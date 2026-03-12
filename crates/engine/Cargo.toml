@@ -1,0 +1,15 @@
+[package]
+name = "braille-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+braille-wire = { path = "../wire" }
+boa_engine = "0.21"
+boa_gc = "0.21"
+html5ever = "0.38"
+markup5ever = "0.38"
+tendril = "0.5"
+cssparser = "0.35"
+selectors = "0.28"
+precomputed-hash = "0.1"

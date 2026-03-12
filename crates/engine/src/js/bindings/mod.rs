@@ -1,0 +1,20 @@
+pub(crate) mod element;
+pub(crate) mod document;
+pub(crate) mod class_list;
+pub(crate) mod traversal;
+pub(crate) mod attributes;
+pub(crate) mod node_info;
+pub(crate) mod inner_html;
+pub(crate) mod mutation;
+pub(crate) mod style;
+pub(crate) mod window;
+pub(crate) mod query;
+pub(crate) mod event;
+pub(crate) mod event_target;
+pub(crate) mod input_props;
+pub(crate) mod select_props;
+pub(crate) mod anchor_form;
+pub(crate) mod html_element;
+pub(crate) mod computed_style;
+
+pub(crate) use document::register_document;
