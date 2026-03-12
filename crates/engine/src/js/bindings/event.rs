@@ -27,9 +27,113 @@ pub(crate) struct JsEvent {
     #[unsafe_ignore_trace]
     pub(crate) current_target: Option<NodeId>,
     pub(crate) phase: u8,
+    pub(crate) dispatching: bool,
 }
 
 impl JsEvent {
+    // -- New getters for WPT --
+
+    fn get_is_trusted(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        Ok(JsValue::from(false))
+    }
+
+    fn get_time_stamp(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        // Return a positive number (spec says DOMHighResTimeStamp)
+        Ok(JsValue::from(1))
+    }
+
+    fn get_composed(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        Ok(JsValue::from(false))
+    }
+
+    fn get_src_element(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        Ok(JsValue::null())
+    }
+
+    fn get_cancel_bubble(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("Event.cancelBubble getter: not an object").into()))?;
+        let evt = obj
+            .downcast_ref::<JsEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("Event.cancelBubble getter: not an Event").into()))?;
+        Ok(JsValue::from(evt.propagation_stopped))
+    }
+
+    fn set_cancel_bubble(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let value = args.first().map(|v| v.to_boolean()).unwrap_or(false);
+        if value {
+            let obj = this
+                .as_object()
+                .ok_or_else(|| JsError::from_opaque(js_string!("Event.cancelBubble setter: not an object").into()))?;
+            let mut evt = obj
+                .downcast_mut::<JsEvent>()
+                .ok_or_else(|| JsError::from_opaque(js_string!("Event.cancelBubble setter: not an Event").into()))?;
+            evt.propagation_stopped = true;
+        }
+        Ok(JsValue::undefined())
+    }
+
+    fn get_return_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("Event.returnValue getter: not an object").into()))?;
+        let evt = obj
+            .downcast_ref::<JsEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("Event.returnValue getter: not an Event").into()))?;
+        Ok(JsValue::from(!evt.default_prevented))
+    }
+
+    fn set_return_value(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let value = args.first().map(|v| v.to_boolean()).unwrap_or(true);
+        if !value {
+            let obj = this
+                .as_object()
+                .ok_or_else(|| JsError::from_opaque(js_string!("Event.returnValue setter: not an object").into()))?;
+            let mut evt = obj
+                .downcast_mut::<JsEvent>()
+                .ok_or_else(|| JsError::from_opaque(js_string!("Event.returnValue setter: not an Event").into()))?;
+            if evt.cancelable {
+                evt.default_prevented = true;
+            }
+        }
+        Ok(JsValue::undefined())
+    }
+
+    fn init_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("Event.initEvent: not an object").into()))?;
+        let mut evt = obj
+            .downcast_mut::<JsEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("Event.initEvent: not an Event").into()))?;
+
+        // Per spec: if dispatching flag is set, return (no-op)
+        if evt.dispatching {
+            return Ok(JsValue::undefined());
+        }
+
+        let event_type = args
+            .first()
+            .ok_or_else(|| {
+                JsError::from_native(
+                    boa_engine::JsNativeError::typ()
+                        .with_message("Failed to execute 'initEvent' on 'Event': 1 argument required, but only 0 present.")
+                )
+            })?
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let bubbles = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
+        let cancelable = args.get(2).map(|v| v.to_boolean()).unwrap_or(false);
+        evt.event_type = event_type;
+        evt.bubbles = bubbles;
+        evt.cancelable = cancelable;
+        evt.default_prevented = false;
+        evt.propagation_stopped = false;
+        evt.immediate_propagation_stopped = false;
+        Ok(JsValue::undefined())
+    }
+
     // -- Getters --
 
     fn get_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
@@ -156,72 +260,68 @@ fn parse_event_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, b
 fn parse_event_type(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
     let event_type = args
         .first()
-        .ok_or_else(|| JsError::from_opaque(js_string!("Event constructor: missing type argument").into()))?
+        .ok_or_else(|| {
+            JsError::from_native(
+                boa_engine::JsNativeError::typ()
+                    .with_message("Failed to execute 'Event' constructor: 1 argument required, but only 0 present.")
+            )
+        })?
         .to_string(ctx)?
         .to_std_string_escaped();
     Ok(event_type)
 }
 
 /// Register the phase constants (NONE, CAPTURING_PHASE, AT_TARGET, BUBBLING_PHASE)
-/// on the Event constructor object.
+/// on the Event constructor object and Event.prototype.
 pub(crate) fn register_event_constants(ctx: &mut Context) {
     let global = ctx.global_object();
     let event_constructor = global
         .get(js_string!("Event"), ctx)
         .expect("Event constructor should exist after registration");
 
+    let constants: &[(&str, i32)] = &[
+        ("NONE", 0),
+        ("CAPTURING_PHASE", 1),
+        ("AT_TARGET", 2),
+        ("BUBBLING_PHASE", 3),
+    ];
+
     if let Some(event_obj) = event_constructor.as_object() {
-        event_obj
-            .define_property_or_throw(
-                js_string!("NONE"),
-                boa_engine::property::PropertyDescriptor::builder()
-                    .value(JsValue::from(0))
-                    .writable(false)
-                    .configurable(false)
-                    .enumerable(true)
-                    .build(),
-                ctx,
-            )
-            .expect("failed to define Event.NONE");
+        // Put constants on both the constructor and its prototype
+        let prototype = event_obj
+            .get(js_string!("prototype"), ctx)
+            .expect("Event.prototype should exist");
+        let proto_obj = prototype.as_object().expect("Event.prototype should be an object");
 
-        event_obj
-            .define_property_or_throw(
-                js_string!("CAPTURING_PHASE"),
-                boa_engine::property::PropertyDescriptor::builder()
-                    .value(JsValue::from(1))
-                    .writable(false)
-                    .configurable(false)
-                    .enumerable(true)
-                    .build(),
-                ctx,
-            )
-            .expect("failed to define Event.CAPTURING_PHASE");
+        // Also get CustomEvent constructor + prototype
+        let custom_event_constructor = global
+            .get(js_string!("CustomEvent"), ctx)
+            .expect("CustomEvent constructor should exist");
+        let custom_proto_val = custom_event_constructor
+            .as_object()
+            .and_then(|obj| obj.get(js_string!("prototype"), ctx).ok());
 
-        event_obj
-            .define_property_or_throw(
-                js_string!("AT_TARGET"),
-                boa_engine::property::PropertyDescriptor::builder()
-                    .value(JsValue::from(2))
-                    .writable(false)
-                    .configurable(false)
-                    .enumerable(true)
-                    .build(),
-                ctx,
-            )
-            .expect("failed to define Event.AT_TARGET");
+        for (name, value) in constants {
+            let desc = boa_engine::property::PropertyDescriptor::builder()
+                .value(JsValue::from(*value))
+                .writable(false)
+                .configurable(false)
+                .enumerable(true)
+                .build();
 
-        event_obj
-            .define_property_or_throw(
-                js_string!("BUBBLING_PHASE"),
-                boa_engine::property::PropertyDescriptor::builder()
-                    .value(JsValue::from(3))
-                    .writable(false)
-                    .configurable(false)
-                    .enumerable(true)
-                    .build(),
-                ctx,
-            )
-            .expect("failed to define Event.BUBBLING_PHASE");
+            event_obj
+                .define_property_or_throw(js_string!(*name), desc.clone(), ctx)
+                .unwrap_or_else(|_| panic!("failed to define Event.{name}"));
+
+            proto_obj
+                .define_property_or_throw(js_string!(*name), desc.clone(), ctx)
+                .unwrap_or_else(|_| panic!("failed to define Event.prototype.{name}"));
+
+            if let Some(cp) = custom_proto_val.as_ref().and_then(|v| v.as_object()) {
+                cp.define_property_or_throw(js_string!(*name), desc, ctx)
+                    .unwrap_or_else(|_| panic!("failed to define CustomEvent.prototype.{name}"));
+            }
+        }
     }
 }
 
@@ -247,6 +347,7 @@ impl Class for JsEvent {
             target: None,
             current_target: None,
             phase: 0,
+            dispatching: false,
         })
     }
 
@@ -329,6 +430,68 @@ impl Class for JsEvent {
             NativeFunction::from_fn_ptr(Self::stop_immediate_propagation),
         );
 
+        class.method(
+            js_string!("initEvent"),
+            3,
+            NativeFunction::from_fn_ptr(Self::init_event),
+        );
+
+        // isTrusted (read-only)
+        let is_trusted_getter = NativeFunction::from_fn_ptr(Self::get_is_trusted);
+        class.accessor(
+            js_string!("isTrusted"),
+            Some(is_trusted_getter.to_js_function(&realm)),
+            None,
+            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+        );
+
+        // timeStamp (read-only)
+        let time_stamp_getter = NativeFunction::from_fn_ptr(Self::get_time_stamp);
+        class.accessor(
+            js_string!("timeStamp"),
+            Some(time_stamp_getter.to_js_function(&realm)),
+            None,
+            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+        );
+
+        // composed (read-only)
+        let composed_getter = NativeFunction::from_fn_ptr(Self::get_composed);
+        class.accessor(
+            js_string!("composed"),
+            Some(composed_getter.to_js_function(&realm)),
+            None,
+            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+        );
+
+        // srcElement (legacy alias for target)
+        let src_element_getter = NativeFunction::from_fn_ptr(Self::get_src_element);
+        class.accessor(
+            js_string!("srcElement"),
+            Some(src_element_getter.to_js_function(&realm)),
+            None,
+            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+        );
+
+        // cancelBubble (getter/setter)
+        let cancel_bubble_getter = NativeFunction::from_fn_ptr(Self::get_cancel_bubble);
+        let cancel_bubble_setter = NativeFunction::from_fn_ptr(Self::set_cancel_bubble);
+        class.accessor(
+            js_string!("cancelBubble"),
+            Some(cancel_bubble_getter.to_js_function(&realm)),
+            Some(cancel_bubble_setter.to_js_function(&realm)),
+            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+        );
+
+        // returnValue (getter/setter)
+        let return_value_getter = NativeFunction::from_fn_ptr(Self::get_return_value);
+        let return_value_setter = NativeFunction::from_fn_ptr(Self::set_return_value);
+        class.accessor(
+            js_string!("returnValue"),
+            Some(return_value_getter.to_js_function(&realm)),
+            Some(return_value_setter.to_js_function(&realm)),
+            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+        );
+
         Ok(())
     }
 }
@@ -352,6 +515,7 @@ pub(crate) struct JsCustomEvent {
     #[unsafe_ignore_trace]
     pub(crate) current_target: Option<NodeId>,
     pub(crate) phase: u8,
+    pub(crate) dispatching: bool,
 }
 
 impl JsCustomEvent {
@@ -423,6 +587,117 @@ impl JsCustomEvent {
             .downcast_ref::<JsCustomEvent>()
             .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.detail getter: `this` is not a CustomEvent").into()))?;
         Ok(evt.detail.clone())
+    }
+
+    // -- WPT getters --
+
+    fn get_is_trusted(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        Ok(JsValue::from(false))
+    }
+
+    fn get_time_stamp(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        Ok(JsValue::from(1))
+    }
+
+    fn get_composed(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        Ok(JsValue::from(false))
+    }
+
+    fn get_src_element(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        Ok(JsValue::null())
+    }
+
+    fn get_cancel_bubble(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this.as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelBubble getter: not an object").into()))?;
+        let evt = obj.downcast_ref::<JsCustomEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelBubble getter: not a CustomEvent").into()))?;
+        Ok(JsValue::from(evt.propagation_stopped))
+    }
+
+    fn set_cancel_bubble(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let value = args.first().map(|v| v.to_boolean()).unwrap_or(false);
+        if value {
+            let obj = this.as_object()
+                .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelBubble setter: not an object").into()))?;
+            let mut evt = obj.downcast_mut::<JsCustomEvent>()
+                .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelBubble setter: not a CustomEvent").into()))?;
+            evt.propagation_stopped = true;
+        }
+        Ok(JsValue::undefined())
+    }
+
+    fn get_return_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this.as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.returnValue getter: not an object").into()))?;
+        let evt = obj.downcast_ref::<JsCustomEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.returnValue getter: not a CustomEvent").into()))?;
+        Ok(JsValue::from(!evt.default_prevented))
+    }
+
+    fn set_return_value(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let value = args.first().map(|v| v.to_boolean()).unwrap_or(true);
+        if !value {
+            let obj = this.as_object()
+                .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.returnValue setter: not an object").into()))?;
+            let mut evt = obj.downcast_mut::<JsCustomEvent>()
+                .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.returnValue setter: not a CustomEvent").into()))?;
+            if evt.cancelable {
+                evt.default_prevented = true;
+            }
+        }
+        Ok(JsValue::undefined())
+    }
+
+    fn init_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this.as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initEvent: not an object").into()))?;
+        let mut evt = obj.downcast_mut::<JsCustomEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initEvent: not a CustomEvent").into()))?;
+        if evt.dispatching {
+            return Ok(JsValue::undefined());
+        }
+        let event_type = args.first()
+            .map(|v| v.to_string(ctx)).transpose()?
+            .map(|s| s.to_std_string_escaped()).unwrap_or_default();
+        let bubbles = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
+        let cancelable = args.get(2).map(|v| v.to_boolean()).unwrap_or(false);
+        evt.event_type = event_type;
+        evt.bubbles = bubbles;
+        evt.cancelable = cancelable;
+        evt.default_prevented = false;
+        evt.propagation_stopped = false;
+        evt.immediate_propagation_stopped = false;
+        Ok(JsValue::undefined())
+    }
+
+    fn init_custom_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this.as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initCustomEvent: not an object").into()))?;
+        let mut evt = obj.downcast_mut::<JsCustomEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initCustomEvent: not a CustomEvent").into()))?;
+        if evt.dispatching {
+            return Ok(JsValue::undefined());
+        }
+        let event_type = args.first()
+            .ok_or_else(|| {
+                JsError::from_native(
+                    boa_engine::JsNativeError::typ()
+                        .with_message("Failed to execute 'initCustomEvent' on 'CustomEvent': 1 argument required, but only 0 present.")
+                )
+            })?
+            .to_string(ctx)?.to_std_string_escaped();
+        let bubbles = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
+        let cancelable = args.get(2).map(|v| v.to_boolean()).unwrap_or(false);
+        let detail = args.get(3).cloned().unwrap_or(JsValue::null());
+        evt.event_type = event_type;
+        evt.bubbles = bubbles;
+        evt.cancelable = cancelable;
+        evt.detail = detail;
+        evt.default_prevented = false;
+        evt.propagation_stopped = false;
+        evt.immediate_propagation_stopped = false;
+        Ok(JsValue::undefined())
     }
 
     // -- Methods --
@@ -503,6 +778,7 @@ impl Class for JsCustomEvent {
             target: None,
             current_target: None,
             phase: 0,
+            dispatching: false,
         })
     }
 
@@ -592,6 +868,44 @@ impl Class for JsCustomEvent {
             0,
             NativeFunction::from_fn_ptr(Self::stop_immediate_propagation),
         );
+
+        class.method(
+            js_string!("initEvent"),
+            3,
+            NativeFunction::from_fn_ptr(Self::init_event),
+        );
+
+        class.method(
+            js_string!("initCustomEvent"),
+            4,
+            NativeFunction::from_fn_ptr(Self::init_custom_event),
+        );
+
+        // isTrusted
+        let is_trusted_getter = NativeFunction::from_fn_ptr(Self::get_is_trusted);
+        class.accessor(js_string!("isTrusted"), Some(is_trusted_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
+
+        // timeStamp
+        let time_stamp_getter = NativeFunction::from_fn_ptr(Self::get_time_stamp);
+        class.accessor(js_string!("timeStamp"), Some(time_stamp_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
+
+        // composed
+        let composed_getter = NativeFunction::from_fn_ptr(Self::get_composed);
+        class.accessor(js_string!("composed"), Some(composed_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
+
+        // srcElement
+        let src_element_getter = NativeFunction::from_fn_ptr(Self::get_src_element);
+        class.accessor(js_string!("srcElement"), Some(src_element_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
+
+        // cancelBubble
+        let cancel_bubble_getter = NativeFunction::from_fn_ptr(Self::get_cancel_bubble);
+        let cancel_bubble_setter = NativeFunction::from_fn_ptr(Self::set_cancel_bubble);
+        class.accessor(js_string!("cancelBubble"), Some(cancel_bubble_getter.to_js_function(&realm)), Some(cancel_bubble_setter.to_js_function(&realm)), Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
+
+        // returnValue
+        let return_value_getter = NativeFunction::from_fn_ptr(Self::get_return_value);
+        let return_value_setter = NativeFunction::from_fn_ptr(Self::set_return_value);
+        class.accessor(js_string!("returnValue"), Some(return_value_getter.to_js_function(&realm)), Some(return_value_setter.to_js_function(&realm)), Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
 
         Ok(())
     }

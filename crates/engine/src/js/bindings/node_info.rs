@@ -6,8 +6,9 @@ use boa_engine::{
     Context, JsError, JsResult, JsValue,
 };
 
-use crate::dom::NodeData;
+use crate::dom::{NodeData, NodeId};
 use super::element::JsElement;
+
 
 // ---------------------------------------------------------------------------
 // Node information properties
@@ -31,6 +32,8 @@ fn get_node_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
         NodeData::Text { .. } => 3,
         NodeData::Comment { .. } => 8,
         NodeData::Document => 9,
+        NodeData::Doctype { .. } => 10,
+        NodeData::DocumentFragment => 11,
     };
 
     Ok(JsValue::from(node_type))
@@ -54,6 +57,8 @@ fn get_node_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
         NodeData::Text { .. } => "#text".to_string(),
         NodeData::Comment { .. } => "#comment".to_string(),
         NodeData::Document => "#document".to_string(),
+        NodeData::Doctype { name, .. } => name.clone(),
+        NodeData::DocumentFragment => "#document-fragment".to_string(),
     };
 
     Ok(JsValue::from(js_string!(node_name)))
@@ -94,7 +99,7 @@ fn get_node_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
     match &node.data {
         NodeData::Text { content } => Ok(JsValue::from(js_string!(content.clone()))),
         NodeData::Comment { content } => Ok(JsValue::from(js_string!(content.clone()))),
-        NodeData::Element { .. } | NodeData::Document => Ok(JsValue::null()),
+        NodeData::Element { .. } | NodeData::Document | NodeData::Doctype { .. } | NodeData::DocumentFragment => Ok(JsValue::null()),
     }
 }
 
@@ -110,6 +115,55 @@ fn get_inner_text(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
 
     let text = el.tree.borrow().get_text_content(el.node_id);
     Ok(JsValue::from(js_string!(text)))
+}
+
+/// Native getter for node.ownerDocument
+/// Returns the document that owns this node (always the global document)
+fn get_owner_document(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("ownerDocument getter: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("ownerDocument getter: `this` is not an Element").into()))?;
+
+    let tree = el.tree.borrow();
+    let node = tree.get_node(el.node_id);
+
+    // Per spec: Document nodes return null for ownerDocument
+    if matches!(node.data, NodeData::Document) {
+        return Ok(JsValue::null());
+    }
+    drop(tree);
+
+    // Return the global document object
+    let global = ctx.global_object();
+    let doc = global.get(js_string!("document"), ctx)?;
+    Ok(doc)
+}
+
+/// Native getter for node.isConnected
+/// Returns true if the node is in the document tree (has a path to the Document root)
+fn get_is_connected(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("isConnected getter: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("isConnected getter: `this` is not an Element").into()))?;
+
+    let tree = el.tree.borrow();
+    let mut current: NodeId = el.node_id;
+    loop {
+        let node = tree.get_node(current);
+        if matches!(node.data, NodeData::Document) {
+            return Ok(JsValue::from(true));
+        }
+        match node.parent {
+            Some(parent_id) => current = parent_id,
+            None => return Ok(JsValue::from(false)),
+        }
+    }
 }
 
 /// Register all node info getters on the Element class
@@ -160,6 +214,35 @@ pub(crate) fn register_node_info(class: &mut ClassBuilder) -> JsResult<()> {
         None,
         Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
     );
+
+    // ownerDocument (read-only)
+    let getter = NativeFunction::from_fn_ptr(get_owner_document);
+    class.accessor(
+        js_string!("ownerDocument"),
+        Some(getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
+    // isConnected (read-only)
+    let getter = NativeFunction::from_fn_ptr(get_is_connected);
+    class.accessor(
+        js_string!("isConnected"),
+        Some(getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
+    // Node type constants on the prototype
+    class.static_property(js_string!("ELEMENT_NODE"), JsValue::from(1), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.static_property(js_string!("ATTRIBUTE_NODE"), JsValue::from(2), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.static_property(js_string!("TEXT_NODE"), JsValue::from(3), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.static_property(js_string!("CDATA_SECTION_NODE"), JsValue::from(4), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.static_property(js_string!("PROCESSING_INSTRUCTION_NODE"), JsValue::from(7), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.static_property(js_string!("COMMENT_NODE"), JsValue::from(8), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.static_property(js_string!("DOCUMENT_NODE"), JsValue::from(9), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.static_property(js_string!("DOCUMENT_TYPE_NODE"), JsValue::from(10), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.static_property(js_string!("DOCUMENT_FRAGMENT_NODE"), JsValue::from(11), Attribute::READONLY | Attribute::NON_ENUMERABLE);
 
     Ok(())
 }

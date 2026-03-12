@@ -144,7 +144,7 @@ impl Engine {
     ) {
         let node = tree.get_node(node_id);
         match &node.data {
-            NodeData::Element { tag_name, attributes } => {
+            NodeData::Element { tag_name, attributes, .. } => {
                 if tag_name.to_ascii_lowercase() == "script" {
                     // Per HTML spec: if src attribute exists, it's an external script
                     // (inline text content is ignored when src is present)
@@ -220,6 +220,73 @@ impl Engine {
     pub fn load_html_with_scripts(&mut self, html: &str, fetched: &HashMap<String, String>) {
         let descriptors = self.parse_and_collect_scripts(html);
         self.execute_scripts(&descriptors, fetched);
+    }
+
+    /// Execute scripts without panicking on JS errors.
+    /// Returns Ok(()) if all scripts executed, or Err with the first error message.
+    /// Unlike execute_scripts, this continues past errors in individual scripts.
+    pub fn execute_scripts_lossy(
+        &mut self,
+        descriptors: &[ScriptDescriptor],
+        fetched: &HashMap<String, String>,
+    ) -> Vec<String> {
+        let mut runtime = JsRuntime::new(Rc::clone(&self.tree));
+        let mut errors = Vec::new();
+
+        for descriptor in descriptors {
+            let code = match descriptor {
+                ScriptDescriptor::Inline(text) => {
+                    if text.trim().is_empty() { continue; }
+                    text.clone()
+                }
+                ScriptDescriptor::External(url) => {
+                    match fetched.get(url) {
+                        Some(content) if !content.trim().is_empty() => content.clone(),
+                        _ => continue,
+                    }
+                }
+            };
+            if let Err(e) = runtime.eval(&code) {
+                errors.push(format!("{:?}", e));
+            }
+        }
+
+        self.runtime = Some(runtime);
+        self.focused_element = None;
+        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+        errors
+    }
+
+    /// Convenience: load HTML with external scripts, tolerating JS errors.
+    /// Returns any JS errors that occurred during script execution.
+    pub fn load_html_with_scripts_lossy(
+        &mut self,
+        html: &str,
+        fetched: &HashMap<String, String>,
+    ) -> Vec<String> {
+        let descriptors = self.parse_and_collect_scripts(html);
+        self.execute_scripts_lossy(&descriptors, fetched)
+    }
+
+    /// Evaluate a JavaScript expression and return the result as a string.
+    /// Panics if no runtime is loaded (call load_html or execute_scripts first).
+    pub fn eval_js(&mut self, code: &str) -> Result<String, String> {
+        let runtime = self.runtime.as_mut().expect("eval_js: no runtime loaded");
+        match runtime.eval(code) {
+            Ok(val) => {
+                if val.is_null() {
+                    Ok("null".to_string())
+                } else if val.is_undefined() {
+                    Ok("undefined".to_string())
+                } else {
+                    match val.to_string(&mut runtime.context) {
+                        Ok(s) => Ok(s.to_std_string_escaped()),
+                        Err(_) => Ok("undefined".to_string()),
+                    }
+                }
+            }
+            Err(e) => Err(format!("{:?}", e)),
+        }
     }
 }
 

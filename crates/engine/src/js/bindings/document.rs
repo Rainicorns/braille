@@ -13,7 +13,11 @@ use boa_gc::{Finalize, Trace};
 
 use crate::dom::DomTree;
 
+use crate::dom::NodeData;
+
 use super::element::JsElement;
+use super::event::{JsEvent, JsCustomEvent};
+use super::event_target::{ListenerEntry, EVENT_LISTENERS};
 use super::class_list::register_class_list_class;
 use super::style::register_style_class;
 use super::query;
@@ -208,6 +212,398 @@ fn document_create_text_node(
     Ok(js_obj.into())
 }
 
+/// Native getter for document.documentElement
+fn document_get_document_element(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("documentElement getter: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("documentElement getter: `this` is not document").into()))?;
+    let tree = doc.tree.borrow();
+    let doc_node = tree.get_node(tree.document());
+    // documentElement is the first Element child of the Document node
+    for &child_id in &doc_node.children {
+        if matches!(tree.get_node(child_id).data, NodeData::Element { .. }) {
+            drop(tree);
+            let element = JsElement::new(child_id, doc.tree.clone());
+            let js_obj = JsElement::from_data(element, ctx)?;
+            return Ok(js_obj.into());
+        }
+    }
+    Ok(JsValue::null())
+}
+
+/// Native implementation of document.createComment(data)
+fn document_create_comment(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("createComment: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("createComment: `this` is not document").into()))?;
+    let tree = doc.tree.clone();
+
+    let data = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let node_id = tree.borrow_mut().create_comment(&data);
+
+    let element = JsElement::new(node_id, tree);
+    let js_obj = JsElement::from_data(element, ctx)?;
+    Ok(js_obj.into())
+}
+
+/// Native implementation of document.createDocumentFragment()
+fn document_create_document_fragment(
+    this: &JsValue,
+    _args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("createDocumentFragment: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("createDocumentFragment: `this` is not document").into()))?;
+    let tree = doc.tree.clone();
+
+    let node_id = tree.borrow_mut().create_document_fragment();
+
+    let element = JsElement::new(node_id, tree);
+    let js_obj = JsElement::from_data(element, ctx)?;
+    Ok(js_obj.into())
+}
+
+/// Native implementation of document.createEvent(type)
+/// Legacy event creation — returns an uninitialized Event
+fn document_create_event(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let _obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("createEvent: `this` is not an object").into()))?;
+
+    let event_interface = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    if event_interface.eq_ignore_ascii_case("customevent") {
+        let event = JsCustomEvent {
+            event_type: String::new(),
+            bubbles: false,
+            cancelable: false,
+            default_prevented: false,
+            propagation_stopped: false,
+            immediate_propagation_stopped: false,
+            detail: JsValue::null(),
+            target: None,
+            current_target: None,
+            phase: 0,
+            dispatching: false,
+        };
+        let js_obj = JsCustomEvent::from_data(event, ctx)?;
+        Ok(js_obj.into())
+    } else {
+        let event = JsEvent {
+            event_type: String::new(),
+            bubbles: false,
+            cancelable: false,
+            default_prevented: false,
+            propagation_stopped: false,
+            immediate_propagation_stopped: false,
+            target: None,
+            current_target: None,
+            phase: 0,
+            dispatching: false,
+        };
+        let js_obj = JsEvent::from_data(event, ctx)?;
+        Ok(js_obj.into())
+    }
+}
+
+/// Parse the third argument to addEventListener/removeEventListener.
+/// Returns (capture, once).
+fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, bool)> {
+    let mut capture = false;
+    let mut once = false;
+
+    if let Some(opt_val) = args.get(2) {
+        if let Some(b) = opt_val.as_boolean() {
+            capture = b;
+        } else if let Some(opt_obj) = opt_val.as_object() {
+            let c = opt_obj.get(js_string!("capture"), ctx)?;
+            if !c.is_undefined() {
+                capture = c.to_boolean();
+            }
+            let o = opt_obj.get(js_string!("once"), ctx)?;
+            if !o.is_undefined() {
+                once = o.to_boolean();
+            }
+        }
+    }
+
+    Ok((capture, once))
+}
+
+/// Native implementation of document.addEventListener(type, callback, options?)
+fn document_add_event_listener(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: `this` is not document").into()))?;
+    let node_id = doc.tree.borrow().document();
+
+    let event_type = args
+        .first()
+        .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: missing type argument").into()))?
+        .to_string(ctx)?
+        .to_std_string_escaped();
+
+    let callback_val = args
+        .get(1)
+        .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: missing callback argument").into()))?;
+
+    if callback_val.is_null() || callback_val.is_undefined() {
+        return Ok(JsValue::undefined());
+    }
+
+    let callback = callback_val
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
+        .clone();
+
+    let (capture, once) = parse_listener_options(args, ctx)?;
+
+    EVENT_LISTENERS.with(|el| {
+        let rc = el.borrow();
+        let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
+        let mut map = listeners_rc.borrow_mut();
+        let entries = map.entry(node_id).or_insert_with(Vec::new);
+
+        let duplicate = entries.iter().any(|entry| {
+            entry.event_type == event_type
+                && entry.capture == capture
+                && entry.callback == callback
+        });
+
+        if !duplicate {
+            entries.push(ListenerEntry {
+                event_type,
+                callback,
+                capture,
+                once,
+            });
+        }
+    });
+
+    Ok(JsValue::undefined())
+}
+
+/// Native implementation of document.removeEventListener(type, callback, options?)
+fn document_remove_event_listener(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: `this` is not document").into()))?;
+    let node_id = doc.tree.borrow().document();
+
+    let event_type = args
+        .first()
+        .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: missing type argument").into()))?
+        .to_string(ctx)?
+        .to_std_string_escaped();
+
+    let callback_val = args
+        .get(1)
+        .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: missing callback argument").into()))?;
+
+    if callback_val.is_null() || callback_val.is_undefined() {
+        return Ok(JsValue::undefined());
+    }
+
+    let callback = callback_val
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: callback is not an object").into()))?
+        .clone();
+
+    let (capture, _once) = parse_listener_options(args, ctx)?;
+
+    EVENT_LISTENERS.with(|el| {
+        let rc = el.borrow();
+        let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
+        let mut map = listeners_rc.borrow_mut();
+        if let Some(entries) = map.get_mut(&node_id) {
+            entries.retain(|entry| {
+                !(entry.event_type == event_type
+                    && entry.capture == capture
+                    && entry.callback == callback)
+            });
+            if entries.is_empty() {
+                map.remove(&node_id);
+            }
+        }
+    });
+
+    Ok(JsValue::undefined())
+}
+
+/// Native implementation of document.dispatchEvent(event)
+/// Delegates to the same dispatch algorithm used by elements.
+fn document_dispatch_event(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not document").into()))?;
+    let tree = doc.tree.clone();
+    let target_node_id = tree.borrow().document();
+
+    let event_val = args
+        .first()
+        .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: missing event argument").into()))?
+        .clone();
+    let event_obj = event_val
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an object").into()))?
+        .clone();
+
+    let is_custom_event;
+    let (event_type, bubbles) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
+        is_custom_event = false;
+        (evt.event_type.clone(), evt.bubbles)
+    } else if let Some(evt) = event_obj.downcast_ref::<JsCustomEvent>() {
+        is_custom_event = true;
+        (evt.event_type.clone(), evt.bubbles)
+    } else {
+        return Err(JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()));
+    };
+
+    // Document is the root, so propagation path is just [document]
+    let propagation_path = vec![target_node_id];
+
+    // Set event.target and dispatching flag
+    if is_custom_event {
+        let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
+        evt.target = Some(target_node_id);
+        evt.dispatching = true;
+    } else {
+        let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+        evt.target = Some(target_node_id);
+        evt.dispatching = true;
+    }
+
+    use boa_engine::property::PropertyDescriptor;
+    event_obj.define_property_or_throw(
+        js_string!("target"),
+        PropertyDescriptor::builder()
+            .value(this.clone())
+            .writable(true)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+    event_obj.define_property_or_throw(
+        js_string!("srcElement"),
+        PropertyDescriptor::builder()
+            .value(this.clone())
+            .writable(true)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // At-target phase (document is both root and target)
+    if is_custom_event {
+        let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
+        evt.current_target = Some(target_node_id);
+        evt.phase = 2; // AT_TARGET
+    } else {
+        let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+        evt.current_target = Some(target_node_id);
+        evt.phase = 2; // AT_TARGET
+    }
+    event_obj.define_property_or_throw(
+        js_string!("currentTarget"),
+        PropertyDescriptor::builder()
+            .value(this.clone())
+            .writable(true)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // Invoke listeners at target
+    let _should_stop = super::element::invoke_listeners_for_node(
+        target_node_id, &event_type, &event_obj, &event_val, false, true, ctx,
+    )?;
+
+    // Reset event state
+    let default_prevented = if is_custom_event {
+        let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
+        evt.phase = 0;
+        evt.current_target = None;
+        evt.propagation_stopped = false;
+        evt.immediate_propagation_stopped = false;
+        evt.dispatching = false;
+        evt.default_prevented
+    } else {
+        let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+        evt.phase = 0;
+        evt.current_target = None;
+        evt.propagation_stopped = false;
+        evt.immediate_propagation_stopped = false;
+        evt.dispatching = false;
+        evt.default_prevented
+    };
+    event_obj.define_property_or_throw(
+        js_string!("currentTarget"),
+        PropertyDescriptor::builder()
+            .value(JsValue::null())
+            .writable(true)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    let _ = (bubbles, propagation_path); // document has no parent to bubble to
+    Ok(JsValue::from(!default_prevented))
+}
+
 /// Builds the `document` global object and registers it on the context.
 pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Context) {
     // Register the Element class first so from_data works
@@ -257,6 +653,36 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
             js_string!("getElementsByTagName"),
             1,
         )
+        .function(
+            NativeFunction::from_fn_ptr(document_create_comment),
+            js_string!("createComment"),
+            1,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(document_create_document_fragment),
+            js_string!("createDocumentFragment"),
+            0,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(document_create_event),
+            js_string!("createEvent"),
+            1,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(document_add_event_listener),
+            js_string!("addEventListener"),
+            2,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(document_remove_event_listener),
+            js_string!("removeEventListener"),
+            2,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(document_dispatch_event),
+            js_string!("dispatchEvent"),
+            1,
+        )
         .build();
 
     // Add accessor properties (body, head, title)
@@ -289,6 +715,20 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
             context,
         )
         .expect("failed to define document.head");
+
+    // document.documentElement (getter only)
+    let document_element_getter = NativeFunction::from_fn_ptr(document_get_document_element);
+    document
+        .define_property_or_throw(
+            js_string!("documentElement"),
+            PropertyDescriptor::builder()
+                .get(document_element_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define document.documentElement");
 
     // document.title (getter and setter)
     let title_getter = NativeFunction::from_fn_ptr(document_get_title);

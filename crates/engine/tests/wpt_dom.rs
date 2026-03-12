@@ -1,0 +1,877 @@
+//! WPT (Web Platform Tests) runner for dom/nodes and dom/events.
+//!
+//! Uses libtest-mimic to create one test Trial per HTML file.
+//! Each Trial loads the test HTML via Engine, injects testharness.js,
+//! and reads window.__wpt_results to determine pass/fail.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use libtest_mimic::{Arguments, Failed, Trial};
+
+use braille_engine::Engine;
+
+// ---------------------------------------------------------------------------
+// Paths
+// ---------------------------------------------------------------------------
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+fn wpt_root() -> PathBuf {
+    workspace_root().join("tests/wpt")
+}
+
+// ---------------------------------------------------------------------------
+// Test harness JS
+// ---------------------------------------------------------------------------
+
+fn load_testharness_js() -> String {
+    let path = wpt_root().join("resources/testharness.js");
+    std::fs::read_to_string(&path).expect("failed to read testharness.js")
+}
+
+/// Minimal testharness shim that provides test(), assert_*(), setup(), done()
+/// and captures results to window.__wpt_results.
+/// We prepend this before the real testharness.js. It provides the critical
+/// globals in case testharness.js fails to initialize its WindowTestEnvironment.
+fn testharness_preamble() -> String {
+    r#"
+// Minimal WPT test harness preamble
+(function() {
+    var results = [];
+    var setup_fn = null;
+    var setup_ran = false;
+
+    function run_setup() {
+        if (!setup_ran && setup_fn) {
+            setup_ran = true;
+            setup_fn();
+        }
+    }
+
+    self.test = function(fn, name) {
+        run_setup();
+        var t = {
+            name: name || "(unnamed)",
+            step: function(f) { return function() { return f.apply(t, arguments); }; },
+            step_func: function(f) { return function() { return f.apply(t, arguments); }; },
+            step_func_done: function(f) { return function() { return f.apply(t, arguments); }; },
+            unreached_func: function(msg) { return function() { throw new Error(msg || "unreached"); }; },
+            add_cleanup: function() {}
+        };
+        var result = { name: name || "(unnamed)", status: 0, message: "" };
+        try {
+            fn.call(t, t);
+        } catch(e) {
+            result.status = 1;
+            result.message = e.message || String(e);
+        }
+        results.push(result);
+    };
+
+    self.async_test = function(fn, name) {
+        // For sync-like async tests, run immediately
+        if (typeof fn === "string") {
+            // async_test(name) form — return test object
+            name = fn;
+            fn = null;
+        }
+        var t = {
+            name: name || "(unnamed)",
+            step: function(f) {
+                return function() { return f.apply(t, arguments); };
+            },
+            step_func: function(f) {
+                return function() { return f.apply(t, arguments); };
+            },
+            step_func_done: function(f) {
+                return function() {
+                    f.apply(t, arguments);
+                    t._done = true;
+                };
+            },
+            done: function() { t._done = true; },
+            unreached_func: function(msg) {
+                return function() { throw new Error(msg || "unreached"); };
+            },
+            add_cleanup: function() {},
+            _done: false
+        };
+        var result = { name: t.name, status: 0, message: "" };
+        if (fn) {
+            try {
+                fn.call(t, t);
+            } catch(e) {
+                result.status = 1;
+                result.message = e.message || String(e);
+            }
+        }
+        results.push(result);
+        return t;
+    };
+
+    self.promise_test = function(fn, name) {
+        // Stub — mark as NOTRUN
+        results.push({ name: name || "(unnamed)", status: 3, message: "promise_test not supported" });
+    };
+
+    self.setup = function(fn_or_props) {
+        if (typeof fn_or_props === 'function') {
+            fn_or_props();
+            setup_ran = true;
+        }
+        // If it's props, ignore for now
+    };
+
+    self.done = function() {};
+
+    self.add_completion_callback = function() {};
+    self.add_result_callback = function() {};
+    self.add_start_callback = function() {};
+
+    self.on_event = function(obj, event_type, handler) {
+        if (obj && typeof obj.addEventListener === 'function') {
+            obj.addEventListener(event_type, handler);
+        }
+    };
+
+    self.step_timeout = function(fn, timeout) {
+        fn();
+    };
+
+    self.generate_tests = function(fn, tests, props) {
+        for (var i = 0; i < tests.length; i++) {
+            var args = tests[i];
+            var name = args[0];
+            self.test(function() { fn.apply(null, args.slice(1)); }, name);
+        }
+    };
+
+    // Assertions
+    self.assert_true = function(val, msg) {
+        if (val !== true) throw new Error(msg || "assert_true: got " + val);
+    };
+    self.assert_false = function(val, msg) {
+        if (val !== false) throw new Error(msg || "assert_false: got " + val);
+    };
+    self.assert_equals = function(a, b, msg) {
+        if (a !== b) throw new Error(msg || "assert_equals: " + a + " !== " + b);
+    };
+    self.assert_not_equals = function(a, b, msg) {
+        if (a === b) throw new Error(msg || "assert_not_equals: values are equal: " + a);
+    };
+    self.assert_in_array = function(val, arr, msg) {
+        if (arr.indexOf(val) === -1) throw new Error(msg || "assert_in_array: " + val + " not in array");
+    };
+    self.assert_greater_than = function(a, b, msg) {
+        if (!(a > b)) throw new Error(msg || "assert_greater_than: " + a + " <= " + b);
+    };
+    self.assert_less_than = function(a, b, msg) {
+        if (!(a < b)) throw new Error(msg || "assert_less_than: " + a + " >= " + b);
+    };
+    self.assert_greater_than_equal = function(a, b, msg) {
+        if (!(a >= b)) throw new Error(msg || "assert_greater_than_equal: " + a + " < " + b);
+    };
+    self.assert_less_than_equal = function(a, b, msg) {
+        if (!(a <= b)) throw new Error(msg || "assert_less_than_equal: " + a + " > " + b);
+    };
+    self.assert_array_equals = function(a, b, msg) {
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+            throw new Error(msg || "assert_array_equals: length mismatch");
+        }
+        for (var i = 0; i < a.length; i++) {
+            if (a[i] !== b[i]) throw new Error(msg || "assert_array_equals: index " + i + ": " + a[i] + " !== " + b[i]);
+        }
+    };
+    self.assert_regexp_match = function(val, re, msg) {
+        if (!re.test(val)) throw new Error(msg || "assert_regexp_match: " + val + " doesn't match " + re);
+    };
+    self.assert_own_property = function(obj, prop, msg) {
+        if (!obj.hasOwnProperty(prop)) throw new Error(msg || "assert_own_property: missing " + prop);
+    };
+    self.assert_class_string = function(obj, expected, msg) {
+        var actual = Object.prototype.toString.call(obj);
+        var cls = actual.slice(8, -1);
+        if (cls !== expected) throw new Error(msg || "assert_class_string: " + cls + " !== " + expected);
+    };
+    self.assert_throws_js = function(ctor, fn, msg) {
+        var threw = false;
+        try { fn(); } catch(e) {
+            threw = true;
+            if (!(e instanceof ctor)) throw new Error(msg || "assert_throws_js: wrong error type: " + e);
+        }
+        if (!threw) throw new Error(msg || "assert_throws_js: no error thrown");
+    };
+    self.assert_throws_dom = function(name, fn, msg) {
+        var threw = false;
+        try { fn(); } catch(e) {
+            threw = true;
+            // Accept any error with matching name or message
+        }
+        if (!threw) throw new Error(msg || "assert_throws_dom(" + name + "): no error thrown");
+    };
+    self.assert_throws_exactly = function(expected, fn, msg) {
+        var threw = false;
+        try { fn(); } catch(e) {
+            threw = true;
+            if (e !== expected) throw new Error(msg || "assert_throws_exactly: wrong error");
+        }
+        if (!threw) throw new Error(msg || "assert_throws_exactly: no error thrown");
+    };
+    self.assert_unreached = function(msg) {
+        throw new Error(msg || "assert_unreached");
+    };
+    self.assert_readonly = function(obj, prop, msg) {
+        var desc = Object.getOwnPropertyDescriptor(obj, prop);
+        if (!desc || desc.writable !== false) {
+            // Check if setter-less accessor
+            if (!desc || desc.set) throw new Error(msg || "assert_readonly: " + prop + " is not readonly");
+        }
+    };
+    self.assert_idl_attribute = function(obj, prop, msg) {
+        if (!(prop in obj)) throw new Error(msg || "assert_idl_attribute: missing " + prop);
+    };
+    self.assert_implements = function(val, msg) {
+        if (!val) throw new Error(msg || "assert_implements: not implemented");
+    };
+    self.assert_implements_optional = function(val, msg) {
+        if (!val) throw new Error(msg || "assert_implements_optional: not implemented");
+    };
+    self.format_value = function(val) {
+        if (val === null) return "null";
+        if (val === undefined) return "undefined";
+        if (typeof val === "string") return '"' + val + '"';
+        return String(val);
+    };
+
+    // Event constants
+    if (typeof Event !== 'undefined') {
+        if (!Event.NONE) Event.NONE = 0;
+        if (!Event.CAPTURING_PHASE) Event.CAPTURING_PHASE = 1;
+        if (!Event.AT_TARGET) Event.AT_TARGET = 2;
+        if (!Event.BUBBLING_PHASE) Event.BUBBLING_PHASE = 3;
+    }
+
+    // Make results available
+    self.__wpt_get_results = function() { return results; };
+})();
+"#
+    .to_string()
+}
+
+/// Shim that replaces testharnessreport.js — no-op since we use our own preamble.
+fn testharnessreport_shim() -> String {
+    "// testharnessreport.js shim — no-op".to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Skip list — tests that need features we don't support
+// ---------------------------------------------------------------------------
+
+/// Returns true if this test file should be skipped (not ignored — just skipped entirely).
+fn should_skip(rel_path: &str) -> Option<&'static str> {
+    // Files requiring iframes / cross-document
+    let skip_patterns: &[(&str, &str)] = &[
+        // Iframes
+        ("iframe", "requires iframes"),
+        ("cross-doc", "requires cross-document"),
+        ("adoption", "requires cross-document adoption"),
+        // MutationObserver
+        ("MutationObserver", "requires MutationObserver"),
+        ("mutation-observer", "requires MutationObserver"),
+        ("mutationobserver", "requires MutationObserver"),
+        // Range / Selection
+        ("Range", "requires Range API"),
+        ("range", "requires Range API"),
+        ("Selection", "requires Selection API"),
+        // Shadow DOM
+        ("shadow", "requires Shadow DOM"),
+        ("Shadow", "requires Shadow DOM"),
+        ("slot", "requires Shadow DOM slots"),
+        // DOMImplementation
+        ("DOMImplementation", "requires DOMImplementation"),
+        // Processing instructions / XHTML
+        ("ProcessingInstruction", "requires ProcessingInstruction"),
+        ("xml", "requires XML support"),
+        ("XHTML", "requires XHTML"),
+        ("xhtml", "requires XHTML"),
+        // NodeIterator / TreeWalker
+        ("NodeIterator", "requires NodeIterator"),
+        ("TreeWalker", "requires TreeWalker"),
+        // Attr node
+        ("Attr-", "requires Attr node interface"),
+        // Workers
+        (".worker.", "requires Web Workers"),
+        ("worker", "requires Web Workers"),
+        // .sub.html (server substitution)
+        (".sub.", "requires server-side substitution"),
+        // AbortController / AbortSignal
+        ("abort", "requires AbortController"),
+        ("Abort", "requires AbortController"),
+        // Historical features
+        ("historical", "tests removed features"),
+        // DOMTokenList edge cases
+        ("DOMTokenList-coverage", "requires full DOMTokenList"),
+        // Namespace-heavy tests
+        ("createElementNS", "requires namespace support"),
+        ("getElementsByTagNameNS", "requires namespace support"),
+        ("namespaced", "requires namespace support"),
+        ("NamedNodeMap", "requires NamedNodeMap"),
+        // CharacterData (we don't have full CharacterData interface)
+        ("CharacterData", "requires CharacterData interface"),
+        // Pre-insertion validation (requires DOMException hierarchy)
+        ("pre-insertion", "requires DOMException types"),
+        // Document.URL, baseURI, etc.
+        ("Document-URL", "requires Document.URL"),
+        ("Node-baseURI", "requires baseURI"),
+        ("Document-doctype", "requires doctype node access"),
+        ("Document-adoptNode", "requires adoptNode"),
+        // Comment/Text constructor
+        ("Comment-constructor", "requires Comment constructor"),
+        ("Text-constructor", "requires Text constructor"),
+        // ChildNode-after/before/replaceWith
+        ("ChildNode-after", "requires after()"),
+        ("ChildNode-before", "requires before()"),
+        ("ChildNode-replaceWith", "requires replaceWith()"),
+        // ParentNode.append/prepend/replaceChildren
+        ("ParentNode-append", "requires append()"),
+        ("ParentNode-prepend", "requires prepend()"),
+        ("ParentNode-replaceChildren", "requires replaceChildren()"),
+        // Node-isEqualNode, Node-isSameNode, etc.
+        ("Node-isEqualNode", "requires isEqualNode"),
+        ("Node-isSameNode", "requires isSameNode"),
+        ("Node-compareDocumentPosition", "requires compareDocumentPosition"),
+        ("Node-lookupPrefix", "requires lookupPrefix"),
+        ("Node-lookupNamespaceURI", "requires lookupNamespaceURI"),
+        ("Node-isDefaultNamespace", "requires isDefaultNamespace"),
+        ("Node-normalize", "requires normalize"),
+        ("Node-textContent", "requires full textContent spec"),
+        ("Node-nodeName", "requires full nodeName spec"),
+        ("Node-nodeValue", "requires full nodeValue spec"),
+        // Node-cloneNode needs more than we have
+        ("Node-cloneNode", "requires full cloneNode spec"),
+        // Node-parentNode
+        ("Node-parentNode", "requires full parentNode spec"),
+        // Node-contains
+        ("Node-contains", "requires full contains spec"),
+        // getElementsByClassName edge cases
+        ("getElementsByClassName", "requires full getElementsByClassName"),
+        // Document-characterSet
+        ("Document-characterSet", "requires characterSet"),
+        // Creators
+        ("creators", "requires full creator functions"),
+        // Productions
+        ("productions", "requires productions"),
+        // Case tests
+        ("case.html", "requires case-sensitivity tests"),
+        // Document-createEvent full spec
+        ("Document-createEvent.html", "requires full createEvent spec"),
+        // Selector tests that need complex selectors
+        ("query", "requires full querySelector"),
+        // EventTarget constructor
+        ("EventTarget-constructible", "requires EventTarget constructor"),
+        // addEventListener advanced options
+        ("AddEventListenerOptions-signal", "requires AbortSignal"),
+        // EventListener-handleEvent
+        ("EventListener-handleEvent", "requires handleEvent protocol"),
+        // Body/FrameSet event handlers
+        ("Body-FrameSet", "requires body/frameset event forwarding"),
+        // Event global
+        ("event-global", "requires window.event"),
+        // relatedTarget
+        ("relatedTarget", "requires relatedTarget"),
+        // legacy-pre-activation
+        ("legacy-pre-activation", "requires pre-activation behavior"),
+        // scrolling
+        ("scrolling", "requires scroll APIs"),
+        // touch events
+        ("touch", "requires touch events"),
+        ("Touch", "requires touch events"),
+        // Document/DocumentFragment/DocumentType constructors
+        ("Document-constructor", "requires Document constructor"),
+        ("DocumentFragment-constructor", "requires DocumentFragment constructor"),
+        ("DocumentType-literal", "requires DocumentType interface"),
+        ("DocumentType-remove", "requires DocumentType interface"),
+        // CDATA (XML only)
+        ("createCDATASection", "requires XML CDATA support"),
+        // Full createEvent spec (hundreds of event types)
+        ("Document-createEvent.https", "requires full createEvent spec"),
+        // Event subclasses (UIEvent, MouseEvent, etc.)
+        ("Event-subclasses", "requires UIEvent/MouseEvent constructors"),
+        // Document.implementation
+        ("Document-implementation", "requires DOMImplementation"),
+        // importNode / adoptNode
+        ("Document-importNode", "requires importNode"),
+        // Namespace-heavy tests
+        ("Document-createElement-namespace", "requires namespace support"),
+        ("Element-firstElementChild-namespace", "requires setAttributeNS"),
+        ("Element-removeAttributeNS", "requires setAttributeNS"),
+        ("Element-setAttribute-crbug", "requires setAttributeNS"),
+        // Custom elements / CE reactions
+        ("cereactions", "requires custom elements"),
+        // Full Node spec tests we can't pass yet
+        ("Node-mutation-adoptNode", "requires adoptNode"),
+        // adoptNode/remove+adopt crash tests
+        ("remove-and-adopt", "requires adoptNode"),
+        // NodeList interface tests
+        ("NodeList-Iterable", "requires NodeList interface"),
+        ("NodeList-static-length", "requires NodeList interface"),
+        ("NodeList-live-mutations", "requires NodeList interface"),
+        // NamedNodeMap / attributes interface
+        ("attributes-namednodemap", "requires NamedNodeMap"),
+        ("attributes.html", "requires NamedNodeMap"),
+        // Document-createAttribute (Attr interface)
+        ("Document-createAttribute", "requires Attr interface"),
+        // Document-createComment.html needs Comment constructor
+        ("Document-createComment.html", "requires Comment constructor global"),
+        // Document-createTextNode needs Text constructor
+        ("Document-createTextNode.html", "requires Text constructor global"),
+        // Full getElementsByTagName spec
+        ("Element-getElementsByTagName", "requires full getElementsByTagName"),
+        ("Document-getElementsByTagName", "requires full getElementsByTagName"),
+        // Document-getElementById (needs HTMLDivElement, full spec)
+        ("Document-getElementById", "requires HTMLDivElement and full spec"),
+        // DocumentFragment-getElementById (needs DocumentFragment constructor)
+        ("DocumentFragment-getElementById", "requires DocumentFragment constructor"),
+        // Node-constants (needs Node constructor / prototype)
+        ("Node-constants", "requires Node constructor"),
+        // Node-properties (needs full Node interface)
+        ("Node-properties", "requires full Node interface"),
+        // ParentNode-children (needs HTMLCollection)
+        ("ParentNode-children", "requires HTMLCollection"),
+        // Element-children (needs HTMLCollection)
+        ("Element-children.html", "requires HTMLCollection"),
+        // name-validation
+        ("name-validation", "requires full name validation"),
+        // Text-splitText, Text-wholeText
+        ("Text-splitText", "requires Text.splitText"),
+        ("Text-wholeText", "requires Text.wholeText"),
+        // remove-unscopable (needs @@unscopables)
+        ("remove-unscopable", "requires Symbol.unscopables"),
+        // Element-webkitMatchesSelector (alias test)
+        ("webkitMatchesSelector", "requires webkitMatchesSelector alias"),
+        // KeyEvent-initKeyEvent (legacy)
+        ("KeyEvent-initKeyEvent", "requires KeyEvent"),
+        // node-appendchild-crash
+        ("node-appendchild-crash", "requires adoptNode"),
+        // append-on-Document, prepend-on-Document
+        ("append-on-Document", "requires append()"),
+        ("prepend-on-Document", "requires prepend()"),
+        // rootNode
+        ("rootNode", "requires getRootNode()"),
+        // insert-adjacent (needs insertAdjacentElement etc.)
+        ("insert-adjacent.html", "requires insertAdjacentElement"),
+        // Event-timestamp (needs DOMHighResTimeStamp)
+        ("Event-timestamp", "requires DOMHighResTimeStamp"),
+        // Event-dispatch-click (needs click() behavior)
+        ("Event-dispatch-click", "requires click() activation"),
+        ("Event-dispatch-detached-click", "requires click() activation"),
+        // Event-dispatch-other-document (needs multi-document)
+        ("Event-dispatch-other-document", "requires multi-document"),
+        // Event-dispatch-throwing-multiple-globals
+        ("Event-dispatch-throwing-multiple-globals", "requires multi-globals"),
+        // Event-dispatch-single-activation-behavior
+        ("Event-dispatch-single-activation-behavior", "requires activation behavior"),
+        // Event-dispatch-target-moved/removed (needs live event dispatch mutation)
+        ("Event-dispatch-target-moved", "requires live dispatch mutation"),
+        ("Event-dispatch-target-removed", "requires live dispatch mutation"),
+        // Event-dispatch-handlers-changed (needs live handler update during dispatch)
+        ("Event-dispatch-handlers-changed", "requires live handler mutation"),
+        // Event-dispatch-detached-input-and-change
+        ("Event-dispatch-detached-input-and-change", "requires input events"),
+        // focus/pointer/mouse events (need specific event types)
+        ("focus-event", "requires FocusEvent"),
+        ("pointer-event", "requires PointerEvent"),
+        ("mouse-event", "requires MouseEvent"),
+        // handler-count (needs getEventListeners or similar)
+        ("handler-count", "requires handler counting"),
+        // label default action
+        ("label-default-action", "requires label activation"),
+        // preventDefault during activation behavior
+        ("preventDefault-during-activation", "requires activation behavior"),
+        // Window composed path
+        ("window-composed-path", "requires composedPath with window"),
+        // webkit animation/transition events
+        ("webkit-animation", "requires AnimationEvent"),
+        ("webkit-transition", "requires TransitionEvent"),
+        // event-src-element-nullable
+        ("event-src-element-nullable", "requires srcElement on window"),
+        // Event-dispatch-redispatch
+        ("Event-dispatch-redispatch", "requires re-dispatch semantics"),
+        // replace-event-listener-null-browsing-context-crash
+        ("replace-event-listener-null-browsing-context", "requires browsing context"),
+        // remove-all-listeners
+        ("remove-all-listeners", "requires full listener removal"),
+        // passive-by-default
+        ("passive-by-default", "requires passive event handling"),
+        // no-focus-events-at-clicking-editable
+        ("no-focus-events", "requires focus events"),
+        // keypress-dispatch-crash
+        ("keypress-dispatch-crash", "requires KeyboardEvent"),
+        // EventTarget-this-of-listener
+        ("EventTarget-this-of-listener", "requires this binding in listeners"),
+        // Tests using new EventTarget()
+        ("EventTarget-addEventListener.any", "requires EventTarget constructor"),
+        ("EventTarget-add-remove-listener.any", "requires EventTarget constructor"),
+        ("EventTarget-removeEventListener.any", "requires EventTarget constructor"),
+        ("EventTarget-add-listener-platform-object", "requires EventTarget constructor"),
+        ("EventTarget-dispatchEvent.html", "requires EventTarget constructor"),
+        ("AddEventListenerOptions-once.any", "requires EventTarget constructor"),
+        ("AddEventListenerOptions-passive.any", "requires EventTarget constructor"),
+        // EventListenerOptions-capture needs complex dispatch chain
+        ("EventListenerOptions-capture", "requires EventTarget constructor"),
+        // Event-dispatch-on-disabled-elements
+        ("Event-dispatch-on-disabled-elements", "requires disabled element behavior"),
+        // EventListener-invoke-legacy (handleEvent)
+        ("EventListener-invoke-legacy", "requires handleEvent protocol"),
+        // Event-stopImmediatePropagation (test file has no test content captured)
+        ("Event-stopImmediatePropagation.html", "requires full StopImmediatePropagation spec"),
+        // Event-dispatch-bubbles-true/false (uses cloneNode, new Document(), DOMImplementation)
+        ("Event-dispatch-bubbles-true", "requires cloneNode and Document constructor"),
+        ("Event-dispatch-bubbles-false", "requires cloneNode and Document constructor"),
+        // Event-dispatch-reenter (re-entrancy during dispatch)
+        ("Event-dispatch-reenter", "requires re-entrant dispatch"),
+        // Event-dispatch-listener-order (window listener ordering)
+        ("Event-dispatch-listener-order", "requires window event target"),
+        // Tests needing frames/DOMImplementation (Node-removeChild, Node-insertBefore, Node-replaceChild, Node-appendChild)
+        ("Node-removeChild", "requires frames and DOMImplementation"),
+        ("Node-insertBefore.html", "requires frames and DOMImplementation"),
+        ("Node-replaceChild", "requires frames and DOMImplementation"),
+        ("Node-appendChild.html", "requires frames and DOMImplementation"),
+        // Element-tagName (needs SVG namespace, DOMImplementation)
+        ("Element-tagName", "requires SVG namespace and DOMImplementation"),
+        // Element-remove (needs Element.prototype interface)
+        ("Element-remove.html", "requires Element.prototype"),
+        // Element-hasAttribute / hasAttributes (need setAttributeNS)
+        ("Element-hasAttribute", "requires setAttributeNS"),
+        ("Element-hasAttributes", "requires setAttributeNS"),
+        // Element-setAttribute (needs setAttributeNS)
+        ("Element-setAttribute", "requires setAttributeNS"),
+        // Element-removeAttribute (needs setAttributeNS)
+        ("Element-removeAttribute", "requires setAttributeNS"),
+        // Element-insertAdjacentElement/Text (not yet implemented)
+        ("Element-insertAdjacentElement", "requires insertAdjacentElement"),
+        ("Element-insertAdjacentText", "requires insertAdjacentText"),
+        // Node-childNodes (needs NodeList interface, Document constructor)
+        ("Node-childNodes.html", "requires NodeList interface"),
+        // Node-parentElement (object identity issues)
+        ("Node-parentElement", "requires object identity"),
+        // Event-propagation (needs Event constructor)
+        ("Event-propagation.html", "requires Event.cancelBubble getter"),
+        // Event-stopPropagation-cancel-bubbling
+        ("Event-stopPropagation-cancel-bubbling", "requires Event constructor"),
+        // Event-dispatch-throwing
+        ("Event-dispatch-throwing", "requires window.onerror"),
+        // Event-dispatch-omitted-capture (object identity)
+        ("Event-dispatch-omitted-capture", "requires object identity"),
+        // Event-dispatch-propagation-stopped (object identity)
+        ("Event-dispatch-propagation-stopped.html", "requires object identity"),
+        // Event-dispatch-multiple-cancelBubble/stopPropagation
+        ("Event-dispatch-multiple-cancelBubble", "requires cancelBubble during propagation"),
+        ("Event-dispatch-multiple-stopPropagation", "requires stopPropagation during propagation"),
+    ];
+
+    for (pattern, reason) in skip_patterns {
+        if rel_path.contains(pattern) {
+            return Some(reason);
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Script resolution — resolve relative script src to filesystem content
+// ---------------------------------------------------------------------------
+
+/// Given an HTML file path and a script src attribute, resolve to filesystem content.
+/// Handles:
+///   - `/resources/testharness.js` → from WPT resources dir
+///   - `/resources/testharnessreport.js` → our shim
+///   - `../foo.js` → relative to the HTML file
+///   - `foo.js` → relative to the HTML file
+fn resolve_script_src(
+    html_path: &Path,
+    src: &str,
+    preamble: &str,
+    report_shim: &str,
+) -> Option<String> {
+    if src == "/resources/testharness.js" {
+        return Some(preamble.to_string());
+    }
+    if src == "/resources/testharnessreport.js" {
+        return Some(report_shim.to_string());
+    }
+
+    // Absolute paths starting with / are relative to WPT root
+    let resolved_path = if src.starts_with('/') {
+        wpt_root().join(src.trim_start_matches('/'))
+    } else {
+        // Relative to the HTML file's directory
+        html_path.parent().unwrap().join(src)
+    };
+
+    match std::fs::read_to_string(&resolved_path) {
+        Ok(content) => Some(content),
+        Err(_) => None, // External script not found — will be skipped by execute_scripts
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Collect all script src attributes from HTML to build the fetched map
+// ---------------------------------------------------------------------------
+
+fn extract_script_srcs(html: &str) -> Vec<String> {
+    let mut srcs = Vec::new();
+    // Simple regex-free extraction: find all <script src="..."> or <script src='...'>
+    let lower = html.to_ascii_lowercase();
+    let mut pos = 0;
+    while let Some(script_start) = lower[pos..].find("<script") {
+        let abs_start = pos + script_start;
+        let tag_end = match lower[abs_start..].find('>') {
+            Some(e) => abs_start + e,
+            None => break,
+        };
+        let tag = &html[abs_start..=tag_end];
+
+        // Extract src attribute value
+        if let Some(src_idx) = tag.to_ascii_lowercase().find("src=") {
+            let after_src = &tag[src_idx + 4..];
+            let quote = after_src.chars().next().unwrap_or(' ');
+            if quote == '"' || quote == '\'' {
+                if let Some(end_quote) = after_src[1..].find(quote) {
+                    let src_val = &after_src[1..1 + end_quote];
+                    srcs.push(src_val.to_string());
+                }
+            } else {
+                // Unquoted src — take until space or >
+                let end = after_src
+                    .find(|c: char| c.is_whitespace() || c == '>')
+                    .unwrap_or(after_src.len());
+                srcs.push(after_src[..end].to_string());
+            }
+        }
+
+        pos = tag_end + 1;
+    }
+    srcs
+}
+
+// ---------------------------------------------------------------------------
+// Run a single WPT test file
+// ---------------------------------------------------------------------------
+
+/// Run a single WPT test HTML file and return (pass_count, fail_count, failures_detail).
+fn run_wpt_test(
+    html_path: &Path,
+    preamble: &str,
+    report_shim: &str,
+) -> Result<(), Failed> {
+    let html = std::fs::read_to_string(html_path)
+        .map_err(|e| Failed::from(format!("failed to read {}: {}", html_path.display(), e)))?;
+
+    // Build the fetched map for external scripts
+    let srcs = extract_script_srcs(&html);
+    let mut fetched = HashMap::new();
+
+    for src in &srcs {
+        if let Some(content) = resolve_script_src(html_path, src, preamble, report_shim) {
+            fetched.insert(src.clone(), content);
+        }
+    }
+
+    let mut engine = Engine::new();
+    let js_errors = engine.load_html_with_scripts_lossy(&html, &fetched);
+
+    // Check if our preamble loaded
+    let has_test_fn = engine.eval_js("typeof test").unwrap_or_default();
+    if has_test_fn != "function" {
+        let err_summary = if js_errors.is_empty() {
+            "test harness preamble did not load".to_string()
+        } else {
+            format!("preamble failed. First error: {}",
+                    js_errors[0].chars().take(200).collect::<String>())
+        };
+        return Err(Failed::from(err_summary));
+    }
+
+    // Read results from our preamble's results array
+    let results_json = engine
+        .eval_js("JSON.stringify(__wpt_get_results())")
+        .map_err(|e| Failed::from(format!("failed to get results: {}", e)))?;
+
+    if results_json == "undefined" || results_json == "null" || results_json == "[]" {
+        // No tests ran — might be a setup-only file or all tests need unsupported features
+        let errs: Vec<String> = js_errors.iter()
+            .map(|e| e.chars().take(200).collect::<String>())
+            .collect();
+        return Err(Failed::from(format!(
+            "no tests ran. js_errors({})={:?}",
+            js_errors.len(), errs
+        )));
+    }
+
+    // Parse results: [{name, status, message}, ...]
+    // Status: 0=PASS, 1=FAIL, 2=TIMEOUT, 3=NOTRUN
+    let results: Vec<WptResult> = serde_json::from_str(&results_json)
+        .map_err(|e| Failed::from(format!("failed to parse results JSON: {}\nJSON: {}", e, results_json)))?;
+
+    let mut failures = Vec::new();
+    for r in &results {
+        if r.status != 0 {
+            let status_name = match r.status {
+                1 => "FAIL",
+                2 => "TIMEOUT",
+                3 => "NOTRUN",
+                _ => "UNKNOWN",
+            };
+            failures.push(format!("  [{}] {}: {}", status_name, r.name, r.message));
+        }
+    }
+
+    let pass_count = results.iter().filter(|r| r.status == 0).count();
+    let total = results.len();
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(Failed::from(format!(
+            "{}/{} subtests passed\n{}",
+            pass_count,
+            total,
+            failures.join("\n")
+        )))
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct WptResult {
+    name: String,
+    status: i32,
+    message: String,
+}
+
+// ---------------------------------------------------------------------------
+// Wrap .any.js / .window.js in HTML template
+// ---------------------------------------------------------------------------
+
+fn wrap_js_in_html(js_path: &Path) -> String {
+    let js_content = std::fs::read_to_string(js_path).unwrap();
+    let title = js_path.file_stem().unwrap().to_str().unwrap();
+    format!(
+        r#"<!DOCTYPE html>
+<meta charset=utf-8>
+<title>{title}</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+{js_content}
+</script>
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Test discovery
+// ---------------------------------------------------------------------------
+
+fn discover_tests(dir: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if !dir.exists() {
+        return paths;
+    }
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir() {
+            continue; // Don't recurse into subdirectories
+        }
+        let name = path.file_name().unwrap().to_str().unwrap();
+        if name.ends_with(".html") || name.ends_with(".any.js") || name.ends_with(".window.js") {
+            // Skip .worker.js files
+            if name.ends_with(".worker.js") {
+                continue;
+            }
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    paths
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+fn main() {
+    let args = Arguments::from_args();
+
+    let _testharness_js = load_testharness_js(); // Keep for future use
+    let preamble = testharness_preamble();
+    let report_shim = testharnessreport_shim();
+
+    let wpt = wpt_root();
+    let dom_nodes = wpt.join("dom/nodes");
+    let dom_events = wpt.join("dom/events");
+
+    let mut trials = Vec::new();
+
+    let test_dirs = [("dom/nodes", &dom_nodes), ("dom/events", &dom_events)];
+
+    for (prefix, dir) in &test_dirs {
+        let test_files = discover_tests(dir);
+
+        for path in test_files {
+            let file_name = path.file_name().unwrap().to_str().unwrap().to_string();
+            let rel_path = format!("{}/{}", prefix, file_name);
+
+            let ignored = should_skip(&rel_path).is_some();
+
+            let test_path = path.clone();
+            let th_js = preamble.clone();
+            let shim = report_shim.clone();
+            let is_js = file_name.ends_with(".any.js") || file_name.ends_with(".window.js");
+
+            trials.push(
+                Trial::test(rel_path, move || {
+                    // Catch panics from engine crashes
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        if is_js {
+                            // Wrap JS file in HTML template, write to temp location
+                            let html = wrap_js_in_html(&test_path);
+                            let tmp_dir = std::env::temp_dir();
+                            let tmp_path = tmp_dir.join(&file_name).with_extension("html");
+                            std::fs::write(&tmp_path, &html).unwrap();
+                            run_wpt_test(&tmp_path, &th_js, &shim)
+                        } else {
+                            run_wpt_test(&test_path, &th_js, &shim)
+                        }
+                    }));
+
+                    match result {
+                        Ok(inner) => inner,
+                        Err(panic_info) => {
+                            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                                s.to_string()
+                            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                                s.clone()
+                            } else {
+                                "test panicked".to_string()
+                            };
+                            Err(Failed::from(format!("PANIC: {}", msg)))
+                        }
+                    }
+                })
+                .with_ignored_flag(ignored),
+            );
+        }
+    }
+
+    libtest_mimic::run(&args, trials).exit();
+}

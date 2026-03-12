@@ -36,8 +36,8 @@ impl JsRuntime {
 
         // Register Event and CustomEvent classes
         context.register_global_class::<bindings::event::JsEvent>().unwrap();
-        bindings::event::register_event_constants(&mut context);
         context.register_global_class::<bindings::event::JsCustomEvent>().unwrap();
+        bindings::event::register_event_constants(&mut context);
 
         // Register CSSStyleDeclaration class for getComputedStyle
         context.register_global_class::<bindings::computed_style::JsComputedStyle>().unwrap();

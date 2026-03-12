@@ -12,6 +12,7 @@ use boa_engine::{
 
 type ConsoleBuffer = Rc<RefCell<Vec<String>>>;
 type TimerMap = Rc<RefCell<HashMap<u32, JsValue>>>;
+type WindowListenerMap = Rc<RefCell<HashMap<String, Vec<JsValue>>>>;
 
 fn console_format_args(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
     let parts: Vec<String> = args
@@ -290,14 +291,90 @@ pub(crate) fn register_window(
     let set_interval = make_set_timer(Rc::clone(&timers), Rc::clone(&next_timer_id));
     let clear_interval = make_clear_timer(Rc::clone(&timers));
 
+    // Register timer functions as globals (testharness.js calls them without window. prefix)
+    let g_set_timeout = make_set_timer(Rc::clone(&timers), Rc::clone(&next_timer_id));
+    let g_clear_timeout = make_clear_timer(Rc::clone(&timers));
+    let g_set_interval = make_set_timer(Rc::clone(&timers), Rc::clone(&next_timer_id));
+    let g_clear_interval = make_clear_timer(Rc::clone(&timers));
+    context
+        .register_global_property(
+            js_string!("setTimeout"),
+            g_set_timeout.to_js_function(context.realm()),
+            Attribute::all(),
+        )
+        .expect("failed to register setTimeout global");
+    context
+        .register_global_property(
+            js_string!("clearTimeout"),
+            g_clear_timeout.to_js_function(context.realm()),
+            Attribute::all(),
+        )
+        .expect("failed to register clearTimeout global");
+    context
+        .register_global_property(
+            js_string!("setInterval"),
+            g_set_interval.to_js_function(context.realm()),
+            Attribute::all(),
+        )
+        .expect("failed to register setInterval global");
+    context
+        .register_global_property(
+            js_string!("clearInterval"),
+            g_clear_interval.to_js_function(context.realm()),
+            Attribute::all(),
+        )
+        .expect("failed to register clearInterval global");
+
     let location = build_location("about:blank", context);
     let navigator = build_navigator(context);
+
+    // Window event listeners (for testharness.js "load" event, etc.)
+    let win_listeners: WindowListenerMap = Rc::new(RefCell::new(HashMap::new()));
+
+    let listeners_for_add = Rc::clone(&win_listeners);
+    let add_event_listener = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
+        let event_type = args.first()
+            .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
+            .transpose()?
+            .unwrap_or_default();
+        if let Some(callback) = args.get(1) {
+            listeners_for_add.borrow_mut()
+                .entry(event_type)
+                .or_default()
+                .push(callback.clone());
+        }
+        Ok(JsValue::undefined())
+    }) };
+
+    let listeners_for_remove = Rc::clone(&win_listeners);
+    let remove_event_listener = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
+        let event_type = args.first()
+            .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
+            .transpose()?
+            .unwrap_or_default();
+        if let Some(callback) = args.get(1) {
+            if let Some(list) = listeners_for_remove.borrow_mut().get_mut(&event_type) {
+                list.retain(|cb| cb != callback);
+            }
+        }
+        Ok(JsValue::undefined())
+    }) };
+
+    let listeners_for_dispatch = Rc::clone(&win_listeners);
+    let dispatch_event = unsafe { NativeFunction::from_closure(move |_this, _args, _ctx| {
+        // Stub — just return true
+        let _ = &listeners_for_dispatch;
+        Ok(JsValue::from(true))
+    }) };
 
     let window = ObjectInitializer::new(context)
         .function(set_timeout, js_string!("setTimeout"), 2)
         .function(clear_timeout, js_string!("clearTimeout"), 1)
         .function(set_interval, js_string!("setInterval"), 2)
         .function(clear_interval, js_string!("clearInterval"), 1)
+        .function(add_event_listener, js_string!("addEventListener"), 2)
+        .function(remove_event_listener, js_string!("removeEventListener"), 2)
+        .function(dispatch_event, js_string!("dispatchEvent"), 1)
         .build();
 
     window
@@ -376,6 +453,15 @@ pub(crate) fn register_window(
     context
         .register_global_property(js_string!("window"), window, Attribute::all())
         .expect("failed to register window global");
+
+    // Register `self` as the actual global object.
+    // testharness.js does (function(global_scope){...})(self) and uses expose()
+    // to set properties on global_scope. For these to become true globals,
+    // `self` must be the real global object, not our window proxy.
+    let global_for_self = context.global_object();
+    context
+        .register_global_property(js_string!("self"), global_for_self, Attribute::all())
+        .expect("failed to register self global");
 
     // Also register getComputedStyle as a direct global
     context

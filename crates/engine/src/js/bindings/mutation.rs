@@ -5,6 +5,7 @@ use boa_engine::{
     Context, JsError, JsResult, JsValue,
 };
 
+use crate::dom::{NodeData, NodeId};
 use super::element::JsElement;
 
 pub(crate) fn register_mutation(class: &mut ClassBuilder) -> JsResult<()> {
@@ -38,8 +39,18 @@ fn insert_before(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResu
 
     let ref_arg = args.get(1).cloned().unwrap_or(JsValue::null());
 
+    // Per spec: if new_node is a DocumentFragment, insert its children instead
+    let is_fragment = matches!(tree.borrow().get_node(new_node_id).data, NodeData::DocumentFragment);
+
     if ref_arg.is_null() || ref_arg.is_undefined() {
-        tree.borrow_mut().append_child(parent_id, new_node_id);
+        if is_fragment {
+            let children: Vec<NodeId> = tree.borrow().get_node(new_node_id).children.clone();
+            for frag_child in children {
+                tree.borrow_mut().append_child(parent_id, frag_child);
+            }
+        } else {
+            tree.borrow_mut().append_child(parent_id, new_node_id);
+        }
     } else {
         let ref_obj = ref_arg
             .as_object()
@@ -48,7 +59,14 @@ fn insert_before(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResu
             .downcast_ref::<JsElement>()
             .ok_or_else(|| JsError::from_opaque(js_string!("insertBefore: second argument is not an Element").into()))?;
         let ref_id = ref_el.node_id;
-        tree.borrow_mut().insert_child_before(parent_id, new_node_id, ref_id);
+        if is_fragment {
+            let children: Vec<NodeId> = tree.borrow().get_node(new_node_id).children.clone();
+            for frag_child in children {
+                tree.borrow_mut().insert_child_before(parent_id, frag_child, ref_id);
+            }
+        } else {
+            tree.borrow_mut().insert_child_before(parent_id, new_node_id, ref_id);
+        }
     }
 
     Ok(new_node_arg.clone())

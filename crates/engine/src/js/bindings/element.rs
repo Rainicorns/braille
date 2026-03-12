@@ -10,7 +10,7 @@ use boa_engine::{
 };
 use boa_gc::{Finalize, Trace};
 
-use crate::dom::{DomTree, NodeId};
+use crate::dom::{DomTree, NodeData, NodeId};
 
 use super::class_list::JsClassList;
 use super::event::JsEvent;
@@ -55,9 +55,18 @@ impl JsElement {
             .ok_or_else(|| JsError::from_opaque(js_string!("appendChild: argument is not an Element").into()))?;
         let child_id = child.node_id;
 
-        tree.borrow_mut().append_child(parent_id, child_id);
+        // Per spec: if child is a DocumentFragment, move its children instead
+        let is_fragment = matches!(tree.borrow().get_node(child_id).data, NodeData::DocumentFragment);
+        if is_fragment {
+            let children: Vec<NodeId> = tree.borrow().get_node(child_id).children.clone();
+            for frag_child in children {
+                tree.borrow_mut().append_child(parent_id, frag_child);
+            }
+        } else {
+            tree.borrow_mut().append_child(parent_id, child_id);
+        }
 
-        // appendChild returns the appended child
+        // appendChild returns the appended child (or fragment)
         Ok(child_arg.clone())
     }
 
@@ -103,6 +112,59 @@ impl JsElement {
         let class_list = JsClassList::new(el.node_id, el.tree.clone());
         let js_obj = JsClassList::from_data(class_list, ctx)?;
         Ok(js_obj.into())
+    }
+
+    /// Native implementation of element.remove()
+    fn remove(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let this_obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("remove: `this` is not an object").into()))?;
+        let el = this_obj
+            .downcast_ref::<JsElement>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("remove: `this` is not an Element").into()))?;
+        let node_id = el.node_id;
+        let tree = el.tree.clone();
+        tree.borrow_mut().remove_from_parent(node_id);
+        Ok(JsValue::undefined())
+    }
+
+    /// Native implementation of element.contains(other)
+    fn contains(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let this_obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("contains: `this` is not an object").into()))?;
+        let el = this_obj
+            .downcast_ref::<JsElement>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("contains: `this` is not an Element").into()))?;
+        let this_id = el.node_id;
+        let tree = el.tree.clone();
+
+        let other_val = match args.first() {
+            Some(v) if !v.is_null() && !v.is_undefined() => v,
+            _ => return Ok(JsValue::from(false)),
+        };
+        let other_obj = match other_val.as_object() {
+            Some(o) => o,
+            None => return Ok(JsValue::from(false)),
+        };
+        let other_el = match other_obj.downcast_ref::<JsElement>() {
+            Some(e) => e,
+            None => return Ok(JsValue::from(false)),
+        };
+        let other_id = other_el.node_id;
+
+        // Walk up from other to see if we reach this
+        let tree_ref = tree.borrow();
+        let mut current = other_id;
+        loop {
+            if current == this_id {
+                return Ok(JsValue::from(true));
+            }
+            match tree_ref.get_node(current).parent {
+                Some(parent_id) => current = parent_id,
+                None => return Ok(JsValue::from(false)),
+            }
+        }
     }
 
     /// Parse the third argument to addEventListener/removeEventListener.
@@ -272,13 +334,27 @@ impl JsElement {
             .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an object").into()))?
             .clone();
 
-        // Read event_type and bubbles from the event's native data
-        let (event_type, bubbles) = {
-            let evt = event_obj
-                .downcast_ref::<JsEvent>()
-                .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()))?;
+        // Read event_type and bubbles from the event's native data (JsEvent or JsCustomEvent)
+        let is_custom_event;
+        let (event_type, bubbles) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
+            is_custom_event = false;
             (evt.event_type.clone(), evt.bubbles)
+        } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
+            is_custom_event = true;
+            (evt.event_type.clone(), evt.bubbles)
+        } else {
+            return Err(JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()));
         };
+
+        // Check cancelBubble (propagation_stopped) — if already set, dispatch is a no-op
+        let already_stopped = if is_custom_event {
+            event_obj.downcast_ref::<super::event::JsCustomEvent>().unwrap().propagation_stopped
+        } else {
+            event_obj.downcast_ref::<JsEvent>().unwrap().propagation_stopped
+        };
+        if already_stopped {
+            return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+        }
 
         // 1. Build propagation path: [root, ..., grandparent, parent, target]
         let propagation_path = {
@@ -293,18 +369,20 @@ impl JsElement {
             path
         };
 
-        // 2. Set event.target = this element's NodeId
-        {
-            let mut evt = event_obj
-                .downcast_mut::<JsEvent>()
-                .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: cannot mutate event").into()))?;
+        // 2. Set event.target and dispatching flag
+        if is_custom_event {
+            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
             evt.target = Some(target_node_id);
+            evt.dispatching = true;
+        } else {
+            let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+            evt.target = Some(target_node_id);
+            evt.dispatching = true;
         }
 
-        // Set the JS-level target property to the actual JS element object.
-        // Use define_property_or_throw to create an own data property that
-        // shadows the prototype accessor getter.
+        // Set the JS-level target and srcElement properties
         Self::set_event_prop(&event_obj, "target", this.clone(), ctx)?;
+        Self::set_event_prop(&event_obj, "srcElement", this.clone(), ctx)?;
 
         // Helper: create a JsElement JS object for a given NodeId
         let make_js_element = |node_id: NodeId, ctx: &mut Context| -> JsResult<JsObject> {
@@ -312,17 +390,25 @@ impl JsElement {
             JsElement::from_data(element, ctx)
         };
 
+        // Helper macro-like closure: set phase/current_target on either event type
+        let set_phase = |event_obj: &JsObject, node_id: Option<NodeId>, phase: u8, is_custom: bool| {
+            if is_custom {
+                let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
+                evt.current_target = node_id;
+                evt.phase = phase;
+            } else {
+                let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+                evt.current_target = node_id;
+                evt.phase = phase;
+            }
+        };
+
         // 3. Capture phase (phase = 1): Walk from root down to (but NOT including) the target
         let target_index = propagation_path.len() - 1;
         for i in 0..target_index {
             let node_id = propagation_path[i];
 
-            // Set event.current_target and event.phase
-            {
-                let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
-                evt.current_target = Some(node_id);
-                evt.phase = 1; // CAPTURING_PHASE
-            }
+            set_phase(&event_obj, Some(node_id), 1, is_custom_event);
             let current_target_js = make_js_element(node_id, ctx)?;
             Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
 
@@ -330,23 +416,29 @@ impl JsElement {
                 node_id, &event_type, &event_obj, &event_val, true, false, ctx,
             )?;
             if should_stop {
-                return Self::finish_dispatch(&event_obj, ctx);
+                return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
             }
         }
 
-        // 4. At-target phase (phase = 2): Process the target element itself
-        {
-            let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
-            evt.current_target = Some(target_node_id);
-            evt.phase = 2; // AT_TARGET
-        }
+        // 4. At-target phase (phase = 2): capture listeners first, then non-capture
+        set_phase(&event_obj, Some(target_node_id), 2, is_custom_event);
         Self::set_event_prop(&event_obj, "currentTarget", this.clone(), ctx)?;
 
+        // First: capture listeners at target
         let should_stop = Self::invoke_listeners_for_node(
-            target_node_id, &event_type, &event_obj, &event_val, false, true, ctx,
+            target_node_id, &event_type, &event_obj, &event_val, true, false, ctx,
         )?;
         if should_stop {
-            return Self::finish_dispatch(&event_obj, ctx);
+            return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+        }
+
+        // Second: non-capture listeners at target
+        set_phase(&event_obj, Some(target_node_id), 2, is_custom_event);
+        let should_stop = Self::invoke_listeners_for_node(
+            target_node_id, &event_type, &event_obj, &event_val, false, false, ctx,
+        )?;
+        if should_stop {
+            return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
         }
 
         // 5. Bubble phase (phase = 3): Only if event.bubbles. Walk from parent up to root.
@@ -354,11 +446,7 @@ impl JsElement {
             for i in (0..target_index).rev() {
                 let node_id = propagation_path[i];
 
-                {
-                    let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
-                    evt.current_target = Some(node_id);
-                    evt.phase = 3; // BUBBLING_PHASE
-                }
+                set_phase(&event_obj, Some(node_id), 3, is_custom_event);
                 let current_target_js = make_js_element(node_id, ctx)?;
                 Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
 
@@ -366,23 +454,15 @@ impl JsElement {
                     node_id, &event_type, &event_obj, &event_val, false, false, ctx,
                 )?;
                 if should_stop {
-                    return Self::finish_dispatch(&event_obj, ctx);
+                    return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
                 }
             }
         }
 
-        Self::finish_dispatch(&event_obj, ctx)
+        Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx)
     }
 
-    /// Invoke matching listeners for a specific node during event dispatch.
-    ///
-    /// - `capture_only`: if true, only invoke listeners with capture=true (capture phase)
-    /// - `at_target`: if true, invoke ALL matching listeners regardless of capture flag
-    ///
-    /// For the bubble phase, call with capture_only=false, at_target=false,
-    /// which invokes only listeners with capture=false.
-    ///
-    /// Returns true if propagation was stopped and dispatch should halt.
+    /// Delegates to the standalone `invoke_listeners_for_node` function.
     fn invoke_listeners_for_node(
         node_id: NodeId,
         event_type: &str,
@@ -392,75 +472,7 @@ impl JsElement {
         at_target: bool,
         ctx: &mut Context,
     ) -> JsResult<bool> {
-        // Collect matching listeners (snapshot to avoid borrow issues during callback invocation)
-        let matching: Vec<(JsObject, bool)> = EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-            let map = listeners_rc.borrow();
-            match map.get(&node_id) {
-                Some(entries) => entries
-                    .iter()
-                    .filter(|entry| {
-                        if entry.event_type != event_type {
-                            return false;
-                        }
-                        if at_target {
-                            // At target: fire all matching listeners regardless of capture flag
-                            true
-                        } else if capture_only {
-                            entry.capture
-                        } else {
-                            !entry.capture
-                        }
-                    })
-                    .map(|entry| (entry.callback.clone(), entry.once))
-                    .collect(),
-                None => Vec::new(),
-            }
-        });
-
-        for (callback, once) in &matching {
-            // Remove `once` listeners before invocation
-            if *once {
-                EVENT_LISTENERS.with(|el| {
-                    let rc = el.borrow();
-                    let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-                    let mut map = listeners_rc.borrow_mut();
-                    if let Some(entries) = map.get_mut(&node_id) {
-                        entries.retain(|entry| {
-                            !(entry.event_type == event_type && entry.callback == *callback && entry.once)
-                        });
-                        if entries.is_empty() {
-                            map.remove(&node_id);
-                        }
-                    }
-                });
-            }
-
-            // Call the listener callback
-            callback.call(&JsValue::undefined(), &[event_val.clone()], ctx)?;
-
-            // Check if immediate propagation was stopped
-            {
-                let evt = event_obj.downcast_ref::<JsEvent>().unwrap();
-                if evt.immediate_propagation_stopped {
-                    return Ok(true);
-                }
-            }
-
-            // Check if propagation was stopped (continue processing listeners on this node, but stop after)
-            {
-                let evt = event_obj.downcast_ref::<JsEvent>().unwrap();
-                if evt.propagation_stopped {
-                    // Don't return yet -- we still process remaining listeners on this node
-                    // unless immediate_propagation_stopped is set
-                }
-            }
-        }
-
-        // After processing all listeners on this node, check if propagation was stopped
-        let evt = event_obj.downcast_ref::<JsEvent>().unwrap();
-        Ok(evt.propagation_stopped)
+        invoke_listeners_for_node(node_id, event_type, event_obj, event_val, capture_only, at_target, ctx)
     }
 
     /// Set an own data property on the event object, overriding any prototype accessor.
@@ -478,17 +490,116 @@ impl JsElement {
         Ok(())
     }
 
-    /// Reset event phase and currentTarget after dispatch, return !defaultPrevented.
-    fn finish_dispatch(event_obj: &JsObject, ctx: &mut Context) -> JsResult<JsValue> {
-        let default_prevented = {
+    /// Reset event phase, currentTarget, propagation flags, dispatching after dispatch.
+    fn finish_dispatch_generic(event_obj: &JsObject, is_custom: bool, ctx: &mut Context) -> JsResult<JsValue> {
+        let default_prevented = if is_custom {
+            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
+            evt.phase = 0;
+            evt.current_target = None;
+            evt.propagation_stopped = false;
+            evt.immediate_propagation_stopped = false;
+            evt.dispatching = false;
+            evt.default_prevented
+        } else {
             let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
             evt.phase = 0;
             evt.current_target = None;
+            evt.propagation_stopped = false;
+            evt.immediate_propagation_stopped = false;
+            evt.dispatching = false;
             evt.default_prevented
         };
         Self::set_event_prop(event_obj, "currentTarget", JsValue::null(), ctx)?;
         Ok(JsValue::from(!default_prevented))
     }
+}
+
+/// Invoke matching listeners for a specific node during event dispatch.
+///
+/// - `capture_only`: if true, only invoke listeners with capture=true (capture phase)
+/// - `at_target`: if true, invoke ALL matching listeners regardless of capture flag
+///
+/// For the bubble phase, call with capture_only=false, at_target=false,
+/// which invokes only listeners with capture=false.
+///
+/// Returns true if propagation was stopped and dispatch should halt.
+pub(crate) fn invoke_listeners_for_node(
+    node_id: NodeId,
+    event_type: &str,
+    event_obj: &JsObject,
+    event_val: &JsValue,
+    capture_only: bool,
+    at_target: bool,
+    ctx: &mut Context,
+) -> JsResult<bool> {
+    // Collect matching listeners (snapshot to avoid borrow issues during callback invocation)
+    let matching: Vec<(JsObject, bool)> = EVENT_LISTENERS.with(|el| {
+        let rc = el.borrow();
+        let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
+        let map = listeners_rc.borrow();
+        match map.get(&node_id) {
+            Some(entries) => entries
+                .iter()
+                .filter(|entry| {
+                    if entry.event_type != event_type {
+                        return false;
+                    }
+                    if at_target {
+                        true
+                    } else if capture_only {
+                        entry.capture
+                    } else {
+                        !entry.capture
+                    }
+                })
+                .map(|entry| (entry.callback.clone(), entry.once))
+                .collect(),
+            None => Vec::new(),
+        }
+    });
+
+    for (callback, once) in &matching {
+        if *once {
+            EVENT_LISTENERS.with(|el| {
+                let rc = el.borrow();
+                let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
+                let mut map = listeners_rc.borrow_mut();
+                if let Some(entries) = map.get_mut(&node_id) {
+                    entries.retain(|entry| {
+                        !(entry.event_type == event_type && entry.callback == *callback && entry.once)
+                    });
+                    if entries.is_empty() {
+                        map.remove(&node_id);
+                    }
+                }
+            });
+        }
+
+        callback.call(&JsValue::undefined(), &[event_val.clone()], ctx)?;
+
+        let (imm_stopped, prop_stopped) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
+            (evt.immediate_propagation_stopped, evt.propagation_stopped)
+        } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
+            (evt.immediate_propagation_stopped, evt.propagation_stopped)
+        } else {
+            (false, false)
+        };
+
+        if imm_stopped {
+            return Ok(true);
+        }
+        // prop_stopped: don't return yet -- continue processing listeners on this node
+        let _ = prop_stopped;
+    }
+
+    let propagation_stopped = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
+        evt.propagation_stopped
+    } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
+        evt.propagation_stopped
+    } else {
+        false
+    };
+    Ok(propagation_stopped)
 }
 
 impl Class for JsElement {
@@ -567,6 +678,20 @@ impl Class for JsElement {
 
         // Register common HTMLElement properties (tabIndex, title, lang, dir, getBoundingClientRect, focus, blur, click)
         super::html_element::register_html_element(class)?;
+
+        // remove() method
+        class.method(
+            js_string!("remove"),
+            0,
+            NativeFunction::from_fn_ptr(Self::remove),
+        );
+
+        // contains() method
+        class.method(
+            js_string!("contains"),
+            1,
+            NativeFunction::from_fn_ptr(Self::contains),
+        );
 
         // addEventListener / removeEventListener / dispatchEvent
         class.method(

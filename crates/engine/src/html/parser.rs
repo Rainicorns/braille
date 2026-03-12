@@ -5,7 +5,8 @@ use std::rc::Rc;
 use html5ever::interface::{
     Attribute, ElementFlags, NodeOrText, QuirksMode, TreeSink,
 };
-use html5ever::{parse_document, ParseOpts, QualName};
+use html5ever::{parse_document, parse_fragment, ParseOpts, QualName};
+use markup5ever::{ns, Namespace, LocalName};
 use tendril::{StrTendril, TendrilSink};
 
 use crate::dom::tree::DomTree;
@@ -20,6 +21,10 @@ use crate::dom::node::{NodeData, NodeId};
 struct BrailleSink {
     tree: Rc<RefCell<DomTree>>,
     names: RefCell<Vec<Option<QualName>>>,
+    // POLYFILL: stored per-node flag for is_mathml_annotation_xml_integration_point.
+    // html5ever's TreeSink trait requires us to store this from create_element and
+    // return it later. Remove when html5ever handles this internally.
+    mathml_integration_points: RefCell<Vec<bool>>,
 }
 
 impl BrailleSink {
@@ -27,7 +32,15 @@ impl BrailleSink {
         let tree = Rc::new(RefCell::new(DomTree::new()));
         // Index 0 is the Document root — no QualName for it.
         let names = RefCell::new(vec![None]);
-        BrailleSink { tree, names }
+        let mathml_integration_points = RefCell::new(vec![false]);
+        BrailleSink { tree, names, mathml_integration_points }
+    }
+
+    /// Pad a parallel vec with `value` up to `len` (inclusive).
+    fn pad_vec<T: Clone>(vec: &mut Vec<T>, target_len: usize, value: T) {
+        while vec.len() <= target_len {
+            vec.push(value.clone());
+        }
     }
 }
 
@@ -69,26 +82,51 @@ impl TreeSink for BrailleSink {
         &self,
         name: QualName,
         attrs: Vec<Attribute>,
-        _flags: ElementFlags,
+        flags: ElementFlags,
     ) -> NodeId {
         let tag_name = name.local.to_string();
         let attributes: Vec<(String, String)> = attrs
             .into_iter()
-            .map(|a| (a.name.local.to_string(), a.value.to_string()))
+            .map(|a| {
+                let key = format_attr_name(&a.name);
+                (key, a.value.to_string())
+            })
             .collect();
 
-        let id = self
-            .tree
-            .borrow_mut()
-            .create_element_with_attrs(&tag_name, attributes);
+        let namespace = ns_to_label(&name.ns);
 
-        // Keep the parallel names vec in sync.
-        let mut names = self.names.borrow_mut();
-        // Pad with None if needed (shouldn't happen normally, but be safe).
-        while names.len() < id {
-            names.push(None);
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.create_element_ns(&tag_name, attributes, namespace);
+
+        // For <template> elements, create an associated content fragment.
+        if flags.template {
+            let content_id = tree.create_template_contents();
+            tree.get_node_mut(id).template_contents = Some(content_id);
+
+            // Keep names vec in sync for the content fragment node too.
+            let mut names = self.names.borrow_mut();
+            while names.len() < id {
+                names.push(None);
+            }
+            names.push(Some(name));
+            // Also pad for the content_id
+            while names.len() <= content_id {
+                names.push(None);
+            }
+        } else {
+            // Keep the parallel names vec in sync.
+            let mut names = self.names.borrow_mut();
+            // Pad with None if needed (shouldn't happen normally, but be safe).
+            while names.len() < id {
+                names.push(None);
+            }
+            names.push(Some(name));
         }
-        names.push(Some(name));
+
+        // POLYFILL: store mathml annotation-xml integration point flag.
+        let mut mip = self.mathml_integration_points.borrow_mut();
+        Self::pad_vec(&mut mip, id, false);
+        mip[id] = flags.mathml_annotation_xml_integration_point;
 
         id
     }
@@ -147,6 +185,21 @@ impl TreeSink for BrailleSink {
             }
             NodeOrText::AppendText(text) => {
                 let mut tree = self.tree.borrow_mut();
+
+                // Try to merge with the sibling immediately before `sibling`.
+                let parent = tree.get_node(*sibling).parent
+                    .expect("append_before_sibling: sibling has no parent");
+                let children = &tree.get_node(parent).children;
+                let pos = children.iter().position(|&c| c == *sibling);
+                if let Some(p) = pos {
+                    if p > 0 {
+                        let prev = children[p - 1];
+                        if tree.append_to_text(prev, &text) {
+                            return;
+                        }
+                    }
+                }
+
                 let text_id = tree.create_text(&text);
 
                 let mut names = self.names.borrow_mut();
@@ -178,17 +231,29 @@ impl TreeSink for BrailleSink {
 
     fn append_doctype_to_document(
         &self,
-        _name: StrTendril,
-        _public_id: StrTendril,
-        _system_id: StrTendril,
+        name: StrTendril,
+        public_id: StrTendril,
+        system_id: StrTendril,
     ) {
-        // Ignored for spike — we don't model DOCTYPE nodes.
+        let mut tree = self.tree.borrow_mut();
+        let doctype_id = tree.create_doctype(&name, &public_id, &system_id);
+
+        // Keep names vec in sync.
+        let mut names = self.names.borrow_mut();
+        while names.len() < doctype_id {
+            names.push(None);
+        }
+        names.push(None);
+
+        let doc = tree.document();
+        tree.append_child(doc, doctype_id);
     }
 
     fn get_template_contents(&self, target: &NodeId) -> NodeId {
-        // For the spike, we treat template elements as regular elements.
-        // Their children go directly into the element itself.
-        *target
+        let tree = self.tree.borrow();
+        tree.get_node(*target)
+            .template_contents
+            .expect("get_template_contents called on non-template element")
     }
 
     fn same_node(&self, x: &NodeId, y: &NodeId) -> bool {
@@ -208,7 +273,7 @@ impl TreeSink for BrailleSink {
         {
             let existing: Vec<String> = attributes.iter().map(|(k, _)| k.clone()).collect();
             for attr in attrs {
-                let name = attr.name.local.to_string();
+                let name = format_attr_name(&attr.name);
                 if !existing.contains(&name) {
                     attributes.push((name, attr.value.to_string()));
                 }
@@ -223,13 +288,210 @@ impl TreeSink for BrailleSink {
     fn reparent_children(&self, node: &NodeId, new_parent: &NodeId) {
         self.tree.borrow_mut().reparent_children(*node, *new_parent);
     }
+
+    // -----------------------------------------------------------------------
+    // POLYFILL: is_mathml_annotation_xml_integration_point
+    //
+    // html5ever calls this to decide whether <annotation-xml> is an HTML
+    // integration point (based on its encoding attribute). The TreeSink
+    // default returns false. We store the flag from ElementFlags in
+    // create_element and return it here.
+    //
+    // Remove when html5ever handles this internally without requiring
+    // TreeSink participation.
+    // -----------------------------------------------------------------------
+    fn is_mathml_annotation_xml_integration_point(&self, handle: &NodeId) -> bool {
+        let mip = self.mathml_integration_points.borrow();
+        mip.get(*handle).copied().unwrap_or(false)
+    }
+
+}
+
+// ---------------------------------------------------------------------------
+// POLYFILL: selectedcontent cloning (post-processing)
+//
+// Per spec, when an <option> is closed inside a <select> that has a
+// <button> > <selectedcontent> descendant, the selected option's children
+// are deep-cloned into <selectedcontent>. html5ever 0.38 only calls
+// maybe_clone_an_option_into_selectedcontent for *explicit* </option> close
+// tags, not implicit closes (html5ever issue #712). Since most HTML uses
+// implicit closes, we handle this as a post-parse fixup instead.
+//
+// Remove when html5ever handles implicit option closing for selectedcontent.
+// ---------------------------------------------------------------------------
+
+fn polyfill_selectedcontent(tree: &mut DomTree) {
+    // Collect all <select> elements.
+    let selects: Vec<NodeId> = (0..tree.node_count())
+        .filter(|&id| matches!(&tree.get_node(id).data,
+            NodeData::Element { tag_name, .. } if tag_name == "select"))
+        .collect();
+
+    for select_id in selects {
+        // Find <selectedcontent> inside a <button> child of this <select>.
+        let selectedcontent_id = {
+            let mut found = None;
+            let select_children: Vec<NodeId> = tree.get_node(select_id).children.clone();
+            'outer: for &child_id in &select_children {
+                if let NodeData::Element { ref tag_name, .. } = tree.get_node(child_id).data {
+                    if tag_name == "button" {
+                        let mut stack: Vec<NodeId> = tree.get_node(child_id).children.clone();
+                        while let Some(nid) = stack.pop() {
+                            if let NodeData::Element { ref tag_name, .. } = tree.get_node(nid).data {
+                                if tag_name == "selectedcontent" {
+                                    found = Some(nid);
+                                    break 'outer;
+                                }
+                            }
+                            stack.extend_from_slice(&tree.get_node(nid).children);
+                        }
+                    }
+                }
+            }
+            found
+        };
+
+        let selectedcontent_id = match selectedcontent_id {
+            Some(id) => id,
+            None => continue,
+        };
+
+        // Already populated (e.g. by an explicit </option> calling the trait method)?
+        if !tree.get_node(selectedcontent_id).children.is_empty() {
+            continue;
+        }
+
+        // Find the selected <option>: last one with `selected` attr, or first option.
+        let mut first_option: Option<NodeId> = None;
+        let mut selected_option: Option<NodeId> = None;
+        collect_options(tree, select_id, &mut first_option, &mut selected_option);
+
+        let winner = selected_option.or(first_option);
+        let winner = match winner {
+            Some(id) => id,
+            None => continue,
+        };
+
+        // Deep-clone winner's children into selectedcontent.
+        let option_children: Vec<NodeId> = tree.get_node(winner).children.clone();
+        for &child_id in &option_children {
+            let cloned = tree.clone_node(child_id, true);
+            tree.append_child(selectedcontent_id, cloned);
+        }
+    }
+}
+
+/// Recursively collect <option> info under a subtree, skipping <button> descendants.
+fn collect_options(
+    tree: &DomTree,
+    node_id: NodeId,
+    first_option: &mut Option<NodeId>,
+    selected_option: &mut Option<NodeId>,
+) {
+    let children: Vec<NodeId> = tree.get_node(node_id).children.clone();
+    for &child_id in &children {
+        if let NodeData::Element { ref tag_name, ref attributes, .. } = tree.get_node(child_id).data {
+            if tag_name == "button" {
+                continue; // don't look inside <button> for options
+            }
+            if tag_name == "option" {
+                if first_option.is_none() {
+                    *first_option = Some(child_id);
+                }
+                if attributes.iter().any(|(k, _)| k == "selected") {
+                    *selected_option = Some(child_id);
+                }
+                continue; // options don't nest
+            }
+        }
+        collect_options(tree, child_id, first_option, selected_option);
+    }
+}
+
+/// Maps an html5ever namespace URL to our short label.
+fn ns_to_label(ns: &Namespace) -> &'static str {
+    if *ns == ns!(svg) {
+        "svg"
+    } else if *ns == ns!(mathml) {
+        "math"
+    } else {
+        ""
+    }
+}
+
+/// Maps an html5ever namespace URL to a prefix string for attributes.
+fn ns_to_attr_prefix(ns: &Namespace) -> &'static str {
+    if *ns == ns!(xlink) {
+        "xlink"
+    } else if *ns == ns!(xml) {
+        "xml"
+    } else if *ns == ns!(xmlns) {
+        "xmlns"
+    } else {
+        ""
+    }
+}
+
+/// Formats an attribute name, including namespace prefix if present.
+/// For namespaced attributes (e.g. xlink:href inside SVG), html5ever sets the
+/// attribute QualName's ns and prefix. We encode this as "prefix localname"
+/// (space-separated) so the test serializer can reconstruct it.
+fn format_attr_name(name: &QualName) -> String {
+    let prefix = ns_to_attr_prefix(&name.ns);
+    if prefix.is_empty() {
+        name.local.to_string()
+    } else {
+        format!("{} {}", prefix, name.local)
+    }
+}
+
+fn make_opts(scripting_enabled: bool) -> ParseOpts {
+    let mut opts = ParseOpts::default();
+    opts.tree_builder.scripting_enabled = scripting_enabled;
+    opts
 }
 
 /// Parses an HTML string and returns a shared reference to the resulting DomTree.
 pub fn parse_html(html: &str) -> Rc<RefCell<DomTree>> {
+    parse_html_scripting(html, true)
+}
+
+/// Parses HTML with explicit scripting flag.
+pub fn parse_html_scripting(html: &str, scripting_enabled: bool) -> Rc<RefCell<DomTree>> {
     let sink = BrailleSink::new();
-    let parser = parse_document(sink, ParseOpts::default());
-    parser.one(html)
+    let parser = parse_document(sink, make_opts(scripting_enabled));
+    let tree = parser.one(html);
+    // POLYFILL: selectedcontent cloning (see polyfill_selectedcontent docs).
+    polyfill_selectedcontent(&mut tree.borrow_mut());
+    tree
+}
+
+/// Parses an HTML fragment with the given context element tag and namespace.
+/// Returns a shared reference to the resulting DomTree.
+/// The context element is used to set the parsing context (e.g., parsing inside a `<td>`).
+pub fn parse_html_fragment(html: &str, context_tag: &str, context_ns: &str) -> Rc<RefCell<DomTree>> {
+    parse_html_fragment_scripting(html, context_tag, context_ns, true)
+}
+
+/// Parses HTML fragment with explicit scripting flag.
+pub fn parse_html_fragment_scripting(
+    html: &str,
+    context_tag: &str,
+    context_ns: &str,
+    scripting_enabled: bool,
+) -> Rc<RefCell<DomTree>> {
+    let ns = match context_ns {
+        "svg" => ns!(svg),
+        "math" => ns!(mathml),
+        _ => ns!(html),
+    };
+    let context_name = QualName::new(None, ns, LocalName::from(context_tag));
+    let sink = BrailleSink::new();
+    let parser = parse_fragment(sink, make_opts(scripting_enabled), context_name, Vec::new(), scripting_enabled);
+    let tree = parser.one(html);
+    // POLYFILL: selectedcontent cloning (see polyfill_selectedcontent docs).
+    polyfill_selectedcontent(&mut tree.borrow_mut());
+    tree
 }
 
 #[cfg(test)]
@@ -281,6 +543,7 @@ mod tests {
         if let NodeData::Element {
             ref tag_name,
             ref attributes,
+            ..
         } = div_node.data
         {
             assert_eq!(tag_name, "div");
@@ -297,6 +560,7 @@ mod tests {
         if let NodeData::Element {
             ref tag_name,
             ref attributes,
+            ..
         } = span_node.data
         {
             assert_eq!(tag_name, "span");

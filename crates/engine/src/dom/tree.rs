@@ -14,6 +14,7 @@ impl DomTree {
             parent: None,
             children: Vec::new(),
             computed_style: None,
+            template_contents: None,
         };
         DomTree { nodes: vec![root] }
     }
@@ -26,10 +27,12 @@ impl DomTree {
             data: NodeData::Element {
                 tag_name: tag_name.to_string(),
                 attributes: Vec::new(),
+                namespace: String::new(),
             },
             parent: None,
             children: Vec::new(),
             computed_style: None,
+            template_contents: None,
         });
         id
     }
@@ -45,6 +48,7 @@ impl DomTree {
             parent: None,
             children: Vec::new(),
             computed_style: None,
+            template_contents: None,
         });
         id
     }
@@ -157,6 +161,21 @@ impl DomTree {
             parent: None,
             children: Vec::new(),
             computed_style: None,
+            template_contents: None,
+        });
+        id
+    }
+
+    /// Allocates a new DocumentFragment node (unattached) and returns its NodeId.
+    pub fn create_document_fragment(&mut self) -> NodeId {
+        let id = self.nodes.len();
+        self.nodes.push(Node {
+            id,
+            data: NodeData::DocumentFragment,
+            parent: None,
+            children: Vec::new(),
+            computed_style: None,
+            template_contents: None,
         });
         id
     }
@@ -173,10 +192,68 @@ impl DomTree {
             data: NodeData::Element {
                 tag_name: tag_name.to_string(),
                 attributes,
+                namespace: String::new(),
             },
             parent: None,
             children: Vec::new(),
             computed_style: None,
+            template_contents: None,
+        });
+        id
+    }
+
+    /// Allocates a new Doctype node (unattached) and returns its NodeId.
+    pub fn create_doctype(&mut self, name: &str, public_id: &str, system_id: &str) -> NodeId {
+        let id = self.nodes.len();
+        self.nodes.push(Node {
+            id,
+            data: NodeData::Doctype {
+                name: name.to_string(),
+                public_id: public_id.to_string(),
+                system_id: system_id.to_string(),
+            },
+            parent: None,
+            children: Vec::new(),
+            computed_style: None,
+            template_contents: None,
+        });
+        id
+    }
+
+    /// Allocates a new Element node with namespace (unattached) and returns its NodeId.
+    pub fn create_element_ns(
+        &mut self,
+        tag_name: &str,
+        attributes: Vec<(String, String)>,
+        namespace: &str,
+    ) -> NodeId {
+        let id = self.nodes.len();
+        self.nodes.push(Node {
+            id,
+            data: NodeData::Element {
+                tag_name: tag_name.to_string(),
+                attributes,
+                namespace: namespace.to_string(),
+            },
+            parent: None,
+            children: Vec::new(),
+            computed_style: None,
+            template_contents: None,
+        });
+        id
+    }
+
+    /// Creates a template content fragment node (Document-like container).
+    /// Returns the NodeId of the new fragment.
+    pub fn create_template_contents(&mut self) -> NodeId {
+        let id = self.nodes.len();
+        self.nodes.push(Node {
+            id,
+            data: NodeData::Document, // content fragment acts like a document fragment
+            parent: None,
+            children: Vec::new(),
+            computed_style: None,
+            template_contents: None,
         });
         id
     }
@@ -298,6 +375,7 @@ impl DomTree {
             parent: None,
             children: Vec::new(),
             computed_style: None,
+            template_contents: None,
         });
 
         if deep {
@@ -356,7 +434,8 @@ impl DomTree {
         match &nd.data {
             NodeData::Text { content } => Self::escape_html(content),
             NodeData::Comment { content } => format!("<!--{}-->", content),
-            NodeData::Element { tag_name, attributes } => {
+            NodeData::Doctype { name, .. } => format!("<!DOCTYPE {}>", name),
+            NodeData::Element { tag_name, attributes, .. } => {
                 let mut o = String::new();
                 o.push('<');
                 o.push_str(tag_name);
@@ -377,7 +456,7 @@ impl DomTree {
                 o.push('>');
                 o
             }
-            NodeData::Document => self.serialize_children_html(nid),
+            NodeData::Document | NodeData::DocumentFragment => self.serialize_children_html(nid),
         }
     }
 
@@ -392,12 +471,16 @@ impl DomTree {
     pub fn import_subtree(&mut self, source: &DomTree, src_nid: NodeId) -> NodeId {
         let src_node = source.get_node(src_nid);
         let new_id = match &src_node.data {
-            NodeData::Element { tag_name, attributes } => {
-                self.create_element_with_attrs(tag_name, attributes.clone())
+            NodeData::Element { tag_name, attributes, namespace } => {
+                self.create_element_ns(tag_name, attributes.clone(), namespace)
             }
             NodeData::Text { content } => self.create_text(content),
             NodeData::Comment { content } => self.create_comment(content),
+            NodeData::Doctype { name, public_id, system_id } => {
+                self.create_doctype(name, public_id, system_id)
+            }
             NodeData::Document => panic!("cannot import Document node"),
+            NodeData::DocumentFragment => panic!("cannot import DocumentFragment node"),
         };
         let src_children: Vec<NodeId> = src_node.children.clone();
         for &child_id in &src_children {
@@ -686,7 +769,7 @@ mod tests {
         assert!(tree.get_node(cloned).children.is_empty());
         assert!(tree.get_node(cloned).parent.is_none());
         match &tree.get_node(cloned).data {
-            NodeData::Element { tag_name, attributes } => {
+            NodeData::Element { tag_name, attributes, .. } => {
                 assert_eq!(tag_name, "div");
                 assert_eq!(attributes, &vec![("class".to_string(), "container".to_string())]);
             }
@@ -730,7 +813,7 @@ mod tests {
         let cloned = tree.clone_node(div, false);
 
         match &tree.get_node(cloned).data {
-            NodeData::Element { tag_name, attributes } => {
+            NodeData::Element { tag_name, attributes, .. } => {
                 assert_eq!(tag_name, "div");
                 assert_eq!(attributes.len(), 3);
                 assert!(attributes.contains(&("id".to_string(), "main".to_string())));

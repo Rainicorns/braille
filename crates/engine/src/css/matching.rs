@@ -374,6 +374,39 @@ pub fn query_selector_all(tree: &DomTree, root: NodeId, selector: &str) -> Vec<N
     find_all_matches(tree, root, &selector_list, &mut context)
 }
 
+/// Tests if a single element matches the given CSS selector string.
+pub fn matches_selector_str(tree: &DomTree, node_id: NodeId, selector: &str) -> bool {
+    let node = tree.get_node(node_id);
+    if !matches!(node.data, NodeData::Element { .. }) {
+        return false;
+    }
+
+    let mut parser_input = ParserInput::new(selector);
+    let mut parser = CssParser::new(&mut parser_input);
+    let selector_list = match SelectorList::parse(&BrailleSelectorParser, &mut parser, ParseRelative::No) {
+        Ok(list) => list,
+        Err(_) => return false,
+    };
+
+    let mut caches = SelectorCaches::default();
+    let mut context = MatchingContext::new(
+        MatchingMode::Normal,
+        None,
+        &mut caches,
+        QuirksMode::NoQuirks,
+        NeedsSelectorFlags::No,
+        MatchingForInvalidation::No,
+    );
+
+    let element = DomElement::new(tree, node_id);
+    for selector in selector_list.slice().iter() {
+        if matches_selector(selector, 0, None, &element, &mut context) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Helper function to recursively find the first matching element.
 fn find_first_match(
     tree: &DomTree,

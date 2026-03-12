@@ -92,6 +92,51 @@ pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
         NativeFunction::from_fn_ptr(has_child_nodes),
     );
 
+    // firstElementChild getter
+    let first_element_child_getter = NativeFunction::from_fn_ptr(get_first_element_child);
+    class.accessor(
+        js_string!("firstElementChild"),
+        Some(first_element_child_getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
+    // lastElementChild getter
+    let last_element_child_getter = NativeFunction::from_fn_ptr(get_last_element_child);
+    class.accessor(
+        js_string!("lastElementChild"),
+        Some(last_element_child_getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
+    // nextElementSibling getter
+    let next_element_sibling_getter = NativeFunction::from_fn_ptr(get_next_element_sibling);
+    class.accessor(
+        js_string!("nextElementSibling"),
+        Some(next_element_sibling_getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
+    // previousElementSibling getter
+    let previous_element_sibling_getter = NativeFunction::from_fn_ptr(get_previous_element_sibling);
+    class.accessor(
+        js_string!("previousElementSibling"),
+        Some(previous_element_sibling_getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
+    // childElementCount getter
+    let child_element_count_getter = NativeFunction::from_fn_ptr(get_child_element_count);
+    class.accessor(
+        js_string!("childElementCount"),
+        Some(child_element_count_getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
     Ok(())
 }
 
@@ -274,6 +319,101 @@ fn has_child_nodes(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsR
     let tree = el.tree.borrow();
     let has_children = !tree.children(el.node_id).is_empty();
     Ok(JsValue::from(has_children))
+}
+
+/// Native getter for element.firstElementChild
+fn get_first_element_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("firstElementChild getter: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("firstElementChild getter: `this` is not an Element").into()))?;
+    let tree = el.tree.borrow();
+    let element_kids = tree.element_children(el.node_id);
+    match element_kids.first().copied() {
+        Some(child_id) => {
+            drop(tree);
+            let child = JsElement::new(child_id, el.tree.clone());
+            let js_obj = JsElement::from_data(child, ctx)?;
+            Ok(js_obj.into())
+        }
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// Native getter for element.lastElementChild
+fn get_last_element_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("lastElementChild getter: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("lastElementChild getter: `this` is not an Element").into()))?;
+    let tree = el.tree.borrow();
+    let element_kids = tree.element_children(el.node_id);
+    match element_kids.last().copied() {
+        Some(child_id) => {
+            drop(tree);
+            let child = JsElement::new(child_id, el.tree.clone());
+            let js_obj = JsElement::from_data(child, ctx)?;
+            Ok(js_obj.into())
+        }
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// Native getter for element.nextElementSibling
+fn get_next_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("nextElementSibling getter: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("nextElementSibling getter: `this` is not an Element").into()))?;
+    let tree = el.tree.borrow();
+    match tree.next_sibling_element(el.node_id) {
+        Some(sibling_id) => {
+            drop(tree);
+            let sibling = JsElement::new(sibling_id, el.tree.clone());
+            let js_obj = JsElement::from_data(sibling, ctx)?;
+            Ok(js_obj.into())
+        }
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// Native getter for element.previousElementSibling
+fn get_previous_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("previousElementSibling getter: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("previousElementSibling getter: `this` is not an Element").into()))?;
+    let tree = el.tree.borrow();
+    match tree.prev_sibling_element(el.node_id) {
+        Some(sibling_id) => {
+            drop(tree);
+            let sibling = JsElement::new(sibling_id, el.tree.clone());
+            let js_obj = JsElement::from_data(sibling, ctx)?;
+            Ok(js_obj.into())
+        }
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// Native getter for element.childElementCount
+fn get_child_element_count(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("childElementCount getter: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("childElementCount getter: `this` is not an Element").into()))?;
+    let tree = el.tree.borrow();
+    let count = tree.element_children(el.node_id).len();
+    Ok(JsValue::from(count as i32))
 }
 
 #[cfg(test)]

@@ -403,6 +403,72 @@ pub(crate) fn document_get_elements_by_tag_name(
 }
 
 // ---------------------------------------------------------------------------
+// Element.matches() and Element.closest()
+// ---------------------------------------------------------------------------
+
+fn element_matches(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("matches: `this` is not an object").into()))?;
+    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("matches: `this` is not an Element").into())
+    })?;
+    let selector = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let tree_rc = el.tree.clone();
+    let node_id = el.node_id;
+    let tree = tree_rc.borrow();
+    let result = matching::matches_selector_str(&tree, node_id, &selector);
+    Ok(JsValue::from(result))
+}
+
+fn element_closest(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("closest: `this` is not an object").into()))?;
+    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("closest: `this` is not an Element").into())
+    })?;
+    let selector = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let tree_rc = el.tree.clone();
+    let tree = tree_rc.borrow();
+    let mut current = el.node_id;
+    loop {
+        if matches!(tree.get_node(current).data, NodeData::Element { .. }) {
+            if matching::matches_selector_str(&tree, current, &selector) {
+                drop(tree);
+                let element = JsElement::new(current, tree_rc);
+                let js_obj = JsElement::from_data(element, ctx)?;
+                return Ok(js_obj.into());
+            }
+        }
+        match tree.get_node(current).parent {
+            Some(parent_id) => current = parent_id,
+            None => return Ok(JsValue::null()),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -426,6 +492,16 @@ pub(crate) fn register_query(class: &mut ClassBuilder) -> JsResult<()> {
         js_string!("getElementsByTagName"),
         1,
         NativeFunction::from_fn_ptr(element_get_elements_by_tag_name),
+    );
+    class.method(
+        js_string!("matches"),
+        1,
+        NativeFunction::from_fn_ptr(element_matches),
+    );
+    class.method(
+        js_string!("closest"),
+        1,
+        NativeFunction::from_fn_ptr(element_closest),
     );
     Ok(())
 }

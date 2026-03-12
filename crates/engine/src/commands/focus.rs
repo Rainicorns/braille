@@ -14,7 +14,7 @@ impl Engine {
         // 2. Verify it's a focusable element
         let node = tree.get_node(node_id);
         let is_focusable = match &node.data {
-            NodeData::Element { tag_name, attributes } => {
+            NodeData::Element { tag_name, attributes, .. } => {
                 let tag = tag_name.to_ascii_lowercase();
                 // Standard focusable elements
                 if matches!(tag.as_str(), "input" | "textarea" | "select" | "button" | "a") {

@@ -7,9 +7,15 @@ pub type ComputedStyles = std::collections::HashMap<String, String>;
 #[derive(Debug, Clone)]
 pub enum NodeData {
     Document,
+    Doctype {
+        name: String,
+        public_id: String,
+        system_id: String,
+    },
     Element {
         tag_name: String,
         attributes: Vec<(String, String)>,
+        namespace: String,
     },
     Text {
         content: String,
@@ -17,6 +23,7 @@ pub enum NodeData {
     Comment {
         content: String,
     },
+    DocumentFragment,
 }
 
 #[derive(Debug, Clone)]
@@ -26,4 +33,6 @@ pub struct Node {
     pub parent: Option<NodeId>,
     pub children: Vec<NodeId>,
     pub computed_style: Option<ComputedStyles>,
+    /// For `<template>` elements: the NodeId of the associated content fragment.
+    pub template_contents: Option<NodeId>,
 }

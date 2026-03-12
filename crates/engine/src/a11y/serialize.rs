@@ -52,9 +52,11 @@ fn walk(
             // Text and Comment nodes are never rendered on their own;
             // text content is collected by the parent element's role line.
         }
+        NodeData::Doctype { .. } | NodeData::DocumentFragment => {}
         NodeData::Element {
             tag_name,
             attributes,
+            ..
         } => {
             let tag = tag_name.to_ascii_lowercase();
 
@@ -232,6 +234,7 @@ fn get_interactive_value(
                 if let NodeData::Element {
                     tag_name,
                     attributes: child_attrs,
+                    ..
                 } = &child.data
                 {
                     if tag_name.to_ascii_lowercase() == "option" {
