@@ -2,18 +2,28 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use boa_engine::{Context, JsResult, JsValue, Source};
+use boa_engine::{
+    js_string,
+    native_function::NativeFunction,
+    object::{FunctionObjectBuilder, JsObject, ObjectInitializer},
+    property::Attribute,
+    Context, JsError, JsResult, JsValue, Source,
+};
 
 use crate::dom::DomTree;
 
 use super::bindings;
 use super::bindings::event_target::{ListenerMap, EVENT_LISTENERS};
+use super::bindings::element::{
+    get_or_create_js_element, DomPrototypes, NodeCache, DOM_PROTOTYPES, DOM_TREE, NODE_CACHE,
+};
 
 pub struct JsRuntime {
     pub(crate) context: Context,
     tree: Rc<RefCell<DomTree>>,
     console_buffer: Rc<RefCell<Vec<String>>>,
     pub(crate) listeners: Rc<RefCell<ListenerMap>>,
+    pub(crate) node_cache: Rc<RefCell<NodeCache>>,
 }
 
 impl JsRuntime {
@@ -24,11 +34,23 @@ impl JsRuntime {
         let mut context = Context::default();
         let console_buffer = Rc::new(RefCell::new(Vec::new()));
         let listeners: Rc<RefCell<ListenerMap>> = Rc::new(RefCell::new(HashMap::new()));
+        let node_cache: Rc<RefCell<NodeCache>> = Rc::new(RefCell::new(HashMap::new()));
 
         // Store the listeners Rc in the thread-local so NativeFunction callbacks
         // (addEventListener, removeEventListener) can access it.
         EVENT_LISTENERS.with(|el| {
             *el.borrow_mut() = Some(Rc::clone(&listeners));
+        });
+
+        // Store the node cache Rc in the thread-local so NativeFunction callbacks
+        // can return the same JsObject for the same NodeId (object identity).
+        NODE_CACHE.with(|cell| {
+            *cell.borrow_mut() = Some(Rc::clone(&node_cache));
+        });
+
+        // Store the DomTree in the thread-local so Text/Comment constructors can access it
+        DOM_TREE.with(|cell| {
+            *cell.borrow_mut() = Some(Rc::clone(&tree));
         });
 
         bindings::register_document(Rc::clone(&tree), &mut context);
@@ -42,7 +64,337 @@ impl JsRuntime {
         // Register CSSStyleDeclaration class for getComputedStyle
         context.register_global_class::<bindings::computed_style::JsComputedStyle>().unwrap();
 
-        Self { context, tree, console_buffer, listeners }
+        // Register global Node, CharacterData, Text, Comment with proper prototype chain
+        Self::register_dom_type_hierarchy(&mut context);
+
+        Self { context, tree, console_buffer, listeners, node_cache }
+    }
+
+    /// Register the full DOM type hierarchy:
+    ///   Node (interface object + prototype with constants)
+    ///   CharacterData (prototype inherits from Node.prototype)
+    ///   Text (constructor + prototype inherits from CharacterData.prototype)
+    ///   Comment (constructor + prototype inherits from CharacterData.prototype)
+    ///
+    /// Also stores Text.prototype and Comment.prototype in the DOM_PROTOTYPES thread-local
+    /// so that get_or_create_js_element can set the right prototype on created objects.
+    fn register_dom_type_hierarchy(context: &mut Context) {
+        // Get the Element class prototype — this is what all JsElement instances inherit from.
+        // We'll make Node.prototype the parent of this prototype,
+        // so Element instances get the Node constants via prototype chain.
+        let element_constructor = context.global_object()
+            .get(js_string!("Element"), context)
+            .expect("Element should be registered");
+        let element_proto = element_constructor
+            .as_object()
+            .expect("Element should be an object")
+            .get(js_string!("prototype"), context)
+            .expect("Element.prototype should exist");
+        let element_proto_obj = element_proto.as_object().expect("Element.prototype should be an object").clone();
+
+        // ---------------------------------------------------------------
+        // Node.prototype — the base prototype with node type constants
+        // ---------------------------------------------------------------
+        let node_proto = ObjectInitializer::new(context).build();
+
+        // Add all Node constants to Node.prototype
+        let node_constants: &[(&str, i32)] = &[
+            ("ELEMENT_NODE", 1), ("ATTRIBUTE_NODE", 2), ("TEXT_NODE", 3),
+            ("CDATA_SECTION_NODE", 4), ("ENTITY_REFERENCE_NODE", 5), ("ENTITY_NODE", 6),
+            ("PROCESSING_INSTRUCTION_NODE", 7), ("COMMENT_NODE", 8), ("DOCUMENT_NODE", 9),
+            ("DOCUMENT_TYPE_NODE", 10), ("DOCUMENT_FRAGMENT_NODE", 11), ("NOTATION_NODE", 12),
+        ];
+        let doc_position_constants: &[(&str, i32)] = &[
+            ("DOCUMENT_POSITION_DISCONNECTED", 0x01), ("DOCUMENT_POSITION_PRECEDING", 0x02),
+            ("DOCUMENT_POSITION_FOLLOWING", 0x04), ("DOCUMENT_POSITION_CONTAINS", 0x08),
+            ("DOCUMENT_POSITION_CONTAINED_BY", 0x10), ("DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC", 0x20),
+        ];
+
+        for (name, value) in node_constants.iter().chain(doc_position_constants.iter()) {
+            node_proto.define_property_or_throw(
+                js_string!(*name),
+                boa_engine::property::PropertyDescriptor::builder()
+                    .value(JsValue::from(*value))
+                    .writable(false)
+                    .configurable(false)
+                    .enumerable(false)
+                    .build(),
+                context,
+            ).expect("failed to define Node.prototype constant");
+        }
+
+        // Make Element.prototype inherit from Node.prototype
+        element_proto_obj.set_prototype(Some(node_proto.clone()));
+
+        // ---------------------------------------------------------------
+        // Node interface object — must be a callable function so that
+        // `obj instanceof Node` works (requires [[Call]] on the RHS).
+        // Node is abstract; calling `new Node()` throws "Illegal constructor".
+        // ---------------------------------------------------------------
+        let node_ctor = unsafe {
+            NativeFunction::from_closure(|_this, _args, _ctx| {
+                Err(JsError::from_opaque(JsValue::from(js_string!("Illegal constructor"))))
+            })
+        };
+        let node_ctor_fn = FunctionObjectBuilder::new(context.realm(), node_ctor)
+            .name(js_string!("Node"))
+            .length(0)
+            .constructor(true)
+            .build();
+        // Set Node.prototype
+        node_ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(node_proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define Node.prototype");
+        // Add constants to Node constructor itself (e.g. Node.ELEMENT_NODE)
+        for (name, value) in node_constants.iter().chain(doc_position_constants.iter()) {
+            node_ctor_fn.define_property_or_throw(
+                js_string!(*name),
+                boa_engine::property::PropertyDescriptor::builder()
+                    .value(JsValue::from(*value))
+                    .writable(false)
+                    .configurable(false)
+                    .enumerable(false)
+                    .build(),
+                context,
+            ).expect("failed to define Node constant");
+        }
+
+        context
+            .register_global_property(js_string!("Node"), node_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register Node global");
+
+        // ---------------------------------------------------------------
+        // CharacterData.prototype — inherits from Node.prototype
+        // We copy all properties from Element.prototype onto it so that
+        // CharacterData instances (Text, Comment) get access to .data,
+        // .nodeType, .textContent, etc. without Element.prototype being
+        // in the chain (which would break the WPT prototype chain checks).
+        // ---------------------------------------------------------------
+        let char_data_proto = ObjectInitializer::new(context).build();
+        char_data_proto.set_prototype(Some(node_proto.clone()));
+
+        // Store Element.prototype and CharacterData.prototype as JS globals temporarily,
+        // then use JS to copy all property descriptors.
+        context.register_global_property(
+            js_string!("__braille_elem_proto"),
+            element_proto_obj.clone(),
+            Attribute::all(),
+        ).expect("failed to register temp elem proto");
+        context.register_global_property(
+            js_string!("__braille_cd_proto"),
+            char_data_proto.clone(),
+            Attribute::all(),
+        ).expect("failed to register temp cd proto");
+
+        // Use JS to copy all property descriptors from Element.prototype to CharacterData.prototype
+        context.eval(Source::from_bytes(
+            r#"
+            (function() {
+                var src = __braille_elem_proto;
+                var dst = __braille_cd_proto;
+                var names = Object.getOwnPropertyNames(src);
+                for (var i = 0; i < names.length; i++) {
+                    var name = names[i];
+                    if (name === 'constructor') continue;
+                    var desc = Object.getOwnPropertyDescriptor(src, name);
+                    if (desc) {
+                        Object.defineProperty(dst, name, desc);
+                    }
+                }
+                delete self.__braille_elem_proto;
+                delete self.__braille_cd_proto;
+            })();
+            "#,
+        )).expect("failed to copy Element.prototype properties to CharacterData.prototype");
+
+        // CharacterData is abstract; calling `new CharacterData()` throws.
+        // Must be a callable function for `obj instanceof CharacterData` to work.
+        let char_data_ctor = unsafe {
+            NativeFunction::from_closure(|_this, _args, _ctx| {
+                Err(JsError::from_opaque(JsValue::from(js_string!("Illegal constructor"))))
+            })
+        };
+        let char_data_ctor_fn = FunctionObjectBuilder::new(context.realm(), char_data_ctor)
+            .name(js_string!("CharacterData"))
+            .length(0)
+            .constructor(true)
+            .build();
+        char_data_ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(char_data_proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define CharacterData.prototype");
+
+        context
+            .register_global_property(js_string!("CharacterData"), char_data_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register CharacterData global");
+
+        // ---------------------------------------------------------------
+        // Text.prototype — inherits from CharacterData.prototype
+        // ---------------------------------------------------------------
+        let text_proto = ObjectInitializer::new(context).build();
+        text_proto.set_prototype(Some(char_data_proto.clone()));
+
+        // Text constructor: new Text(data?) creates a Text node
+        let text_proto_for_closure = text_proto.clone();
+        let text_ctor = unsafe {
+            NativeFunction::from_closure(move |_this, args, ctx| {
+                let data = if args.is_empty() || args[0].is_undefined() {
+                    String::new()
+                } else {
+                    args[0].to_string(ctx)?.to_std_string_escaped()
+                };
+
+                let tree = DOM_TREE.with(|cell| {
+                    let rc = cell.borrow();
+                    rc.as_ref().expect("DOM_TREE not initialized").clone()
+                });
+
+                let node_id = tree.borrow_mut().create_text(&data);
+                let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
+                // Ensure prototype is Text.prototype (get_or_create_js_element may already do this)
+                js_obj.set_prototype(Some(text_proto_for_closure.clone()));
+                Ok(JsValue::from(js_obj))
+            })
+        };
+
+        // Build the Text constructor function object (constructor: true enables `new Text()`)
+        let text_ctor_fn = FunctionObjectBuilder::new(context.realm(), text_ctor)
+            .name(js_string!("Text"))
+            .length(0)
+            .constructor(true)
+            .build();
+        text_ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(text_proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define Text.prototype");
+
+        // Set Text.prototype.constructor = Text
+        text_proto.define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(text_ctor_fn.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define Text.prototype.constructor");
+
+        context
+            .register_global_property(js_string!("Text"), text_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register Text global");
+
+        // ---------------------------------------------------------------
+        // Comment.prototype — inherits from CharacterData.prototype
+        // ---------------------------------------------------------------
+        let comment_proto = ObjectInitializer::new(context).build();
+        comment_proto.set_prototype(Some(char_data_proto.clone()));
+
+        // Comment constructor: new Comment(data?) creates a Comment node
+        let comment_proto_for_closure = comment_proto.clone();
+        let comment_ctor = unsafe {
+            NativeFunction::from_closure(move |_this, args, ctx| {
+                let data = if args.is_empty() || args[0].is_undefined() {
+                    String::new()
+                } else {
+                    args[0].to_string(ctx)?.to_std_string_escaped()
+                };
+
+                let tree = DOM_TREE.with(|cell| {
+                    let rc = cell.borrow();
+                    rc.as_ref().expect("DOM_TREE not initialized").clone()
+                });
+
+                let node_id = tree.borrow_mut().create_comment(&data);
+                let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
+                js_obj.set_prototype(Some(comment_proto_for_closure.clone()));
+                Ok(JsValue::from(js_obj))
+            })
+        };
+
+        let comment_ctor_fn = FunctionObjectBuilder::new(context.realm(), comment_ctor)
+            .name(js_string!("Comment"))
+            .length(0)
+            .constructor(true)
+            .build();
+        comment_ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(comment_proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define Comment.prototype");
+
+        comment_proto.define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(comment_ctor_fn.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define Comment.prototype.constructor");
+
+        context
+            .register_global_property(js_string!("Comment"), comment_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register Comment global");
+
+        // ---------------------------------------------------------------
+        // Store prototypes in thread-local for get_or_create_js_element
+        // ---------------------------------------------------------------
+        DOM_PROTOTYPES.with(|cell| {
+            *cell.borrow_mut() = Some(DomPrototypes {
+                text_proto,
+                comment_proto,
+            });
+        });
+
+        // ---------------------------------------------------------------
+        // Copy Node/CharacterData/Text/Comment globals onto window object
+        // so that `window.Text`, `window.Node`, etc. work (used by WPT tests)
+        // ---------------------------------------------------------------
+        let global = context.global_object();
+        let window_val = global.get(js_string!("window"), context)
+            .expect("window global should exist");
+        if let Some(window_obj) = window_val.as_object() {
+            for name in &["Node", "CharacterData", "Text", "Comment"] {
+                let val = global.get(js_string!(*name), context)
+                    .expect("global should have this property");
+                window_obj.define_property_or_throw(
+                    js_string!(*name),
+                    boa_engine::property::PropertyDescriptor::builder()
+                        .value(val)
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(false)
+                        .build(),
+                    context,
+                ).expect("failed to set window property");
+            }
+        }
     }
 
     /// Evaluates a JS source string and returns the result.
@@ -724,5 +1076,29 @@ mod tests {
         let t = tree.borrow();
         let div_id: NodeId = 3;
         assert_eq!(t.get_attribute(div_id, "class"), None);
+    }
+
+    #[test]
+    fn text_constructor_debug() {
+        let tree = make_test_tree();
+        let mut rt = JsRuntime::new(Rc::clone(&tree));
+
+        let result = rt.eval("typeof Text").unwrap();
+        let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert_eq!(s, "function", "Text should be a function");
+
+        let result2 = rt.eval("var t = new Text('hello'); t.data").unwrap();
+        let s2 = result2.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert_eq!(s2, "hello", "Text data should be 'hello'");
+
+        // Check window.Text === Text
+        let result3 = rt.eval("typeof window.Text").unwrap();
+        let s3 = result3.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert_eq!(s3, "function", "window.Text should be a function");
+
+        // Check window[ctor] pattern used by WPT
+        let result4 = rt.eval("var ctor = 'Text'; new window[ctor]('test').data").unwrap();
+        let s4 = result4.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert_eq!(s4, "test", "window['Text'] constructor should work");
     }
 }

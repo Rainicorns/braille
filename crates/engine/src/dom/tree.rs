@@ -106,11 +106,15 @@ impl DomTree {
             .collect()
     }
 
-    /// Recursively collects all text content from Text node descendants.
+    /// Returns the textContent of a node per the DOM spec:
+    /// - Text / Comment / ProcessingInstruction: return the node's data
+    /// - Element / DocumentFragment: recursively collect text from descendants
+    /// - Document / Doctype: return empty string (spec says null, but "" is fine here)
     pub fn get_text_content(&self, node_id: NodeId) -> String {
         let node = &self.nodes[node_id];
         match &node.data {
             NodeData::Text { content } => content.clone(),
+            NodeData::Comment { content } => content.clone(),
             _ => {
                 let mut result = String::new();
                 for &child_id in &node.children {
@@ -490,6 +494,256 @@ impl DomTree {
         new_id
     }
 
+    // -----------------------------------------------------------------------
+    // CharacterData interface methods
+    // All offsets and counts are in UTF-16 code units.
+    // -----------------------------------------------------------------------
+
+    /// Returns the text content of a Text or Comment node, or None for other node types.
+    pub fn character_data_get(&self, id: NodeId) -> Option<String> {
+        match &self.nodes[id].data {
+            NodeData::Text { content } => Some(content.clone()),
+            NodeData::Comment { content } => Some(content.clone()),
+            _ => None,
+        }
+    }
+
+    /// Sets the text content of a Text or Comment node.
+    pub fn character_data_set(&mut self, id: NodeId, data: &str) {
+        match &mut self.nodes[id].data {
+            NodeData::Text { content } => *content = data.to_string(),
+            NodeData::Comment { content } => *content = data.to_string(),
+            _ => {}
+        }
+    }
+
+    /// Returns the length of the CharacterData in UTF-16 code units.
+    pub fn character_data_length(&self, id: NodeId) -> usize {
+        match &self.nodes[id].data {
+            NodeData::Text { content } => content.encode_utf16().count(),
+            NodeData::Comment { content } => content.encode_utf16().count(),
+            _ => 0,
+        }
+    }
+
+    /// Appends data to a Text or Comment node.
+    pub fn character_data_append(&mut self, id: NodeId, data: &str) {
+        match &mut self.nodes[id].data {
+            NodeData::Text { content } => content.push_str(data),
+            NodeData::Comment { content } => content.push_str(data),
+            _ => {}
+        }
+    }
+
+    /// Deletes count UTF-16 code units starting at offset.
+    /// Returns Err if offset > length.
+    pub fn character_data_delete(&mut self, id: NodeId, offset: usize, count: usize) -> Result<(), &'static str> {
+        let content = match &self.nodes[id].data {
+            NodeData::Text { content } => content.clone(),
+            NodeData::Comment { content } => content.clone(),
+            _ => return Ok(()),
+        };
+        let utf16_len = content.encode_utf16().count();
+        if offset > utf16_len {
+            return Err("IndexSizeError");
+        }
+        let end = std::cmp::min(offset + count, utf16_len);
+        let new_content = Self::utf16_splice(&content, offset, end, "");
+        self.character_data_set(id, &new_content);
+        Ok(())
+    }
+
+    /// Inserts data at offset (in UTF-16 code units).
+    /// Returns Err if offset > length.
+    pub fn character_data_insert(&mut self, id: NodeId, offset: usize, data: &str) -> Result<(), &'static str> {
+        let content = match &self.nodes[id].data {
+            NodeData::Text { content } => content.clone(),
+            NodeData::Comment { content } => content.clone(),
+            _ => return Ok(()),
+        };
+        let utf16_len = content.encode_utf16().count();
+        if offset > utf16_len {
+            return Err("IndexSizeError");
+        }
+        let new_content = Self::utf16_splice(&content, offset, offset, data);
+        self.character_data_set(id, &new_content);
+        Ok(())
+    }
+
+    /// Replaces count UTF-16 code units starting at offset with data.
+    /// Returns Err if offset > length.
+    pub fn character_data_replace(&mut self, id: NodeId, offset: usize, count: usize, data: &str) -> Result<(), &'static str> {
+        let content = match &self.nodes[id].data {
+            NodeData::Text { content } => content.clone(),
+            NodeData::Comment { content } => content.clone(),
+            _ => return Ok(()),
+        };
+        let utf16_len = content.encode_utf16().count();
+        if offset > utf16_len {
+            return Err("IndexSizeError");
+        }
+        let end = std::cmp::min(offset + count, utf16_len);
+        let new_content = Self::utf16_splice(&content, offset, end, data);
+        self.character_data_set(id, &new_content);
+        Ok(())
+    }
+
+    /// Returns a substring of count UTF-16 code units starting at offset.
+    /// Returns Err if offset > length.
+    pub fn character_data_substring(&self, id: NodeId, offset: usize, count: usize) -> Result<String, &'static str> {
+        let content = match &self.nodes[id].data {
+            NodeData::Text { content } => content,
+            NodeData::Comment { content } => content,
+            _ => return Ok(String::new()),
+        };
+        let utf16_len = content.encode_utf16().count();
+        if offset > utf16_len {
+            return Err("IndexSizeError");
+        }
+        let end = std::cmp::min(offset + count, utf16_len);
+        let utf16_units: Vec<u16> = content.encode_utf16().collect();
+        let slice = &utf16_units[offset..end];
+        Ok(String::from_utf16_lossy(slice))
+    }
+
+    /// Splices a UTF-8 string at UTF-16 code unit boundaries.
+    /// Replaces UTF-16 code units in range [start..end) with `replacement`.
+    fn utf16_splice(s: &str, start: usize, end: usize, replacement: &str) -> String {
+        let utf16_units: Vec<u16> = s.encode_utf16().collect();
+        let mut result_utf16: Vec<u16> = Vec::with_capacity(utf16_units.len() + replacement.encode_utf16().count());
+        result_utf16.extend_from_slice(&utf16_units[..start]);
+        result_utf16.extend(replacement.encode_utf16());
+        result_utf16.extend_from_slice(&utf16_units[end..]);
+        String::from_utf16_lossy(&result_utf16)
+    }
+
+    /// Converts a UTF-16 code unit offset to a byte offset in a UTF-8 string.
+    /// Returns None if the offset is out of range.
+    fn utf16_offset_to_byte_offset(s: &str, utf16_offset: usize) -> Option<usize> {
+        let mut utf16_pos = 0;
+        for (byte_pos, ch) in s.char_indices() {
+            if utf16_pos == utf16_offset {
+                return Some(byte_pos);
+            }
+            utf16_pos += ch.len_utf16();
+        }
+        if utf16_pos == utf16_offset {
+            return Some(s.len());
+        }
+        None // offset out of range
+    }
+
+    /// Splits a Text node at the given offset (in UTF-16 code units).
+    ///
+    /// - Keeps data[..offset] in the original node
+    /// - Creates a new Text node with data[offset..]
+    /// - If the original node has a parent, inserts the new node as next sibling
+    /// - Returns Ok(new_node_id) or Err("IndexSizeError") if offset > length
+    pub fn split_text(&mut self, node_id: NodeId, utf16_offset: usize) -> Result<NodeId, &'static str> {
+        // Get the text content
+        let content = match &self.nodes[node_id].data {
+            NodeData::Text { content } => content.clone(),
+            _ => return Err("InvalidNodeTypeError"),
+        };
+
+        let utf16_len = content.encode_utf16().count();
+        if utf16_offset > utf16_len {
+            return Err("IndexSizeError");
+        }
+
+        let byte_offset = Self::utf16_offset_to_byte_offset(&content, utf16_offset)
+            .ok_or("IndexSizeError")?;
+
+        // Split the data
+        let kept = &content[..byte_offset];
+        let split_off = &content[byte_offset..];
+
+        // Create new Text node with the split-off portion
+        let new_id = self.create_text(split_off);
+
+        // Update the original node's data to keep only the first part
+        if let NodeData::Text { ref mut content } = self.nodes[node_id].data {
+            *content = kept.to_string();
+        }
+
+        // If original node has a parent, insert the new node after it
+        let parent = self.nodes[node_id].parent;
+        if parent.is_some() {
+            self.insert_after(node_id, new_id);
+        }
+
+        Ok(new_id)
+    }
+
+    /// Returns the concatenation of all contiguous Text node siblings' data,
+    /// including this node, in document order.
+    ///
+    /// Walks backwards from this node through previous siblings (stopping at
+    /// non-Text nodes), then forwards through next siblings (stopping at non-Text
+    /// nodes), collecting all text content.
+    pub fn whole_text(&self, node_id: NodeId) -> String {
+        // Verify this is a Text node
+        if !matches!(&self.nodes[node_id].data, NodeData::Text { .. }) {
+            return String::new();
+        }
+
+        let parent = self.nodes[node_id].parent;
+
+        // If no parent, wholeText is just this node's text
+        if parent.is_none() {
+            return match &self.nodes[node_id].data {
+                NodeData::Text { content } => content.clone(),
+                _ => String::new(),
+            };
+        }
+
+        let parent_id = parent.unwrap();
+        let siblings = &self.nodes[parent_id].children;
+
+        // Find position of this node in parent's children
+        let pos = match siblings.iter().position(|&c| c == node_id) {
+            Some(p) => p,
+            None => {
+                return match &self.nodes[node_id].data {
+                    NodeData::Text { content } => content.clone(),
+                    _ => String::new(),
+                };
+            }
+        };
+
+        // Walk backwards to find the start of the contiguous Text run
+        let mut start = pos;
+        while start > 0 {
+            let prev = siblings[start - 1];
+            if matches!(&self.nodes[prev].data, NodeData::Text { .. }) {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+
+        // Walk forwards to find the end of the contiguous Text run
+        let mut end = pos;
+        while end + 1 < siblings.len() {
+            let next = siblings[end + 1];
+            if matches!(&self.nodes[next].data, NodeData::Text { .. }) {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Concatenate all text content in the range [start..=end]
+        let mut result = String::new();
+        for i in start..=end {
+            if let NodeData::Text { content } = &self.nodes[siblings[i]].data {
+                result.push_str(content);
+            }
+        }
+
+        result
+    }
+
     pub fn insert_after(&mut self, sibling: NodeId, child: NodeId) {
         let parent = self.nodes[sibling]
             .parent
@@ -504,6 +758,266 @@ impl DomTree {
             .expect("insert_after: sibling not found");
         self.nodes[parent].children.insert(pos + 1, child);
         self.nodes[child].parent = Some(parent);
+    }
+
+    // -----------------------------------------------------------------------
+    // Node comparison methods
+    // -----------------------------------------------------------------------
+
+    /// Returns the nodeType integer for a node.
+    pub fn node_type(&self, id: NodeId) -> u16 {
+        match &self.nodes[id].data {
+            NodeData::Element { .. } => 1,
+            NodeData::Text { .. } => 3,
+            NodeData::Comment { .. } => 8,
+            NodeData::Document => 9,
+            NodeData::Doctype { .. } => 10,
+            NodeData::DocumentFragment => 11,
+        }
+    }
+
+    /// Implements the DOM isEqualNode algorithm.
+    /// Two nodes are equal if they have the same type, same type-specific data,
+    /// same number of children, and each child is recursively equal.
+    pub fn is_equal_node(&self, a: NodeId, b: NodeId) -> bool {
+        if a == b {
+            return true;
+        }
+        let node_a = &self.nodes[a];
+        let node_b = &self.nodes[b];
+
+        // Must be same nodeType
+        if self.node_type(a) != self.node_type(b) {
+            return false;
+        }
+
+        // Compare type-specific data
+        match (&node_a.data, &node_b.data) {
+            (
+                NodeData::Element { tag_name: t1, attributes: a1, namespace: ns1 },
+                NodeData::Element { tag_name: t2, attributes: a2, namespace: ns2 },
+            ) => {
+                // Compare localName, namespace, and prefix (we store them in tag_name)
+                if t1 != t2 || ns1 != ns2 {
+                    return false;
+                }
+                // Compare attributes: same count, and each attr in a1 has a match in a2
+                if a1.len() != a2.len() {
+                    return false;
+                }
+                for (name, value) in a1 {
+                    let found = a2.iter().any(|(n, v)| n == name && v == value);
+                    if !found {
+                        return false;
+                    }
+                }
+            }
+            (
+                NodeData::Doctype { name: n1, public_id: p1, system_id: s1 },
+                NodeData::Doctype { name: n2, public_id: p2, system_id: s2 },
+            ) => {
+                if n1 != n2 || p1 != p2 || s1 != s2 {
+                    return false;
+                }
+            }
+            (NodeData::Text { content: c1 }, NodeData::Text { content: c2 }) => {
+                if c1 != c2 {
+                    return false;
+                }
+            }
+            (NodeData::Comment { content: c1 }, NodeData::Comment { content: c2 }) => {
+                if c1 != c2 {
+                    return false;
+                }
+            }
+            (NodeData::Document, NodeData::Document) => {}
+            (NodeData::DocumentFragment, NodeData::DocumentFragment) => {}
+            _ => return false,
+        }
+
+        // Compare children recursively
+        if node_a.children.len() != node_b.children.len() {
+            return false;
+        }
+        for (child_a, child_b) in node_a.children.iter().zip(node_b.children.iter()) {
+            if !self.is_equal_node(*child_a, *child_b) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Implements the DOM Node.normalize() algorithm.
+    ///
+    /// For each descendant of `node_id` (in tree order):
+    /// - Remove empty Text nodes
+    /// - Merge adjacent Text nodes (append next sibling's data to current, remove next)
+    ///
+    /// Only "exclusive Text nodes" are touched (not CDATASection, Comment, etc.).
+    pub fn normalize(&mut self, node_id: NodeId) {
+        // We process each direct child of node_id, then recurse into non-Text children.
+        // Because normalize is recursive and merging/removing changes the children list,
+        // we use index-based iteration and re-read children as we go.
+
+        let mut i = 0;
+        loop {
+            let children = self.nodes[node_id].children.clone();
+            if i >= children.len() {
+                break;
+            }
+            let child_id = children[i];
+
+            if matches!(&self.nodes[child_id].data, NodeData::Text { .. }) {
+                // Check if the text node is empty
+                let is_empty = match &self.nodes[child_id].data {
+                    NodeData::Text { content } => content.is_empty(),
+                    _ => false,
+                };
+
+                if is_empty {
+                    // Remove empty text node
+                    self.remove_child(node_id, child_id);
+                    // Don't increment i — the next child slides into this position
+                    continue;
+                }
+
+                // Merge with any following adjacent Text nodes
+                loop {
+                    let children = self.nodes[node_id].children.clone();
+                    let next_idx = children.iter().position(|&c| c == child_id)
+                        .map(|pos| pos + 1);
+                    let next_id = next_idx.and_then(|idx| children.get(idx).copied());
+
+                    match next_id {
+                        Some(next) if matches!(&self.nodes[next].data, NodeData::Text { .. }) => {
+                            // Get next sibling's text data
+                            let next_text = match &self.nodes[next].data {
+                                NodeData::Text { content } => content.clone(),
+                                _ => unreachable!(),
+                            };
+                            // Append to current text node
+                            if let NodeData::Text { ref mut content } = self.nodes[child_id].data {
+                                content.push_str(&next_text);
+                            }
+                            // Remove the next sibling
+                            self.remove_child(node_id, next);
+                        }
+                        _ => break,
+                    }
+                }
+
+                i += 1;
+            } else {
+                // Recurse into non-Text child
+                self.normalize(child_id);
+                i += 1;
+            }
+        }
+    }
+
+    /// Walk to the root of the tree from a given node, returning the root NodeId.
+    pub fn root_of(&self, id: NodeId) -> NodeId {
+        let mut current = id;
+        while let Some(parent) = self.nodes[current].parent {
+            current = parent;
+        }
+        current
+    }
+
+    /// Implements the DOM compareDocumentPosition algorithm.
+    /// Returns a bitmask of position flags.
+    pub fn compare_document_position(&self, reference: NodeId, other: NodeId) -> u16 {
+        const DISCONNECTED: u16 = 0x01;
+        const PRECEDING: u16 = 0x02;
+        const FOLLOWING: u16 = 0x04;
+        const CONTAINS: u16 = 0x08;
+        const CONTAINED_BY: u16 = 0x10;
+        const IMPLEMENTATION_SPECIFIC: u16 = 0x20;
+
+        // Same node => 0
+        if reference == other {
+            return 0;
+        }
+
+        // Check if they are in the same tree
+        let root_ref = self.root_of(reference);
+        let root_other = self.root_of(other);
+
+        if root_ref != root_other {
+            // Different trees -- disconnected. Use NodeId for consistent ordering.
+            let dir = if other < reference { PRECEDING } else { FOLLOWING };
+            return DISCONNECTED | IMPLEMENTATION_SPECIFIC | dir;
+        }
+
+        // Check if other is an ancestor of reference (other contains reference)
+        {
+            let mut current = reference;
+            while let Some(parent) = self.nodes[current].parent {
+                if parent == other {
+                    // other is an ancestor of reference
+                    return CONTAINS | PRECEDING;
+                }
+                current = parent;
+            }
+        }
+
+        // Check if other is a descendant of reference (reference contains other)
+        {
+            let mut current = other;
+            while let Some(parent) = self.nodes[current].parent {
+                if parent == reference {
+                    // other is a descendant of reference
+                    return CONTAINED_BY | FOLLOWING;
+                }
+                current = parent;
+            }
+        }
+
+        // Neither ancestor nor descendant -- determine document order
+        if self.is_preceding(other, reference) {
+            PRECEDING
+        } else {
+            FOLLOWING
+        }
+    }
+
+    /// Returns true if `a` precedes `b` in tree order (depth-first pre-order).
+    fn is_preceding(&self, a: NodeId, b: NodeId) -> bool {
+        // Build ancestor chains for both nodes
+        let mut chain_a = Vec::new();
+        let mut current = a;
+        chain_a.push(current);
+        while let Some(parent) = self.nodes[current].parent {
+            chain_a.push(parent);
+            current = parent;
+        }
+        chain_a.reverse();
+
+        let mut chain_b = Vec::new();
+        current = b;
+        chain_b.push(current);
+        while let Some(parent) = self.nodes[current].parent {
+            chain_b.push(parent);
+            current = parent;
+        }
+        chain_b.reverse();
+
+        // Find the first point of divergence
+        let min_len = chain_a.len().min(chain_b.len());
+        for i in 0..min_len {
+            if chain_a[i] != chain_b[i] {
+                // Find which comes first among the children of the common parent
+                let common_parent = if i > 0 { chain_a[i - 1] } else { return a < b; };
+                let parent_children = &self.nodes[common_parent].children;
+                let pos_a = parent_children.iter().position(|&c| c == chain_a[i]);
+                let pos_b = parent_children.iter().position(|&c| c == chain_b[i]);
+                return pos_a < pos_b;
+            }
+        }
+
+        // If one is a prefix of the other, the shorter chain is the ancestor
+        chain_a.len() < chain_b.len()
     }
 
 }

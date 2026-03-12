@@ -15,7 +15,7 @@ use crate::dom::DomTree;
 
 use crate::dom::NodeData;
 
-use super::element::JsElement;
+use super::element::{JsElement, get_or_create_js_element};
 use super::event::{JsEvent, JsCustomEvent};
 use super::event_target::{ListenerEntry, EVENT_LISTENERS};
 use super::class_list::register_class_list_class;
@@ -55,8 +55,7 @@ fn document_create_element(
 
     let node_id = tree.borrow_mut().create_element(&tag);
 
-    let element = JsElement::new(node_id, tree);
-    let js_obj = JsElement::from_data(element, ctx)?;
+    let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
     Ok(js_obj.into())
 }
 
@@ -84,8 +83,7 @@ fn document_get_element_by_id(
     let found = tree.borrow().get_element_by_id(&id);
     match found {
         Some(node_id) => {
-            let element = JsElement::new(node_id, tree);
-            let js_obj = JsElement::from_data(element, ctx)?;
+            let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -103,9 +101,9 @@ fn document_get_body(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> Js
     let tree = doc.tree.borrow();
     match tree.body() {
         Some(body_id) => {
+            let tree_rc = doc.tree.clone();
             drop(tree);
-            let element = JsElement::new(body_id, doc.tree.clone());
-            let js_obj = JsElement::from_data(element, ctx)?;
+            let js_obj = get_or_create_js_element(body_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -123,9 +121,9 @@ fn document_get_head(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> Js
     let tree = doc.tree.borrow();
     match tree.head() {
         Some(head_id) => {
+            let tree_rc = doc.tree.clone();
             drop(tree);
-            let element = JsElement::new(head_id, doc.tree.clone());
-            let js_obj = JsElement::from_data(element, ctx)?;
+            let js_obj = get_or_create_js_element(head_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -207,8 +205,7 @@ fn document_create_text_node(
 
     let node_id = tree.borrow_mut().create_text(&text);
 
-    let element = JsElement::new(node_id, tree);
-    let js_obj = JsElement::from_data(element, ctx)?;
+    let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
     Ok(js_obj.into())
 }
 
@@ -225,9 +222,9 @@ fn document_get_document_element(this: &JsValue, _args: &[JsValue], ctx: &mut Co
     // documentElement is the first Element child of the Document node
     for &child_id in &doc_node.children {
         if matches!(tree.get_node(child_id).data, NodeData::Element { .. }) {
+            let tree_rc = doc.tree.clone();
             drop(tree);
-            let element = JsElement::new(child_id, doc.tree.clone());
-            let js_obj = JsElement::from_data(element, ctx)?;
+            let js_obj = get_or_create_js_element(child_id, tree_rc, ctx)?;
             return Ok(js_obj.into());
         }
     }
@@ -257,8 +254,45 @@ fn document_create_comment(
 
     let node_id = tree.borrow_mut().create_comment(&data);
 
-    let element = JsElement::new(node_id, tree);
-    let js_obj = JsElement::from_data(element, ctx)?;
+    let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
+    Ok(js_obj.into())
+}
+
+/// Native implementation of document.createProcessingInstruction(target, data)
+/// We implement this as a Comment node since we don't have a native PI node type.
+/// This is sufficient for most tests that just need a node to exist.
+fn document_create_processing_instruction(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("createProcessingInstruction: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("createProcessingInstruction: `this` is not document").into()))?;
+    let tree = doc.tree.clone();
+
+    // target is first arg, data is second arg
+    let _target = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let data = args
+        .get(1)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    // Use a Comment node as a stand-in for ProcessingInstruction
+    let node_id = tree.borrow_mut().create_comment(&data);
+
+    let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
     Ok(js_obj.into())
 }
 
@@ -278,8 +312,7 @@ fn document_create_document_fragment(
 
     let node_id = tree.borrow_mut().create_document_fragment();
 
-    let element = JsElement::new(node_id, tree);
-    let js_obj = JsElement::from_data(element, ctx)?;
+    let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
     Ok(js_obj.into())
 }
 
@@ -604,6 +637,12 @@ fn document_dispatch_event(
     Ok(JsValue::from(!default_prevented))
 }
 
+/// document.getRootNode() — document is always its own root
+fn document_get_root_node(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+    // Document node has no parent, so getRootNode() returns itself
+    Ok(this.clone())
+}
+
 /// Builds the `document` global object and registers it on the context.
 pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Context) {
     // Register the Element class first so from_data works
@@ -659,6 +698,11 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
             1,
         )
         .function(
+            NativeFunction::from_fn_ptr(document_create_processing_instruction),
+            js_string!("createProcessingInstruction"),
+            2,
+        )
+        .function(
             NativeFunction::from_fn_ptr(document_create_document_fragment),
             js_string!("createDocumentFragment"),
             0,
@@ -682,6 +726,31 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
             NativeFunction::from_fn_ptr(document_dispatch_event),
             js_string!("dispatchEvent"),
             1,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(super::mutation::document_append),
+            js_string!("append"),
+            0,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(super::mutation::document_prepend),
+            js_string!("prepend"),
+            0,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(super::mutation::document_replace_children),
+            js_string!("replaceChildren"),
+            0,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(super::mutation::document_normalize),
+            js_string!("normalize"),
+            0,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(document_get_root_node),
+            js_string!("getRootNode"),
+            0,
         )
         .build();
 

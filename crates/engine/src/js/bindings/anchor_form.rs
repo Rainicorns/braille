@@ -9,7 +9,7 @@ use boa_engine::{
 
 use crate::dom::{NodeData, NodeId};
 
-use super::element::JsElement;
+use super::element::{JsElement, get_or_create_js_element};
 
 // ---------------------------------------------------------------------------
 // Helper: kebab-case to camelCase
@@ -199,8 +199,7 @@ fn get_form_elements(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> Js
     drop(tree);
 
     for id in interactive_ids {
-        let element = JsElement::new(id, tree_rc.clone());
-        let js_obj = JsElement::from_data(element, ctx)?;
+        let js_obj = get_or_create_js_element(id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
 

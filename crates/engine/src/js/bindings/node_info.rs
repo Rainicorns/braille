@@ -233,16 +233,27 @@ pub(crate) fn register_node_info(class: &mut ClassBuilder) -> JsResult<()> {
         Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
     );
 
-    // Node type constants on the prototype
-    class.static_property(js_string!("ELEMENT_NODE"), JsValue::from(1), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.static_property(js_string!("ATTRIBUTE_NODE"), JsValue::from(2), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.static_property(js_string!("TEXT_NODE"), JsValue::from(3), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.static_property(js_string!("CDATA_SECTION_NODE"), JsValue::from(4), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.static_property(js_string!("PROCESSING_INSTRUCTION_NODE"), JsValue::from(7), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.static_property(js_string!("COMMENT_NODE"), JsValue::from(8), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.static_property(js_string!("DOCUMENT_NODE"), JsValue::from(9), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.static_property(js_string!("DOCUMENT_TYPE_NODE"), JsValue::from(10), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.static_property(js_string!("DOCUMENT_FRAGMENT_NODE"), JsValue::from(11), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    // Node type constants on the prototype (so instances inherit them)
+    class.property(js_string!("ELEMENT_NODE"), JsValue::from(1), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("ATTRIBUTE_NODE"), JsValue::from(2), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("TEXT_NODE"), JsValue::from(3), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("CDATA_SECTION_NODE"), JsValue::from(4), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("ENTITY_REFERENCE_NODE"), JsValue::from(5), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("ENTITY_NODE"), JsValue::from(6), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("PROCESSING_INSTRUCTION_NODE"), JsValue::from(7), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("COMMENT_NODE"), JsValue::from(8), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("DOCUMENT_NODE"), JsValue::from(9), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("DOCUMENT_TYPE_NODE"), JsValue::from(10), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("DOCUMENT_FRAGMENT_NODE"), JsValue::from(11), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("NOTATION_NODE"), JsValue::from(12), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+
+    // Document position constants on the prototype
+    class.property(js_string!("DOCUMENT_POSITION_DISCONNECTED"), JsValue::from(0x01), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("DOCUMENT_POSITION_PRECEDING"), JsValue::from(0x02), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("DOCUMENT_POSITION_FOLLOWING"), JsValue::from(0x04), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("DOCUMENT_POSITION_CONTAINS"), JsValue::from(0x08), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("DOCUMENT_POSITION_CONTAINED_BY"), JsValue::from(0x10), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(js_string!("DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC"), JsValue::from(0x20), Attribute::READONLY | Attribute::NON_ENUMERABLE);
 
     Ok(())
 }

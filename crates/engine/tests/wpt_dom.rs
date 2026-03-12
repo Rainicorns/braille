@@ -324,8 +324,12 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("getElementsByTagNameNS", "requires namespace support"),
         ("namespaced", "requires namespace support"),
         ("NamedNodeMap", "requires NamedNodeMap"),
-        // CharacterData (we don't have full CharacterData interface)
-        ("CharacterData", "requires CharacterData interface"),
+        // CharacterData-appendChild requires HierarchyRequestError (DOMException)
+        ("CharacterData-appendChild", "requires HierarchyRequestError DOMException"),
+        // CharacterData-remove requires ChildNode-remove.js helper
+        ("CharacterData-remove", "requires ChildNode-remove.js helper"),
+        // CharacterData-surrogates requires UTF-16 internal storage (Rust String is UTF-8)
+        ("CharacterData-surrogates", "requires UTF-16 internal string storage for lone surrogates"),
         // Pre-insertion validation (requires DOMException hierarchy)
         ("pre-insertion", "requires DOMException types"),
         // Document.URL, baseURI, etc.
@@ -333,25 +337,14 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Node-baseURI", "requires baseURI"),
         ("Document-doctype", "requires doctype node access"),
         ("Document-adoptNode", "requires adoptNode"),
-        // Comment/Text constructor
-        ("Comment-constructor", "requires Comment constructor"),
-        ("Text-constructor", "requires Text constructor"),
-        // ChildNode-after/before/replaceWith
-        ("ChildNode-after", "requires after()"),
-        ("ChildNode-before", "requires before()"),
-        ("ChildNode-replaceWith", "requires replaceWith()"),
-        // ParentNode.append/prepend/replaceChildren
-        ("ParentNode-append", "requires append()"),
-        ("ParentNode-prepend", "requires prepend()"),
-        ("ParentNode-replaceChildren", "requires replaceChildren()"),
-        // Node-isEqualNode, Node-isSameNode, etc.
-        ("Node-isEqualNode", "requires isEqualNode"),
-        ("Node-isSameNode", "requires isSameNode"),
-        ("Node-compareDocumentPosition", "requires compareDocumentPosition"),
+        // Comment/Text constructor — now implemented
+        // ChildNode-after/before/replaceWith — now implemented
+        // ParentNode.append/prepend/replaceChildren — now implemented
+        // Node-lookupPrefix, etc.
         ("Node-lookupPrefix", "requires lookupPrefix"),
         ("Node-lookupNamespaceURI", "requires lookupNamespaceURI"),
         ("Node-isDefaultNamespace", "requires isDefaultNamespace"),
-        ("Node-normalize", "requires normalize"),
+        // Node-normalize — now implemented
         ("Node-textContent", "requires full textContent spec"),
         ("Node-nodeName", "requires full nodeName spec"),
         ("Node-nodeValue", "requires full nodeValue spec"),
@@ -429,10 +422,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("attributes.html", "requires NamedNodeMap"),
         // Document-createAttribute (Attr interface)
         ("Document-createAttribute", "requires Attr interface"),
-        // Document-createComment.html needs Comment constructor
-        ("Document-createComment.html", "requires Comment constructor global"),
-        // Document-createTextNode needs Text constructor
-        ("Document-createTextNode.html", "requires Text constructor global"),
+        // Document-createComment.html — now implemented
+        // Document-createTextNode — now implemented
         // Full getElementsByTagName spec
         ("Element-getElementsByTagName", "requires full getElementsByTagName"),
         ("Document-getElementsByTagName", "requires full getElementsByTagName"),
@@ -440,8 +431,6 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Document-getElementById", "requires HTMLDivElement and full spec"),
         // DocumentFragment-getElementById (needs DocumentFragment constructor)
         ("DocumentFragment-getElementById", "requires DocumentFragment constructor"),
-        // Node-constants (needs Node constructor / prototype)
-        ("Node-constants", "requires Node constructor"),
         // Node-properties (needs full Node interface)
         ("Node-properties", "requires full Node interface"),
         // ParentNode-children (needs HTMLCollection)
@@ -450,9 +439,6 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Element-children.html", "requires HTMLCollection"),
         // name-validation
         ("name-validation", "requires full name validation"),
-        // Text-splitText, Text-wholeText
-        ("Text-splitText", "requires Text.splitText"),
-        ("Text-wholeText", "requires Text.wholeText"),
         // remove-unscopable (needs @@unscopables)
         ("remove-unscopable", "requires Symbol.unscopables"),
         // Element-webkitMatchesSelector (alias test)
@@ -461,13 +447,13 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("KeyEvent-initKeyEvent", "requires KeyEvent"),
         // node-appendchild-crash
         ("node-appendchild-crash", "requires adoptNode"),
-        // append-on-Document, prepend-on-Document
-        ("append-on-Document", "requires append()"),
-        ("prepend-on-Document", "requires prepend()"),
-        // rootNode
-        ("rootNode", "requires getRootNode()"),
-        // insert-adjacent (needs insertAdjacentElement etc.)
-        ("insert-adjacent.html", "requires insertAdjacentElement"),
+        // append-on-Document, prepend-on-Document — now implemented
+        // append-on-Document, prepend-on-Document require DOMImplementation.createDocument
+        ("append-on-Document", "requires DOMImplementation"),
+        ("prepend-on-Document", "requires DOMImplementation"),
+        // rootNode — now implemented
+        // insert-adjacent: 12/14 subtests pass, but 2 need document.implementation.createHTMLDocument()
+        ("insert-adjacent.html", "requires DOMImplementation for 2 subtests"),
         // Event-timestamp (needs DOMHighResTimeStamp)
         ("Event-timestamp", "requires DOMHighResTimeStamp"),
         // Event-dispatch-click (needs click() behavior)
@@ -543,7 +529,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Tests needing frames/DOMImplementation (Node-removeChild, Node-insertBefore, Node-replaceChild, Node-appendChild)
         ("Node-removeChild", "requires frames and DOMImplementation"),
         ("Node-insertBefore.html", "requires frames and DOMImplementation"),
-        ("Node-replaceChild", "requires frames and DOMImplementation"),
+        ("Node-replaceChild.html", "requires frames and DOMImplementation"),
         ("Node-appendChild.html", "requires frames and DOMImplementation"),
         // Element-tagName (needs SVG namespace, DOMImplementation)
         ("Element-tagName", "requires SVG namespace and DOMImplementation"),
@@ -556,23 +542,21 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Element-setAttribute", "requires setAttributeNS"),
         // Element-removeAttribute (needs setAttributeNS)
         ("Element-removeAttribute", "requires setAttributeNS"),
-        // Element-insertAdjacentElement/Text (not yet implemented)
-        ("Element-insertAdjacentElement", "requires insertAdjacentElement"),
-        ("Element-insertAdjacentText", "requires insertAdjacentText"),
+        // Element-insertAdjacentElement/Text — now implemented
+        // ("Element-insertAdjacentElement", "requires insertAdjacentElement"),
+        // ("Element-insertAdjacentText", "requires insertAdjacentText"),
         // Node-childNodes (needs NodeList interface, Document constructor)
         ("Node-childNodes.html", "requires NodeList interface"),
-        // Node-parentElement (object identity issues)
-        ("Node-parentElement", "requires object identity"),
+        // Node-parentElement (needs document.doctype, Document as EventTarget parent)
+        ("Node-parentElement", "requires document.doctype and Document-as-parent handling"),
         // Event-propagation (needs Event constructor)
         ("Event-propagation.html", "requires Event.cancelBubble getter"),
         // Event-stopPropagation-cancel-bubbling
         ("Event-stopPropagation-cancel-bubbling", "requires Event constructor"),
         // Event-dispatch-throwing
         ("Event-dispatch-throwing", "requires window.onerror"),
-        // Event-dispatch-omitted-capture (object identity)
-        ("Event-dispatch-omitted-capture", "requires object identity"),
-        // Event-dispatch-propagation-stopped (object identity)
-        ("Event-dispatch-propagation-stopped.html", "requires object identity"),
+        // Event-dispatch-omitted-capture (needs window EventTarget, initEvent)
+        ("Event-dispatch-omitted-capture", "requires window EventTarget and initEvent"),
         // Event-dispatch-multiple-cancelBubble/stopPropagation
         ("Event-dispatch-multiple-cancelBubble", "requires cancelBubble during propagation"),
         ("Event-dispatch-multiple-stopPropagation", "requires stopPropagation during propagation"),

@@ -11,7 +11,7 @@ A browser for those who read, not see.
 
 All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **1778 passed, 0 failed, 0 ignored** out of 1778 test cases (**100% pass rate**). html5lib-tests serializer suite: **204 passed, 0 failed, 26 ignored** (core + optionaltags fully passing; options/injectmeta/whitespace skipped as non-default serializer config). Fixed foster parenting text merge (8 tests), template contents with DocumentFragment (112 tests), test harness trailing newline (1 test), annotation-xml integration point polyfill (4 tests), and selectedcontent cloning polyfill (4 tests). Two polyfills in parser.rs are marked `POLYFILL` for removal when html5ever handles them internally: `is_mathml_annotation_xml_integration_point` flag storage and `polyfill_selectedcontent` post-processing (workaround for html5ever issue #712). The engine has a full DOM API surface (~70 methods), CSS cascade with selector matching wired into the load pipeline, full event system (addEventListener/dispatchEvent with capture/bubble/at-target), getComputedStyle, HTMLElement-specific properties (input.value/checked/type/disabled, select.value/selectedIndex/options, option.value/selected/text, a.href, form.action/method/elements, element.dataset/hidden/tabIndex/title/lang/dir, focus/blur/click stubs, getBoundingClientRect stub), and JS bindings for querySelector, innerHTML, classList, element.style, node mutation, window/console, and more. CLI has all commands routed through session manager, network client with cookie jar, navigation history, and external script loading. Full integration smoke tests (20) and CSS edge case tests (32) verify end-to-end behavior.
 
-**WPT Phase 1 — Steps 1-3 DONE, Step 4 IN PROGRESS.** **29 WPT tests passing** out of 263 files (229 ignored, 5 failing). Latest fixes: JsCustomEvent dual-type dispatch support (element + document), AT_TARGET capture-first ordering, cancelBubble pre-check + reset after dispatch, dispatching flag blocks initEvent, TypeError for missing Event constructor/initEvent args, timeStamp returns 1 (>0), initCustomEvent/initEvent on CustomEvent, propagation flag reset after dispatch, srcElement own property. 7 new passes this round: Event-dispatch-order-at-target, Event-cancelBubble, CustomEvent, Event-initEvent, Event-defaultPrevented-after-dispatch, Event-dispatch-bubble-canceled, Event-constructors.any. 5 remaining failures: Event-constants (needs constants.js support file), Event-isTrusted (needs isTrusted as own accessor property), Element-closest (CSS selector gaps), Element-classlist (classList edge cases), Node-isConnected (iframe only). All prior tests still pass.
+**WPT Phase 1 — Steps 1-3 DONE, Step 4 IN PROGRESS.** **31 WPT tests passing** out of 263 files (228 ignored, 4 failing). NodeId→JsObject cache added for DOM object identity (`el.parentNode === el.parentNode` now returns `true`), which un-blocked Event-dispatch-propagation-stopped. Previous fixes: JsCustomEvent dual-type dispatch support (element + document), AT_TARGET capture-first ordering, cancelBubble pre-check + reset after dispatch, dispatching flag blocks initEvent, TypeError for missing Event constructor/initEvent args, timeStamp returns 1 (>0), initCustomEvent/initEvent on CustomEvent, propagation flag reset after dispatch, srcElement own property. 4 remaining failures: Event-isTrusted (needs isTrusted as own accessor property), Element-closest (CSS selector gaps), Element-classlist (classList edge cases), Node-isConnected (iframe only). All prior tests still pass.
 
 ### What exists (770 unit/integration + 1778 tree-construction + 204 serializer = 2752 tests, all passing)
 
@@ -19,7 +19,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 |-----------|--------|------------|
 | DOM tree | Arena-based, full ops | createElement, appendChild, removeChild, insertBefore, replaceChild, cloneNode, getElementById, getElementsByTagName, querySelector/All, textContent, innerHTML, attribute CRUD, class list, node traversal. Nodes carry namespace (svg/math/"") and Doctype variant. |
 | HTML parser | html5ever TreeSink, 100% html5lib-tests (1778/1778 tree-construction, 204/204 serializer) | Full spec-compliant HTML parsing into DomTree, fragment parsing for innerHTML setter and html5lib fragment tests. Stores element namespace (SVG/MathML/HTML), doctype nodes (name/public_id/system_id), namespaced attribute prefixes (xlink/xml/xmlns). Supports scripting on/off flag. Template elements have proper content DocumentFragment. Foster parenting text merge in `append_before_sibling`. Two polyfills (grep `POLYFILL`): annotation-xml integration point flag storage, selectedcontent post-parse cloning (html5ever #712). Token-stream serializer test harness validates attribute quoting, text escaping, void elements, DOCTYPE serialization, and all HTML optional tag omission rules. |
-| JS engine | Boa bindings (~70 methods) | document: createElement, getElementById, querySelector/All, getElementsByClassName/TagName, createTextNode, body, head, title. element: appendChild, textContent, classList, getAttribute/setAttribute/removeAttribute, parentNode, children, firstChild, lastChild, siblings, nodeType/nodeName/tagName, innerHTML/outerHTML, insertAdjacentHTML, insertBefore, replaceChild, cloneNode, element.style, querySelector/All, getElementsByClassName/TagName. input: value, checked, type, disabled, name, placeholder. select: value, selectedIndex, options. option: value, selected, text. anchor: href. form: action, method, elements. element: hidden, dataset, tabIndex, title, lang, dir, getBoundingClientRect (stub), focus/blur (stubs), click (dispatches event) |
+| JS engine | Boa bindings (~70 methods), NodeId→JsObject cache | document: createElement, getElementById, querySelector/All, getElementsByClassName/TagName, createTextNode, body, head, title. element: appendChild, textContent, classList, getAttribute/setAttribute/removeAttribute, parentNode, children, firstChild, lastChild, siblings, nodeType/nodeName/tagName, innerHTML/outerHTML, insertAdjacentHTML, insertBefore, replaceChild, cloneNode, element.style, querySelector/All, getElementsByClassName/TagName. input: value, checked, type, disabled, name, placeholder. select: value, selectedIndex, options. option: value, selected, text. anchor: href. form: action, method, elements. element: hidden, dataset, tabIndex, title, lang, dir, getBoundingClientRect (stub), focus/blur (stubs), click (dispatches event). **Object identity**: thread-local `NODE_CACHE` ensures `el.parentNode === el.parentNode` (same JsObject for same NodeId). |
 | CSS cascade | Parsing + matching + cascade + computed + wired + JS | cssparser stylesheet/inline parsing, selectors Element trait impl, selector matching (tag, class, id, attribute, pseudo-classes), cascade algorithm (origin, importance, specificity, source order), computed style resolution (inherit/initial/unset, em→px, color names), style tree DFS walk, compute_all_styles called in load_html/execute_scripts, getComputedStyle(el) JS binding with camelCase property accessors |
 | Event system | Full W3C dispatch | Event/CustomEvent constructors, addEventListener/removeEventListener (capture, once options), dispatchEvent with capture/bubble/at-target phases, stopPropagation, stopImmediatePropagation, preventDefault |
 | A11y serializer | Roles + values + CSS | headings, paragraphs, links, buttons, inputs (with value display), selects (with selected option), lists, images, nav, main, form; interactive refs (@e1); display:none skips element+descendants, visibility:hidden suppresses text but keeps structure |
@@ -31,7 +31,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 | Component | Gap |
 |-----------|-----|
-| WPT harness | Step 4 triage in progress — 29/263 passing, 5 failing, 229 ignored |
+| WPT harness | Phase 1 Step 4 done (31/263 passing, 4 failing, 228 ignored). **Phase 2 planned** — 29 agents across 6 waves to implement missing DOM APIs and un-ignore ~135 tests |
 | Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height |
 | WASM sandbox | Not started — engine runs in-process |
 
@@ -229,7 +229,7 @@ Validate DOM implementation against Web Platform Tests (`dom/nodes/`, `dom/event
 | 1 | WPT submodule setup — sparse checkout of `resources`, `dom/nodes`, `dom/events` | DONE |
 | 2 | DOM API gaps — 6 batches of missing APIs needed by WPT tests | DONE |
 | 3 | WPT test harness — `wpt_dom.rs` using libtest-mimic, minimal preamble shim, result extraction via `window.__wpt_results` | DONE |
-| 4 | Run and triage — execute WPT tests, build skip list, fix failures | IN PROGRESS — 29 passing, 5 failing, 229 ignored |
+| 4 | Run and triage — execute WPT tests, build skip list, fix failures | IN PROGRESS — 31 passing, 4 failing, 228 ignored |
 
 **Step 2 details (all 6 batches DONE):**
 - Batch 1: `document.documentElement`, `createComment`, `createDocumentFragment`, `createEvent`
@@ -246,6 +246,122 @@ Validate DOM implementation against Web Platform Tests (`dom/nodes/`, `dom/event
 - Shim: `add_completion_callback(function(tests, status) { window.__wpt_results = tests.map(function(t) { return { name: t.name, status: t.status, message: t.message }; }); });`
 - Status codes: 0=PASS, 1=FAIL, 2=TIMEOUT, 3=NOTRUN
 - Skip tests needing iframes, workers, Range API, Shadow DOM, etc.
+
+### WPT Phase 2: Expanding DOM Conformance (29 agents, 6 waves)
+
+Implement missing DOM APIs to un-ignore ~135 of the 228 ignored WPT tests. Each wave is a group of independent agents that run in parallel. After each wave: remove corresponding skip patterns from `wpt_dom.rs`, run tests, triage new failures.
+
+**Execution phases:**
+
+| Phase | Waves | Agents | Why sequential |
+|-------|-------|--------|----------------|
+| A | Wave 1 | 8 parallel | Foundation — methods that later waves' tests use as setup |
+| B | Wave 2 | 6 parallel | Full-spec compliance — builds on Wave 1 primitives |
+| C | Waves 3+4+5+6 | 15 parallel | All independent — queries, namespaces, document APIs, events |
+
+Total: 29 agents, 3 sequential phases, peak concurrency 15.
+
+**Permanently deferred** (~50 tests, architectural limitations or disproportionate effort):
+- Iframes / cross-document / browsing contexts
+- Shadow DOM
+- MutationObserver (12 tests — Phase 3 candidate)
+- Range / Selection / TreeWalker / NodeIterator
+- Workers
+- Server-side substitution (`.sub.` tests)
+- Activation behavior (checkbox/radio click, form submission, label activation)
+- `window.event` / `window.onerror`
+- FocusEvent / PointerEvent / AnimationEvent / TransitionEvent / KeyEvent
+- Custom elements / `Symbol.unscopables`
+- XML / XHTML / CDATASection / DOMParser
+
+**Wave 1: Core DOM Data Methods (8 agents, all parallel)**
+
+All independent, no cross-dependencies. Each agent adds Rust DomTree methods + JS bindings + removes skip patterns + runs affected tests.
+
+| Agent | What | Target Tests | Key APIs |
+|-------|------|-------------|----------|
+| W1-A | CharacterData interface | CharacterData-{appendData,deleteData,insertData,replaceData,substringData,data,appendChild,remove,surrogates}.html (9) | `data` get/set, `length`, `appendData()`, `deleteData()`, `insertData()`, `replaceData()`, `substringData()` on Text+Comment. IndexSizeError for bad offsets. UTF-16 code unit semantics. |
+| W1-B | ChildNode mixin | ChildNode-{after,before,replaceWith}.html (3) | `before(...nodes)`, `after(...nodes)`, `replaceWith(...nodes)` — variadic, accept Node and string (strings become Text nodes). Works on Element, Text, Comment. |
+| W1-C | ParentNode mixin | ParentNode-{append,prepend,replaceChildren}.html, {append,prepend}-on-Document.html (5) | `append(...nodes)`, `prepend(...nodes)`, `replaceChildren(...nodes)` — variadic, accept Node and string. Works on Element, Document, DocumentFragment. |
+| W1-D | Node comparison | Node-{isEqualNode,isSameNode,compareDocumentPosition}.html (3) | `isEqualNode(other)` — deep equality. `isSameNode(other)` — reference identity. `compareDocumentPosition(other)` — returns bitmask + 6 `DOCUMENT_POSITION_*` constants on Node. |
+| W1-E | Text node methods | Text-{splitText,wholeText}.html (2) | `splitText(offset)` — split text node, insert new node as next sibling. `wholeText` getter — concatenated data of all logically adjacent Text nodes. IndexSizeError for bad offset. |
+| W1-F | insertAdjacentElement/Text | Element-{insertAdjacentElement,insertAdjacentText}.html, insert-adjacent.html (3) | `insertAdjacentElement(pos, el)` — returns el. `insertAdjacentText(pos, text)` — creates Text node. Positions: beforebegin/afterbegin/beforeend/afterend. SyntaxError for invalid pos. |
+| W1-G | Node.normalize + getRootNode | Node-normalize.html, rootNode.html (2) | `normalize()` — merge adjacent Text nodes, remove empty Text nodes. `getRootNode({composed})` — walk parent chain to root (composed crosses shadow boundaries, but Shadow DOM deferred). |
+| W1-H | Node/Text/Comment constructors | Node-constants.html, Text-constructor.html, Comment-constructor.html, Document-{createComment,createTextNode}.html (5) | Node type constants on Node constructor (`Node.ELEMENT_NODE=1`, `TEXT_NODE=3`, etc.). `new Text(data)`, `new Comment(data)` as global constructors. Ensure createComment/createTextNode return proper typed objects. |
+
+**Wave 1 targets: 32 test files. Expected: ~20-25 passing (focused tests likely to fully pass), remainder reveal sub-test gaps.**
+
+**Wave 2: Node Full-Spec Compliance (6 agents, all parallel, after Wave 1)**
+
+| Agent | What | Target Tests | Key APIs |
+|-------|------|-------------|----------|
+| W2-A | textContent + nodeName + nodeValue full spec | Node-{textContent,nodeName,nodeValue}.html (3) | Full spec for all node types: Document→null, Doctype→null, DocumentFragment→concat children, Comment→data, Text→data. nodeValue setter on Text/Comment. nodeName: Document→"#document", DocumentFragment→"#document-fragment", Comment→"#comment", Text→"#text". |
+| W2-B | cloneNode full spec | Node-cloneNode*.html (2-7) | Deep clone all node types including attributes, namespace, doctype info. Clone template contents. Some sub-tests need DOMImplementation (partial pass expected). |
+| W2-C | contains + parentNode + parentElement | Node-{contains,parentNode,parentElement}.html (3) | Full spec edge cases — Document as parent, doctype nodes, detached trees. `parentElement` returns null when parent is Document. `contains(null)` returns false. |
+| W2-D | Node mutation full spec | Node-{appendChild,insertBefore,removeChild,replaceChild}.html (4) | Pre-insertion validation: HierarchyRequestError for invalid parent/child combos (e.g. Element under another Element when parent is Document). DocumentFragment children transfer. Doctype insertion constraints. |
+| W2-E | Node-properties + Element.remove | Node-properties.html, Element-remove.html (2) | Comprehensive property tests across all node types (needs most Wave 1 APIs). `Element.prototype.remove()` — ChildNode mixin on Element. |
+| W2-F | HTMLCollection + NodeList | Element-children.html, ParentNode-children.html, Node-childNodes.html, NodeList-*.html (6-8) | `HTMLCollection` — live, element-only, `length`+`item()`+bracket access. `NodeList` — live for `childNodes`, static for `querySelectorAll`. Iterable (`forEach`/`keys`/`values`/`entries`). |
+
+**Wave 2 targets: 20-27 test files. Expected: ~10-15 passing (complex tests with cross-feature dependencies).**
+
+**Waves 3-6 can all run in parallel (Phase C). No inter-wave dependencies.**
+
+**Wave 3: Query & Selector APIs (4 agents, all parallel)**
+
+| Agent | What | Target Tests | Key APIs |
+|-------|------|-------------|----------|
+| W3-A | querySelector spec fixes | ParentNode-querySelector-All.html, -scope.html, -exclusive.html, -removed-elements.html, -space-and-dash-attribute-value.html, DocumentFragment-querySelectorAll-after-modification.html, query-target-in-load-event.html (7) | Fix: exclude root element from results (root's descendants only). Add `:scope` pseudo-class (matches the context element). Verify static NodeList behavior. |
+| W3-B | CSS selector edge cases | ParentNode-querySelector-{case-insensitive,escapes,namespaces}.html, querySelector-mixed-case.html (4) | Attribute selector case flags (`[attr=val i]` / `[attr=val s]`). CSS escape sequences in selectors. Namespace-aware attribute case sensitivity (HTML=insensitive, SVG=sensitive). |
+| W3-C | getElementsByClassName | Document/Element-getElementsByClassName.html, getElementsByClassName-{32,empty-set,whitespace-class-names}.html (5) | Full spec: multiple class names (space-separated), whitespace handling, live HTMLCollection, case-sensitive matching. |
+| W3-D | getElementsByTagName + matches/closest fixes | Document/Element-getElementsByTagName.html, Element-{matches,closest}.html, case.html (5) | Full spec: live HTMLCollection, wildcard `*`, HTML case-insensitive / non-HTML case-sensitive. Fix `closest()` edge cases. Fix `matches()` edge cases. **Fixes currently-failing Element-closest.html.** |
+
+**Wave 3 targets: 21 test files + 1 currently-failing fix.**
+
+**Wave 4: Namespace & Attribute APIs (3 agents, all parallel)**
+
+| Agent | What | Target Tests | Key APIs |
+|-------|------|-------------|----------|
+| W4-A | Namespace attribute methods | Element-{hasAttribute,hasAttributes,setAttribute,removeAttribute,removeAttributeNS,firstElementChild-namespace,setAttribute-crbug}.html (7) | `setAttributeNS(ns, qname, val)`, `getAttributeNS(ns, localName)`, `hasAttributeNS(ns, localName)`, `removeAttributeNS(ns, localName)`. Namespace + prefix handling on Attribute. Also fix classList validation edge cases. **Fixes currently-failing Element-classlist.html.** |
+| W4-B | Namespace element creation | Document-{createElementNS,createElement-namespace,createElement}.html, Element-tagName.html (3-4) | `document.createElementNS(ns, qualifiedName)`. Namespace validation (InvalidCharacterError, NamespaceError). Prefix handling. `tagName` returns qualified name with correct case per namespace. |
+| W4-C | NamedNodeMap + Attr interface | attributes-namednodemap.html, attributes.html, Document-createAttribute.html (3) | `Element.attributes` returns NamedNodeMap with `getNamedItem(name)`, `setNamedItem(attr)`, `removeNamedItem(name)`, `item(index)`, `length`. Attr node: `name`, `value`, `namespaceURI`, `prefix`, `localName`, `ownerElement`. `document.createAttribute(name)`. |
+
+**Wave 4 targets: 14 test files + 1 currently-failing fix.**
+
+**Wave 5: Document APIs & DOMImplementation (4 agents, all parallel)**
+
+| Agent | What | Target Tests | Key APIs |
+|-------|------|-------------|----------|
+| W5-A | DOMImplementation | DOMImplementation-{createDocument,createHTMLDocument,createDocumentType,hasFeature,*crash}.html, Document-implementation.html (8) | `document.implementation` object. `createHTMLDocument(title)` — returns new Document with doctype+html+head+title+body. `createDocument(ns, qname, doctype)` — returns XMLDocument. `createDocumentType(qname, publicId, systemId)`. `hasFeature()` — always returns true. |
+| W5-B | Document metadata | Document-{URL,doctype,getElementById,characterSet-*}.html, Node-baseURI.html (5-6) | `Document.URL` (getter, default "about:blank"). `Document.doctype` (returns first Doctype child or null). `Document.characterSet` (returns "UTF-8"). `Node.baseURI` (returns document URL). Full `getElementById` spec (first in tree order, dynamic id changes). |
+| W5-C | Document constructors + adoptNode | Document-constructor.html, DocumentFragment-{constructor,getElementById}.html, Document-{adoptNode,importNode}.html (5) | `new Document()` global constructor. `new DocumentFragment()` global constructor. `document.adoptNode(node)` — change ownerDocument, remove from old parent. `document.importNode(node, deep)` — clone into this document. |
+| W5-D | DocumentType interface | DocumentType-{literal,remove}.html, DOMTokenList-coverage.html (2-3) | DocumentType: `name`, `publicId`, `systemId` as JS-visible properties. `DocumentType.remove()` (ChildNode mixin). DOMTokenList: `value` property, `replace()`, `supports()`, `toString()`, validation (SyntaxError for empty/whitespace tokens). |
+
+**Wave 5 targets: 20-22 test files.**
+
+**Wave 6: Event System Enhancements (4 agents, all parallel)**
+
+| Agent | What | Target Tests | Key APIs |
+|-------|------|-------------|----------|
+| W6-A | Event dispatch edge cases | Event-dispatch-{target-moved,target-removed,handlers-changed,reenter,multiple-cancelBubble,multiple-stopPropagation}.html, Event-{propagation,stopPropagation-cancel-bubbling,stopImmediatePropagation}.html, remove-all-listeners.html (10) | Snapshot event propagation path at dispatch start (target moving/removal doesn't change path). Snapshot listener list per-node before invoking. Support re-entrant dispatch (dispatch inside listener). Fix propagation flag edge cases across multiple dispatches. |
+| W6-B | EventTarget constructor + isTrusted | EventTarget-{constructible,addEventListener,add-remove-listener,removeEventListener,dispatchEvent,add-listener-platform-object}.{any.js,html}, AddEventListenerOptions-{once,passive}.any.js, EventListenerOptions-capture.html (9) | Standalone `new EventTarget()` constructor — no DOM node, just event support. Full `once`/`passive`/`capture` option handling. `isTrusted` as unforgeable own accessor property (not prototype property). **Fixes currently-failing Event-isTrusted.any.js.** |
+| W6-C | Event subclasses + createEvent | Event-subclasses-constructors.html, Document-createEvent{,.https}.html, Event-dispatch-{bubbles-true,bubbles-false}.html (5) | UIEvent, MouseEvent, KeyboardEvent, FocusEvent, WheelEvent, CompositionEvent constructors with proper property defaults. `document.createEvent(interface)` — case-insensitive alias matching for all legacy event types. |
+| W6-D | EventTarget this + timestamp | EventTarget-this-of-listener.html, Event-dispatch-omitted-capture.html, Event-timestamp-*.html (4-5) | Proper `this` binding in function listeners (bound to currentTarget). handleEvent protocol (listener object with `handleEvent()` method, re-looked-up each dispatch). `event.timeStamp` returns `DOMHighResTimeStamp` (monotonic ms, use `performance.now()` stub). |
+
+**Wave 6 targets: 28-29 test files + 1 currently-failing fix.**
+
+**WPT Phase 2 summary:**
+
+| Metric | Count |
+|--------|-------|
+| Total agents | 29 |
+| Total waves | 6 |
+| Sequential phases | 3 (A→B→C) |
+| Peak concurrency | 15 (Phase C) |
+| Test files targeted | ~135 |
+| Currently-failing tests fixed | 3 (Element-closest, Element-classlist, Event-isTrusted) |
+| Expected new passing tests | 60-100 (many tests have sub-tests needing cross-wave features) |
+| Estimated final passing | ~95-135 / 263 (36-51%) |
+| Permanently deferred | ~50 tests |
 
 ## Core Thesis
 
@@ -443,7 +559,7 @@ Must support: clicking links/buttons, filling form inputs, selecting dropdowns, 
   - Git submodule at `tests/wpt/` with sparse checkout: `resources`, `dom/nodes`, `dom/events`
   - 164 HTML test files in `dom/nodes/`, 78 in `dom/events/`
   - jsdom's `to-run.yaml` provides a curated roadmap of which tests are feasible for non-browser DOM implementations
-  - **Phase 1 IN PROGRESS** — Steps 1-3 done, Step 4 (triage) in progress — 29/263 passing, 5 failing, 229 ignored
+  - **Phase 1 IN PROGRESS** — Steps 1-3 done, Step 4 (triage) in progress — 31/263 passing, 4 failing, 228 ignored
   - Future phases: `html/dom/`, `css/selectors/`
 - **html5lib-tests** — integrated as git submodule at `tests/html5lib-tests/`
   - **Tree-construction:** 1778 test cases from 56 `.dat` files, run via `cargo test --test html5lib_tree_construction`

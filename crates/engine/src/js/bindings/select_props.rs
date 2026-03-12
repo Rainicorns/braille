@@ -8,7 +8,7 @@ use boa_engine::{
 };
 
 use crate::dom::{DomTree, NodeData, NodeId};
-use super::element::JsElement;
+use super::element::{JsElement, get_or_create_js_element};
 
 // ---------------------------------------------------------------------------
 // Helper: get all <option> children of a node
@@ -131,8 +131,7 @@ fn get_options(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult
     let options = get_option_children(&tree_rc.borrow(), node_id);
     let arr = JsArray::new(ctx);
     for opt_id in options {
-        let element = JsElement::new(opt_id, tree_rc.clone());
-        let js_obj = JsElement::from_data(element, ctx)?;
+        let js_obj = get_or_create_js_element(opt_id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
     Ok(arr.into())

@@ -15,7 +15,7 @@ use crate::css::matching;
 use crate::dom::node::NodeData;
 use crate::dom::{DomTree, NodeId};
 
-use super::element::JsElement;
+use super::element::{JsElement, get_or_create_js_element};
 
 // ---------------------------------------------------------------------------
 // Helper functions for collecting elements by class name and tag name
@@ -114,8 +114,7 @@ fn element_query_selector(
 
     match result {
         Some(found_id) => {
-            let element = JsElement::new(found_id, tree_rc);
-            let js_obj = JsElement::from_data(element, ctx)?;
+            let js_obj = get_or_create_js_element(found_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -154,8 +153,7 @@ fn element_query_selector_all(
 
     let arr = JsArray::new(ctx);
     for found_id in results {
-        let element = JsElement::new(found_id, tree_rc.clone());
-        let js_obj = JsElement::from_data(element, ctx)?;
+        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
     Ok(arr.into())
@@ -193,8 +191,7 @@ fn element_get_elements_by_class_name(
 
     let arr = JsArray::new(ctx);
     for found_id in results {
-        let element = JsElement::new(found_id, tree_rc.clone());
-        let js_obj = JsElement::from_data(element, ctx)?;
+        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
     Ok(arr.into())
@@ -232,8 +229,7 @@ fn element_get_elements_by_tag_name(
 
     let arr = JsArray::new(ctx);
     for found_id in results {
-        let element = JsElement::new(found_id, tree_rc.clone());
-        let js_obj = JsElement::from_data(element, ctx)?;
+        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
     Ok(arr.into())
@@ -277,8 +273,7 @@ pub(crate) fn document_query_selector(
 
     match result {
         Some(found_id) => {
-            let element = JsElement::new(found_id, tree_rc);
-            let js_obj = JsElement::from_data(element, ctx)?;
+            let js_obj = get_or_create_js_element(found_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -317,8 +312,7 @@ pub(crate) fn document_query_selector_all(
 
     let arr = JsArray::new(ctx);
     for found_id in results {
-        let element = JsElement::new(found_id, tree_rc.clone());
-        let js_obj = JsElement::from_data(element, ctx)?;
+        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
     Ok(arr.into())
@@ -356,8 +350,7 @@ pub(crate) fn document_get_elements_by_class_name(
 
     let arr = JsArray::new(ctx);
     for found_id in results {
-        let element = JsElement::new(found_id, tree_rc.clone());
-        let js_obj = JsElement::from_data(element, ctx)?;
+        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
     Ok(arr.into())
@@ -395,8 +388,7 @@ pub(crate) fn document_get_elements_by_tag_name(
 
     let arr = JsArray::new(ctx);
     for found_id in results {
-        let element = JsElement::new(found_id, tree_rc.clone());
-        let js_obj = JsElement::from_data(element, ctx)?;
+        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
     Ok(arr.into())
@@ -456,8 +448,7 @@ fn element_closest(
         if matches!(tree.get_node(current).data, NodeData::Element { .. }) {
             if matching::matches_selector_str(&tree, current, &selector) {
                 drop(tree);
-                let element = JsElement::new(current, tree_rc);
-                let js_obj = JsElement::from_data(element, ctx)?;
+                let js_obj = get_or_create_js_element(current, tree_rc, ctx)?;
                 return Ok(js_obj.into());
             }
         }

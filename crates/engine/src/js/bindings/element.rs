@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use boa_engine::{
@@ -15,6 +16,101 @@ use crate::dom::{DomTree, NodeData, NodeId};
 use super::class_list::JsClassList;
 use super::event::JsEvent;
 use super::event_target::{ListenerEntry, EVENT_LISTENERS};
+
+// ---------------------------------------------------------------------------
+// NodeId -> JsObject cache (thread-local, same pattern as EVENT_LISTENERS)
+// ---------------------------------------------------------------------------
+
+pub(crate) type NodeCache = HashMap<NodeId, JsObject>;
+
+thread_local! {
+    pub(crate) static NODE_CACHE: RefCell<Option<Rc<RefCell<NodeCache>>>> = const { RefCell::new(None) };
+}
+
+// ---------------------------------------------------------------------------
+// DOM tree thread-local (used by Text/Comment constructors)
+// ---------------------------------------------------------------------------
+thread_local! {
+    pub(crate) static DOM_TREE: RefCell<Option<Rc<RefCell<DomTree>>>> = const { RefCell::new(None) };
+}
+
+// ---------------------------------------------------------------------------
+// Prototype objects for proper instanceof support
+// (Node.prototype -> CharacterData.prototype -> Text.prototype / Comment.prototype)
+// ---------------------------------------------------------------------------
+
+/// Holds the prototype objects for DOM node types.
+/// Stored in a thread-local so get_or_create_js_element can assign the right prototype.
+#[derive(Clone)]
+pub(crate) struct DomPrototypes {
+    pub(crate) text_proto: JsObject,
+    pub(crate) comment_proto: JsObject,
+}
+
+thread_local! {
+    pub(crate) static DOM_PROTOTYPES: RefCell<Option<DomPrototypes>> = const { RefCell::new(None) };
+}
+
+/// Look up or create the JsObject wrapper for a given NodeId.
+/// Returns the same JsObject every time for the same NodeId, preserving `===` identity.
+/// For Text and Comment nodes, sets the prototype to Text.prototype / Comment.prototype
+/// so that `instanceof` checks work correctly.
+pub(crate) fn get_or_create_js_element(
+    node_id: NodeId,
+    tree: Rc<RefCell<DomTree>>,
+    ctx: &mut Context,
+) -> JsResult<JsObject> {
+    // Check cache first
+    let cached = NODE_CACHE.with(|cell| {
+        let rc = cell.borrow();
+        let cache_rc = rc.as_ref().expect("NODE_CACHE not initialized");
+        let cache = cache_rc.borrow();
+        cache.get(&node_id).cloned()
+    });
+
+    if let Some(obj) = cached {
+        return Ok(obj);
+    }
+
+    // Determine node type before creating the object
+    let node_data_kind = {
+        let tree_ref = tree.borrow();
+        let node = tree_ref.get_node(node_id);
+        match &node.data {
+            NodeData::Text { .. } => 1u8,
+            NodeData::Comment { .. } => 2u8,
+            _ => 0u8,
+        }
+    };
+
+    // Cache miss — create and store
+    let element = JsElement::new(node_id, tree);
+    let js_obj = JsElement::from_data(element, ctx)?;
+
+    // Set the right prototype for Text/Comment nodes (for instanceof support)
+    if node_data_kind == 1 || node_data_kind == 2 {
+        DOM_PROTOTYPES.with(|cell| {
+            let protos = cell.borrow();
+            if let Some(ref p) = *protos {
+                let proto = if node_data_kind == 1 {
+                    &p.text_proto
+                } else {
+                    &p.comment_proto
+                };
+                js_obj.set_prototype(Some(proto.clone()));
+            }
+        });
+    }
+
+    NODE_CACHE.with(|cell| {
+        let rc = cell.borrow();
+        let cache_rc = rc.as_ref().expect("NODE_CACHE not initialized");
+        let mut cache = cache_rc.borrow_mut();
+        cache.insert(node_id, js_obj.clone());
+    });
+
+    Ok(js_obj)
+}
 
 // ---------------------------------------------------------------------------
 // JsElement — the Class-based wrapper around a DomTree node
@@ -126,6 +222,88 @@ impl JsElement {
         let tree = el.tree.clone();
         tree.borrow_mut().remove_from_parent(node_id);
         Ok(JsValue::undefined())
+    }
+
+    /// Native implementation of node.isEqualNode(other)
+    fn is_equal_node(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let this_obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("isEqualNode: `this` is not an object").into()))?;
+        let el = this_obj
+            .downcast_ref::<JsElement>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("isEqualNode: `this` is not an Element").into()))?;
+        let this_id = el.node_id;
+        let tree = el.tree.clone();
+
+        let other_val = match args.first() {
+            Some(v) if !v.is_null() && !v.is_undefined() => v,
+            _ => return Ok(JsValue::from(false)),
+        };
+        let other_obj = match other_val.as_object() {
+            Some(o) => o,
+            None => return Ok(JsValue::from(false)),
+        };
+        let other_el = match other_obj.downcast_ref::<JsElement>() {
+            Some(e) => e,
+            None => return Ok(JsValue::from(false)),
+        };
+        let other_id = other_el.node_id;
+
+        let result = tree.borrow().is_equal_node(this_id, other_id);
+        Ok(JsValue::from(result))
+    }
+
+    /// Native implementation of node.isSameNode(other)
+    fn is_same_node(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let this_obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("isSameNode: `this` is not an object").into()))?;
+        let el = this_obj
+            .downcast_ref::<JsElement>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("isSameNode: `this` is not an Element").into()))?;
+        let this_id = el.node_id;
+
+        let other_val = match args.first() {
+            Some(v) if !v.is_null() && !v.is_undefined() => v,
+            _ => return Ok(JsValue::from(false)),
+        };
+        let other_obj = match other_val.as_object() {
+            Some(o) => o,
+            None => return Ok(JsValue::from(false)),
+        };
+        let other_el = match other_obj.downcast_ref::<JsElement>() {
+            Some(e) => e,
+            None => return Ok(JsValue::from(false)),
+        };
+        let other_id = other_el.node_id;
+
+        Ok(JsValue::from(this_id == other_id))
+    }
+
+    /// Native implementation of node.compareDocumentPosition(other)
+    fn compare_document_position(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let this_obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("compareDocumentPosition: `this` is not an object").into()))?;
+        let el = this_obj
+            .downcast_ref::<JsElement>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("compareDocumentPosition: `this` is not an Element").into()))?;
+        let this_id = el.node_id;
+        let tree = el.tree.clone();
+
+        let other_val = args
+            .first()
+            .ok_or_else(|| JsError::from_opaque(js_string!("compareDocumentPosition: missing argument").into()))?;
+        let other_obj = other_val
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("compareDocumentPosition: argument is not an object").into()))?;
+        let other_el = other_obj
+            .downcast_ref::<JsElement>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("compareDocumentPosition: argument is not an Element").into()))?;
+        let other_id = other_el.node_id;
+
+        let result = tree.borrow().compare_document_position(this_id, other_id);
+        Ok(JsValue::from(result as i32))
     }
 
     /// Native implementation of element.contains(other)
@@ -384,10 +562,9 @@ impl JsElement {
         Self::set_event_prop(&event_obj, "target", this.clone(), ctx)?;
         Self::set_event_prop(&event_obj, "srcElement", this.clone(), ctx)?;
 
-        // Helper: create a JsElement JS object for a given NodeId
+        // Helper: create a JsElement JS object for a given NodeId (uses cache)
         let make_js_element = |node_id: NodeId, ctx: &mut Context| -> JsResult<JsObject> {
-            let element = JsElement::new(node_id, tree.clone());
-            JsElement::from_data(element, ctx)
+            get_or_create_js_element(node_id, tree.clone(), ctx)
         };
 
         // Helper macro-like closure: set phase/current_target on either event type
@@ -679,6 +856,9 @@ impl Class for JsElement {
         // Register common HTMLElement properties (tabIndex, title, lang, dir, getBoundingClientRect, focus, blur, click)
         super::html_element::register_html_element(class)?;
 
+        // Register CharacterData properties and methods (data, length, appendData, etc.)
+        super::character_data::register_character_data(class)?;
+
         // remove() method
         class.method(
             js_string!("remove"),
@@ -691,6 +871,23 @@ impl Class for JsElement {
             js_string!("contains"),
             1,
             NativeFunction::from_fn_ptr(Self::contains),
+        );
+
+        // isEqualNode / isSameNode / compareDocumentPosition
+        class.method(
+            js_string!("isEqualNode"),
+            1,
+            NativeFunction::from_fn_ptr(Self::is_equal_node),
+        );
+        class.method(
+            js_string!("isSameNode"),
+            1,
+            NativeFunction::from_fn_ptr(Self::is_same_node),
+        );
+        class.method(
+            js_string!("compareDocumentPosition"),
+            1,
+            NativeFunction::from_fn_ptr(Self::compare_document_position),
         );
 
         // addEventListener / removeEventListener / dispatchEvent

@@ -7,7 +7,7 @@ use boa_engine::{
     Context, JsError, JsResult, JsValue,
 };
 
-use super::element::JsElement;
+use super::element::{JsElement, get_or_create_js_element};
 
 /// Registers all traversal properties on the Element class.
 pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
@@ -92,6 +92,13 @@ pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
         NativeFunction::from_fn_ptr(has_child_nodes),
     );
 
+    // getRootNode() method
+    class.method(
+        js_string!("getRootNode"),
+        0,
+        NativeFunction::from_fn_ptr(get_root_node),
+    );
+
     // firstElementChild getter
     let first_element_child_getter = NativeFunction::from_fn_ptr(get_first_element_child);
     class.accessor(
@@ -151,9 +158,9 @@ fn get_parent_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
     let tree = el.tree.borrow();
     match tree.get_parent(el.node_id) {
         Some(parent_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let parent = JsElement::new(parent_id, el.tree.clone());
-            let js_obj = JsElement::from_data(parent, ctx)?;
+            let js_obj = get_or_create_js_element(parent_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -172,9 +179,9 @@ fn get_parent_element(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> J
     let tree = el.tree.borrow();
     match tree.parent_element(el.node_id) {
         Some(parent_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let parent = JsElement::new(parent_id, el.tree.clone());
-            let js_obj = JsElement::from_data(parent, ctx)?;
+            let js_obj = get_or_create_js_element(parent_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -192,9 +199,9 @@ fn get_first_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
     let tree = el.tree.borrow();
     match tree.first_child(el.node_id) {
         Some(child_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let child = JsElement::new(child_id, el.tree.clone());
-            let js_obj = JsElement::from_data(child, ctx)?;
+            let js_obj = get_or_create_js_element(child_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -212,9 +219,9 @@ fn get_last_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
     let tree = el.tree.borrow();
     match tree.last_child(el.node_id) {
         Some(child_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let child = JsElement::new(child_id, el.tree.clone());
-            let js_obj = JsElement::from_data(child, ctx)?;
+            let js_obj = get_or_create_js_element(child_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -232,9 +239,9 @@ fn get_next_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsR
     let tree = el.tree.borrow();
     match tree.next_sibling(el.node_id) {
         Some(sibling_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let sibling = JsElement::new(sibling_id, el.tree.clone());
-            let js_obj = JsElement::from_data(sibling, ctx)?;
+            let js_obj = get_or_create_js_element(sibling_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -252,9 +259,9 @@ fn get_previous_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) ->
     let tree = el.tree.borrow();
     match tree.prev_sibling(el.node_id) {
         Some(sibling_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let sibling = JsElement::new(sibling_id, el.tree.clone());
-            let js_obj = JsElement::from_data(sibling, ctx)?;
+            let js_obj = get_or_create_js_element(sibling_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -277,8 +284,7 @@ fn get_child_nodes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
 
     let arr = JsArray::new(ctx);
     for child_id in children {
-        let child = JsElement::new(child_id, tree_rc.clone());
-        let js_obj = JsElement::from_data(child, ctx)?;
+        let js_obj = get_or_create_js_element(child_id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
     Ok(arr.into())
@@ -300,8 +306,7 @@ fn get_children(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResul
 
     let arr = JsArray::new(ctx);
     for child_id in element_children {
-        let child = JsElement::new(child_id, tree_rc.clone());
-        let js_obj = JsElement::from_data(child, ctx)?;
+        let js_obj = get_or_create_js_element(child_id, tree_rc.clone(), ctx)?;
         arr.push(js_obj, ctx)?;
     }
     Ok(arr.into())
@@ -321,6 +326,38 @@ fn has_child_nodes(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsR
     Ok(JsValue::from(has_children))
 }
 
+/// Native method for node.getRootNode(options?)
+/// Walks parent chain to root. Options.composed is accepted but ignored (no Shadow DOM).
+/// When the root is the Document node, returns the global `document` object to preserve identity.
+fn get_root_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getRootNode: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getRootNode: `this` is not an Element").into()))?;
+    let tree_rc = el.tree.clone();
+    let root_id = {
+        let tree = tree_rc.borrow();
+        tree.root_of(el.node_id)
+    };
+
+    // If the root is the Document node, return the global `document` object
+    // so that `element.getRootNode() === document` holds true.
+    {
+        let tree = tree_rc.borrow();
+        if matches!(tree.get_node(root_id).data, crate::dom::NodeData::Document) {
+            drop(tree);
+            let global = ctx.global_object();
+            let doc = global.get(js_string!("document"), ctx)?;
+            return Ok(doc);
+        }
+    }
+
+    let js_obj = get_or_create_js_element(root_id, tree_rc, ctx)?;
+    Ok(js_obj.into())
+}
+
 /// Native getter for element.firstElementChild
 fn get_first_element_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
@@ -333,9 +370,9 @@ fn get_first_element_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context)
     let element_kids = tree.element_children(el.node_id);
     match element_kids.first().copied() {
         Some(child_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let child = JsElement::new(child_id, el.tree.clone());
-            let js_obj = JsElement::from_data(child, ctx)?;
+            let js_obj = get_or_create_js_element(child_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -354,9 +391,9 @@ fn get_last_element_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) 
     let element_kids = tree.element_children(el.node_id);
     match element_kids.last().copied() {
         Some(child_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let child = JsElement::new(child_id, el.tree.clone());
-            let js_obj = JsElement::from_data(child, ctx)?;
+            let js_obj = get_or_create_js_element(child_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -374,9 +411,9 @@ fn get_next_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context
     let tree = el.tree.borrow();
     match tree.next_sibling_element(el.node_id) {
         Some(sibling_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let sibling = JsElement::new(sibling_id, el.tree.clone());
-            let js_obj = JsElement::from_data(sibling, ctx)?;
+            let js_obj = get_or_create_js_element(sibling_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
@@ -394,9 +431,9 @@ fn get_previous_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Con
     let tree = el.tree.borrow();
     match tree.prev_sibling_element(el.node_id) {
         Some(sibling_id) => {
+            let tree_rc = el.tree.clone();
             drop(tree);
-            let sibling = JsElement::new(sibling_id, el.tree.clone());
-            let js_obj = JsElement::from_data(sibling, ctx)?;
+            let js_obj = get_or_create_js_element(sibling_id, tree_rc, ctx)?;
             Ok(js_obj.into())
         }
         None => Ok(JsValue::null()),
