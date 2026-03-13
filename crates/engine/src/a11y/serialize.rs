@@ -52,7 +52,7 @@ fn walk(
             // Text and Comment nodes are never rendered on their own;
             // text content is collected by the parent element's role line.
         }
-        NodeData::Doctype { .. } | NodeData::DocumentFragment => {}
+        NodeData::Doctype { .. } | NodeData::DocumentFragment | NodeData::ProcessingInstruction { .. } | NodeData::Attr { .. } => {}
         NodeData::Element {
             tag_name,
             attributes,

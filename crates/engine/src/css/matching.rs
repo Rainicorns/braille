@@ -35,13 +35,100 @@ impl<'a> DomElement<'a> {
             None
         }
     }
+
+    /// Checks if this form element (input/textarea/select) is invalid.
+    /// Invalid means: has `required` attribute and the value is empty.
+    fn is_form_element_invalid(&self) -> bool {
+        let tag = match self.tag_name() {
+            Some(t) => t,
+            None => return false,
+        };
+        match tag {
+            "input" | "textarea" => {
+                if !self.tree.has_attribute(self.node_id, "required") {
+                    return false;
+                }
+                // Check if value is empty
+                let value = self.tree.get_attribute(self.node_id, "value").unwrap_or_default();
+                value.is_empty()
+            }
+            "select" => {
+                if !self.tree.has_attribute(self.node_id, "required") {
+                    return false;
+                }
+                // A required select is invalid if its value is empty.
+                // The value comes from the selected option's value attribute (or its text content).
+                // For this minimal implementation: check if there's a selected option with non-empty value.
+                !self.has_selected_option_with_value()
+            }
+            _ => false,
+        }
+    }
+
+    /// Checks if a select element has a selected option with a non-empty value.
+    fn has_selected_option_with_value(&self) -> bool {
+        self.check_options_recursive(self.node_id)
+    }
+
+    /// Recursively check children for <option selected> with non-empty value.
+    fn check_options_recursive(&self, node_id: NodeId) -> bool {
+        let node = self.tree.get_node(node_id);
+        for &child_id in &node.children {
+            let child = self.tree.get_node(child_id);
+            if let NodeData::Element { ref tag_name, .. } = child.data {
+                if tag_name == "option" && self.tree.has_attribute(child_id, "selected") {
+                    // Check the option's value attribute; if not present, use text content
+                    let value = self.tree.get_attribute(child_id, "value")
+                        .unwrap_or_else(|| self.tree.get_text_content(child_id));
+                    if !value.is_empty() {
+                        return true;
+                    }
+                }
+                // Recurse into optgroup etc.
+                if self.check_options_recursive(child_id) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Checks if this element has any descendant form elements that are invalid.
+    fn has_invalid_descendant(&self) -> bool {
+        self.check_invalid_descendants(self.node_id)
+    }
+
+    /// Recursively walk descendants looking for invalid form elements.
+    fn check_invalid_descendants(&self, node_id: NodeId) -> bool {
+        let node = self.tree.get_node(node_id);
+        for &child_id in &node.children {
+            let child = self.tree.get_node(child_id);
+            if let NodeData::Element { ref tag_name, .. } = child.data {
+                if matches!(tag_name.as_str(), "input" | "textarea" | "select") {
+                    let child_elem = DomElement::new(self.tree, child_id);
+                    if child_elem.is_form_element_invalid() {
+                        return true;
+                    }
+                }
+                // Recurse into children
+                if self.check_invalid_descendants(child_id) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 impl<'a> Element for DomElement<'a> {
     type Impl = BrailleSelectorImpl;
 
     fn opaque(&self) -> OpaqueElement {
-        OpaqueElement::new(self)
+        // Use the stable address of the node in the arena, not the stack-allocated DomElement.
+        // This ensures that two DomElements wrapping the same node_id in the same tree
+        // produce the same OpaqueElement, which is needed for :scope matching.
+        let node_ref = self.tree.get_node(self.node_id);
+        OpaqueElement::new(node_ref)
     }
 
     fn parent_element(&self) -> Option<Self> {
@@ -115,9 +202,15 @@ impl<'a> Element for DomElement<'a> {
         local_name: &CssString,
         operation: &selectors::attr::AttrSelectorOperation<&CssString>,
     ) -> bool {
-        // We don't support namespaced attributes
-        if !matches!(ns, selectors::attr::NamespaceConstraint::Any) {
-            return false;
+        // Allow Any namespace, or Specific with empty namespace (null namespace).
+        // Only reject non-empty specific namespaces since we don't store namespaced attributes.
+        match ns {
+            selectors::attr::NamespaceConstraint::Any => {}
+            selectors::attr::NamespaceConstraint::Specific(ns_url) => {
+                if !ns_url.0.is_empty() {
+                    return false;
+                }
+            }
         }
 
         let attr_value = match self.tree.get_attribute(self.node_id, &local_name.0) {
@@ -131,9 +224,15 @@ impl<'a> Element for DomElement<'a> {
     fn match_non_ts_pseudo_class(
         &self,
         pseudo: &PseudoClass,
-        _context: &mut MatchingContext<Self::Impl>,
+        context: &mut MatchingContext<Self::Impl>,
     ) -> bool {
         match pseudo {
+            PseudoClass::Scope => {
+                match context.scope_element {
+                    Some(scope) => self.opaque() == scope,
+                    None => self.tree.is_root_element(self.node_id),
+                }
+            }
             PseudoClass::Root => self.tree.is_root_element(self.node_id),
             PseudoClass::Empty => self.is_empty(),
             PseudoClass::Link => self.is_link(),
@@ -214,6 +313,28 @@ impl<'a> Element for DomElement<'a> {
                         && !self.tree.has_attribute(self.node_id, "disabled")
                 } else {
                     false
+                }
+            }
+            PseudoClass::Invalid => {
+                match self.tag_name() {
+                    Some("input") | Some("textarea") | Some("select") => {
+                        self.is_form_element_invalid()
+                    }
+                    Some("fieldset") | Some("form") => {
+                        self.has_invalid_descendant()
+                    }
+                    _ => false,
+                }
+            }
+            PseudoClass::Valid => {
+                match self.tag_name() {
+                    Some("input") | Some("textarea") | Some("select") => {
+                        !self.is_form_element_invalid()
+                    }
+                    Some("fieldset") | Some("form") => {
+                        !self.has_invalid_descendant()
+                    }
+                    _ => false,
                 }
             }
         }
@@ -321,13 +442,14 @@ impl<'a> Element for DomElement<'a> {
 /// * `tree` - The DOM tree to search
 /// * `root` - The NodeId to start searching from (searches descendants)
 /// * `selector` - The CSS selector string to match
-pub fn query_selector(tree: &DomTree, root: NodeId, selector: &str) -> Option<NodeId> {
+pub fn query_selector(tree: &DomTree, root: NodeId, selector: &str, scope_node_id: Option<NodeId>) -> Option<NodeId> {
     // Parse the selector
     let mut parser_input = ParserInput::new(selector);
     let mut parser = CssParser::new(&mut parser_input);
     let selector_list = SelectorList::parse(&BrailleSelectorParser, &mut parser, ParseRelative::No).ok()?;
 
-    // Create matching context
+    // Create matching context with scope
+    let scope_opaque = scope_node_id.map(|id| DomElement::new(tree, id).opaque());
     let mut caches = SelectorCaches::default();
     let mut context = MatchingContext::new(
         MatchingMode::Normal,
@@ -337,6 +459,7 @@ pub fn query_selector(tree: &DomTree, root: NodeId, selector: &str) -> Option<No
         NeedsSelectorFlags::No,
         MatchingForInvalidation::No,
     );
+    context.scope_element = scope_opaque;
 
     // Walk descendants and find first match
     find_first_match(tree, root, &selector_list, &mut context)
@@ -350,7 +473,7 @@ pub fn query_selector(tree: &DomTree, root: NodeId, selector: &str) -> Option<No
 /// * `tree` - The DOM tree to search
 /// * `root` - The NodeId to start searching from (searches descendants)
 /// * `selector` - The CSS selector string to match
-pub fn query_selector_all(tree: &DomTree, root: NodeId, selector: &str) -> Vec<NodeId> {
+pub fn query_selector_all(tree: &DomTree, root: NodeId, selector: &str, scope_node_id: Option<NodeId>) -> Vec<NodeId> {
     // Parse the selector
     let mut parser_input = ParserInput::new(selector);
     let mut parser = CssParser::new(&mut parser_input);
@@ -359,7 +482,8 @@ pub fn query_selector_all(tree: &DomTree, root: NodeId, selector: &str) -> Vec<N
         Err(_) => return vec![],
     };
 
-    // Create matching context
+    // Create matching context with scope
+    let scope_opaque = scope_node_id.map(|id| DomElement::new(tree, id).opaque());
     let mut caches = SelectorCaches::default();
     let mut context = MatchingContext::new(
         MatchingMode::Normal,
@@ -369,13 +493,14 @@ pub fn query_selector_all(tree: &DomTree, root: NodeId, selector: &str) -> Vec<N
         NeedsSelectorFlags::No,
         MatchingForInvalidation::No,
     );
+    context.scope_element = scope_opaque;
 
     // Walk descendants and collect all matches
     find_all_matches(tree, root, &selector_list, &mut context)
 }
 
 /// Tests if a single element matches the given CSS selector string.
-pub fn matches_selector_str(tree: &DomTree, node_id: NodeId, selector: &str) -> bool {
+pub fn matches_selector_str(tree: &DomTree, node_id: NodeId, selector: &str, scope_node_id: Option<NodeId>) -> bool {
     let node = tree.get_node(node_id);
     if !matches!(node.data, NodeData::Element { .. }) {
         return false;
@@ -388,6 +513,7 @@ pub fn matches_selector_str(tree: &DomTree, node_id: NodeId, selector: &str) -> 
         Err(_) => return false,
     };
 
+    let scope_opaque = scope_node_id.map(|id| DomElement::new(tree, id).opaque());
     let mut caches = SelectorCaches::default();
     let mut context = MatchingContext::new(
         MatchingMode::Normal,
@@ -397,6 +523,7 @@ pub fn matches_selector_str(tree: &DomTree, node_id: NodeId, selector: &str) -> 
         NeedsSelectorFlags::No,
         MatchingForInvalidation::No,
     );
+    context.scope_element = scope_opaque;
 
     let element = DomElement::new(tree, node_id);
     for selector in selector_list.slice().iter() {
@@ -538,7 +665,7 @@ mod tests {
         let tree = setup_test_tree();
         let body = tree.body().expect("body should exist");
 
-        let result = query_selector(&tree, body, "p");
+        let result = query_selector(&tree, body, "p", None);
         assert!(result.is_some());
 
         // Should find the first <p> element
@@ -555,7 +682,7 @@ mod tests {
         let tree = setup_test_tree();
         let body = tree.body().expect("body should exist");
 
-        let result = query_selector(&tree, body, ".highlight");
+        let result = query_selector(&tree, body, ".highlight", None);
         assert!(result.is_some());
 
         let node_id = result.unwrap();
@@ -567,7 +694,7 @@ mod tests {
         let tree = setup_test_tree();
         let body = tree.body().expect("body should exist");
 
-        let result = query_selector(&tree, body, "#first");
+        let result = query_selector(&tree, body, "#first", None);
         assert!(result.is_some());
 
         let node_id = result.unwrap();
@@ -579,7 +706,7 @@ mod tests {
         let tree = setup_test_tree();
         let body = tree.body().expect("body should exist");
 
-        let results = query_selector_all(&tree, body, "p");
+        let results = query_selector_all(&tree, body, "p", None);
         assert_eq!(results.len(), 3); // Three <p> elements in the tree
 
         // All should be <p> elements
@@ -598,7 +725,7 @@ mod tests {
         let tree = setup_test_tree();
         let body = tree.body().expect("body should exist");
 
-        let result = query_selector(&tree, body, ".nonexistent");
+        let result = query_selector(&tree, body, ".nonexistent", None);
         assert!(result.is_none());
     }
 
@@ -608,7 +735,7 @@ mod tests {
         let body = tree.body().expect("body should exist");
 
         // Select span inside .container
-        let result = query_selector(&tree, body, ".container span");
+        let result = query_selector(&tree, body, ".container span", None);
         assert!(result.is_some());
 
         let node = tree.get_node(result.unwrap());
@@ -624,7 +751,7 @@ mod tests {
         let tree = setup_test_tree();
         let body = tree.body().expect("body should exist");
 
-        let results = query_selector_all(&tree, body, "div");
+        let results = query_selector_all(&tree, body, "div", None);
         assert_eq!(results.len(), 2); // Two <div> elements
     }
 
@@ -644,7 +771,7 @@ mod tests {
         let body = tree.body().expect("body should exist");
 
         // Find element with class
-        let result = query_selector(&tree, body, ".container");
+        let result = query_selector(&tree, body, ".container", None);
         assert!(result.is_some());
 
         let elem = DomElement::new(&tree, result.unwrap());
@@ -657,7 +784,7 @@ mod tests {
         let tree = setup_test_tree();
         let body = tree.body().expect("body should exist");
 
-        let result = query_selector(&tree, body, "#first");
+        let result = query_selector(&tree, body, "#first", None);
         assert!(result.is_some());
 
         let elem = DomElement::new(&tree, result.unwrap());
@@ -702,7 +829,7 @@ mod tests {
         let body = tree.body().expect("body should exist");
 
         // The .container div should be the first element child of body
-        let result = query_selector(&tree, body, "div:first-child");
+        let result = query_selector(&tree, body, "div:first-child", None);
         assert!(result.is_some());
 
         let node_id = result.unwrap();
@@ -715,7 +842,7 @@ mod tests {
         let body = tree.body().expect("body should exist");
 
         // The third <p> should be the last element child of body
-        let result = query_selector(&tree, body, "p:last-child");
+        let result = query_selector(&tree, body, "p:last-child", None);
         assert!(result.is_some());
 
         let text = tree.get_text_content(result.unwrap());
@@ -750,7 +877,7 @@ mod tests {
         let body = tree.body().expect("body should exist");
 
         // Invalid selector should return empty vec
-        let results = query_selector_all(&tree, body, "::invalid::::syntax");
+        let results = query_selector_all(&tree, body, "::invalid::::syntax", None);
         assert_eq!(results.len(), 0);
     }
 }

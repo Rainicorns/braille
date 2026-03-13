@@ -246,8 +246,23 @@ impl Engine {
                     }
                 }
             };
-            if let Err(e) = runtime.eval(&code) {
-                errors.push(format!("{:?}", e));
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                runtime.eval(&code)
+            })) {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    errors.push(format!("{:?}", e));
+                }
+                Err(panic_err) => {
+                    let msg = if let Some(s) = panic_err.downcast_ref::<String>() {
+                        s.clone()
+                    } else if let Some(s) = panic_err.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else {
+                        "unknown panic".to_string()
+                    };
+                    errors.push(format!("PANIC: {}", msg));
+                }
             }
         }
 

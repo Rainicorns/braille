@@ -1,13 +1,54 @@
+use std::cell::RefCell;
+
 use boa_engine::{
     class::{Class, ClassBuilder},
     js_string,
     native_function::NativeFunction,
-    property::Attribute,
+    object::JsObject,
+    property::{Attribute, PropertyDescriptor},
     Context, JsData, JsError, JsResult, JsValue,
 };
 use boa_gc::{Finalize, Trace};
 
 use crate::dom::NodeId;
+
+// Cached getter for isTrusted — same JsObject across all Event instances.
+thread_local! {
+    static IS_TRUSTED_GETTER: RefCell<Option<JsObject>> = const { RefCell::new(None) };
+}
+
+/// Attach `isTrusted` as an own accessor property on the given event object.
+/// Uses a cached getter function so that all instances share the same getter
+/// (required by the spec: `desc1.get === desc2.get`).
+pub(crate) fn attach_is_trusted_own_property(event_obj: &JsObject, ctx: &mut Context) -> JsResult<()> {
+    let getter = IS_TRUSTED_GETTER.with(|cell| {
+        let mut opt = cell.borrow_mut();
+        if let Some(ref g) = *opt {
+            g.clone()
+        } else {
+            let realm = ctx.realm().clone();
+            let fn_obj = NativeFunction::from_fn_ptr(JsEvent::get_is_trusted)
+                .to_js_function(&realm);
+            // to_js_function returns a JsFunction which we store as JsObject
+            let g: JsObject = fn_obj.into();
+            *opt = Some(g.clone());
+            g
+        }
+    });
+
+    event_obj.define_property_or_throw(
+        js_string!("isTrusted"),
+        PropertyDescriptor::builder()
+            .get(getter)
+            .set(JsValue::undefined())
+            .configurable(false)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // JsEvent — the Class-based wrapper for DOM Event
@@ -436,14 +477,8 @@ impl Class for JsEvent {
             NativeFunction::from_fn_ptr(Self::init_event),
         );
 
-        // isTrusted (read-only)
-        let is_trusted_getter = NativeFunction::from_fn_ptr(Self::get_is_trusted);
-        class.accessor(
-            js_string!("isTrusted"),
-            Some(is_trusted_getter.to_js_function(&realm)),
-            None,
-            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
-        );
+        // isTrusted is NOT on the prototype — it's added as an own property on each instance
+        // (see attach_is_trusted_own_property and the constructor wrappers in runtime.rs)
 
         // timeStamp (read-only)
         let time_stamp_getter = NativeFunction::from_fn_ptr(Self::get_time_stamp);
@@ -881,9 +916,8 @@ impl Class for JsCustomEvent {
             NativeFunction::from_fn_ptr(Self::init_custom_event),
         );
 
-        // isTrusted
-        let is_trusted_getter = NativeFunction::from_fn_ptr(Self::get_is_trusted);
-        class.accessor(js_string!("isTrusted"), Some(is_trusted_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
+        // isTrusted is NOT on the prototype — it's added as an own property on each instance
+        // (see attach_is_trusted_own_property and the constructor wrappers in runtime.rs)
 
         // timeStamp
         let time_stamp_getter = NativeFunction::from_fn_ptr(Self::get_time_stamp);

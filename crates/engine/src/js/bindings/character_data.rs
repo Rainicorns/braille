@@ -87,11 +87,11 @@ pub(crate) fn register_character_data(class: &mut ClassBuilder) -> JsResult<()> 
     Ok(())
 }
 
-/// Returns true if the node is a CharacterData node (Text or Comment).
+/// Returns true if the node is a CharacterData node (Text, Comment, or ProcessingInstruction).
 fn is_character_data(el: &JsElement) -> bool {
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
-    matches!(node.data, NodeData::Text { .. } | NodeData::Comment { .. })
+    matches!(node.data, NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. })
 }
 
 /// Helper to create an IndexSizeError DOMException.

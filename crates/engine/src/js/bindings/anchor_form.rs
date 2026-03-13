@@ -60,7 +60,13 @@ fn get_href(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<J
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "href") {
-        Some(val) => Ok(JsValue::from(js_string!(val))),
+        Some(val) => {
+            // Per WHATWG URL spec: parse through url::Url to get percent-encoded form
+            match url::Url::parse(&val) {
+                Ok(parsed) => Ok(JsValue::from(js_string!(parsed.to_string()))),
+                Err(_) => Ok(JsValue::from(js_string!(val))),
+            }
+        }
         None => Ok(JsValue::from(js_string!(""))),
     }
 }
@@ -391,7 +397,7 @@ mod tests {
             .to_string(&mut runtime.context)
             .unwrap()
             .to_std_string_escaped();
-        assert_eq!(s, "https://example.com");
+        assert_eq!(s, "https://example.com/");
     }
 
     #[test]
@@ -409,7 +415,7 @@ mod tests {
             .to_string(&mut runtime.context)
             .unwrap()
             .to_std_string_escaped();
-        assert_eq!(s, "https://new.com");
+        assert_eq!(s, "https://new.com/");
     }
 
     // -- form.action --

@@ -3,10 +3,12 @@ use super::node::{Node, NodeData, NodeId};
 #[derive(Debug)]
 pub struct DomTree {
     nodes: Vec<Node>,
+    is_html_document: bool,
 }
 
 impl DomTree {
     /// Creates a new DomTree with a Document root node at index 0.
+    /// Defaults to HTML document (is_html_document = true).
     pub fn new() -> Self {
         let root = Node {
             id: 0,
@@ -16,7 +18,25 @@ impl DomTree {
             computed_style: None,
             template_contents: None,
         };
-        DomTree { nodes: vec![root] }
+        DomTree { nodes: vec![root], is_html_document: true }
+    }
+
+    /// Creates a new DomTree for an XML document (is_html_document = false).
+    pub fn new_xml() -> Self {
+        let root = Node {
+            id: 0,
+            data: NodeData::Document,
+            parent: None,
+            children: Vec::new(),
+            computed_style: None,
+            template_contents: None,
+        };
+        DomTree { nodes: vec![root], is_html_document: false }
+    }
+
+    /// Returns true if this is an HTML document, false for XML documents.
+    pub fn is_html_document(&self) -> bool {
+        self.is_html_document
     }
 
     /// Allocates a new Element node (unattached) and returns its NodeId.
@@ -27,7 +47,7 @@ impl DomTree {
             data: NodeData::Element {
                 tag_name: tag_name.to_string(),
                 attributes: Vec::new(),
-                namespace: String::new(),
+                namespace: "http://www.w3.org/1999/xhtml".to_string(),
             },
             parent: None,
             children: Vec::new(),
@@ -107,20 +127,39 @@ impl DomTree {
     }
 
     /// Returns the textContent of a node per the DOM spec:
-    /// - Text / Comment / ProcessingInstruction: return the node's data
-    /// - Element / DocumentFragment: recursively collect text from descendants
-    /// - Document / Doctype: return empty string (spec says null, but "" is fine here)
+    /// - Text / Comment: return the node's data
+    /// - Element / DocumentFragment: concatenation of all descendant Text node data
+    /// - Document / Doctype: return empty string (JS layer returns null)
     pub fn get_text_content(&self, node_id: NodeId) -> String {
         let node = &self.nodes[node_id];
         match &node.data {
             NodeData::Text { content } => content.clone(),
             NodeData::Comment { content } => content.clone(),
-            _ => {
+            NodeData::ProcessingInstruction { data, .. } => data.clone(),
+            NodeData::Attr { value, .. } => value.clone(),
+            NodeData::Element { .. } | NodeData::DocumentFragment => {
                 let mut result = String::new();
-                for &child_id in &node.children {
-                    result.push_str(&self.get_text_content(child_id));
-                }
+                self.collect_descendant_text(node_id, &mut result);
                 result
+            }
+            _ => {
+                // Document / Doctype: empty string at tree level
+                String::new()
+            }
+        }
+    }
+
+    /// Recursively collects text content from all descendant Text nodes.
+    /// Per spec, only Text node data is included (not Comment or PI).
+    fn collect_descendant_text(&self, node_id: NodeId, result: &mut String) {
+        for &child_id in &self.nodes[node_id].children {
+            match &self.nodes[child_id].data {
+                NodeData::Text { content } => result.push_str(content),
+                NodeData::Element { .. } | NodeData::DocumentFragment => {
+                    self.collect_descendant_text(child_id, result);
+                }
+                // Skip Comment, Doctype, Document
+                _ => {}
             }
         }
     }
@@ -170,6 +209,42 @@ impl DomTree {
         id
     }
 
+    /// Allocates a new ProcessingInstruction node (unattached) and returns its NodeId.
+    pub fn create_processing_instruction(&mut self, target: &str, data: &str) -> NodeId {
+        let id = self.nodes.len();
+        self.nodes.push(Node {
+            id,
+            data: NodeData::ProcessingInstruction {
+                target: target.to_string(),
+                data: data.to_string(),
+            },
+            parent: None,
+            children: Vec::new(),
+            computed_style: None,
+            template_contents: None,
+        });
+        id
+    }
+
+    /// Allocates a new Attr node (unattached) and returns its NodeId.
+    pub fn create_attr(&mut self, local_name: &str, namespace: &str, prefix: &str, value: &str) -> NodeId {
+        let id = self.nodes.len();
+        self.nodes.push(Node {
+            id,
+            data: NodeData::Attr {
+                local_name: local_name.to_string(),
+                namespace: namespace.to_string(),
+                prefix: prefix.to_string(),
+                value: value.to_string(),
+            },
+            parent: None,
+            children: Vec::new(),
+            computed_style: None,
+            template_contents: None,
+        });
+        id
+    }
+
     /// Allocates a new DocumentFragment node (unattached) and returns its NodeId.
     pub fn create_document_fragment(&mut self) -> NodeId {
         let id = self.nodes.len();
@@ -196,7 +271,7 @@ impl DomTree {
             data: NodeData::Element {
                 tag_name: tag_name.to_string(),
                 attributes,
-                namespace: String::new(),
+                namespace: "http://www.w3.org/1999/xhtml".to_string(),
             },
             parent: None,
             children: Vec::new(),
@@ -460,6 +535,8 @@ impl DomTree {
                 o.push('>');
                 o
             }
+            NodeData::ProcessingInstruction { target, data } => format!("<?{}{}?>", target, if data.is_empty() { String::new() } else { format!(" {}", data) }),
+            NodeData::Attr { .. } => String::new(), // Attr nodes are not serialized as children
             NodeData::Document | NodeData::DocumentFragment => self.serialize_children_html(nid),
         }
     }
@@ -480,6 +557,12 @@ impl DomTree {
             }
             NodeData::Text { content } => self.create_text(content),
             NodeData::Comment { content } => self.create_comment(content),
+            NodeData::ProcessingInstruction { target, data } => {
+                self.create_processing_instruction(target, data)
+            }
+            NodeData::Attr { local_name, namespace, prefix, value } => {
+                self.create_attr(local_name, namespace, prefix, value)
+            }
             NodeData::Doctype { name, public_id, system_id } => {
                 self.create_doctype(name, public_id, system_id)
             }
@@ -504,15 +587,17 @@ impl DomTree {
         match &self.nodes[id].data {
             NodeData::Text { content } => Some(content.clone()),
             NodeData::Comment { content } => Some(content.clone()),
+            NodeData::ProcessingInstruction { data, .. } => Some(data.clone()),
             _ => None,
         }
     }
 
     /// Sets the text content of a Text or Comment node.
-    pub fn character_data_set(&mut self, id: NodeId, data: &str) {
+    pub fn character_data_set(&mut self, id: NodeId, new_data: &str) {
         match &mut self.nodes[id].data {
-            NodeData::Text { content } => *content = data.to_string(),
-            NodeData::Comment { content } => *content = data.to_string(),
+            NodeData::Text { content } => *content = new_data.to_string(),
+            NodeData::Comment { content } => *content = new_data.to_string(),
+            NodeData::ProcessingInstruction { data, .. } => *data = new_data.to_string(),
             _ => {}
         }
     }
@@ -522,15 +607,17 @@ impl DomTree {
         match &self.nodes[id].data {
             NodeData::Text { content } => content.encode_utf16().count(),
             NodeData::Comment { content } => content.encode_utf16().count(),
+            NodeData::ProcessingInstruction { data, .. } => data.encode_utf16().count(),
             _ => 0,
         }
     }
 
     /// Appends data to a Text or Comment node.
-    pub fn character_data_append(&mut self, id: NodeId, data: &str) {
+    pub fn character_data_append(&mut self, id: NodeId, append_data: &str) {
         match &mut self.nodes[id].data {
-            NodeData::Text { content } => content.push_str(data),
-            NodeData::Comment { content } => content.push_str(data),
+            NodeData::Text { content } => content.push_str(append_data),
+            NodeData::Comment { content } => content.push_str(append_data),
+            NodeData::ProcessingInstruction { data, .. } => data.push_str(append_data),
             _ => {}
         }
     }
@@ -541,6 +628,7 @@ impl DomTree {
         let content = match &self.nodes[id].data {
             NodeData::Text { content } => content.clone(),
             NodeData::Comment { content } => content.clone(),
+            NodeData::ProcessingInstruction { data, .. } => data.clone(),
             _ => return Ok(()),
         };
         let utf16_len = content.encode_utf16().count();
@@ -559,6 +647,7 @@ impl DomTree {
         let content = match &self.nodes[id].data {
             NodeData::Text { content } => content.clone(),
             NodeData::Comment { content } => content.clone(),
+            NodeData::ProcessingInstruction { data: pi_data, .. } => pi_data.clone(),
             _ => return Ok(()),
         };
         let utf16_len = content.encode_utf16().count();
@@ -576,6 +665,7 @@ impl DomTree {
         let content = match &self.nodes[id].data {
             NodeData::Text { content } => content.clone(),
             NodeData::Comment { content } => content.clone(),
+            NodeData::ProcessingInstruction { data: pi_data, .. } => pi_data.clone(),
             _ => return Ok(()),
         };
         let utf16_len = content.encode_utf16().count();
@@ -594,6 +684,7 @@ impl DomTree {
         let content = match &self.nodes[id].data {
             NodeData::Text { content } => content,
             NodeData::Comment { content } => content,
+            NodeData::ProcessingInstruction { data, .. } => data,
             _ => return Ok(String::new()),
         };
         let utf16_len = content.encode_utf16().count();
@@ -769,6 +860,8 @@ impl DomTree {
         match &self.nodes[id].data {
             NodeData::Element { .. } => 1,
             NodeData::Text { .. } => 3,
+            NodeData::ProcessingInstruction { .. } => 7,
+            NodeData::Attr { .. } => 2,
             NodeData::Comment { .. } => 8,
             NodeData::Document => 9,
             NodeData::Doctype { .. } => 10,
@@ -827,6 +920,22 @@ impl DomTree {
             }
             (NodeData::Comment { content: c1 }, NodeData::Comment { content: c2 }) => {
                 if c1 != c2 {
+                    return false;
+                }
+            }
+            (
+                NodeData::ProcessingInstruction { target: t1, data: d1 },
+                NodeData::ProcessingInstruction { target: t2, data: d2 },
+            ) => {
+                if t1 != t2 || d1 != d2 {
+                    return false;
+                }
+            }
+            (
+                NodeData::Attr { local_name: l1, namespace: n1, prefix: p1, value: v1 },
+                NodeData::Attr { local_name: l2, namespace: n2, prefix: p2, value: v2 },
+            ) => {
+                if l1 != l2 || n1 != n2 || p1 != p2 || v1 != v2 {
                     return false;
                 }
             }

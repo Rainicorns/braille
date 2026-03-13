@@ -240,6 +240,7 @@ fn click(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
     };
 
     let event_obj = JsEvent::from_data(event, ctx)?;
+    super::event::attach_is_trusted_own_property(&event_obj, ctx)?;
     let event_val = JsValue::from(event_obj);
 
     // Dispatch by calling this.dispatchEvent(event) through the JS method

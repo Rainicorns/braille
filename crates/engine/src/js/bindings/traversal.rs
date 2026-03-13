@@ -1,13 +1,37 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use boa_engine::{
     class::{Class, ClassBuilder},
     js_string,
     native_function::NativeFunction,
     object::builtins::JsArray,
+    object::JsObject,
     property::Attribute,
     Context, JsError, JsResult, JsValue,
 };
 
+use crate::dom::NodeId;
+
 use super::element::{JsElement, get_or_create_js_element};
+use super::collections;
+
+// ---------------------------------------------------------------------------
+// Cache for live NodeList / HTMLCollection per (tree_ptr, node_id)
+// ---------------------------------------------------------------------------
+
+/// Cache key is (tree_ptr, node_id).
+type CollectionCacheKey = (usize, NodeId);
+
+thread_local! {
+    /// Cached childNodes NodeList objects per (tree_ptr, node_id)
+    static CHILD_NODES_CACHE: RefCell<HashMap<CollectionCacheKey, JsObject>> =
+        RefCell::new(HashMap::new());
+    /// Cached children HTMLCollection objects per (tree_ptr, node_id)
+    static CHILDREN_CACHE: RefCell<HashMap<CollectionCacheKey, JsObject>> =
+        RefCell::new(HashMap::new());
+}
 
 /// Registers all traversal properties on the Element class.
 pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
@@ -148,6 +172,9 @@ pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
 }
 
 /// Native getter for element.parentNode
+/// When the parent is the Document node of the *main* document tree, returns
+/// the global `document` object so that `node.parentNode === document` holds true.
+/// For foreign documents, returns the JsElement wrapper for that document node.
 fn get_parent_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
@@ -158,6 +185,24 @@ fn get_parent_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
     let tree = el.tree.borrow();
     match tree.get_parent(el.node_id) {
         Some(parent_id) => {
+            // If the parent is the Document node, check if this is the main document tree.
+            // Only return the global `document` object for the main tree.
+            if matches!(tree.get_node(parent_id).data, crate::dom::NodeData::Document) {
+                drop(tree);
+                let global = ctx.global_object();
+                let doc_val = global.get(js_string!("document"), ctx)?;
+                if let Some(doc_obj) = doc_val.as_object() {
+                    if let Some(doc) = doc_obj.downcast_ref::<super::document::JsDocument>() {
+                        if Rc::ptr_eq(&el.tree, &doc.tree) {
+                            return Ok(doc_val);
+                        }
+                    }
+                }
+                // Foreign document: return the JsElement wrapper for the document node
+                let tree_rc = el.tree.clone();
+                let js_obj = get_or_create_js_element(parent_id, tree_rc, ctx)?;
+                return Ok(js_obj.into());
+            }
             let tree_rc = el.tree.clone();
             drop(tree);
             let js_obj = get_or_create_js_element(parent_id, tree_rc, ctx)?;
@@ -177,7 +222,7 @@ fn get_parent_element(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> J
         .downcast_ref::<JsElement>()
         .ok_or_else(|| JsError::from_opaque(js_string!("parentElement getter: `this` is not an Element").into()))?;
     let tree = el.tree.borrow();
-    match tree.parent_element(el.node_id) {
+    match tree.dom_parent_element(el.node_id) {
         Some(parent_id) => {
             let tree_rc = el.tree.clone();
             drop(tree);
@@ -269,7 +314,7 @@ fn get_previous_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) ->
 }
 
 /// Native getter for element.childNodes
-/// Returns an Array of all child nodes
+/// Returns a live NodeList of all child nodes (cached per element for identity)
 fn get_child_nodes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
@@ -278,20 +323,32 @@ fn get_child_nodes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
         .downcast_ref::<JsElement>()
         .ok_or_else(|| JsError::from_opaque(js_string!("childNodes getter: `this` is not an Element").into()))?;
     let tree_rc = el.tree.clone();
-    let tree = tree_rc.borrow();
-    let children = tree.children(el.node_id);
-    drop(tree);
+    let node_id = el.node_id;
+    let tree_ptr = Rc::as_ptr(&tree_rc) as usize;
+    let cache_key = (tree_ptr, node_id);
 
-    let arr = JsArray::new(ctx);
-    for child_id in children {
-        let js_obj = get_or_create_js_element(child_id, tree_rc.clone(), ctx)?;
-        arr.push(js_obj, ctx)?;
+    // Check cache first for identity (el.childNodes === el.childNodes)
+    let cached = CHILD_NODES_CACHE.with(|cell| {
+        cell.borrow().get(&cache_key).cloned()
+    });
+
+    if let Some(cached_obj) = cached {
+        return Ok(cached_obj.into());
     }
-    Ok(arr.into())
+
+    // Create a new live NodeList
+    let nodelist = collections::create_live_nodelist(node_id, tree_rc, ctx)?;
+
+    // Cache it
+    CHILD_NODES_CACHE.with(|cell| {
+        cell.borrow_mut().insert(cache_key, nodelist.clone());
+    });
+
+    Ok(nodelist.into())
 }
 
 /// Native getter for element.children
-/// Returns an Array of Element-only children (filters out Text, Comment nodes)
+/// Returns a live HTMLCollection of Element-only children (cached per element for identity)
 fn get_children(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
@@ -300,16 +357,28 @@ fn get_children(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResul
         .downcast_ref::<JsElement>()
         .ok_or_else(|| JsError::from_opaque(js_string!("children getter: `this` is not an Element").into()))?;
     let tree_rc = el.tree.clone();
-    let tree = tree_rc.borrow();
-    let element_children = tree.element_children(el.node_id);
-    drop(tree);
+    let node_id = el.node_id;
+    let tree_ptr = Rc::as_ptr(&tree_rc) as usize;
+    let cache_key = (tree_ptr, node_id);
 
-    let arr = JsArray::new(ctx);
-    for child_id in element_children {
-        let js_obj = get_or_create_js_element(child_id, tree_rc.clone(), ctx)?;
-        arr.push(js_obj, ctx)?;
+    // Check cache first for identity
+    let cached = CHILDREN_CACHE.with(|cell| {
+        cell.borrow().get(&cache_key).cloned()
+    });
+
+    if let Some(cached_obj) = cached {
+        return Ok(cached_obj.into());
     }
-    Ok(arr.into())
+
+    // Create a new live HTMLCollection
+    let htmlcollection = collections::create_live_htmlcollection(node_id, tree_rc, ctx)?;
+
+    // Cache it
+    CHILDREN_CACHE.with(|cell| {
+        cell.borrow_mut().insert(cache_key, htmlcollection.clone());
+    });
+
+    Ok(htmlcollection.into())
 }
 
 /// Native method for element.hasChildNodes()
@@ -342,15 +411,25 @@ fn get_root_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResu
         tree.root_of(el.node_id)
     };
 
-    // If the root is the Document node, return the global `document` object
-    // so that `element.getRootNode() === document` holds true.
+    // If the root is the Document node and this is the main tree, return the
+    // global `document` object so that `element.getRootNode() === document`.
+    // For foreign documents, return the JsElement wrapper.
     {
         let tree = tree_rc.borrow();
         if matches!(tree.get_node(root_id).data, crate::dom::NodeData::Document) {
             drop(tree);
             let global = ctx.global_object();
-            let doc = global.get(js_string!("document"), ctx)?;
-            return Ok(doc);
+            let doc_val = global.get(js_string!("document"), ctx)?;
+            if let Some(doc_obj) = doc_val.as_object() {
+                if let Some(doc) = doc_obj.downcast_ref::<super::document::JsDocument>() {
+                    if Rc::ptr_eq(&tree_rc, &doc.tree) {
+                        return Ok(doc_val);
+                    }
+                }
+            }
+            // Foreign document: return JsElement wrapper
+            let js_obj = get_or_create_js_element(root_id, tree_rc, ctx)?;
+            return Ok(js_obj.into());
         }
     }
 
@@ -493,6 +572,155 @@ mod tests {
             t.append_child(div, span2);
         }
         tree
+    }
+
+    #[test]
+    fn nodelist_wpt_iterator_behavior() {
+        let tree = make_traversal_test_tree();
+        let mut rt = JsRuntime::new(Rc::clone(&tree));
+
+        // Reproduce the exact WPT test "Iterator behavior of Node.childNodes"
+        let result = rt
+            .eval(
+                r#"
+            var node = document.createElement("div");
+            var kid1 = document.createElement("p");
+            var kid2 = document.createTextNode("hey");
+            var kid3 = document.createElement("span");
+            node.appendChild(kid1);
+            node.appendChild(kid2);
+            node.appendChild(kid3);
+
+            var list = node.childNodes;
+
+            var keys = list.keys();
+            var keysIsArray = keys instanceof Array;
+
+            keys = [...keys];
+            var keysCorrect = (keys.length === 3 && keys[0] === 0 && keys[1] === 1 && keys[2] === 2);
+
+            var values = list.values();
+            var valuesIsArray = values instanceof Array;
+
+            values = [...values];
+            var valuesCorrect = (values.length === 3 && values[0] === kid1 && values[1] === kid2 && values[2] === kid3);
+
+            var entries = list.entries();
+            var entriesIsArray = entries instanceof Array;
+
+            entries = [...entries];
+            var entriesCorrect = (entries.length === 3);
+
+            var cur = 0;
+            var thisObj = {};
+            list.forEach(function(value, key, listObj) {
+                if (listObj !== list) throw new Error("listObj !== list");
+                if (this !== thisObj) throw new Error("this !== thisObj");
+                cur++;
+            }, thisObj);
+
+            var forEachOk = (cur === 3);
+
+            var symbolIterEq = (list[Symbol.iterator] === Array.prototype[Symbol.iterator]);
+            var keysEq = (list.keys === Array.prototype.keys);
+            var forEachEq = (list.forEach === Array.prototype.forEach);
+
+            JSON.stringify({
+                keysIsArray: keysIsArray,
+                keysCorrect: keysCorrect,
+                valuesIsArray: valuesIsArray,
+                valuesCorrect: valuesCorrect,
+                entriesIsArray: entriesIsArray,
+                entriesCorrect: entriesCorrect,
+                forEachOk: forEachOk,
+                symbolIterEq: symbolIterEq,
+                keysEq: keysEq,
+                forEachEq: forEachEq
+            })
+        "#,
+            )
+            .unwrap();
+
+        let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        eprintln!("WPT Iterator test: {}", s);
+
+        assert!(s.contains("\"keysIsArray\":false"), "keys() should not be Array, got: {}", s);
+        assert!(s.contains("\"keysCorrect\":true"), "keys() values should be correct, got: {}", s);
+        assert!(s.contains("\"forEachOk\":true"), "forEach should work, got: {}", s);
+        assert!(s.contains("\"symbolIterEq\":true"), "Symbol.iterator identity, got: {}", s);
+        assert!(s.contains("\"keysEq\":true"), "keys identity, got: {}", s);
+    }
+
+    #[test]
+    fn nodelist_has_iterator_methods() {
+        let tree = make_traversal_test_tree();
+        let mut rt = JsRuntime::new(Rc::clone(&tree));
+
+        let result = rt
+            .eval(
+                r#"
+            var node = document.createElement("div");
+            var kid1 = document.createElement("p");
+            var kid2 = document.createTextNode("hey");
+            var kid3 = document.createElement("span");
+            node.appendChild(kid1);
+            node.appendChild(kid2);
+            node.appendChild(kid3);
+
+            var list = node.childNodes;
+            var results = [];
+            results.push("length=" + list.length);
+            results.push("typeof_keys=" + typeof list.keys);
+            results.push("typeof_forEach=" + typeof list.forEach);
+            results.push("typeof_values=" + typeof list.values);
+            results.push("typeof_entries=" + typeof list.entries);
+            results.push("typeof_item=" + typeof list.item);
+            results.push("has_symbol_iter=" + (Symbol.iterator in list));
+
+            // Try calling keys
+            try {
+                var k = list.keys();
+                results.push("keys_callable=true");
+                results.push("keys_instanceof_array=" + (k instanceof Array));
+            } catch(e) {
+                results.push("keys_error=" + e.message);
+            }
+
+            // Try spread
+            try {
+                var spread = [...list];
+                results.push("spread_length=" + spread.length);
+            } catch(e) {
+                results.push("spread_error=" + e.message);
+            }
+
+            // Try forEach
+            try {
+                var count = 0;
+                list.forEach(function() { count++; });
+                results.push("forEach_count=" + count);
+            } catch(e) {
+                results.push("forEach_error=" + e.message);
+            }
+
+            // Check identity with Array.prototype methods
+            results.push("keys_eq_array=" + (list.keys === Array.prototype.keys));
+            results.push("forEach_eq_array=" + (list.forEach === Array.prototype.forEach));
+            results.push("iter_eq_array=" + (list[Symbol.iterator] === Array.prototype[Symbol.iterator]));
+
+            results.join("|")
+        "#,
+            )
+            .unwrap();
+
+        let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        eprintln!("NodeList debug: {}", s);
+
+        assert!(s.contains("typeof_keys=function"), "keys should be function, got: {}", s);
+        assert!(s.contains("typeof_forEach=function"), "forEach should be function, got: {}", s);
+        assert!(s.contains("keys_callable=true"), "keys should be callable, got: {}", s);
+        assert!(s.contains("spread_length=3"), "spread should have 3 items, got: {}", s);
+        assert!(s.contains("forEach_count=3"), "forEach should run 3 times, got: {}", s);
     }
 
     #[test]

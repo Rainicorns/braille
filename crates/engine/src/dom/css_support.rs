@@ -15,6 +15,18 @@ impl DomTree {
         }
     }
 
+    /// DOM spec `parentElement`: returns the immediate parent if it is an Element, else None.
+    /// Unlike `parent_element()` (used for CSS matching), this does NOT walk up past non-Element nodes.
+    pub fn dom_parent_element(&self, node_id: NodeId) -> Option<NodeId> {
+        let parent_id = self.get_node(node_id).parent?;
+        let parent_node = self.get_node(parent_id);
+        if matches!(parent_node.data, NodeData::Element { .. }) {
+            Some(parent_id)
+        } else {
+            None
+        }
+    }
+
     /// Walks backwards through siblings and returns the first sibling that is an Element.
     /// Returns None if there are no previous element siblings.
     pub fn prev_sibling_element(&self, node_id: NodeId) -> Option<NodeId> {

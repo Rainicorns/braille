@@ -76,6 +76,9 @@ pub enum PseudoClass {
     OnlyChild,
     Empty,
     Root,
+    Scope,
+    Invalid,
+    Valid,
 }
 
 /// Pseudo-elements supported by Braille.
@@ -117,6 +120,9 @@ impl CssparserToCss for PseudoClass {
             PseudoClass::OnlyChild => dest.write_str(":only-child"),
             PseudoClass::Empty => dest.write_str(":empty"),
             PseudoClass::Root => dest.write_str(":root"),
+            PseudoClass::Scope => dest.write_str(":scope"),
+            PseudoClass::Invalid => dest.write_str(":invalid"),
+            PseudoClass::Valid => dest.write_str(":valid"),
         }
     }
 }
@@ -167,6 +173,10 @@ impl<'i> parser::Parser<'i> for BrailleSelectorParser {
     type Impl = BrailleSelectorImpl;
     type Error = parser::SelectorParseErrorKind<'i>;
 
+    fn parse_has(&self) -> bool {
+        true
+    }
+
     fn parse_non_ts_pseudo_class(
         &self,
         _location: cssparser::SourceLocation,
@@ -186,6 +196,9 @@ impl<'i> parser::Parser<'i> for BrailleSelectorParser {
             "only-child" => Ok(PseudoClass::OnlyChild),
             "empty" => Ok(PseudoClass::Empty),
             "root" => Ok(PseudoClass::Root),
+            "scope" => Ok(PseudoClass::Scope),
+            "invalid" => Ok(PseudoClass::Invalid),
+            "valid" => Ok(PseudoClass::Valid),
             _ => Err(cssparser::ParseError {
                 kind: cssparser::ParseErrorKind::Custom(
                     parser::SelectorParseErrorKind::UnexpectedIdent(name.clone()),

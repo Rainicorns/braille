@@ -408,14 +408,14 @@ fn collect_options(
     }
 }
 
-/// Maps an html5ever namespace URL to our short label.
+/// Maps an html5ever namespace URL to a full namespace URI string.
 fn ns_to_label(ns: &Namespace) -> &'static str {
     if *ns == ns!(svg) {
-        "svg"
+        "http://www.w3.org/2000/svg"
     } else if *ns == ns!(mathml) {
-        "math"
+        "http://www.w3.org/1998/Math/MathML"
     } else {
-        ""
+        "http://www.w3.org/1999/xhtml"
     }
 }
 

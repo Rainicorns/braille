@@ -15,6 +15,7 @@ use crate::css::matching;
 use crate::dom::node::NodeData;
 use crate::dom::{DomTree, NodeId};
 
+use super::collections;
 use super::element::{JsElement, get_or_create_js_element};
 
 // ---------------------------------------------------------------------------
@@ -109,7 +110,7 @@ fn element_query_selector(
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
     let tree = tree_rc.borrow();
-    let result = matching::query_selector(&tree, node_id, &selector);
+    let result = matching::query_selector(&tree, node_id, &selector, Some(node_id));
     drop(tree);
 
     match result {
@@ -148,15 +149,11 @@ fn element_query_selector_all(
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
     let tree = tree_rc.borrow();
-    let results = matching::query_selector_all(&tree, node_id, &selector);
+    let results = matching::query_selector_all(&tree, node_id, &selector, Some(node_id));
     drop(tree);
 
-    let arr = JsArray::new(ctx);
-    for found_id in results {
-        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
-        arr.push(js_obj, ctx)?;
-    }
-    Ok(arr.into())
+    let nodelist = collections::create_static_nodelist(results, tree_rc, ctx)?;
+    Ok(nodelist.into())
 }
 
 fn element_get_elements_by_class_name(
@@ -268,7 +265,7 @@ pub(crate) fn document_query_selector(
     let tree_rc = doc.tree.clone();
     let tree = tree_rc.borrow();
     let root = tree.document();
-    let result = matching::query_selector(&tree, root, &selector);
+    let result = matching::query_selector(&tree, root, &selector, None);
     drop(tree);
 
     match result {
@@ -307,15 +304,11 @@ pub(crate) fn document_query_selector_all(
     let tree_rc = doc.tree.clone();
     let tree = tree_rc.borrow();
     let root = tree.document();
-    let results = matching::query_selector_all(&tree, root, &selector);
+    let results = matching::query_selector_all(&tree, root, &selector, None);
     drop(tree);
 
-    let arr = JsArray::new(ctx);
-    for found_id in results {
-        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
-        arr.push(js_obj, ctx)?;
-    }
-    Ok(arr.into())
+    let nodelist = collections::create_static_nodelist(results, tree_rc, ctx)?;
+    Ok(nodelist.into())
 }
 
 pub(crate) fn document_get_elements_by_class_name(
@@ -419,7 +412,7 @@ fn element_matches(
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
     let tree = tree_rc.borrow();
-    let result = matching::matches_selector_str(&tree, node_id, &selector);
+    let result = matching::matches_selector_str(&tree, node_id, &selector, Some(node_id));
     Ok(JsValue::from(result))
 }
 
@@ -443,10 +436,11 @@ fn element_closest(
 
     let tree_rc = el.tree.clone();
     let tree = tree_rc.borrow();
+    let scope_id = el.node_id;
     let mut current = el.node_id;
     loop {
         if matches!(tree.get_node(current).data, NodeData::Element { .. }) {
-            if matching::matches_selector_str(&tree, current, &selector) {
+            if matching::matches_selector_str(&tree, current, &selector, Some(scope_id)) {
                 drop(tree);
                 let js_obj = get_or_create_js_element(current, tree_rc, ctx)?;
                 return Ok(js_obj.into());

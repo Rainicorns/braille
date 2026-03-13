@@ -191,6 +191,9 @@ fn serialize_node(tree: &DomTree, node_id: NodeId, depth: usize, out: &mut Strin
         NodeData::Comment { content } => {
             out.push_str(&format!("| {indent}<!-- {content} -->\n"));
         }
+        NodeData::ProcessingInstruction { target, data } => {
+            out.push_str(&format!("| {indent}<?{target} {data}?>\n"));
+        }
         NodeData::DocumentFragment => {
             for &child_id in &node.children {
                 serialize_node(tree, child_id, depth, out);

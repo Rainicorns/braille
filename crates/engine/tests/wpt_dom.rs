@@ -183,12 +183,21 @@ fn testharness_preamble() -> String {
         if (!(a <= b)) throw new Error(msg || "assert_less_than_equal: " + a + " > " + b);
     };
     self.assert_array_equals = function(a, b, msg) {
-        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
-            throw new Error(msg || "assert_array_equals: length mismatch");
+        // Support both true arrays and array-like objects (NodeList, HTMLCollection)
+        var aLen = a ? a.length : undefined;
+        var bLen = b ? b.length : undefined;
+        if (aLen === undefined || bLen === undefined || aLen !== bLen) {
+            throw new Error(msg || "assert_array_equals: length mismatch (" + aLen + " vs " + bLen + ")");
         }
-        for (var i = 0; i < a.length; i++) {
+        for (var i = 0; i < aLen; i++) {
             if (a[i] !== b[i]) throw new Error(msg || "assert_array_equals: index " + i + ": " + a[i] + " !== " + b[i]);
         }
+    };
+    self.assert_object_equals = function(a, b, msg) {
+        // Deep comparison via JSON serialization (good enough for arrays/objects)
+        var aStr = JSON.stringify(a);
+        var bStr = JSON.stringify(b);
+        if (aStr !== bStr) throw new Error(msg || "assert_object_equals: " + aStr + " !== " + bStr);
     };
     self.assert_regexp_match = function(val, re, msg) {
         if (!re.test(val)) throw new Error(msg || "assert_regexp_match: " + val + " doesn't match " + re);
@@ -295,8 +304,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("shadow", "requires Shadow DOM"),
         ("Shadow", "requires Shadow DOM"),
         ("slot", "requires Shadow DOM slots"),
-        // DOMImplementation
-        ("DOMImplementation", "requires DOMImplementation"),
+        // DOMImplementation — now have document.implementation (W2 un-skip)
+        // ("DOMImplementation", "requires DOMImplementation"),
         // Processing instructions / XHTML
         ("ProcessingInstruction", "requires ProcessingInstruction"),
         ("xml", "requires XML support"),
@@ -320,12 +329,14 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // DOMTokenList edge cases
         ("DOMTokenList-coverage", "requires full DOMTokenList"),
         // Namespace-heavy tests
-        ("createElementNS", "requires namespace support"),
+        // createElementNS — now have proper namespace support (W2 un-skip)
+        // ("createElementNS", "requires namespace support"),
         ("getElementsByTagNameNS", "requires namespace support"),
         ("namespaced", "requires namespace support"),
         ("NamedNodeMap", "requires NamedNodeMap"),
         // CharacterData-appendChild requires HierarchyRequestError (DOMException)
-        ("CharacterData-appendChild", "requires HierarchyRequestError DOMException"),
+        // CharacterData-appendChild — now have HierarchyRequestError (W2 un-skip)
+        // ("CharacterData-appendChild", "requires HierarchyRequestError DOMException"),
         // CharacterData-remove requires ChildNode-remove.js helper
         ("CharacterData-remove", "requires ChildNode-remove.js helper"),
         // CharacterData-surrogates requires UTF-16 internal storage (Rust String is UTF-8)
@@ -345,15 +356,15 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Node-lookupNamespaceURI", "requires lookupNamespaceURI"),
         ("Node-isDefaultNamespace", "requires isDefaultNamespace"),
         // Node-normalize — now implemented
-        ("Node-textContent", "requires full textContent spec"),
-        ("Node-nodeName", "requires full nodeName spec"),
-        ("Node-nodeValue", "requires full nodeValue spec"),
-        // Node-cloneNode needs more than we have
-        ("Node-cloneNode", "requires full cloneNode spec"),
-        // Node-parentNode
-        ("Node-parentNode", "requires full parentNode spec"),
-        // Node-contains
-        ("Node-contains", "requires full contains spec"),
+        // Node-textContent, Node-nodeName, Node-nodeValue — now implemented
+        // Node-cloneNode — now implemented (main test enabled)
+        // These specific cloneNode tests need features we don't have:
+        ("Node-cloneNode-XMLDocument", "requires XML Document support"),
+        ("Node-cloneNode-svg", "requires SVG namespace support"),
+        ("Node-cloneNode-external-stylesheet", "requires external stylesheet loading"),
+        ("Node-cloneNode-document-allow-declarative-shadow-roots", "requires declarative shadow DOM"),
+        ("Node-cloneNode-on-inactive-document-crash", "requires inactive document"),
+        // Node-parentNode, Node-contains — now implemented
         // getElementsByClassName edge cases
         ("getElementsByClassName", "requires full getElementsByClassName"),
         // Document-characterSet
@@ -399,11 +410,13 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Event subclasses (UIEvent, MouseEvent, etc.)
         ("Event-subclasses", "requires UIEvent/MouseEvent constructors"),
         // Document.implementation
-        ("Document-implementation", "requires DOMImplementation"),
+        // Document-implementation — now have document.implementation (W2 un-skip)
+        // ("Document-implementation", "requires DOMImplementation"),
         // importNode / adoptNode
         ("Document-importNode", "requires importNode"),
         // Namespace-heavy tests
-        ("Document-createElement-namespace", "requires namespace support"),
+        // Document-createElement-namespace — now have namespace support (W2 un-skip)
+        // ("Document-createElement-namespace", "requires namespace support"),
         ("Element-firstElementChild-namespace", "requires setAttributeNS"),
         ("Element-removeAttributeNS", "requires setAttributeNS"),
         ("Element-setAttribute-crbug", "requires setAttributeNS"),
@@ -413,10 +426,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Node-mutation-adoptNode", "requires adoptNode"),
         // adoptNode/remove+adopt crash tests
         ("remove-and-adopt", "requires adoptNode"),
-        // NodeList interface tests
-        ("NodeList-Iterable", "requires NodeList interface"),
-        ("NodeList-static-length", "requires NodeList interface"),
-        ("NodeList-live-mutations", "requires NodeList interface"),
+        // NodeList interface tests — now implemented (W2-F)
+        // ("NodeList-Iterable", "requires NodeList interface"),
+        // ("NodeList-static-length", "requires NodeList interface"),
+        // ("NodeList-live-mutations", "requires NodeList interface"),
         // NamedNodeMap / attributes interface
         ("attributes-namednodemap", "requires NamedNodeMap"),
         ("attributes.html", "requires NamedNodeMap"),
@@ -431,12 +444,12 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Document-getElementById", "requires HTMLDivElement and full spec"),
         // DocumentFragment-getElementById (needs DocumentFragment constructor)
         ("DocumentFragment-getElementById", "requires DocumentFragment constructor"),
-        // Node-properties (needs full Node interface)
-        ("Node-properties", "requires full Node interface"),
-        // ParentNode-children (needs HTMLCollection)
-        ("ParentNode-children", "requires HTMLCollection"),
-        // Element-children (needs HTMLCollection)
-        ("Element-children.html", "requires HTMLCollection"),
+        // Node-properties — 679/726 subtests pass, 47 fail (document props, XML case, ownerDocument identity)
+        ("Node-properties", "47 subtests still failing (Document properties, XML, ownerDocument)"),
+        // ParentNode-children — now implemented (W2-F)
+        // ("ParentNode-children", "requires HTMLCollection"),
+        // Element-children — now implemented (W2-F)
+        // ("Element-children.html", "requires HTMLCollection"),
         // name-validation
         ("name-validation", "requires full name validation"),
         // remove-unscopable (needs @@unscopables)
@@ -447,13 +460,9 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("KeyEvent-initKeyEvent", "requires KeyEvent"),
         // node-appendchild-crash
         ("node-appendchild-crash", "requires adoptNode"),
-        // append-on-Document, prepend-on-Document — now implemented
-        // append-on-Document, prepend-on-Document require DOMImplementation.createDocument
-        ("append-on-Document", "requires DOMImplementation"),
-        ("prepend-on-Document", "requires DOMImplementation"),
+        // append-on-Document, prepend-on-Document — now enabled (DOMImplementation available)
         // rootNode — now implemented
-        // insert-adjacent: 12/14 subtests pass, but 2 need document.implementation.createHTMLDocument()
-        ("insert-adjacent.html", "requires DOMImplementation for 2 subtests"),
+        // insert-adjacent: now enabled (DOMImplementation available)
         // Event-timestamp (needs DOMHighResTimeStamp)
         ("Event-timestamp", "requires DOMHighResTimeStamp"),
         // Event-dispatch-click (needs click() behavior)
@@ -526,15 +535,15 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Event-dispatch-reenter", "requires re-entrant dispatch"),
         // Event-dispatch-listener-order (window listener ordering)
         ("Event-dispatch-listener-order", "requires window event target"),
-        // Tests needing frames/DOMImplementation (Node-removeChild, Node-insertBefore, Node-replaceChild, Node-appendChild)
-        ("Node-removeChild", "requires frames and DOMImplementation"),
-        ("Node-insertBefore.html", "requires frames and DOMImplementation"),
-        ("Node-replaceChild.html", "requires frames and DOMImplementation"),
-        ("Node-appendChild.html", "requires frames and DOMImplementation"),
+        // Tests needing frames/DOMImplementation — W2-D: now enabled
+        // ("Node-removeChild", "requires frames and DOMImplementation"),
+        // ("Node-insertBefore.html", "requires frames and DOMImplementation"),
+        // ("Node-replaceChild.html", "requires frames and DOMImplementation"),
+        // ("Node-appendChild.html", "requires frames and DOMImplementation"),
         // Element-tagName (needs SVG namespace, DOMImplementation)
-        ("Element-tagName", "requires SVG namespace and DOMImplementation"),
-        // Element-remove (needs Element.prototype interface)
-        ("Element-remove.html", "requires Element.prototype"),
+        // Element-tagName — now have SVG namespace and DOMImplementation (W2 un-skip)
+        // ("Element-tagName", "requires SVG namespace and DOMImplementation"),
+        // Element-remove — ENABLED (W2-E)
         // Element-hasAttribute / hasAttributes (need setAttributeNS)
         ("Element-hasAttribute", "requires setAttributeNS"),
         ("Element-hasAttributes", "requires setAttributeNS"),
@@ -545,10 +554,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Element-insertAdjacentElement/Text — now implemented
         // ("Element-insertAdjacentElement", "requires insertAdjacentElement"),
         // ("Element-insertAdjacentText", "requires insertAdjacentText"),
-        // Node-childNodes (needs NodeList interface, Document constructor)
-        ("Node-childNodes.html", "requires NodeList interface"),
+        // Node-childNodes — now implemented (W2-F); 5/6 subtests pass (1 needs cross-tree adoption)
+        // ("Node-childNodes.html", "requires NodeList interface"),
         // Node-parentElement (needs document.doctype, Document as EventTarget parent)
-        ("Node-parentElement", "requires document.doctype and Document-as-parent handling"),
+        // Node-parentElement — now implemented
         // Event-propagation (needs Event constructor)
         ("Event-propagation.html", "requires Event.cancelBubble getter"),
         // Event-stopPropagation-cancel-bubbling
@@ -705,6 +714,7 @@ fn run_wpt_test(
     // Status: 0=PASS, 1=FAIL, 2=TIMEOUT, 3=NOTRUN
     let results: Vec<WptResult> = serde_json::from_str(&results_json)
         .map_err(|e| Failed::from(format!("failed to parse results JSON: {}\nJSON: {}", e, results_json)))?;
+
 
     let mut failures = Vec::new();
     for r in &results {

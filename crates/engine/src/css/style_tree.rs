@@ -609,7 +609,7 @@ mod tests {
         for nid in 0..tree.node_count() {
             let node = tree.get_node(nid);
             match &node.data {
-                NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::Document | NodeData::Doctype { .. } | NodeData::DocumentFragment => {
+                NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. } | NodeData::Document | NodeData::Doctype { .. } | NodeData::DocumentFragment => {
                     assert!(
                         node.computed_style.is_none(),
                         "non-element node {} should not have computed_style",

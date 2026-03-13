@@ -5,10 +5,663 @@ use boa_engine::{
     Context, JsError, JsNativeError, JsResult, JsValue,
 };
 
+use boa_engine::JsObject;
+
 use crate::dom::{DomTree, NodeData, NodeId};
-use super::element::{JsElement, get_or_create_js_element};
+use super::element::{JsElement, get_or_create_js_element, NODE_CACHE};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+// ---------------------------------------------------------------------------
+// Error helpers
+// ---------------------------------------------------------------------------
+
+fn hierarchy_request_error(msg: &str) -> JsError {
+    JsNativeError::typ()
+        .with_message(format!("HierarchyRequestError: {}", msg))
+        .into()
+}
+
+fn not_found_error(msg: &str) -> JsError {
+    JsNativeError::typ()
+        .with_message(format!("NotFoundError: {}", msg))
+        .into()
+}
+
+// ---------------------------------------------------------------------------
+// Extract node args with proper TypeError for null / non-Node
+// ---------------------------------------------------------------------------
+
+/// Extract a required Node argument. Throws TypeError if missing, null, or not a JsElement.
+fn require_node_arg(args: &[JsValue], index: usize, method: &str, arg_name: &str) -> JsResult<(NodeId, Rc<RefCell<DomTree>>)> {
+    let arg = args
+        .get(index)
+        .ok_or_else(|| JsNativeError::typ().with_message(format!("{}: {} argument is required", method, arg_name)))?;
+    if arg.is_null() || arg.is_undefined() {
+        return Err(JsNativeError::typ()
+            .with_message(format!("{}: {} argument is null", method, arg_name))
+            .into());
+    }
+    let obj = arg
+        .as_object()
+        .ok_or_else(|| JsNativeError::typ().with_message(format!("{}: {} argument is not a Node", method, arg_name)))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsNativeError::typ().with_message(format!("{}: {} argument is not a Node", method, arg_name)))?;
+    Ok((el.node_id, el.tree.clone()))
+}
+
+// ---------------------------------------------------------------------------
+// Cache update after cross-tree adoption
+// ---------------------------------------------------------------------------
+
+/// Update the NODE_CACHE after a cross-tree adoption:
+/// - Remove the old entry (src_tree_ptr, src_node_id)
+/// - Add a new entry (dst_tree_ptr, adopted_id) -> js_obj
+pub(crate) fn update_node_cache_after_adoption(
+    src_tree: &Rc<RefCell<DomTree>>,
+    src_node_id: NodeId,
+    dst_tree: &Rc<RefCell<DomTree>>,
+    adopted_id: NodeId,
+    js_obj: &JsObject,
+) {
+    let src_ptr = Rc::as_ptr(src_tree) as usize;
+    let dst_ptr = Rc::as_ptr(dst_tree) as usize;
+
+    NODE_CACHE.with(|cell| {
+        let rc = cell.borrow();
+        let cache_rc = rc.as_ref().expect("NODE_CACHE not initialized");
+        let mut cache = cache_rc.borrow_mut();
+        cache.remove(&(src_ptr, src_node_id));
+        cache.insert((dst_ptr, adopted_id), js_obj.clone());
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Cross-tree node adoption
+// ---------------------------------------------------------------------------
+
+/// Adopt a node from one DomTree into another by creating a clone in the
+/// destination tree and removing the original from its source parent.
+/// Returns the new NodeId in the destination tree.
+pub(crate) fn adopt_node(
+    src_tree: &Rc<RefCell<DomTree>>,
+    src_id: NodeId,
+    dst_tree: &Rc<RefCell<DomTree>>,
+) -> NodeId {
+    let src = src_tree.borrow();
+    let node = src.get_node(src_id);
+
+    let new_id = match &node.data {
+        NodeData::Text { content } => {
+            let t = content.clone();
+            drop(src);
+            dst_tree.borrow_mut().create_text(&t)
+        }
+        NodeData::Comment { content } => {
+            let t = content.clone();
+            drop(src);
+            dst_tree.borrow_mut().create_comment(&t)
+        }
+        NodeData::Element { tag_name, attributes, namespace, .. } => {
+            let tag = tag_name.clone();
+            let attrs = attributes.clone();
+            let ns = namespace.clone();
+            let child_ids: Vec<NodeId> = node.children.clone();
+            drop(src);
+            let id = dst_tree.borrow_mut().create_element_ns(&tag, attrs, &ns);
+            for child_id in child_ids {
+                let adopted_child = adopt_node(src_tree, child_id, dst_tree);
+                dst_tree.borrow_mut().append_child(id, adopted_child);
+            }
+            id
+        }
+        NodeData::Doctype { name, public_id, system_id } => {
+            let n = name.clone();
+            let p = public_id.clone();
+            let s = system_id.clone();
+            drop(src);
+            dst_tree.borrow_mut().create_doctype(&n, &p, &s)
+        }
+        NodeData::DocumentFragment => {
+            let child_ids: Vec<NodeId> = node.children.clone();
+            drop(src);
+            let id = dst_tree.borrow_mut().create_document_fragment();
+            for child_id in child_ids {
+                let adopted_child = adopt_node(src_tree, child_id, dst_tree);
+                dst_tree.borrow_mut().append_child(id, adopted_child);
+            }
+            id
+        }
+        NodeData::ProcessingInstruction { target, data } => {
+            let t = target.clone();
+            let d = data.clone();
+            drop(src);
+            dst_tree.borrow_mut().create_processing_instruction(&t, &d)
+        }
+        NodeData::Attr { local_name, namespace, prefix, value } => {
+            let ln = local_name.clone();
+            let ns = namespace.clone();
+            let pfx = prefix.clone();
+            let val = value.clone();
+            drop(src);
+            dst_tree.borrow_mut().create_attr(&ln, &ns, &pfx, &val)
+        }
+        NodeData::Document => {
+            drop(src);
+            dst_tree.borrow_mut().create_document_fragment()
+        }
+    };
+
+    // Remove the original node from its parent in the source tree
+    src_tree.borrow_mut().remove_from_parent(src_id);
+
+    new_id
+}
+
+// ---------------------------------------------------------------------------
+// Pre-insertion validation (spec: https://dom.spec.whatwg.org/#concept-node-ensure-pre-insertion-validity)
+// ---------------------------------------------------------------------------
+
+/// Checks if `ancestor_id` is an inclusive ancestor of `node_id`.
+fn is_inclusive_ancestor(tree: &DomTree, ancestor_id: NodeId, node_id: NodeId) -> bool {
+    let mut current = node_id;
+    loop {
+        if current == ancestor_id {
+            return true;
+        }
+        match tree.get_parent(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
+}
+
+/// Pre-insertion validation for insertBefore/appendChild.
+/// `child_ref` is the reference child (None means append).
+/// `node_tree` is the tree for the node when it differs from the parent's tree (cross-tree insert).
+pub(crate) fn validate_pre_insert(
+    tree: &DomTree,
+    parent_id: NodeId,
+    node_id: NodeId,
+    child_ref: Option<NodeId>,
+    node_tree: Option<&DomTree>,
+) -> JsResult<()> {
+    let parent_data = &tree.get_node(parent_id).data;
+
+    // Step 1: parent must be Document, DocumentFragment, or Element
+    match parent_data {
+        NodeData::Document | NodeData::DocumentFragment | NodeData::Element { .. } => {}
+        _ => {
+            return Err(hierarchy_request_error(
+                "parent is not a Document, DocumentFragment, or Element",
+            ));
+        }
+    }
+
+    // Step 2: node must not be an inclusive ancestor of parent
+    // If node is from a different tree, it can't be an ancestor of parent
+    if node_tree.is_none() && is_inclusive_ancestor(tree, node_id, parent_id) {
+        return Err(hierarchy_request_error(
+            "The new child is an ancestor of the parent",
+        ));
+    }
+
+    // Step 3: if child is not null, its parent must be parent
+    // Note: ref_id must be from the same tree as parent (checked by caller)
+    if let Some(ref_id) = child_ref {
+        let ref_parent = tree.get_node(ref_id).parent;
+        if ref_parent != Some(parent_id) {
+            return Err(not_found_error(
+                "The node before which the new node is to be inserted is not a child of this node",
+            ));
+        }
+    }
+
+    // Use the appropriate tree for the node
+    let nt = node_tree.unwrap_or(tree);
+    let node_data = &nt.get_node(node_id).data;
+
+    // Step 4: node must be DocumentFragment, DocumentType, Element, Text, Comment, PI, or Attr
+    match node_data {
+        NodeData::DocumentFragment
+        | NodeData::Doctype { .. }
+        | NodeData::Element { .. }
+        | NodeData::Text { .. }
+        | NodeData::Comment { .. }
+        | NodeData::ProcessingInstruction { .. }
+        | NodeData::Attr { .. } => {}
+        NodeData::Document => {
+            return Err(hierarchy_request_error(
+                "Cannot insert a Document node",
+            ));
+        }
+    }
+
+    // Step 5: If node is Text and parent is Document, throw
+    if matches!(node_data, NodeData::Text { .. }) && matches!(parent_data, NodeData::Document) {
+        return Err(hierarchy_request_error(
+            "Cannot insert Text as a child of Document",
+        ));
+    }
+
+    // Step 5 (continued): If node is Doctype and parent is not Document, throw
+    if matches!(node_data, NodeData::Doctype { .. }) && !matches!(parent_data, NodeData::Document) {
+        return Err(hierarchy_request_error(
+            "Cannot insert Doctype as a child of a non-Document node",
+        ));
+    }
+
+    // Step 6: If parent is Document, additional constraints
+    // For cross-tree nodes, some Document constraints use node_tree
+    if matches!(parent_data, NodeData::Document) {
+        validate_document_insert(tree, parent_id, node_id, child_ref, node_tree)?;
+    }
+
+    Ok(())
+}
+
+/// Additional validation when inserting into a Document node (step 6 of pre-insert).
+/// `node_tree` is the tree for the node when it differs from the parent's tree.
+fn validate_document_insert(
+    tree: &DomTree,
+    parent_id: NodeId,
+    node_id: NodeId,
+    child_ref: Option<NodeId>,
+    node_tree: Option<&DomTree>,
+) -> JsResult<()> {
+    let nt = node_tree.unwrap_or(tree);
+    let node_data = &nt.get_node(node_id).data;
+
+    match node_data {
+        NodeData::DocumentFragment => {
+            // Count element children in the fragment
+            let frag_children = &nt.get_node(node_id).children;
+            let elem_count = frag_children
+                .iter()
+                .filter(|&&c| matches!(nt.get_node(c).data, NodeData::Element { .. }))
+                .count();
+            let has_text = frag_children
+                .iter()
+                .any(|&c| matches!(nt.get_node(c).data, NodeData::Text { .. }));
+
+            // Fragment cannot have text children when inserting into Document
+            if has_text {
+                return Err(hierarchy_request_error(
+                    "Cannot insert DocumentFragment containing Text into Document",
+                ));
+            }
+
+            // Fragment cannot have more than one element child
+            if elem_count > 1 {
+                return Err(hierarchy_request_error(
+                    "Cannot insert DocumentFragment with multiple elements into Document",
+                ));
+            }
+
+            if elem_count == 1 {
+                // If parent already has an element child (that isn't being replaced), throw
+                let parent_children = &tree.get_node(parent_id).children;
+                let has_existing_element = parent_children
+                    .iter()
+                    .any(|&c| matches!(tree.get_node(c).data, NodeData::Element { .. }));
+                if has_existing_element {
+                    return Err(hierarchy_request_error(
+                        "Document already has an element child",
+                    ));
+                }
+
+                // If child_ref is a doctype, or there's a doctype following child_ref, throw
+                if let Some(ref_id) = child_ref {
+                    if matches!(tree.get_node(ref_id).data, NodeData::Doctype { .. }) {
+                        return Err(hierarchy_request_error(
+                            "Cannot insert element before doctype",
+                        ));
+                    }
+                    // Check if there's a doctype FOLLOWING the reference child
+                    if has_doctype_after(tree, parent_id, ref_id) {
+                        return Err(hierarchy_request_error(
+                            "Cannot insert element before a doctype",
+                        ));
+                    }
+                }
+            }
+        }
+        NodeData::Element { .. } => {
+            // If parent already has an element child, throw
+            let parent_children = &tree.get_node(parent_id).children;
+            let has_existing_element = parent_children
+                .iter()
+                .any(|&c| matches!(tree.get_node(c).data, NodeData::Element { .. }));
+            if has_existing_element {
+                return Err(hierarchy_request_error(
+                    "Document already has an element child",
+                ));
+            }
+
+            // If child_ref is a doctype, or there's a doctype following child_ref, throw
+            if let Some(ref_id) = child_ref {
+                if matches!(tree.get_node(ref_id).data, NodeData::Doctype { .. }) {
+                    return Err(hierarchy_request_error(
+                        "Cannot insert element before doctype",
+                    ));
+                }
+                if has_doctype_after(tree, parent_id, ref_id) {
+                    return Err(hierarchy_request_error(
+                        "Cannot insert element before a doctype",
+                    ));
+                }
+            }
+        }
+        NodeData::Doctype { .. } => {
+            // If parent already has a doctype child, throw
+            let parent_children = &tree.get_node(parent_id).children;
+            let has_existing_doctype = parent_children
+                .iter()
+                .any(|&c| matches!(tree.get_node(c).data, NodeData::Doctype { .. }));
+            if has_existing_doctype {
+                return Err(hierarchy_request_error(
+                    "Document already has a doctype child",
+                ));
+            }
+
+            // If child_ref is non-null and there's an element before child_ref, throw
+            // If child_ref is null (appending), and there's already an element child, throw
+            if let Some(ref_id) = child_ref {
+                if has_element_before(tree, parent_id, ref_id) {
+                    return Err(hierarchy_request_error(
+                        "Cannot insert doctype after an element",
+                    ));
+                }
+            } else {
+                // Appending: if there's already an element child, throw
+                let has_element = parent_children
+                    .iter()
+                    .any(|&c| matches!(tree.get_node(c).data, NodeData::Element { .. }));
+                if has_element {
+                    return Err(hierarchy_request_error(
+                        "Cannot insert doctype after an element",
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+/// Pre-replace validation for replaceChild (spec: https://dom.spec.whatwg.org/#concept-node-replace)
+/// `node_tree` is the tree for the node when it differs from the parent's tree.
+fn validate_pre_replace(
+    tree: &DomTree,
+    parent_id: NodeId,
+    node_id: NodeId,
+    old_child_id: NodeId,
+    node_tree: Option<&DomTree>,
+) -> JsResult<()> {
+    let parent_data = &tree.get_node(parent_id).data;
+
+    // Step 1: parent must be Document, DocumentFragment, or Element
+    match parent_data {
+        NodeData::Document | NodeData::DocumentFragment | NodeData::Element { .. } => {}
+        _ => {
+            return Err(hierarchy_request_error(
+                "parent is not a Document, DocumentFragment, or Element",
+            ));
+        }
+    }
+
+    // Step 2: node must not be an inclusive ancestor of parent
+    // If node is from a different tree, it can't be an ancestor of parent
+    if node_tree.is_none() && is_inclusive_ancestor(tree, node_id, parent_id) {
+        return Err(hierarchy_request_error(
+            "The new child is an ancestor of the parent",
+        ));
+    }
+
+    // Step 3: old child's parent must be parent
+    let old_child_parent = tree.get_node(old_child_id).parent;
+    if old_child_parent != Some(parent_id) {
+        return Err(not_found_error(
+            "The node to be replaced is not a child of this node",
+        ));
+    }
+
+    let nt = node_tree.unwrap_or(tree);
+    let node_data = &nt.get_node(node_id).data;
+
+    // Step 4/5: node must be valid insertion type
+    match node_data {
+        NodeData::DocumentFragment
+        | NodeData::Doctype { .. }
+        | NodeData::Element { .. }
+        | NodeData::Text { .. }
+        | NodeData::Comment { .. }
+        | NodeData::ProcessingInstruction { .. }
+        | NodeData::Attr { .. } => {}
+        NodeData::Document => {
+            return Err(hierarchy_request_error(
+                "Cannot insert a Document node",
+            ));
+        }
+    }
+
+    // Step 5: If node is Text and parent is Document, throw
+    if matches!(node_data, NodeData::Text { .. }) && matches!(parent_data, NodeData::Document) {
+        return Err(hierarchy_request_error(
+            "Cannot insert Text as a child of Document",
+        ));
+    }
+
+    // If node is Doctype and parent is not Document, throw
+    if matches!(node_data, NodeData::Doctype { .. }) && !matches!(parent_data, NodeData::Document) {
+        return Err(hierarchy_request_error(
+            "Cannot insert Doctype as a child of a non-Document node",
+        ));
+    }
+
+    // Step 6: If parent is Document, additional constraints
+    if matches!(parent_data, NodeData::Document) {
+        validate_document_replace(tree, parent_id, node_id, old_child_id, node_tree)?;
+    }
+
+    Ok(())
+}
+
+/// Additional validation when replacing within a Document node (step 6 of replace).
+/// `node_tree` is the tree for the node when it differs from the parent's tree.
+fn validate_document_replace(
+    tree: &DomTree,
+    parent_id: NodeId,
+    node_id: NodeId,
+    old_child_id: NodeId,
+    node_tree: Option<&DomTree>,
+) -> JsResult<()> {
+    let nt = node_tree.unwrap_or(tree);
+    let node_data = &nt.get_node(node_id).data;
+
+    match node_data {
+        NodeData::DocumentFragment => {
+            let frag_children = &nt.get_node(node_id).children;
+            let elem_count = frag_children
+                .iter()
+                .filter(|&&c| matches!(nt.get_node(c).data, NodeData::Element { .. }))
+                .count();
+            let has_text = frag_children
+                .iter()
+                .any(|&c| matches!(nt.get_node(c).data, NodeData::Text { .. }));
+
+            if has_text {
+                return Err(hierarchy_request_error(
+                    "Cannot insert DocumentFragment containing Text into Document",
+                ));
+            }
+
+            if elem_count > 1 {
+                return Err(hierarchy_request_error(
+                    "Cannot insert DocumentFragment with multiple elements into Document",
+                ));
+            }
+
+            if elem_count == 1 {
+                // Check if parent has an element child that is NOT old_child
+                let parent_children = &tree.get_node(parent_id).children;
+                let has_other_element = parent_children.iter().any(|&c| {
+                    c != old_child_id && matches!(tree.get_node(c).data, NodeData::Element { .. })
+                });
+                if has_other_element {
+                    return Err(hierarchy_request_error(
+                        "Document already has an element child",
+                    ));
+                }
+
+                // Check if there's a doctype following old_child
+                if has_doctype_after(tree, parent_id, old_child_id) {
+                    return Err(hierarchy_request_error(
+                        "Cannot insert element before a doctype",
+                    ));
+                }
+            }
+        }
+        NodeData::Element { .. } => {
+            // Check if parent has an element child that is NOT old_child
+            let parent_children = &tree.get_node(parent_id).children;
+            let has_other_element = parent_children.iter().any(|&c| {
+                c != old_child_id && matches!(tree.get_node(c).data, NodeData::Element { .. })
+            });
+            if has_other_element {
+                return Err(hierarchy_request_error(
+                    "Document already has an element child",
+                ));
+            }
+
+            // Check if there's a doctype following old_child
+            if has_doctype_after(tree, parent_id, old_child_id) {
+                return Err(hierarchy_request_error(
+                    "Cannot insert element before a doctype",
+                ));
+            }
+        }
+        NodeData::Doctype { .. } => {
+            // Check if parent has a doctype child that is NOT old_child
+            let parent_children = &tree.get_node(parent_id).children;
+            let has_other_doctype = parent_children.iter().any(|&c| {
+                c != old_child_id && matches!(tree.get_node(c).data, NodeData::Doctype { .. })
+            });
+            if has_other_doctype {
+                return Err(hierarchy_request_error(
+                    "Document already has a doctype child",
+                ));
+            }
+
+            // Check if there's an element BEFORE old_child in parent's children
+            if has_element_before(tree, parent_id, old_child_id) {
+                return Err(hierarchy_request_error(
+                    "Cannot insert doctype after an element",
+                ));
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+/// Returns true if there's a Doctype node after `ref_id` in `parent_id`'s children.
+fn has_doctype_after(tree: &DomTree, parent_id: NodeId, ref_id: NodeId) -> bool {
+    let parent_children = &tree.get_node(parent_id).children;
+    let mut found_ref = false;
+    for &c in parent_children {
+        if c == ref_id {
+            found_ref = true;
+            continue;
+        }
+        if found_ref && matches!(tree.get_node(c).data, NodeData::Doctype { .. }) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns true if there's an Element node before `ref_id` in `parent_id`'s children.
+fn has_element_before(tree: &DomTree, parent_id: NodeId, ref_id: NodeId) -> bool {
+    let parent_children = &tree.get_node(parent_id).children;
+    for &c in parent_children {
+        if c == ref_id {
+            return false;
+        }
+        if matches!(tree.get_node(c).data, NodeData::Element { .. }) {
+            return true;
+        }
+    }
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Perform the actual insertion after validation
+// ---------------------------------------------------------------------------
+
+pub(crate) fn do_insert(
+    tree: &Rc<RefCell<DomTree>>,
+    parent_id: NodeId,
+    node_id: NodeId,
+    child_ref: Option<NodeId>,
+) {
+    let is_fragment = matches!(tree.borrow().get_node(node_id).data, NodeData::DocumentFragment);
+
+    if is_fragment {
+        let children: Vec<NodeId> = tree.borrow().get_node(node_id).children.clone();
+        for frag_child in children {
+            match child_ref {
+                Some(ref_id) => tree.borrow_mut().insert_child_before(parent_id, frag_child, ref_id),
+                None => tree.borrow_mut().append_child(parent_id, frag_child),
+            }
+        }
+    } else {
+        // Special case: if node == child_ref, it's already in the right place
+        if child_ref == Some(node_id) {
+            return;
+        }
+        match child_ref {
+            Some(ref_id) => tree.borrow_mut().insert_child_before(parent_id, node_id, ref_id),
+            None => tree.borrow_mut().append_child(parent_id, node_id),
+        }
+    }
+}
+
+fn do_replace(
+    tree: &Rc<RefCell<DomTree>>,
+    parent_id: NodeId,
+    node_id: NodeId,
+    old_child_id: NodeId,
+) {
+    let is_fragment = matches!(tree.borrow().get_node(node_id).data, NodeData::DocumentFragment);
+
+    if node_id == old_child_id {
+        // Replacing a node with itself is a no-op
+        return;
+    }
+
+    if is_fragment {
+        let frag_children: Vec<NodeId> = tree.borrow().get_node(node_id).children.clone();
+        // Find the position of old_child, insert fragment children there, then remove old_child
+        let next_sibling = tree.borrow().next_sibling(old_child_id);
+        tree.borrow_mut().remove_child(parent_id, old_child_id);
+        for frag_child in frag_children {
+            match next_sibling {
+                Some(ref_id) => tree.borrow_mut().insert_child_before(parent_id, frag_child, ref_id),
+                None => tree.borrow_mut().append_child(parent_id, frag_child),
+            }
+        }
+    } else {
+        tree.borrow_mut().replace_child(parent_id, node_id, old_child_id);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Registration
+// ---------------------------------------------------------------------------
 
 pub(crate) fn register_mutation(class: &mut ClassBuilder) -> JsResult<()> {
     class.method(js_string!("insertBefore"), 2, NativeFunction::from_fn_ptr(insert_before));
@@ -30,55 +683,77 @@ pub(crate) fn register_mutation(class: &mut ClassBuilder) -> JsResult<()> {
 fn insert_before(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     let this_obj = this
         .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertBefore: this is not an object").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: this is not an object"))?;
     let parent = this_obj
         .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertBefore: this is not an Element").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: this is not a Node"))?;
     let parent_id = parent.node_id;
     let tree = parent.tree.clone();
 
+    // First argument: node (required, must be a Node)
     let new_node_arg = args
         .first()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertBefore: missing first argument").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: 1 argument required"))?;
+    if new_node_arg.is_null() || new_node_arg.is_undefined() {
+        return Err(JsNativeError::typ().with_message("insertBefore: argument 1 is not a Node").into());
+    }
     let new_node_obj = new_node_arg
         .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertBefore: first argument is not an object").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: argument 1 is not a Node"))?;
     let new_node = new_node_obj
         .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertBefore: first argument is not an Element").into()))?;
-    let new_node_id = new_node.node_id;
+        .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: argument 1 is not a Node"))?;
 
-    let ref_arg = args.get(1).cloned().unwrap_or(JsValue::null());
-
-    // Per spec: if new_node is a DocumentFragment, insert its children instead
-    let is_fragment = matches!(tree.borrow().get_node(new_node_id).data, NodeData::DocumentFragment);
-
-    if ref_arg.is_null() || ref_arg.is_undefined() {
-        if is_fragment {
-            let children: Vec<NodeId> = tree.borrow().get_node(new_node_id).children.clone();
-            for frag_child in children {
-                tree.borrow_mut().append_child(parent_id, frag_child);
-            }
-        } else {
-            tree.borrow_mut().append_child(parent_id, new_node_id);
+    // Check if node is a Document - must reject before adoption changes it
+    {
+        let node_tree_ref = new_node.tree.borrow();
+        let node_data = &node_tree_ref.get_node(new_node.node_id).data;
+        if matches!(node_data, NodeData::Document) {
+            return Err(hierarchy_request_error("Cannot insert a Document node"));
         }
+    }
+
+    // Cross-tree adoption: if node is from a different tree, adopt it first
+    let new_node_id = if !Rc::ptr_eq(&tree, &new_node.tree) {
+        let src_tree = new_node.tree.clone();
+        let src_id = new_node.node_id;
+        let adopted_id = adopt_node(&src_tree, src_id, &tree);
+        drop(new_node);
+        let mut child_mut = new_node_obj.downcast_mut::<JsElement>().unwrap();
+        child_mut.node_id = adopted_id;
+        child_mut.tree = tree.clone();
+        drop(child_mut);
+        update_node_cache_after_adoption(&src_tree, src_id, &tree, adopted_id, &new_node_obj);
+        adopted_id
+    } else {
+        new_node.node_id
+    };
+
+    // Second argument: reference child (required per spec — missing throws TypeError)
+    let ref_arg = args.get(1).ok_or_else(|| JsNativeError::typ().with_message("insertBefore: 2 arguments required"))?;
+
+    let ref_id = if ref_arg.is_null() || ref_arg.is_undefined() {
+        None
     } else {
         let ref_obj = ref_arg
             .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("insertBefore: second argument is not an object or null").into()))?;
+            .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: argument 2 is not a Node or null"))?;
         let ref_el = ref_obj
             .downcast_ref::<JsElement>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("insertBefore: second argument is not an Element").into()))?;
-        let ref_id = ref_el.node_id;
-        if is_fragment {
-            let children: Vec<NodeId> = tree.borrow().get_node(new_node_id).children.clone();
-            for frag_child in children {
-                tree.borrow_mut().insert_child_before(parent_id, frag_child, ref_id);
-            }
-        } else {
-            tree.borrow_mut().insert_child_before(parent_id, new_node_id, ref_id);
+            .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: argument 2 is not a Node or null"))?;
+        // If ref child is from a different tree, it can't be a child of parent -> NotFoundError
+        if !Rc::ptr_eq(&tree, &ref_el.tree) {
+            return Err(not_found_error(
+                "The node before which the new node is to be inserted is not a child of this node",
+            ));
         }
-    }
+        Some(ref_el.node_id)
+    };
+
+    // Pre-insertion validation (node is now in same tree after adoption)
+    validate_pre_insert(&tree.borrow(), parent_id, new_node_id, ref_id, None)?;
+
+    do_insert(&tree, parent_id, new_node_id, ref_id);
 
     Ok(new_node_arg.clone())
 }
@@ -86,36 +761,77 @@ fn insert_before(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResu
 fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let this_obj = this
         .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChild: this is not an object").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: this is not an object"))?;
     let parent = this_obj
         .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChild: this is not an Element").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: this is not a Node"))?;
     let parent_id = parent.node_id;
     let tree = parent.tree.clone();
 
+    // First arg: new child (required)
     let new_child_arg = args
         .first()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChild: missing first argument").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: 2 arguments required"))?;
+    if new_child_arg.is_null() || new_child_arg.is_undefined() {
+        return Err(JsNativeError::typ().with_message("replaceChild: argument 1 is not a Node").into());
+    }
     let new_child_obj = new_child_arg
         .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChild: first argument is not an object").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: argument 1 is not a Node"))?;
     let new_child = new_child_obj
         .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChild: first argument is not an Element").into()))?;
-    let new_child_id = new_child.node_id;
+        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: argument 1 is not a Node"))?;
 
+    // Check if node is a Document - must reject before adoption changes it
+    {
+        let node_tree_ref = new_child.tree.borrow();
+        let node_data = &node_tree_ref.get_node(new_child.node_id).data;
+        if matches!(node_data, NodeData::Document) {
+            return Err(hierarchy_request_error("Cannot insert a Document node"));
+        }
+    }
+
+    // Cross-tree adoption: if new child is from a different tree, adopt it first
+    let new_child_id = if !Rc::ptr_eq(&tree, &new_child.tree) {
+        let src_tree = new_child.tree.clone();
+        let src_id = new_child.node_id;
+        let adopted_id = adopt_node(&src_tree, src_id, &tree);
+        drop(new_child);
+        let mut child_mut = new_child_obj.downcast_mut::<JsElement>().unwrap();
+        child_mut.node_id = adopted_id;
+        child_mut.tree = tree.clone();
+        drop(child_mut);
+        update_node_cache_after_adoption(&src_tree, src_id, &tree, adopted_id, &new_child_obj);
+        adopted_id
+    } else {
+        new_child.node_id
+    };
+
+    // Second arg: old child (required)
     let old_child_arg = args
         .get(1)
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChild: missing second argument").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: 2 arguments required"))?;
+    if old_child_arg.is_null() || old_child_arg.is_undefined() {
+        return Err(JsNativeError::typ().with_message("replaceChild: argument 2 is not a Node").into());
+    }
     let old_child_obj = old_child_arg
         .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChild: second argument is not an object").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: argument 2 is not a Node"))?;
     let old_child = old_child_obj
         .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChild: second argument is not an Element").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: argument 2 is not a Node"))?;
+    // If old child is from a different tree, it can't be a child of parent -> NotFoundError
+    if !Rc::ptr_eq(&tree, &old_child.tree) {
+        return Err(not_found_error(
+            "The node to be replaced is not a child of this node",
+        ));
+    }
     let old_child_id = old_child.node_id;
 
-    tree.borrow_mut().replace_child(parent_id, new_child_id, old_child_id);
+    // Pre-replace validation (new child is now in same tree after adoption)
+    validate_pre_replace(&tree.borrow(), parent_id, new_child_id, old_child_id, None)?;
+
+    do_replace(&tree, parent_id, new_child_id, old_child_id);
 
     let js_obj = get_or_create_js_element(old_child_id, tree, ctx)?;
     Ok(js_obj.into())
@@ -124,30 +840,40 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
 fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let this_obj = this
         .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("removeChild: this is not an object").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("removeChild: this is not an object"))?;
     let parent = this_obj
         .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("removeChild: this is not an Element").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("removeChild: this is not a Node"))?;
     let parent_id = parent.node_id;
     let tree = parent.tree.clone();
 
     let child_arg = args
         .first()
-        .ok_or_else(|| JsError::from_opaque(js_string!("removeChild: missing argument").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("removeChild: 1 argument required"))?;
+    if child_arg.is_null() || child_arg.is_undefined() {
+        return Err(JsNativeError::typ().with_message("removeChild: argument 1 is not a Node").into());
+    }
     let child_obj = child_arg
         .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("removeChild: argument is not an object").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("removeChild: argument 1 is not a Node"))?;
     let child = child_obj
         .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("removeChild: argument is not an Element").into()))?;
+        .ok_or_else(|| JsNativeError::typ().with_message("removeChild: argument 1 is not a Node"))?;
+
+    // If child is from a different tree, it can't be a child of parent -> NotFoundError
+    if !Rc::ptr_eq(&tree, &child.tree) {
+        return Err(not_found_error(
+            "The node to be removed is not a child of this node",
+        ));
+    }
     let child_id = child.node_id;
 
     {
         let t = tree.borrow();
         let parent_node = t.get_node(parent_id);
         if !parent_node.children.contains(&child_id) {
-            return Err(JsError::from_opaque(
-                js_string!("removeChild: the node to be removed is not a child of this node").into(),
+            return Err(not_found_error(
+                "The node to be removed is not a child of this node",
             ));
         }
     }
@@ -223,7 +949,8 @@ fn append(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
 
     let node_ids = convert_nodes_from_args(args, &tree, ctx)?;
     for nid in node_ids {
-        tree.borrow_mut().append_child(parent_id, nid);
+        validate_pre_insert(&tree.borrow(), parent_id, nid, None, None)?;
+        do_insert(&tree, parent_id, nid, None);
     }
     Ok(JsValue::undefined())
 }
@@ -240,14 +967,10 @@ fn prepend(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVa
     let tree = parent.tree.clone();
 
     let node_ids = convert_nodes_from_args(args, &tree, ctx)?;
-    // Capture the original first child once before any insertions.
-    // Insert each new node before this reference node so they appear in order.
     let original_first_child = tree.borrow().first_child(parent_id);
     for nid in node_ids {
-        match original_first_child {
-            Some(fc) => tree.borrow_mut().insert_child_before(parent_id, nid, fc),
-            None => tree.borrow_mut().append_child(parent_id, nid),
-        }
+        validate_pre_insert(&tree.borrow(), parent_id, nid, original_first_child, None)?;
+        do_insert(&tree, parent_id, nid, original_first_child);
     }
     Ok(JsValue::undefined())
 }
@@ -264,9 +987,13 @@ fn replace_children(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     let tree = parent.tree.clone();
 
     let node_ids = convert_nodes_from_args(args, &tree, ctx)?;
+    // Validate all nodes first before making changes
+    for &nid in &node_ids {
+        validate_pre_insert(&tree.borrow(), parent_id, nid, None, None)?;
+    }
     tree.borrow_mut().clear_children(parent_id);
     for nid in node_ids {
-        tree.borrow_mut().append_child(parent_id, nid);
+        do_insert(&tree, parent_id, nid, None);
     }
     Ok(JsValue::undefined())
 }
@@ -623,7 +1350,8 @@ pub(crate) fn document_append(this: &JsValue, args: &[JsValue], ctx: &mut Contex
 
     let node_ids = convert_nodes_from_args(args, &tree, ctx)?;
     for nid in node_ids {
-        tree.borrow_mut().append_child(doc_id, nid);
+        validate_pre_insert(&tree.borrow(), doc_id, nid, None, None)?;
+        do_insert(&tree, doc_id, nid, None);
     }
     Ok(JsValue::undefined())
 }
@@ -641,10 +1369,8 @@ pub(crate) fn document_prepend(this: &JsValue, args: &[JsValue], ctx: &mut Conte
     let node_ids = convert_nodes_from_args(args, &tree, ctx)?;
     let original_first_child = tree.borrow().first_child(doc_id);
     for nid in node_ids {
-        match original_first_child {
-            Some(fc) => tree.borrow_mut().insert_child_before(doc_id, nid, fc),
-            None => tree.borrow_mut().append_child(doc_id, nid),
-        }
+        validate_pre_insert(&tree.borrow(), doc_id, nid, original_first_child, None)?;
+        do_insert(&tree, doc_id, nid, original_first_child);
     }
     Ok(JsValue::undefined())
 }
@@ -660,9 +1386,12 @@ pub(crate) fn document_replace_children(this: &JsValue, args: &[JsValue], ctx: &
     let doc_id = tree.borrow().document();
 
     let node_ids = convert_nodes_from_args(args, &tree, ctx)?;
+    for &nid in &node_ids {
+        validate_pre_insert(&tree.borrow(), doc_id, nid, None, None)?;
+    }
     tree.borrow_mut().clear_children(doc_id);
     for nid in node_ids {
-        tree.borrow_mut().append_child(doc_id, nid);
+        do_insert(&tree, doc_id, nid, None);
     }
     Ok(JsValue::undefined())
 }
@@ -921,6 +1650,121 @@ mod tests {
         "#).unwrap();
         let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "b");
+    }
+
+    #[test]
+    fn doctype_into_element_throws() {
+        let tree = make_mutation_test_tree();
+        let mut rt = JsRuntime::new(Rc::clone(&tree));
+        let result = rt.eval(r#"
+            var doc = document.implementation.createHTMLDocument("title");
+            var doctype = doc.childNodes[0];
+            var el = doc.createElement("a");
+            var results = [];
+            results.push("doctype.nodeType=" + doctype.nodeType);
+            results.push("el has insertBefore=" + (typeof el.insertBefore));
+            results.push("el.insertBefore.length=" + (el.insertBefore ? el.insertBefore.length : "N/A"));
+            try { el.insertBefore(doctype, null); results.push("no error"); } catch(e) {
+                results.push("error: " + e.message);
+            }
+            results.join(" | ");
+        "#).unwrap();
+        let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert!(s.contains("error:"), "Expected error but got: {}", s);
+    }
+
+    #[test]
+    fn text_node_append_child_throws_hierarchy_request_error() {
+        let tree = make_mutation_test_tree();
+        let mut rt = JsRuntime::new(Rc::clone(&tree));
+        let result = rt.eval(r#"
+            var text = document.createTextNode("foo");
+            var result = 'no error';
+            try { text.appendChild(document.createElement("div")); } catch(e) {
+                result = 'error: ' + e.message;
+            }
+            result;
+        "#).unwrap();
+        let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert!(s.contains("HierarchyRequestError") || s.contains("error:"), "Expected error but got: {}", s);
+    }
+
+    #[test]
+    fn element_remove_with_siblings_via_engine_harness() {
+        use crate::Engine;
+        let mut engine = Engine::new();
+        // Mimic the WPT pattern: test() wraps each check in try/catch
+        let html = r#"<!DOCTYPE html>
+<html><body>
+<script>
+var debug_log = [];
+function test(fn, name) {
+    try {
+        fn();
+        debug_log.push("PASS: " + name);
+    } catch(e) {
+        debug_log.push("FAIL: " + name + ": " + e.message);
+    }
+}
+function assert_equals(a, b, msg) {
+    if (a !== b) throw new Error(msg || "assert_equals: " + a + " !== " + b);
+}
+function assert_array_equals(a, b, msg) {
+    var aLen = a ? a.length : undefined;
+    var bLen = b ? b.length : undefined;
+    if (aLen === undefined || bLen === undefined || aLen !== bLen) {
+        throw new Error(msg || "assert_array_equals: length mismatch (" + aLen + " vs " + bLen + ")");
+    }
+    for (var i = 0; i < aLen; i++) {
+        if (a[i] !== b[i]) throw new Error(msg || "assert_array_equals: index " + i);
+    }
+}
+function assert_true(val, msg) {
+    if (val !== true) throw new Error(msg || "assert_true: got " + val);
+}
+
+var node = document.createElement("div");
+var parent = document.createElement("div");
+
+test(function() {
+    assert_true("remove" in node);
+    assert_equals(typeof node.remove, "function");
+    assert_equals(node.remove.length, 0);
+}, "element should support remove()");
+
+test(function() {
+    assert_equals(node.parentNode, null, "Node should not have a parent");
+    assert_equals(node.remove(), undefined);
+    assert_equals(node.parentNode, null, "Removed new node should not have a parent");
+}, "remove() should work if element doesn't have a parent");
+
+test(function() {
+    assert_equals(node.parentNode, null, "Node should not have a parent");
+    parent.appendChild(node);
+    assert_equals(node.parentNode, parent, "Appended node should have a parent");
+    assert_equals(node.remove(), undefined);
+    assert_equals(node.parentNode, null, "Removed node should not have a parent");
+    assert_array_equals(parent.childNodes, [], "Parent should not have children");
+}, "remove() should work if element does have a parent");
+
+test(function() {
+    assert_equals(node.parentNode, null, "Node should not have a parent");
+    var before = parent.appendChild(document.createComment("before"));
+    parent.appendChild(node);
+    var after = parent.appendChild(document.createComment("after"));
+    assert_equals(node.parentNode, parent, "Appended node should have a parent");
+    assert_equals(node.remove(), undefined);
+    assert_equals(node.parentNode, null, "Removed node should not have a parent");
+    assert_array_equals(parent.childNodes, [before, after], "Parent should have two children left");
+}, "remove() should work if element does have a parent and siblings");
+
+window.__debug = debug_log.join("\n");
+</script>
+</body></html>"#;
+        let _errors = engine.load_html_with_scripts_lossy(html, &std::collections::HashMap::new());
+        let debug = engine.eval_js("window.__debug").unwrap_or_default();
+        eprintln!("{}", debug);
+        assert!(!debug.contains("FAIL"), "Element-remove harness test:\n{}", debug);
     }
 
 }

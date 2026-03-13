@@ -23,6 +23,16 @@ pub enum NodeData {
     Comment {
         content: String,
     },
+    ProcessingInstruction {
+        target: String,
+        data: String,
+    },
+    Attr {
+        local_name: String,
+        namespace: String,   // "" = null
+        prefix: String,      // "" = null
+        value: String,
+    },
     DocumentFragment,
 }
 

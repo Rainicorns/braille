@@ -13,6 +13,8 @@ tendril = "0.5"
 cssparser = "0.35"
 selectors = "0.28"
 precomputed-hash = "0.1"
+url = "2.5"
+quick-xml = "0.37"
 
 [dev-dependencies]
 libtest-mimic = "0.8"

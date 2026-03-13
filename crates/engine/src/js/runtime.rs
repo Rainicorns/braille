@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use boa_engine::{
+    class::Class,
     js_string,
     native_function::NativeFunction,
     object::{FunctionObjectBuilder, JsObject, ObjectInitializer},
@@ -53,12 +54,19 @@ impl JsRuntime {
             *cell.borrow_mut() = Some(Rc::clone(&tree));
         });
 
+        // Register DOMImplementation global constructor (for instanceof) — must be before register_document
+        bindings::document::register_domimplementation(&mut context);
+
         bindings::register_document(Rc::clone(&tree), &mut context);
         bindings::window::register_window(&mut context, Rc::clone(&console_buffer), Rc::clone(&tree));
 
         // Register Event and CustomEvent classes
         context.register_global_class::<bindings::event::JsEvent>().unwrap();
         context.register_global_class::<bindings::event::JsCustomEvent>().unwrap();
+
+        // Wrap Event/CustomEvent constructors to add isTrusted as own property on each instance.
+        // Must happen BEFORE register_event_constants so constants go on the wrapper constructors.
+        Self::wrap_event_constructors(&mut context);
         bindings::event::register_event_constants(&mut context);
 
         // Register CSSStyleDeclaration class for getComputedStyle
@@ -67,7 +75,186 @@ impl JsRuntime {
         // Register global Node, CharacterData, Text, Comment with proper prototype chain
         Self::register_dom_type_hierarchy(&mut context);
 
+        // Register NodeList and HTMLCollection globals
+        bindings::collections::register_collections(&mut context);
+
+        // Register `location` global stub (needed by WPT Node-properties test)
+        Self::register_location_global(&mut context);
+
+        // Register DOMParser global constructor
+        bindings::dom_parser::register_dom_parser(&mut context);
+
         Self { context, tree, console_buffer, listeners, node_cache }
+    }
+
+    /// Replace the Event and CustomEvent global constructors with wrappers that:
+    /// 1. Create the event via `from_data` (gets the right prototype from Class registration)
+    /// 2. Attach `isTrusted` as an own accessor property on the instance
+    ///
+    /// This is needed because Boa's `Class::data_constructor` returns the Rust struct,
+    /// not the JsObject, so there's no hook to add own properties within the trait.
+    fn wrap_event_constructors(context: &mut Context) {
+        use bindings::event::{JsEvent, JsCustomEvent, attach_is_trusted_own_property};
+
+        let global = context.global_object();
+
+        // Get the original Event.prototype (set up by register_global_class)
+        let orig_event_ctor = global
+            .get(js_string!("Event"), context)
+            .expect("Event constructor should exist");
+        let event_proto = orig_event_ctor
+            .as_object()
+            .expect("Event should be object")
+            .get(js_string!("prototype"), context)
+            .expect("Event.prototype should exist");
+
+        // Build replacement Event constructor
+        let event_proto_for_closure = event_proto.as_object().expect("Event.prototype object").clone();
+        let event_ctor = unsafe {
+            NativeFunction::from_closure(move |_this, args, ctx| {
+                // Parse args the same way as JsEvent::data_constructor
+                let event_type = args
+                    .first()
+                    .ok_or_else(|| {
+                        JsError::from_native(
+                            boa_engine::JsNativeError::typ()
+                                .with_message("Failed to execute 'Event' constructor: 1 argument required, but only 0 present.")
+                        )
+                    })?
+                    .to_string(ctx)?
+                    .to_std_string_escaped();
+
+                let mut bubbles = false;
+                let mut cancelable = false;
+                if let Some(opts_val) = args.get(1) {
+                    if let Some(opts_obj) = opts_val.as_object() {
+                        let b = opts_obj.get(js_string!("bubbles"), ctx)?;
+                        if !b.is_undefined() { bubbles = b.to_boolean(); }
+                        let c = opts_obj.get(js_string!("cancelable"), ctx)?;
+                        if !c.is_undefined() { cancelable = c.to_boolean(); }
+                    }
+                }
+
+                let event = JsEvent {
+                    event_type,
+                    bubbles,
+                    cancelable,
+                    default_prevented: false,
+                    propagation_stopped: false,
+                    immediate_propagation_stopped: false,
+                    target: None,
+                    current_target: None,
+                    phase: 0,
+                    dispatching: false,
+                };
+                let js_obj = JsEvent::from_data(event, ctx)?;
+                js_obj.set_prototype(Some(event_proto_for_closure.clone()));
+                attach_is_trusted_own_property(&js_obj, ctx)?;
+                Ok(JsValue::from(js_obj))
+            })
+        };
+
+        let event_ctor_fn = FunctionObjectBuilder::new(context.realm(), event_ctor)
+            .name(js_string!("Event"))
+            .length(1)
+            .constructor(true)
+            .build();
+
+        // Set Event.prototype on the new constructor
+        event_ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(event_proto)
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define Event.prototype on wrapper");
+
+        // Replace the global Event
+        context
+            .register_global_property(js_string!("Event"), event_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register Event wrapper");
+
+        // --- CustomEvent ---
+        let orig_custom_ctor = global
+            .get(js_string!("CustomEvent"), context)
+            .expect("CustomEvent constructor should exist");
+        let custom_proto = orig_custom_ctor
+            .as_object()
+            .expect("CustomEvent should be object")
+            .get(js_string!("prototype"), context)
+            .expect("CustomEvent.prototype should exist");
+
+        let custom_proto_for_closure = custom_proto.as_object().expect("CustomEvent.prototype object").clone();
+        let custom_ctor = unsafe {
+            NativeFunction::from_closure(move |_this, args, ctx| {
+                let event_type = args
+                    .first()
+                    .ok_or_else(|| {
+                        JsError::from_native(
+                            boa_engine::JsNativeError::typ()
+                                .with_message("Failed to execute 'CustomEvent' constructor: 1 argument required, but only 0 present.")
+                        )
+                    })?
+                    .to_string(ctx)?
+                    .to_std_string_escaped();
+
+                let mut bubbles = false;
+                let mut cancelable = false;
+                let mut detail = JsValue::null();
+                if let Some(opts_val) = args.get(1) {
+                    if let Some(opts_obj) = opts_val.as_object() {
+                        let b = opts_obj.get(js_string!("bubbles"), ctx)?;
+                        if !b.is_undefined() { bubbles = b.to_boolean(); }
+                        let c = opts_obj.get(js_string!("cancelable"), ctx)?;
+                        if !c.is_undefined() { cancelable = c.to_boolean(); }
+                        let d = opts_obj.get(js_string!("detail"), ctx)?;
+                        if !d.is_undefined() { detail = d; }
+                    }
+                }
+
+                let event = JsCustomEvent {
+                    event_type,
+                    bubbles,
+                    cancelable,
+                    default_prevented: false,
+                    propagation_stopped: false,
+                    immediate_propagation_stopped: false,
+                    detail,
+                    target: None,
+                    current_target: None,
+                    phase: 0,
+                    dispatching: false,
+                };
+                let js_obj = JsCustomEvent::from_data(event, ctx)?;
+                js_obj.set_prototype(Some(custom_proto_for_closure.clone()));
+                attach_is_trusted_own_property(&js_obj, ctx)?;
+                Ok(JsValue::from(js_obj))
+            })
+        };
+
+        let custom_ctor_fn = FunctionObjectBuilder::new(context.realm(), custom_ctor)
+            .name(js_string!("CustomEvent"))
+            .length(1)
+            .constructor(true)
+            .build();
+
+        custom_ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(custom_proto)
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define CustomEvent.prototype on wrapper");
+
+        context
+            .register_global_property(js_string!("CustomEvent"), custom_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register CustomEvent wrapper");
     }
 
     /// Register the full DOM type hierarchy:
@@ -125,6 +312,27 @@ impl JsRuntime {
 
         // Make Element.prototype inherit from Node.prototype
         element_proto_obj.set_prototype(Some(node_proto.clone()));
+
+        // Copy Node-level methods from Element.prototype to Node.prototype
+        // so that `Node.prototype.insertBefore` etc. work (used by WPT tests).
+        // Per DOM spec, these are Node interface methods.
+        let node_methods = &[
+            "appendChild", "insertBefore", "removeChild", "replaceChild",
+            "cloneNode", "normalize", "hasChildNodes", "contains",
+            "isEqualNode", "isSameNode", "compareDocumentPosition",
+            "getRootNode", "append", "prepend", "replaceChildren",
+            "before", "after", "replaceWith", "remove",
+            "insertAdjacentElement", "insertAdjacentText",
+        ];
+        for name in node_methods {
+            if let Ok(val) = element_proto_obj.get(js_string!(*name), context) {
+                if !val.is_undefined() {
+                    node_proto.set(js_string!(*name), val, false, context)
+                        .expect("failed to copy method to Node.prototype");
+                }
+            }
+        }
+
 
         // ---------------------------------------------------------------
         // Node interface object — must be a callable function so that
@@ -363,14 +571,123 @@ impl JsRuntime {
             .expect("failed to register Comment global");
 
         // ---------------------------------------------------------------
+        // ProcessingInstruction.prototype — inherits from CharacterData.prototype
+        // ---------------------------------------------------------------
+        let pi_proto = ObjectInitializer::new(context).build();
+        pi_proto.set_prototype(Some(char_data_proto.clone()));
+
+        // ProcessingInstruction is abstract; calling `new ProcessingInstruction()` throws.
+        let pi_ctor = unsafe {
+            NativeFunction::from_closure(|_this, _args, _ctx| {
+                Err(JsError::from_opaque(JsValue::from(js_string!("Illegal constructor"))))
+            })
+        };
+        let pi_ctor_fn = FunctionObjectBuilder::new(context.realm(), pi_ctor)
+            .name(js_string!("ProcessingInstruction"))
+            .length(0)
+            .constructor(true)
+            .build();
+        pi_ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(pi_proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define ProcessingInstruction.prototype");
+
+        pi_proto.define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(pi_ctor_fn.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define ProcessingInstruction.prototype.constructor");
+
+        context
+            .register_global_property(js_string!("ProcessingInstruction"), pi_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register ProcessingInstruction global");
+
+        // ---------------------------------------------------------------
+        // Attr.prototype — inherits from Node.prototype (Element.prototype)
+        // ---------------------------------------------------------------
+        let attr_proto = ObjectInitializer::new(context).build();
+        attr_proto.set_prototype(Some(element_proto_obj.clone()));
+
+        let attr_ctor = unsafe {
+            NativeFunction::from_closure(|_this, _args, _ctx| {
+                Err(JsError::from_opaque(JsValue::from(js_string!("Illegal constructor"))))
+            })
+        };
+        let attr_ctor_fn = FunctionObjectBuilder::new(context.realm(), attr_ctor)
+            .name(js_string!("Attr"))
+            .length(0)
+            .constructor(true)
+            .build();
+        attr_ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(attr_proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define Attr.prototype");
+
+        attr_proto.define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(attr_ctor_fn.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define Attr.prototype.constructor");
+
+        context
+            .register_global_property(js_string!("Attr"), attr_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register Attr global");
+
+        // ---------------------------------------------------------------
         // Store prototypes in thread-local for get_or_create_js_element
         // ---------------------------------------------------------------
         DOM_PROTOTYPES.with(|cell| {
             *cell.borrow_mut() = Some(DomPrototypes {
                 text_proto,
                 comment_proto,
+                pi_proto: Some(pi_proto),
+                attr_proto: Some(attr_proto),
+                html_tag_protos: HashMap::new(),
+                html_element_proto: None,
+                html_unknown_proto: None,
+                document_fragment_proto: None,
+                document_type_proto: None,
+                document_proto: None,
             });
         });
+
+        // ---------------------------------------------------------------
+        // Register HTML element type constructors as globals for instanceof
+        // These are all abstract constructors that throw "Illegal constructor"
+        // but have proper prototypes inheriting from Element.prototype
+        // so that `el instanceof HTMLDivElement` etc. works.
+        // ---------------------------------------------------------------
+        Self::register_html_element_types(context, &element_proto_obj);
+
+        // ---------------------------------------------------------------
+        // Register DocumentFragment and DocumentType constructors
+        // ---------------------------------------------------------------
+        Self::register_document_fragment_type(context, &element_proto_obj);
+        Self::register_document_type_type(context, &element_proto_obj);
+        Self::register_document_constructor(context, &element_proto_obj);
+        Self::populate_dom_prototypes(context);
 
         // ---------------------------------------------------------------
         // Copy Node/CharacterData/Text/Comment globals onto window object
@@ -380,7 +697,12 @@ impl JsRuntime {
         let window_val = global.get(js_string!("window"), context)
             .expect("window global should exist");
         if let Some(window_obj) = window_val.as_object() {
-            for name in &["Node", "CharacterData", "Text", "Comment"] {
+            // Core DOM types
+            let core_types = &[
+                "Node", "CharacterData", "Text", "Comment", "ProcessingInstruction",
+                "Attr", "DocumentFragment", "DocumentType", "Document", "Element",
+            ];
+            for name in core_types {
                 let val = global.get(js_string!(*name), context)
                     .expect("global should have this property");
                 window_obj.define_property_or_throw(
@@ -394,7 +716,434 @@ impl JsRuntime {
                     context,
                 ).expect("failed to set window property");
             }
+
+            // HTML element types
+            let html_types = Self::html_element_type_names();
+            for name in &html_types {
+                if let Ok(val) = global.get(js_string!(*name), context) {
+                    if !val.is_undefined() {
+                        let _ = window_obj.define_property_or_throw(
+                            js_string!(*name),
+                            boa_engine::property::PropertyDescriptor::builder()
+                                .value(val)
+                                .writable(true)
+                                .configurable(true)
+                                .enumerable(false)
+                                .build(),
+                            context,
+                        );
+                    }
+                }
+            }
         }
+    }
+
+    /// Returns the list of HTML element type constructor names.
+    fn html_element_type_names() -> Vec<&'static str> {
+        vec![
+            "HTMLElement", "HTMLAnchorElement", "HTMLAreaElement",
+            "HTMLAudioElement", "HTMLBaseElement", "HTMLBodyElement",
+            "HTMLBRElement", "HTMLButtonElement", "HTMLCanvasElement",
+            "HTMLTableCaptionElement", "HTMLTableColElement",
+            "HTMLDataElement", "HTMLDataListElement", "HTMLDialogElement",
+            "HTMLModElement", "HTMLDirectoryElement", "HTMLDivElement",
+            "HTMLDListElement", "HTMLEmbedElement", "HTMLFieldSetElement",
+            "HTMLFontElement", "HTMLFormElement", "HTMLFrameElement",
+            "HTMLFrameSetElement", "HTMLHeadingElement", "HTMLHeadElement",
+            "HTMLHRElement", "HTMLHtmlElement", "HTMLIFrameElement",
+            "HTMLImageElement", "HTMLInputElement", "HTMLLabelElement",
+            "HTMLLegendElement", "HTMLLIElement", "HTMLLinkElement",
+            "HTMLMapElement", "HTMLMetaElement", "HTMLMeterElement",
+            "HTMLObjectElement", "HTMLOListElement", "HTMLOptGroupElement",
+            "HTMLOptionElement", "HTMLOutputElement", "HTMLParagraphElement",
+            "HTMLParamElement", "HTMLPreElement", "HTMLProgressElement",
+            "HTMLQuoteElement", "HTMLScriptElement", "HTMLSelectElement",
+            "HTMLSourceElement", "HTMLSpanElement", "HTMLStyleElement",
+            "HTMLTableElement", "HTMLTableSectionElement",
+            "HTMLTableCellElement", "HTMLTemplateElement",
+            "HTMLTextAreaElement", "HTMLTimeElement", "HTMLTitleElement",
+            "HTMLTableRowElement", "HTMLTrackElement", "HTMLUListElement",
+            "HTMLVideoElement", "HTMLUnknownElement",
+        ]
+    }
+
+    /// Register all HTML element type constructors as globals.
+    /// Each one has a prototype that inherits from Element.prototype,
+    /// and HTMLElement.prototype is the base for most of them.
+    fn register_html_element_types(context: &mut Context, element_proto: &JsObject) {
+        // Create HTMLElement.prototype inheriting from Element.prototype
+        let html_element_proto = ObjectInitializer::new(context).build();
+        html_element_proto.set_prototype(Some(element_proto.clone()));
+
+        let html_element_ctor = Self::make_illegal_constructor(context, "HTMLElement");
+        html_element_ctor.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(html_element_proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define HTMLElement.prototype");
+
+        html_element_proto.define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(html_element_ctor.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to set HTMLElement.prototype.constructor");
+
+        context
+            .register_global_property(js_string!("HTMLElement"), html_element_ctor, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register HTMLElement global");
+
+        // Register all specific HTML element types, each inheriting from HTMLElement.prototype
+        let specific_types = Self::html_element_type_names();
+        for name in &specific_types {
+            if *name == "HTMLElement" {
+                continue; // Already registered
+            }
+
+            let proto = ObjectInitializer::new(context).build();
+            proto.set_prototype(Some(html_element_proto.clone()));
+
+            let ctor = Self::make_illegal_constructor(context, name);
+            ctor.define_property_or_throw(
+                js_string!("prototype"),
+                boa_engine::property::PropertyDescriptor::builder()
+                    .value(proto.clone())
+                    .writable(false)
+                    .configurable(false)
+                    .enumerable(false)
+                    .build(),
+                context,
+            ).expect("failed to define prototype");
+
+            proto.define_property_or_throw(
+                js_string!("constructor"),
+                boa_engine::property::PropertyDescriptor::builder()
+                    .value(ctor.clone())
+                    .writable(true)
+                    .configurable(true)
+                    .enumerable(false)
+                    .build(),
+                context,
+            ).expect("failed to set prototype.constructor");
+
+            context
+                .register_global_property(js_string!(*name), ctor, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+                .expect("failed to register HTML element type global");
+        }
+    }
+
+    /// Register DocumentFragment constructor
+    fn register_document_fragment_type(context: &mut Context, element_proto: &JsObject) {
+        let proto = ObjectInitializer::new(context).build();
+        proto.set_prototype(Some(element_proto.clone()));
+
+        let ctor = Self::make_illegal_constructor(context, "DocumentFragment");
+        ctor.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define DocumentFragment.prototype");
+
+        proto.define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(ctor.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to set DocumentFragment.prototype.constructor");
+
+        context
+            .register_global_property(js_string!("DocumentFragment"), ctor, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register DocumentFragment global");
+    }
+
+    /// Register DocumentType constructor
+    fn register_document_type_type(context: &mut Context, element_proto: &JsObject) {
+        let proto = ObjectInitializer::new(context).build();
+        proto.set_prototype(Some(element_proto.clone()));
+
+        let ctor = Self::make_illegal_constructor(context, "DocumentType");
+        ctor.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define DocumentType.prototype");
+
+        proto.define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(ctor.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to set DocumentType.prototype.constructor");
+
+        context
+            .register_global_property(js_string!("DocumentType"), ctor, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register DocumentType global");
+    }
+
+    /// Register a working Document constructor global.
+    /// `new Document()` creates a new blank XML document (contentType: application/xml).
+    /// Document.prototype inherits from Element.prototype so it gets cloneNode etc.
+    fn register_document_constructor(context: &mut Context, element_proto: &JsObject) {
+        let proto = ObjectInitializer::new(context).build();
+        proto.set_prototype(Some(element_proto.clone()));
+
+        // Add default Document properties to the prototype so all Document instances
+        // (including clones) inherit them
+        let doc_defaults: &[(&str, &str)] = &[
+            ("charset", "UTF-8"),
+            ("characterSet", "UTF-8"),
+            ("inputEncoding", "UTF-8"),
+            ("URL", "about:blank"),
+            ("documentURI", "about:blank"),
+            ("compatMode", "CSS1Compat"),
+            ("contentType", "application/xml"),
+        ];
+        for (name, value) in doc_defaults {
+            proto.define_property_or_throw(
+                js_string!(*name),
+                boa_engine::property::PropertyDescriptor::builder()
+                    .value(JsValue::from(js_string!(*value)))
+                    .writable(true)
+                    .configurable(true)
+                    .enumerable(false)
+                    .build(),
+                context,
+            ).expect("failed to set Document.prototype default property");
+        }
+
+        let ctor = unsafe {
+            NativeFunction::from_closure(move |_this, _args, ctx| {
+                bindings::document::create_blank_xml_document(ctx)
+            })
+        };
+
+        let ctor_fn = FunctionObjectBuilder::new(context.realm(), ctor)
+            .name(js_string!("Document"))
+            .length(0)
+            .constructor(true)
+            .build();
+
+        ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define Document.prototype");
+
+        proto.define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(ctor_fn.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to set Document.prototype.constructor");
+
+        context
+            .register_global_property(js_string!("Document"), ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register Document global");
+    }
+
+    /// Populate the DomPrototypes thread-local with prototypes from the globally
+    /// registered HTML element type constructors, DocumentFragment, and DocumentType.
+    fn populate_dom_prototypes(context: &mut Context) {
+        let global = context.global_object();
+
+        // Build tag-name -> prototype mapping
+        let tag_to_type: &[(&str, &str)] = &[
+            ("a", "HTMLAnchorElement"),
+            ("area", "HTMLAreaElement"),
+            ("audio", "HTMLAudioElement"),
+            ("base", "HTMLBaseElement"),
+            ("body", "HTMLBodyElement"),
+            ("br", "HTMLBRElement"),
+            ("button", "HTMLButtonElement"),
+            ("canvas", "HTMLCanvasElement"),
+            ("caption", "HTMLTableCaptionElement"),
+            ("col", "HTMLTableColElement"),
+            ("colgroup", "HTMLTableColElement"),
+            ("data", "HTMLDataElement"),
+            ("datalist", "HTMLDataListElement"),
+            ("dialog", "HTMLDialogElement"),
+            ("del", "HTMLModElement"),
+            ("ins", "HTMLModElement"),
+            ("dir", "HTMLDirectoryElement"),
+            ("div", "HTMLDivElement"),
+            ("dl", "HTMLDListElement"),
+            ("embed", "HTMLEmbedElement"),
+            ("fieldset", "HTMLFieldSetElement"),
+            ("font", "HTMLFontElement"),
+            ("form", "HTMLFormElement"),
+            ("frame", "HTMLFrameElement"),
+            ("frameset", "HTMLFrameSetElement"),
+            ("h1", "HTMLHeadingElement"),
+            ("h2", "HTMLHeadingElement"),
+            ("h3", "HTMLHeadingElement"),
+            ("h4", "HTMLHeadingElement"),
+            ("h5", "HTMLHeadingElement"),
+            ("h6", "HTMLHeadingElement"),
+            ("head", "HTMLHeadElement"),
+            ("hr", "HTMLHRElement"),
+            ("html", "HTMLHtmlElement"),
+            ("iframe", "HTMLIFrameElement"),
+            ("img", "HTMLImageElement"),
+            ("input", "HTMLInputElement"),
+            ("label", "HTMLLabelElement"),
+            ("legend", "HTMLLegendElement"),
+            ("li", "HTMLLIElement"),
+            ("link", "HTMLLinkElement"),
+            ("map", "HTMLMapElement"),
+            ("meta", "HTMLMetaElement"),
+            ("meter", "HTMLMeterElement"),
+            ("object", "HTMLObjectElement"),
+            ("ol", "HTMLOListElement"),
+            ("optgroup", "HTMLOptGroupElement"),
+            ("option", "HTMLOptionElement"),
+            ("output", "HTMLOutputElement"),
+            ("p", "HTMLParagraphElement"),
+            ("param", "HTMLParamElement"),
+            ("pre", "HTMLPreElement"),
+            ("progress", "HTMLProgressElement"),
+            ("q", "HTMLQuoteElement"),
+            ("script", "HTMLScriptElement"),
+            ("select", "HTMLSelectElement"),
+            ("source", "HTMLSourceElement"),
+            ("span", "HTMLSpanElement"),
+            ("style", "HTMLStyleElement"),
+            ("table", "HTMLTableElement"),
+            ("tbody", "HTMLTableSectionElement"),
+            ("thead", "HTMLTableSectionElement"),
+            ("tfoot", "HTMLTableSectionElement"),
+            ("td", "HTMLTableCellElement"),
+            ("th", "HTMLTableCellElement"),
+            ("template", "HTMLTemplateElement"),
+            ("textarea", "HTMLTextAreaElement"),
+            ("time", "HTMLTimeElement"),
+            ("title", "HTMLTitleElement"),
+            ("tr", "HTMLTableRowElement"),
+            ("track", "HTMLTrackElement"),
+            ("ul", "HTMLUListElement"),
+            ("video", "HTMLVideoElement"),
+        ];
+
+        // Helper: extract Constructor.prototype from a global constructor name
+        let mut get_proto = |name: &str| -> Option<JsObject> {
+            let ctor_val = global.get(js_string!(name), context).ok()?;
+            let ctor_obj = ctor_val.as_object()?;
+            let proto_val = ctor_obj.get(js_string!("prototype"), context).ok()?;
+            Some(proto_val.as_object()?.clone())
+        };
+
+        let mut html_tag_protos = HashMap::new();
+        for (tag, type_name) in tag_to_type {
+            if let Some(proto) = get_proto(type_name) {
+                html_tag_protos.insert(tag.to_string(), proto);
+            }
+        }
+
+        let html_element_proto = get_proto("HTMLElement");
+        let html_unknown_proto = get_proto("HTMLUnknownElement");
+        let document_fragment_proto = get_proto("DocumentFragment");
+        let document_type_proto = get_proto("DocumentType");
+        let document_proto = get_proto("Document");
+
+        DOM_PROTOTYPES.with(|cell| {
+            let mut protos = cell.borrow_mut();
+            if let Some(ref mut p) = *protos {
+                p.html_tag_protos = html_tag_protos;
+                p.html_element_proto = html_element_proto;
+                p.html_unknown_proto = html_unknown_proto;
+                p.document_fragment_proto = document_fragment_proto;
+                p.document_type_proto = document_type_proto;
+                p.document_proto = document_proto;
+            }
+        });
+    }
+
+    /// Register a minimal `location` global object stub.
+    /// The Node-properties WPT test uses `String(location)` to get the document URL.
+    fn register_location_global(context: &mut Context) {
+        // Create a location object with toString() returning "about:blank"
+        let location = ObjectInitializer::new(context).build();
+        // Make String(location) return "about:blank"
+        let to_string_fn = unsafe {
+            NativeFunction::from_closure(|_this, _args, _ctx| {
+                Ok(JsValue::from(js_string!("about:blank")))
+            })
+        };
+        let realm = context.realm().clone();
+        location.define_property_or_throw(
+            js_string!("toString"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(to_string_fn.to_js_function(&realm))
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define location.toString");
+        location.define_property_or_throw(
+            js_string!("href"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(JsValue::from(js_string!("about:blank")))
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define location.href");
+
+        context
+            .register_global_property(js_string!("location"), location, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register location global");
+    }
+
+    /// Creates a constructor function that throws "Illegal constructor" when called.
+    fn make_illegal_constructor(context: &mut Context, name: &str) -> JsObject {
+        let ctor = unsafe {
+            NativeFunction::from_closure(|_this, _args, _ctx| {
+                Err(JsError::from_opaque(JsValue::from(js_string!("Illegal constructor"))))
+            })
+        };
+        FunctionObjectBuilder::new(context.realm(), ctor)
+            .name(js_string!(name))
+            .length(0)
+            .constructor(true)
+            .build()
+            .into()
     }
 
     /// Evaluates a JS source string and returns the result.
@@ -1101,4 +1850,79 @@ mod tests {
         let s4 = result4.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(s4, "test", "window['Text'] constructor should work");
     }
+
+    #[test]
+    fn cross_tree_replace_child_identity() {
+        let tree = make_test_tree();
+        let mut rt = JsRuntime::new(Rc::clone(&tree));
+        let result = rt.eval(r#"
+            var results = [];
+            var doc = document.implementation.createHTMLDocument("title");
+            var doc2 = document.implementation.createHTMLDocument("title2");
+            var doctype = doc.doctype;
+            var doctype2 = doc2.doctype;
+
+            results.push("before: doc.childNodes.length=" + doc.childNodes.length);
+            results.push("before: doc2.childNodes.length=" + doc2.childNodes.length);
+            results.push("doctype.nodeType=" + doctype.nodeType);
+            results.push("doctype2.nodeType=" + doctype2.nodeType);
+
+            doc.replaceChild(doc2.doctype, doc.doctype);
+
+            results.push("after: doc.childNodes.length=" + doc.childNodes.length);
+            results.push("after: doc2.childNodes.length=" + doc2.childNodes.length);
+
+            results.push("doctype.parentNode === null: " + (doctype.parentNode === null));
+            results.push("doctype2.parentNode === doc: " + (doctype2.parentNode === doc));
+            results.push("doctype2.parentNode: " + doctype2.parentNode);
+            results.push("doc: " + doc);
+
+            // Check childNodes identity
+            results.push("doc.childNodes[0] === doctype2: " + (doc.childNodes[0] === doctype2));
+
+            results.join("\n");
+        "#).unwrap();
+        let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        eprintln!("{}", s);
+        assert!(s.contains("doctype2.parentNode === doc: true"), "doctype2.parentNode should be doc: {}", s);
+    }
+
+    #[test]
+    fn node_prototype_insert_before_is_callable() {
+        let tree = make_test_tree();
+        let mut rt = JsRuntime::new(Rc::clone(&tree));
+        let result = rt.eval(r#"
+            var results = [];
+            results.push("typeof Node.prototype.insertBefore = " + typeof Node.prototype.insertBefore);
+            results.push("typeof Node.prototype.replaceChild = " + typeof Node.prototype.replaceChild);
+            results.push("typeof Node.prototype.removeChild = " + typeof Node.prototype.removeChild);
+            results.push("typeof Node.prototype.appendChild = " + typeof Node.prototype.appendChild);
+            // Try calling via .call()
+            try {
+                var parent = document.createElement("div");
+                var child = document.createElement("span");
+                Node.prototype.insertBefore.call(parent, child, null);
+                results.push("call succeeded, parent.childNodes.length=" + parent.childNodes.length);
+            } catch(e) {
+                results.push("call error: " + e.message);
+            }
+            // Test the exact WPT pattern: assign to var, then .call() on non-parent nodes
+            var insertFunc = Node.prototype.insertBefore;
+            results.push("insertFunc type = " + typeof insertFunc);
+            try {
+                var doctype = document.implementation.createDocumentType("html", "", "");
+                var node = document.createElement("div");
+                var child = document.createElement("div");
+                insertFunc.call(doctype, node, child);
+                results.push("doctype call: no error");
+            } catch(e) {
+                results.push("doctype call error: " + e.message);
+            }
+            results.join("\n");
+        "#).unwrap();
+        let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        eprintln!("{}", s);
+        assert!(s.contains("typeof Node.prototype.insertBefore = function"), "insertBefore should be a function on Node.prototype: {}", s);
+    }
+
 }

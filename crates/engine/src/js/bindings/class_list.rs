@@ -13,6 +13,27 @@ use boa_gc::{Finalize, Trace};
 use crate::dom::{DomTree, NodeId};
 
 // ---------------------------------------------------------------------------
+// Token validation helper
+// ---------------------------------------------------------------------------
+
+/// Validate a DOMTokenList token per the spec:
+/// - Empty string -> SyntaxError
+/// - Contains ASCII whitespace -> InvalidCharacterError
+fn validate_token(token: &str) -> JsResult<()> {
+    if token.is_empty() {
+        return Err(JsError::from_opaque(
+            js_string!("SyntaxError: The token must not be empty").into(),
+        ));
+    }
+    if token.contains(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C') {
+        return Err(JsError::from_opaque(
+            js_string!("InvalidCharacterError: The token must not contain whitespace").into(),
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // JsClassList — the Class-based wrapper for element.classList
 // ---------------------------------------------------------------------------
 
@@ -29,32 +50,47 @@ impl JsClassList {
         Self { node_id, tree }
     }
 
-    /// Helper to parse class attribute into a vector of class names
+    /// Returns true if the element has a "class" attribute (even if empty).
+    fn has_class_attribute(&self) -> bool {
+        self.tree
+            .borrow()
+            .get_attribute(self.node_id, "class")
+            .is_some()
+    }
+
+    /// Returns the raw class attribute string, or empty string if no attribute.
+    fn get_raw_class_value(&self) -> String {
+        self.tree
+            .borrow()
+            .get_attribute(self.node_id, "class")
+            .unwrap_or_default()
+    }
+
+    /// Helper to parse class attribute into a deduplicated vector of class names.
     fn get_classes(&self) -> Vec<String> {
         self.tree
             .borrow()
             .get_attribute(self.node_id, "class")
             .map(|class_str| {
-                class_str
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect()
+                let mut seen = Vec::new();
+                for token in class_str.split_whitespace() {
+                    let s = token.to_string();
+                    if !seen.contains(&s) {
+                        seen.push(s);
+                    }
+                }
+                seen
             })
             .unwrap_or_default()
     }
 
-    /// Helper to write class names back to the class attribute
+    /// Helper to write class names back to the class attribute.
+    /// Always sets the attribute (even to empty string).
     fn set_classes(&self, classes: Vec<String>) {
-        if classes.is_empty() {
-            self.tree
-                .borrow_mut()
-                .remove_attribute(self.node_id, "class");
-        } else {
-            let class_str = classes.join(" ");
-            self.tree
-                .borrow_mut()
-                .set_attribute(self.node_id, "class", &class_str);
-        }
+        let class_str = classes.join(" ");
+        self.tree
+            .borrow_mut()
+            .set_attribute(self.node_id, "class", &class_str);
     }
 
     /// Native implementation of classList.add(...classNames)
@@ -66,13 +102,20 @@ impl JsClassList {
             .downcast_ref::<JsClassList>()
             .ok_or_else(|| JsError::from_opaque(js_string!("classList.add: `this` is not a ClassList").into()))?;
 
+        // Validate all tokens first (before any mutation)
+        let mut tokens = Vec::new();
+        for arg in args {
+            let token = arg.to_string(ctx)?.to_std_string_escaped();
+            validate_token(&token)?;
+            tokens.push(token);
+        }
+
         let mut classes = class_list.get_classes();
 
-        // Add each argument to the classes if not already present
-        for arg in args {
-            let class_name = arg.to_string(ctx)?.to_std_string_escaped();
-            if !class_name.is_empty() && !classes.contains(&class_name) {
-                classes.push(class_name);
+        // Add each token if not already present
+        for token in &tokens {
+            if !classes.contains(token) {
+                classes.push(token.clone());
             }
         }
 
@@ -89,19 +132,31 @@ impl JsClassList {
             .downcast_ref::<JsClassList>()
             .ok_or_else(|| JsError::from_opaque(js_string!("classList.remove: `this` is not a ClassList").into()))?;
 
+        // Validate all tokens first (before any mutation)
+        let mut tokens = Vec::new();
+        for arg in args {
+            let token = arg.to_string(ctx)?.to_std_string_escaped();
+            validate_token(&token)?;
+            tokens.push(token);
+        }
+
+        // If attribute doesn't exist, don't create it
+        if !class_list.has_class_attribute() {
+            return Ok(JsValue::undefined());
+        }
+
         let mut classes = class_list.get_classes();
 
-        // Remove each argument from the classes
-        for arg in args {
-            let class_name = arg.to_string(ctx)?.to_std_string_escaped();
-            classes.retain(|c| c != &class_name);
+        // Remove each token
+        for token in &tokens {
+            classes.retain(|c| c != token);
         }
 
         class_list.set_classes(classes);
         Ok(JsValue::undefined())
     }
 
-    /// Native implementation of classList.toggle(className)
+    /// Native implementation of classList.toggle(className [, force])
     fn toggle(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
         let obj = this
             .as_object()
@@ -116,19 +171,113 @@ impl JsClassList {
             .to_string(ctx)?
             .to_std_string_escaped();
 
+        validate_token(&class_name)?;
+
+        // Check for force parameter (second argument)
+        let force = args.get(1).and_then(|v| {
+            if v.is_undefined() {
+                None
+            } else {
+                Some(v.to_boolean())
+            }
+        });
+
         let mut classes = class_list.get_classes();
-        let added = if let Some(pos) = classes.iter().position(|c| c == &class_name) {
-            // Remove it
-            classes.remove(pos);
-            false
-        } else {
-            // Add it
-            classes.push(class_name);
-            true
+        let has_token = classes.contains(&class_name);
+
+        match force {
+            Some(true) => {
+                // Force add: if already present, it's a noop (don't update attribute for noop)
+                if !has_token {
+                    classes.push(class_name);
+                    class_list.set_classes(classes);
+                } else if class_list.has_class_attribute() {
+                    // Even if noop, dedup if attribute exists (for force toggle noop case,
+                    // the spec says don't run update steps, so we skip set_classes)
+                    // Actually: per the test, force toggle noop returns `before` unchanged.
+                    // So do NOT set_classes here.
+                }
+                Ok(JsValue::from(true))
+            }
+            Some(false) => {
+                // Force remove: if not present, it's a noop
+                if has_token {
+                    classes.retain(|c| c != &class_name);
+                    class_list.set_classes(classes);
+                } else if class_list.has_class_attribute() {
+                    // Noop - don't run update steps
+                }
+                Ok(JsValue::from(false))
+            }
+            None => {
+                // No force: toggle
+                let result = if has_token {
+                    classes.retain(|c| c != &class_name);
+                    false
+                } else {
+                    classes.push(class_name);
+                    true
+                };
+                class_list.set_classes(classes);
+                Ok(JsValue::from(result))
+            }
+        }
+    }
+
+    /// Native implementation of classList.replace(oldToken, newToken)
+    fn replace(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.replace: `this` is not an object").into()))?;
+        let class_list = obj
+            .downcast_ref::<JsClassList>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.replace: `this` is not a ClassList").into()))?;
+
+        let old_token = args
+            .first()
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.replace: missing old token argument").into()))?
+            .to_string(ctx)?
+            .to_std_string_escaped();
+
+        let new_token = args
+            .get(1)
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.replace: missing new token argument").into()))?
+            .to_string(ctx)?
+            .to_std_string_escaped();
+
+        // Validate both tokens: empty first (SyntaxError), then whitespace (InvalidCharacterError)
+        // Per spec, validate old_token first, then new_token
+        validate_token(&old_token)?;
+        validate_token(&new_token)?;
+
+        // If attribute doesn't exist, return false (no modification)
+        if !class_list.has_class_attribute() {
+            return Ok(JsValue::from(false));
+        }
+
+        let mut classes = class_list.get_classes();
+
+        // Find the first occurrence of old_token
+        let pos = match classes.iter().position(|c| c == &old_token) {
+            Some(p) => p,
+            None => return Ok(JsValue::from(false)), // Not found, no modification
         };
 
-        class_list.set_classes(classes);
-        Ok(JsValue::from(added))
+        // Replace that element with new_token
+        classes[pos] = new_token.clone();
+
+        // Deduplicate: remove later occurrences of new_token (keep first)
+        let mut seen = Vec::new();
+        let mut deduped = Vec::new();
+        for class in classes {
+            if !seen.contains(&class) {
+                seen.push(class.clone());
+                deduped.push(class);
+            }
+        }
+
+        class_list.set_classes(deduped);
+        Ok(JsValue::from(true))
     }
 
     /// Native implementation of classList.contains(className)
@@ -184,6 +333,55 @@ impl JsClassList {
         let classes = class_list.get_classes();
         Ok(JsValue::from(classes.len()))
     }
+
+    /// Native getter for classList.value — returns the raw class attribute string
+    fn get_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.value: `this` is not an object").into()))?;
+        let class_list = obj
+            .downcast_ref::<JsClassList>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.value: `this` is not a ClassList").into()))?;
+
+        let raw = class_list.get_raw_class_value();
+        Ok(JsValue::from(js_string!(raw)))
+    }
+
+    /// Native setter for classList.value — sets the raw class attribute
+    fn set_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.value: `this` is not an object").into()))?;
+        let class_list = obj
+            .downcast_ref::<JsClassList>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.value: `this` is not a ClassList").into()))?;
+
+        let value = args
+            .first()
+            .map(|v| v.to_string(ctx))
+            .transpose()?
+            .map(|s| s.to_std_string_escaped())
+            .unwrap_or_default();
+
+        class_list
+            .tree
+            .borrow_mut()
+            .set_attribute(class_list.node_id, "class", &value);
+        Ok(JsValue::undefined())
+    }
+
+    /// Native implementation of classList.toString() — returns the raw class attribute string
+    fn to_string_method(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.toString: `this` is not an object").into()))?;
+        let class_list = obj
+            .downcast_ref::<JsClassList>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("classList.toString: `this` is not a ClassList").into()))?;
+
+        let raw = class_list.get_raw_class_value();
+        Ok(JsValue::from(js_string!(raw)))
+    }
 }
 
 impl Class for JsClassList {
@@ -221,6 +419,12 @@ impl Class for JsClassList {
         );
 
         class.method(
+            js_string!("replace"),
+            2,
+            NativeFunction::from_fn_ptr(Self::replace),
+        );
+
+        class.method(
             js_string!("contains"),
             1,
             NativeFunction::from_fn_ptr(Self::contains),
@@ -232,6 +436,12 @@ impl Class for JsClassList {
             NativeFunction::from_fn_ptr(Self::item),
         );
 
+        class.method(
+            js_string!("toString"),
+            0,
+            NativeFunction::from_fn_ptr(Self::to_string_method),
+        );
+
         // Length getter
         let realm = class.context().realm().clone();
         let length_getter = NativeFunction::from_fn_ptr(Self::get_length);
@@ -240,6 +450,17 @@ impl Class for JsClassList {
             js_string!("length"),
             Some(length_getter.to_js_function(&realm)),
             None,
+            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+        );
+
+        // Value getter/setter
+        let value_getter = NativeFunction::from_fn_ptr(Self::get_value);
+        let value_setter = NativeFunction::from_fn_ptr(Self::set_value);
+
+        class.accessor(
+            js_string!("value"),
+            Some(value_getter.to_js_function(&realm)),
+            Some(value_setter.to_js_function(&realm)),
             Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
         );
 

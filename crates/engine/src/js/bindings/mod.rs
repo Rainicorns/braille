@@ -17,5 +17,7 @@ pub(crate) mod anchor_form;
 pub(crate) mod html_element;
 pub(crate) mod computed_style;
 pub(crate) mod character_data;
+pub(crate) mod collections;
+pub(crate) mod dom_parser;
 
 pub(crate) use document::register_document;
