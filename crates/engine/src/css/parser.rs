@@ -54,8 +54,8 @@ pub fn parse_stylesheet(css: &str) -> Stylesheet {
 
     // Use StyleSheetParser to iterate through top-level rules
     let mut rule_parser = BrailleRuleParser;
-    let mut iter = cssparser::StyleSheetParser::new(&mut parser, &mut rule_parser);
-    while let Some(result) = iter.next() {
+    let iter = cssparser::StyleSheetParser::new(&mut parser, &mut rule_parser);
+    for result in iter {
         match result {
             Ok(rule) => rules.push(rule),
             Err(_) => {
@@ -86,8 +86,8 @@ pub fn parse_inline_style(style_attr: &str) -> Vec<Declaration> {
 
     // Use RuleBodyParser to parse declarations without selectors
     let mut decl_parser = BrailleDeclarationParser;
-    let mut iter = cssparser::RuleBodyParser::new(&mut parser, &mut decl_parser);
-    while let Some(result) = iter.next() {
+    let iter = cssparser::RuleBodyParser::new(&mut parser, &mut decl_parser);
+    for result in iter {
         match result {
             Ok(decl) => declarations.push(decl),
             Err(_) => {
@@ -187,9 +187,9 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for BrailleRuleParser {
         // Parse the declaration block
         let mut declarations = Vec::new();
         let mut decl_parser = BrailleDeclarationParser;
-        let mut iter = cssparser::RuleBodyParser::new(input, &mut decl_parser);
+        let iter = cssparser::RuleBodyParser::new(input, &mut decl_parser);
 
-        while let Some(result) = iter.next() {
+        for result in iter {
             match result {
                 Ok(decl) => declarations.push(decl),
                 Err(_) => {

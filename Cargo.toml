@@ -1,3 +1,9 @@
 [workspace]
 members = ["crates/engine", "crates/wire", "crates/cli"]
 resolver = "2"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

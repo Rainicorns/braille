@@ -25,9 +25,6 @@ pub struct JsRuntime {
     pub(crate) context: Context,
     tree: Rc<RefCell<DomTree>>,
     console_buffer: Rc<RefCell<Vec<String>>>,
-    pub(crate) listeners: Rc<RefCell<ListenerMap>>,
-    pub(crate) node_cache: Rc<RefCell<NodeCache>>,
-    creation_time: Instant,
 }
 
 impl JsRuntime {
@@ -162,7 +159,7 @@ impl JsRuntime {
             }
         }
 
-        Self { context, tree, console_buffer, listeners, node_cache, creation_time }
+        Self { context, tree, console_buffer }
     }
 
     /// Replace the Event and CustomEvent global constructors with wrappers that:
@@ -379,8 +376,6 @@ impl JsRuntime {
                             default_prevented: false,
                             propagation_stopped: false,
                             immediate_propagation_stopped: false,
-                            target: None,
-                            current_target: None,
                             phase: 0,
                             dispatching: false,
                             time_stamp: bindings::event::dom_high_res_time_stamp(),

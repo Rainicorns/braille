@@ -18,71 +18,6 @@ use super::collections;
 use super::element::{JsElement, get_or_create_js_element};
 
 // ---------------------------------------------------------------------------
-// Helper functions for collecting elements by class name and tag name
-// ---------------------------------------------------------------------------
-
-fn collect_by_class(tree: &DomTree, root: NodeId, class_name: &str) -> Vec<NodeId> {
-    let mut results = Vec::new();
-    let children: Vec<NodeId> = tree.get_node(root).children.clone();
-    for child_id in children {
-        collect_by_class_recursive(tree, child_id, class_name, &mut results);
-    }
-    results
-}
-
-fn collect_by_class_recursive(
-    tree: &DomTree,
-    node_id: NodeId,
-    class_name: &str,
-    results: &mut Vec<NodeId>,
-) {
-    let node = tree.get_node(node_id);
-    if let NodeData::Element { ref attributes, .. } = node.data {
-        if let Some(class_attr) = attributes
-            .iter()
-            .find(|a| a.local_name == "class")
-            .map(|a| a.value.as_str())
-        {
-            if class_attr.split_whitespace().any(|c| c == class_name) {
-                results.push(node_id);
-            }
-        }
-    }
-    let children: Vec<NodeId> = node.children.clone();
-    for child_id in children {
-        collect_by_class_recursive(tree, child_id, class_name, results);
-    }
-}
-
-fn collect_by_tag(tree: &DomTree, root: NodeId, tag_name: &str) -> Vec<NodeId> {
-    let mut results = Vec::new();
-    let tag_lower = tag_name.to_ascii_lowercase();
-    let children: Vec<NodeId> = tree.get_node(root).children.clone();
-    for child_id in children {
-        collect_by_tag_recursive(tree, child_id, &tag_lower, &mut results);
-    }
-    results
-}
-
-fn collect_by_tag_recursive(
-    tree: &DomTree,
-    node_id: NodeId,
-    tag_lower: &str,
-    results: &mut Vec<NodeId>,
-) {
-    let node = tree.get_node(node_id);
-    if let NodeData::Element { ref tag_name, .. } = node.data {
-        if tag_lower == "*" || tag_name.to_ascii_lowercase() == tag_lower {
-            results.push(node_id);
-        }
-    }
-    let children: Vec<NodeId> = node.children.clone();
-    for child_id in children {
-        collect_by_tag_recursive(tree, child_id, tag_lower, results);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // DocumentFragment.prototype.getElementById (NonElementParentNode mixin)
 // ---------------------------------------------------------------------------
 
@@ -470,12 +405,12 @@ fn element_closest(
     let scope_id = el.node_id;
     let mut current = el.node_id;
     loop {
-        if matches!(tree.get_node(current).data, NodeData::Element { .. }) {
-            if matching::matches_selector_str(&tree, current, &selector, Some(scope_id)) {
-                drop(tree);
-                let js_obj = get_or_create_js_element(current, tree_rc, ctx)?;
-                return Ok(js_obj.into());
-            }
+        if matches!(tree.get_node(current).data, NodeData::Element { .. })
+            && matching::matches_selector_str(&tree, current, &selector, Some(scope_id))
+        {
+            drop(tree);
+            let js_obj = get_or_create_js_element(current, tree_rc, ctx)?;
+            return Ok(js_obj.into());
         }
         match tree.get_node(current).parent {
             Some(parent_id) => current = parent_id,

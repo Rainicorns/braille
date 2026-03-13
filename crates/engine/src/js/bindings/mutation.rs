@@ -1,5 +1,5 @@
 use boa_engine::{
-    class::{Class, ClassBuilder},
+    class::ClassBuilder,
     js_string,
     native_function::NativeFunction,
     Context, JsError, JsNativeError, JsResult, JsValue,
@@ -26,29 +26,6 @@ fn not_found_error(msg: &str) -> JsError {
     JsNativeError::typ()
         .with_message(format!("NotFoundError: {}", msg))
         .into()
-}
-
-// ---------------------------------------------------------------------------
-// Extract node args with proper TypeError for null / non-Node
-// ---------------------------------------------------------------------------
-
-/// Extract a required Node argument. Throws TypeError if missing, null, or not a JsElement.
-fn require_node_arg(args: &[JsValue], index: usize, method: &str, arg_name: &str) -> JsResult<(NodeId, Rc<RefCell<DomTree>>)> {
-    let arg = args
-        .get(index)
-        .ok_or_else(|| JsNativeError::typ().with_message(format!("{}: {} argument is required", method, arg_name)))?;
-    if arg.is_null() || arg.is_undefined() {
-        return Err(JsNativeError::typ()
-            .with_message(format!("{}: {} argument is null", method, arg_name))
-            .into());
-    }
-    let obj = arg
-        .as_object()
-        .ok_or_else(|| JsNativeError::typ().with_message(format!("{}: {} argument is not a Node", method, arg_name)))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsNativeError::typ().with_message(format!("{}: {} argument is not a Node", method, arg_name)))?;
-    Ok((el.node_id, el.tree.clone()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,9 +1124,9 @@ fn child_node_after(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
         match this_pos {
             Some(pos) => {
                 let mut result = None;
-                for i in (pos + 1)..parent_children.len() {
-                    if !node_ids.contains(&parent_children[i]) {
-                        result = Some(parent_children[i]);
+                for &child in &parent_children[(pos + 1)..] {
+                    if !node_ids.contains(&child) {
+                        result = Some(child);
                         break;
                     }
                 }
@@ -1199,9 +1176,9 @@ fn child_node_replace_with(this: &JsValue, args: &[JsValue], ctx: &mut Context) 
         match this_pos {
             Some(pos) => {
                 let mut result = None;
-                for i in (pos + 1)..parent_children.len() {
-                    if !node_ids.contains(&parent_children[i]) {
-                        result = Some(parent_children[i]);
+                for &child in &parent_children[(pos + 1)..] {
+                    if !node_ids.contains(&child) {
+                        result = Some(child);
                         break;
                     }
                 }
@@ -1382,7 +1359,6 @@ fn normalize(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<
 }
 
 /// Standalone versions for document object (uses JsDocument instead of JsElement)
-
 pub(crate) fn document_normalize(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()

@@ -129,8 +129,7 @@ fn run(cli: Cli) -> String {
     match cli.command {
         TopLevel::New => {
             let mut manager = SessionManager::new();
-            let session_id = manager.new_session();
-            session_id
+            manager.new_session()
         }
         TopLevel::Session(args) => {
             if args.is_empty() {
@@ -240,7 +239,7 @@ fn run(cli: Cli) -> String {
                     let mut manager = SessionManager::new();
                     let session_id = manager.new_session();
                     manager.close_session(&session_id);
-                    format!("session closed")
+                    "session closed".to_string()
                 }
             }
         }

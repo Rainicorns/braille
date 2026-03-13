@@ -306,6 +306,7 @@ fn is_p_closing_element(tag: &str) -> bool {
 }
 
 /// What the next token looks like (for peeking)
+#[allow(dead_code)]
 enum NextToken<'a> {
     StartTag(&'a str),
     EndTag(&'a str),

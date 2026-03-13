@@ -7,6 +7,9 @@ edition = "2021"
 name = "braille"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 braille-wire = { path = "../wire" }
 braille-engine = { path = "../engine" }

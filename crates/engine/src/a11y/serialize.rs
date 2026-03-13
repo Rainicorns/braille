@@ -122,10 +122,8 @@ fn walk(
             // Skip empty elements: no text and no interesting children.
             // But keep the role line if visibility:hidden (structure preserved)
             // or if the element is interactive (e.g., empty button).
-            if direct_text.is_empty() && !has_child_output {
-                if eref.is_none() && !is_visibility_hidden {
-                    return;
-                }
+            if direct_text.is_empty() && !has_child_output && eref.is_none() && !is_visibility_hidden {
+                return;
             }
 
             // Build the role line.
@@ -237,7 +235,7 @@ fn get_interactive_value(
                     ..
                 } = &child.data
                 {
-                    if tag_name.to_ascii_lowercase() == "option" {
+                    if tag_name.eq_ignore_ascii_case("option") {
                         let text = tree.get_text_content(child_id);
                         let text = text.trim().to_string();
                         if child_attrs.iter().any(|a| a.local_name == "selected") {

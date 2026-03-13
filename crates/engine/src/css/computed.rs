@@ -327,8 +327,7 @@ fn parse_color(val: &str) -> ComputedColor {
     }
 
     // Hex colors
-    if trimmed.starts_with('#') {
-        let hex = &trimmed[1..];
+    if let Some(hex) = trimmed.strip_prefix('#') {
         match hex.len() {
             // #rgb -> expand each digit: r -> rr, etc.
             3 => {
@@ -558,10 +557,8 @@ pub fn resolve_style(
     // Phase 1: For inherited properties NOT in the cascaded map, inherit from parent.
     // We do this first so that explicit cascaded values can override in Phase 2.
     for &prop in INHERITED_PROPERTIES {
-        if !cascaded.contains_key(prop) {
-            if parent_style.is_some() {
-                inherit_property(&mut style, prop, parent);
-            }
+        if !cascaded.contains_key(prop) && parent_style.is_some() {
+            inherit_property(&mut style, prop, parent);
             // If no parent, keep initial (already set).
         }
     }

@@ -179,7 +179,7 @@ pub(crate) fn get_or_create_js_element(
         Text,
         Comment,
         ProcessingInstruction { target: String },
-        Attr { local_name: String, namespace: String, prefix: String, value: String },
+        Attr { local_name: String, namespace: String, prefix: String },
         HtmlElement(String), // lowercase tag name
         NonHtmlElement,
         DocumentFragment,
@@ -215,11 +215,10 @@ pub(crate) fn get_or_create_js_element(
                 system_id: system_id.clone(),
             },
             NodeData::ProcessingInstruction { target, .. } => NodeKind::ProcessingInstruction { target: target.clone() },
-            NodeData::Attr { local_name, namespace, prefix, value } => NodeKind::Attr {
+            NodeData::Attr { local_name, namespace, prefix, .. } => NodeKind::Attr {
                 local_name: local_name.clone(),
                 namespace: namespace.clone(),
                 prefix: prefix.clone(),
-                value: value.clone(),
             },
             NodeData::Document => NodeKind::Document,
         }
@@ -303,7 +302,7 @@ pub(crate) fn get_or_create_js_element(
     }
 
     // Set own properties for Attr nodes (name, value, namespaceURI, prefix, localName, ownerElement, specified)
-    if let NodeKind::Attr { local_name, namespace, prefix, value } = &node_kind {
+    if let NodeKind::Attr { local_name, namespace, prefix } = &node_kind {
         // name = qualified name (prefix:localName or just localName)
         let qualified_name = if prefix.is_empty() {
             local_name.clone()
@@ -1255,8 +1254,7 @@ impl JsElement {
         }
 
         let target_index = propagation_path.len() - 1;
-        for i in 0..target_index {
-            let node_id = propagation_path[i];
+        for &node_id in &propagation_path[..target_index] {
 
             set_phase(&event_obj, Some(node_id), 1, is_custom_event);
             let current_target_js = make_js_element(node_id, ctx)?;
@@ -1456,12 +1454,12 @@ pub(crate) fn invoke_listeners_for_node(
             let current_target = event_obj
                 .get(js_string!("currentTarget"), ctx)
                 .unwrap_or(JsValue::undefined());
-            let _ = callback.call(&current_target, &[event_val.clone()], ctx);
+            let _ = callback.call(&current_target, std::slice::from_ref(event_val), ctx);
         } else {
             // handleEvent protocol: look up handleEvent on the object each time
             let handle = callback.get(js_string!("handleEvent"), ctx)?;
             if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
-                let _ = handle_fn.call(&JsValue::from(callback.clone()), &[event_val.clone()], ctx);
+                let _ = handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx);
             }
         }
 
@@ -1650,6 +1648,17 @@ pub(crate) fn node_contains(this: &JsValue, args: &[JsValue], ctx: &mut Context)
 #[cfg(test)]
 mod tests {
     use crate::Engine;
+    use crate::js::bindings::event_target::EVENT_LISTENERS;
+
+    /// Helper to count total listeners across all elements.
+    fn listener_count() -> usize {
+        EVENT_LISTENERS.with(|el| {
+            let rc = el.borrow();
+            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
+            let map = listeners_rc.borrow();
+            map.values().map(|v| v.len()).sum::<usize>()
+        })
+    }
 
     #[test]
     fn add_event_listener_basic() {
@@ -1679,13 +1688,7 @@ mod tests {
             .unwrap();
 
         // Listener map should be empty after removal
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 0);
+        assert_eq!(listener_count(), 0);
     }
 
     #[test]
@@ -1697,19 +1700,17 @@ mod tests {
             .eval("document.getElementById('d').addEventListener('click', function() {}, true)")
             .unwrap();
 
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 1);
+        assert_eq!(listener_count(), 1);
 
         // Verify the capture flag is true
-        let map = runtime.listeners.borrow();
-        let entries = map.values().next().unwrap();
-        assert!(entries[0].capture);
-        assert!(!entries[0].once);
+        EVENT_LISTENERS.with(|el| {
+            let rc = el.borrow();
+            let listeners_rc = rc.as_ref().unwrap();
+            let map = listeners_rc.borrow();
+            let entries = map.values().next().unwrap();
+            assert!(entries[0].capture);
+            assert!(!entries[0].once);
+        });
     }
 
     #[test]
@@ -1721,10 +1722,14 @@ mod tests {
             .eval("document.getElementById('d').addEventListener('click', function() {}, { capture: true, once: true })")
             .unwrap();
 
-        let map = runtime.listeners.borrow();
-        let entries = map.values().next().unwrap();
-        assert!(entries[0].capture);
-        assert!(entries[0].once);
+        EVENT_LISTENERS.with(|el| {
+            let rc = el.borrow();
+            let listeners_rc = rc.as_ref().unwrap();
+            let map = listeners_rc.borrow();
+            let entries = map.values().next().unwrap();
+            assert!(entries[0].capture);
+            assert!(entries[0].once);
+        });
     }
 
     #[test]
@@ -1742,13 +1747,7 @@ mod tests {
             )
             .unwrap();
 
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 2);
+        assert_eq!(listener_count(), 2);
     }
 
     #[test]
@@ -1769,13 +1768,7 @@ mod tests {
             .unwrap();
 
         // Same callback + same type + same capture should only be stored once
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 1);
+        assert_eq!(listener_count(), 1);
     }
 
     #[test]
@@ -1795,13 +1788,7 @@ mod tests {
             .unwrap();
 
         // Different capture flag means they are distinct listeners
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 2);
+        assert_eq!(listener_count(), 2);
     }
 
     #[test]
@@ -1823,13 +1810,7 @@ mod tests {
             .unwrap();
 
         // Only h2 should remain
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 1);
+        assert_eq!(listener_count(), 1);
     }
 
     #[test]
@@ -1850,13 +1831,7 @@ mod tests {
             .unwrap();
 
         // h1 should still be there, h2 was never added
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 1);
+        assert_eq!(listener_count(), 1);
     }
 
     #[test]
@@ -1876,13 +1851,7 @@ mod tests {
             .unwrap();
 
         // Capture flag doesn't match, so the listener should NOT be removed
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 1);
+        assert_eq!(listener_count(), 1);
 
         // Now remove with matching capture
         runtime
@@ -1894,13 +1863,7 @@ mod tests {
             )
             .unwrap();
 
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 0);
+        assert_eq!(listener_count(), 0);
     }
 
     #[test]
@@ -1920,10 +1883,14 @@ mod tests {
             .unwrap();
 
         // Two different elements, each with one listener
-        let map = runtime.listeners.borrow();
-        assert_eq!(map.len(), 2);
-        let total: usize = map.values().map(|v| v.len()).sum();
-        assert_eq!(total, 2);
+        EVENT_LISTENERS.with(|el| {
+            let rc = el.borrow();
+            let listeners_rc = rc.as_ref().unwrap();
+            let map = listeners_rc.borrow();
+            assert_eq!(map.len(), 2);
+            let total: usize = map.values().map(|v| v.len()).sum();
+            assert_eq!(total, 2);
+        });
     }
 
     #[test]
@@ -1936,13 +1903,7 @@ mod tests {
             .eval("document.getElementById('d').addEventListener('click', null)")
             .unwrap();
 
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 0);
+        assert_eq!(listener_count(), 0);
     }
 
     #[test]
@@ -1961,13 +1922,7 @@ mod tests {
             .unwrap();
 
         // The listener should still be there
-        let count: usize = runtime
-            .listeners
-            .borrow()
-            .values()
-            .map(|v| v.len())
-            .sum();
-        assert_eq!(count, 1);
+        assert_eq!(listener_count(), 1);
     }
 
     #[test]
@@ -1979,10 +1934,14 @@ mod tests {
             .eval("document.getElementById('d').addEventListener('click', function() {})")
             .unwrap();
 
-        let map = runtime.listeners.borrow();
-        let entries = map.values().next().unwrap();
-        assert!(!entries[0].capture);
-        assert!(!entries[0].once);
+        EVENT_LISTENERS.with(|el| {
+            let rc = el.borrow();
+            let listeners_rc = rc.as_ref().unwrap();
+            let map = listeners_rc.borrow();
+            let entries = map.values().next().unwrap();
+            assert!(!entries[0].capture);
+            assert!(!entries[0].once);
+        });
     }
 
     #[test]
@@ -2001,12 +1960,16 @@ mod tests {
             )
             .unwrap();
 
-        let map = runtime.listeners.borrow();
-        let entries = map.values().next().unwrap();
-        let types: Vec<&str> = entries.iter().map(|e| e.event_type.as_str()).collect();
-        assert!(types.contains(&"mousedown"));
-        assert!(types.contains(&"mouseup"));
-        assert!(types.contains(&"keypress"));
+        EVENT_LISTENERS.with(|el| {
+            let rc = el.borrow();
+            let listeners_rc = rc.as_ref().unwrap();
+            let map = listeners_rc.borrow();
+            let entries = map.values().next().unwrap();
+            let types: Vec<&str> = entries.iter().map(|e| e.event_type.as_str()).collect();
+            assert!(types.contains(&"mousedown"));
+            assert!(types.contains(&"mouseup"));
+            assert!(types.contains(&"keypress"));
+        });
     }
 
     // ---- dispatchEvent tests ----

@@ -667,10 +667,6 @@ impl JsCustomEvent {
 
     // -- WPT getters --
 
-    fn get_is_trusted(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        Ok(JsValue::from(false))
-    }
-
     fn get_time_stamp(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
         let obj = this
             .as_object()
@@ -1018,10 +1014,6 @@ macro_rules! ui_event_subclass {
             pub(crate) default_prevented: bool,
             pub(crate) propagation_stopped: bool,
             pub(crate) immediate_propagation_stopped: bool,
-            #[unsafe_ignore_trace]
-            pub(crate) target: Option<NodeId>,
-            #[unsafe_ignore_trace]
-            pub(crate) current_target: Option<NodeId>,
             pub(crate) phase: u8,
             pub(crate) dispatching: bool,
             /// DOMHighResTimeStamp captured at construction time
@@ -1075,10 +1067,6 @@ macro_rules! ui_event_subclass {
                 let evt = obj.downcast_ref::<$struct_name>()
                     .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".eventPhase getter: wrong type")).into()))?;
                 Ok(JsValue::from(evt.phase as i32))
-            }
-
-            fn get_is_trusted(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                Ok(JsValue::from(false))
             }
 
             fn get_time_stamp(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
@@ -1214,8 +1202,6 @@ macro_rules! ui_event_subclass {
                     default_prevented: false,
                     propagation_stopped: false,
                     immediate_propagation_stopped: false,
-                    target: None,
-                    current_target: None,
                     phase: 0,
                     dispatching: false,
                     time_stamp: dom_high_res_time_stamp(),

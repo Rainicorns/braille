@@ -45,7 +45,7 @@ impl Engine {
 
                 if tag_lower == "input" {
                     if let Some(input_type) = tree.get_attribute(node_id, "type") {
-                        if input_type.to_ascii_lowercase() == "submit" {
+                        if input_type.eq_ignore_ascii_case("submit") {
                             return EngineAction::None;
                         }
                     }

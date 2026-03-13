@@ -25,7 +25,7 @@ fn validate_token(token: &str) -> JsResult<()> {
             js_string!("SyntaxError: The token must not be empty").into(),
         ));
     }
-    if token.contains(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C') {
+    if token.contains([' ', '\t', '\n', '\r', '\x0C']) {
         return Err(JsError::from_opaque(
             js_string!("InvalidCharacterError: The token must not contain whitespace").into(),
         ));

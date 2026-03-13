@@ -271,9 +271,8 @@ fn parse_declarations(text: &str) -> Vec<(String, String, bool)> {
             let value_part = decl[colon_pos + 1..].trim();
 
             // Check for !important
-            let (value, important) = if value_part.ends_with("!important") {
-                let val = value_part[..value_part.len() - 10].trim().to_string();
-                (val, true)
+            let (value, important) = if let Some(stripped) = value_part.strip_suffix("!important") {
+                (stripped.trim().to_string(), true)
             } else {
                 (value_part.to_string(), false)
             };
@@ -297,7 +296,7 @@ fn remove_comments(text: &str) -> String {
             // Start of comment, skip until */
             chars.next(); // consume '*'
             let mut prev = ' ';
-            while let Some(ch) = chars.next() {
+            for ch in chars.by_ref() {
                 if prev == '*' && ch == '/' {
                     break;
                 }

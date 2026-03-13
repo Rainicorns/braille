@@ -30,7 +30,7 @@ pub fn resolve_tag(tree: &DomTree, tag: &str) -> Option<NodeId> {
 /// - If selector starts with `@` → try `resolve_ref`
 /// - If selector starts with `#` → try `resolve_id`
 /// - Otherwise → try `resolve_tag`
-/// Returns None if nothing matches.
+///   Returns None if nothing matches.
 pub fn resolve_selector(tree: &DomTree, ref_map: &HashMap<String, NodeId>, selector: &str) -> Option<NodeId> {
     if selector.starts_with('@') {
         resolve_ref(ref_map, selector)

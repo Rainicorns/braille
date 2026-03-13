@@ -6,6 +6,12 @@ pub struct DomTree {
     is_html_document: bool,
 }
 
+impl Default for DomTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DomTree {
     /// Creates a new DomTree with a Document root node at index 0.
     /// Defaults to HTML document (is_html_document = true).
@@ -826,8 +832,8 @@ impl DomTree {
 
         // Concatenate all text content in the range [start..=end]
         let mut result = String::new();
-        for i in start..=end {
-            if let NodeData::Text { content } = &self.nodes[siblings[i]].data {
+        for sib in siblings.iter().take(end + 1).skip(start) {
+            if let NodeData::Text { content } = &self.nodes[*sib].data {
                 result.push_str(content);
             }
         }

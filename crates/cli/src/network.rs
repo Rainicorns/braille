@@ -14,6 +14,12 @@ pub struct NetworkClient {
     base_url: Option<String>,
 }
 
+impl Default for NetworkClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkClient {
     /// Create a new NetworkClient with an enabled cookie jar.
     pub fn new() -> Self {

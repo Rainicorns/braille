@@ -15,7 +15,7 @@ impl Engine {
 
         // 2. Get form's action attribute (default to current URL or "")
         let action = tree.get_attribute(form_id, "action")
-            .unwrap_or_else(|| String::new());
+            .unwrap_or_default();
 
         // 3. Get form's method attribute (default to "get")
         let method_str = tree.get_attribute(form_id, "method")
@@ -88,15 +88,15 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
             .to_ascii_lowercase();
 
         // For checkbox/radio, only include if checked
-        if input_type == "checkbox" || input_type == "radio" {
-            if !tree.has_attribute(input_id, "checked") {
-                continue;
-            }
+        if (input_type == "checkbox" || input_type == "radio")
+            && !tree.has_attribute(input_id, "checked")
+        {
+            continue;
         }
 
         // Get value (default to empty string)
         let value = tree.get_attribute(input_id, "value")
-            .unwrap_or_else(|| String::new());
+            .unwrap_or_default();
 
         data.push((name, value));
     }
@@ -112,7 +112,7 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
 
         // Get value attribute
         let value = tree.get_attribute(select_id, "value")
-            .unwrap_or_else(|| String::new());
+            .unwrap_or_default();
 
         data.push((name, value));
     }
@@ -128,7 +128,7 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
 
         // Get value attribute
         let value = tree.get_attribute(textarea_id, "value")
-            .unwrap_or_else(|| String::new());
+            .unwrap_or_default();
 
         data.push((name, value));
     }

@@ -384,10 +384,10 @@ impl JsEventTarget {
                 // Per spec: callable → call with this=currentTarget; object → look up handleEvent
                 let current_target = event_obj.get(js_string!("currentTarget"), ctx).unwrap_or(JsValue::undefined());
                 if callback.is_callable() {
-                    let _ = callback.call(&current_target, &[event_val.clone()], ctx);
+                    let _ = callback.call(&current_target, std::slice::from_ref(event_val), ctx);
                 } else if let Ok(handle) = callback.get(js_string!("handleEvent"), ctx) {
                     if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
-                        let _ = handle_fn.call(&JsValue::from(callback.clone()), &[event_val.clone()], ctx);
+                        let _ = handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx);
                     }
                 }
 
@@ -400,10 +400,10 @@ impl JsEventTarget {
                 // Per spec: callable → call with this=currentTarget; object → look up handleEvent
                 let current_target = event_obj.get(js_string!("currentTarget"), ctx).unwrap_or(JsValue::undefined());
                 if callback.is_callable() {
-                    let _ = callback.call(&current_target, &[event_val.clone()], ctx);
+                    let _ = callback.call(&current_target, std::slice::from_ref(event_val), ctx);
                 } else if let Ok(handle) = callback.get(js_string!("handleEvent"), ctx) {
                     if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
-                        let _ = handle_fn.call(&JsValue::from(callback.clone()), &[event_val.clone()], ctx);
+                        let _ = handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx);
                     }
                 }
             }

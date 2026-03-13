@@ -15,7 +15,7 @@ impl Engine {
         let node = tree.get_node(node_id);
         match &node.data {
             NodeData::Element { tag_name, .. } => {
-                if tag_name.to_ascii_lowercase() != "select" {
+                if !tag_name.eq_ignore_ascii_case("select") {
                     return Err(format!(
                         "select target must be <select>, got <{}>: {}",
                         tag_name.to_ascii_lowercase(),

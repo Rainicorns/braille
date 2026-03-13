@@ -3,10 +3,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use boa_engine::{
-    class::{Class, ClassBuilder},
+    class::ClassBuilder,
     js_string,
     native_function::NativeFunction,
-    object::builtins::JsArray,
     object::JsObject,
     property::Attribute,
     Context, JsError, JsResult, JsValue,
@@ -534,7 +533,6 @@ fn get_child_element_count(this: &JsValue, _args: &[JsValue], _ctx: &mut Context
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::dom::{DomTree, NodeData};
     use crate::js::runtime::JsRuntime;
     use std::cell::RefCell;

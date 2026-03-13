@@ -72,6 +72,7 @@ impl Session {
     }
 
     /// Returns current URL from history, or None if history is empty.
+    #[cfg(test)]
     pub fn current_url(&self) -> Option<&str> {
         match self.history_index {
             Some(idx) => Some(&self.history[idx]),
@@ -123,6 +124,7 @@ impl SessionManager {
     }
 
     /// Get the number of active sessions.
+    #[cfg(test)]
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }

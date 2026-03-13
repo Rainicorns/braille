@@ -34,6 +34,12 @@ pub struct Engine {
     pub(crate) focused_element: Option<NodeId>,
 }
 
+impl Default for Engine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Engine {
     pub fn new() -> Self {
         Engine {
@@ -108,17 +114,14 @@ impl Engine {
 
     fn walk_for_scripts(tree: &DomTree, node_id: NodeId, scripts: &mut Vec<String>) {
         let node = tree.get_node(node_id);
-        match &node.data {
-            NodeData::Element { tag_name, .. } => {
-                if tag_name.to_ascii_lowercase() == "script" {
-                    // Extract text content from this script element
-                    let text = tree.get_text_content(node_id);
-                    scripts.push(text);
-                    // Don't recurse into script children (we already got the text)
-                    return;
-                }
+        if let NodeData::Element { tag_name, .. } = &node.data {
+            if tag_name.eq_ignore_ascii_case("script") {
+                // Extract text content from this script element
+                let text = tree.get_text_content(node_id);
+                scripts.push(text);
+                // Don't recurse into script children (we already got the text)
+                return;
             }
-            _ => {}
         }
         // Recurse into children
         let children: Vec<NodeId> = node.children.clone();
@@ -143,23 +146,20 @@ impl Engine {
         descriptors: &mut Vec<ScriptDescriptor>,
     ) {
         let node = tree.get_node(node_id);
-        match &node.data {
-            NodeData::Element { tag_name, attributes, .. } => {
-                if tag_name.to_ascii_lowercase() == "script" {
-                    // Per HTML spec: if src attribute exists, it's an external script
-                    // (inline text content is ignored when src is present)
-                    let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
-                    if let Some(url) = src {
-                        descriptors.push(ScriptDescriptor::External(url));
-                    } else {
-                        let text = tree.get_text_content(node_id);
-                        descriptors.push(ScriptDescriptor::Inline(text));
-                    }
-                    // Don't recurse into script children
-                    return;
+        if let NodeData::Element { tag_name, attributes, .. } = &node.data {
+            if tag_name.eq_ignore_ascii_case("script") {
+                // Per HTML spec: if src attribute exists, it's an external script
+                // (inline text content is ignored when src is present)
+                let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+                if let Some(url) = src {
+                    descriptors.push(ScriptDescriptor::External(url));
+                } else {
+                    let text = tree.get_text_content(node_id);
+                    descriptors.push(ScriptDescriptor::Inline(text));
                 }
+                // Don't recurse into script children
+                return;
             }
-            _ => {}
         }
         let children: Vec<NodeId> = node.children.clone();
         for child_id in children {

@@ -351,7 +351,7 @@ fn get_attributes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
     let node = tree.get_node(el.node_id);
 
     match &node.data {
-        NodeData::Element { attributes, .. } => {
+        NodeData::Element { attributes: _, .. } => {
             let el_tree = el.tree.clone();
             drop(tree);
 
@@ -435,54 +435,6 @@ fn get_attributes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
 /// Returns: "about:blank" for all node types (matches our Document.URL default)
 fn get_base_uri(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     Ok(JsValue::from(js_string!("about:blank")))
-}
-
-/// Getter for DocumentType.name (returns doctype name, empty string for non-Doctype)
-fn get_doctype_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("name getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("name getter: `this` is not an Element").into()))?;
-    let tree = el.tree.borrow();
-    let node = tree.get_node(el.node_id);
-    match &node.data {
-        NodeData::Doctype { name, .. } => Ok(JsValue::from(js_string!(name.clone()))),
-        _ => Ok(JsValue::from(js_string!(""))),
-    }
-}
-
-/// Getter for DocumentType.publicId
-fn get_doctype_public_id(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("publicId getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("publicId getter: `this` is not an Element").into()))?;
-    let tree = el.tree.borrow();
-    let node = tree.get_node(el.node_id);
-    match &node.data {
-        NodeData::Doctype { public_id, .. } => Ok(JsValue::from(js_string!(public_id.clone()))),
-        _ => Ok(JsValue::from(js_string!(""))),
-    }
-}
-
-/// Getter for DocumentType.systemId
-fn get_doctype_system_id(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("systemId getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("systemId getter: `this` is not an Element").into()))?;
-    let tree = el.tree.borrow();
-    let node = tree.get_node(el.node_id);
-    match &node.data {
-        NodeData::Doctype { system_id, .. } => Ok(JsValue::from(js_string!(system_id.clone()))),
-        _ => Ok(JsValue::from(js_string!(""))),
-    }
 }
 
 /// Register all node info getters on the Element class
@@ -625,7 +577,6 @@ pub(crate) fn register_node_info(class: &mut ClassBuilder) -> JsResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::js::JsRuntime;
     use crate::dom::{DomTree, NodeData};
     use std::cell::RefCell;

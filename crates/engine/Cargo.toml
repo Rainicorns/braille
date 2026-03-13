@@ -16,6 +16,9 @@ precomputed-hash = "0.1"
 url = "2.5"
 quick-xml = "0.37"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 libtest-mimic = "0.8"
 serde_json = "1"

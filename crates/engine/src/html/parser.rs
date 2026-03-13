@@ -467,19 +467,6 @@ fn ns_to_attr_ns_uri(ns: &Namespace) -> &'static str {
     }
 }
 
-/// Formats an attribute name, including namespace prefix if present.
-/// For namespaced attributes (e.g. xlink:href inside SVG), html5ever sets the
-/// attribute QualName's ns and prefix. We encode this as "prefix localname"
-/// (space-separated) so the test serializer can reconstruct it.
-fn format_attr_name(name: &QualName) -> String {
-    let prefix = ns_to_attr_prefix(&name.ns);
-    if prefix.is_empty() {
-        name.local.to_string()
-    } else {
-        format!("{} {}", prefix, name.local)
-    }
-}
-
 fn make_opts(scripting_enabled: bool) -> ParseOpts {
     let mut opts = ParseOpts::default();
     opts.tree_builder.scripting_enabled = scripting_enabled;

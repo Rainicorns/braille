@@ -1,5 +1,5 @@
 use boa_engine::{
-    class::{Class, ClassBuilder},
+    class::ClassBuilder,
     js_string,
     native_function::NativeFunction,
     object::builtins::JsArray,

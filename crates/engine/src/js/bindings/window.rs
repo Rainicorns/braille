@@ -212,7 +212,7 @@ fn extract_hostname(url: &str) -> String {
         return String::new();
     };
     let end = after_scheme
-        .find(|c: char| c == '/' || c == ':' || c == '?' || c == '#')
+        .find(['/', ':', '?', '#'])
         .unwrap_or(after_scheme.len());
     after_scheme[..end].to_string()
 }
@@ -229,7 +229,7 @@ fn extract_pathname(url: &str) -> String {
     };
     let path_portion = &after_scheme[path_start..];
     let end = path_portion
-        .find(|c: char| c == '?' || c == '#')
+        .find(['?', '#'])
         .unwrap_or(path_portion.len());
     path_portion[..end].to_string()
 }

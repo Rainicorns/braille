@@ -1237,7 +1237,7 @@ pub(crate) fn add_document_properties_to_element(
     // adoptNode method
     let tree_for_adopt = new_tree.clone();
     let adopt_node_fn = unsafe {
-        NativeFunction::from_closure(move |_this, args, ctx2| {
+        NativeFunction::from_closure(move |_this, args, _ctx2| {
             let node_val = args.first()
                 .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: missing argument").into()))?;
             let node_obj = node_val.as_object()
@@ -1659,7 +1659,7 @@ fn document_import_node(
 fn document_adopt_node(
     this: &JsValue,
     args: &[JsValue],
-    ctx: &mut Context,
+    _ctx: &mut Context,
 ) -> JsResult<JsValue> {
     let obj = this
         .as_object()

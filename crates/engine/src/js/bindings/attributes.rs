@@ -438,7 +438,6 @@ fn set_class_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::dom::{DomTree, NodeData};
     use crate::js::JsRuntime;
     use std::cell::RefCell;
