@@ -247,11 +247,11 @@ Run all three directions concurrently where dependencies allow. Recommended inte
 
 ### WPT DOM Conformance — Comprehensive Test Status
 
-**263 total test files** across `dom/nodes/` and `dom/events/`. **143 run, 120 skipped.** All running tests pass (all subtests PASS). Implemented across 4 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system).
+**263 total test files** across `dom/nodes/` and `dom/events/`. **122 pass, 21 fail (partial subtest failures), 120 skipped.** Implemented across 4 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system).
 
 Known subtest counts where recorded: Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19.
 
-#### dom/events/ (28 pass, 68 skip)
+#### dom/events/ (26 pass, 2 fail, 68 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -262,7 +262,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | CustomEvent.html | PASS | |
 | Event-cancelBubble.html | PASS | |
 | Event-constants.html | PASS | |
-| Event-constructors.any.js | PASS | |
+| Event-constructors.any.js | FAIL | 12/14; calling Event() without 'new' doesn't throw |
 | Event-defaultPrevented-after-dispatch.html | PASS | |
 | Event-defaultPrevented.html | PASS | |
 | Event-dispatch-bubble-canceled.html | PASS | |
@@ -305,7 +305,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Event-type.html | PASS | |
 | EventListener-addEventListener.sub.window.js | SKIP | requires server-side substitution |
 | EventListener-handleEvent-cross-realm.html | PASS | |
-| EventListener-handleEvent.html | PASS | 3/3 |
+| EventListener-handleEvent.html | FAIL | 3/6; promise_test not supported |
 | EventListener-incumbent-global-1.sub.html | SKIP | requires server-side substitution |
 | EventListener-incumbent-global-2.sub.html | SKIP | requires server-side substitution |
 | EventListener-incumbent-global-subframe-1.sub.html | SKIP | requires server-side substitution |
@@ -349,7 +349,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | webkit-transition-end-event.html | SKIP | requires TransitionEvent |
 | window-composed-path.html | SKIP | requires composedPath with window |
 
-#### dom/nodes/ (115 pass, 52 skip)
+#### dom/nodes/ (96 pass, 19 fail, 52 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -366,11 +366,11 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | ChildNode-before.html | PASS | |
 | ChildNode-replaceWith.html | PASS | |
 | Comment-constructor.html | PASS | |
-| DOMImplementation-createDocument-with-null-browsing-context-crash.html | PASS | |
-| DOMImplementation-createDocument.html | PASS | |
+| DOMImplementation-createDocument-with-null-browsing-context-crash.html | FAIL | crash test fails |
+| DOMImplementation-createDocument.html | FAIL | 0/2; not a callable function |
 | DOMImplementation-createDocumentType.html | PASS | 82/82 |
-| DOMImplementation-createHTMLDocument-with-null-browsing-context-crash.html | PASS | |
-| DOMImplementation-createHTMLDocument-with-saved-implementation.html | PASS | |
+| DOMImplementation-createHTMLDocument-with-null-browsing-context-crash.html | FAIL | crash test fails |
+| DOMImplementation-createHTMLDocument-with-saved-implementation.html | FAIL | 0/1; cannot convert null/undefined to object |
 | DOMImplementation-createHTMLDocument.html | PASS | 13/13 |
 | DOMImplementation-hasFeature.html | PASS | |
 | Document-URL.html | SKIP | requires Document.URL |
@@ -386,7 +386,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Document-createElementNS.html | PASS | 596/596 |
 | Document-createEvent-touchevent.window.js | SKIP | requires touch events |
 | Document-createEvent.https.html | SKIP | requires full createEvent spec |
-| Document-createProcessingInstruction.html | PASS | |
+| Document-createProcessingInstruction.html | FAIL | missing INVALID_CHARACTER_ERR validation for target names |
 | Document-createTextNode.html | PASS | |
 | Document-createTreeWalker.html | SKIP | requires TreeWalker |
 | Document-doctype.html | PASS | |
@@ -445,14 +445,14 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | MutationObserver-takeRecords.html | SKIP | requires MutationObserver |
 | MutationObserver-textContent.html | SKIP | requires MutationObserver |
 | Node-appendChild-cereactions-vs-script.window.js | SKIP | requires custom elements |
-| Node-appendChild.html | PASS | |
+| Node-appendChild.html | FAIL | frames is not defined (3 iframe subtests) |
 | Node-baseURI.html | PASS | 9/9 |
 | Node-childNodes-cache-2.html | PASS | |
 | Node-childNodes-cache.html | PASS | |
 | Node-childNodes.html | PASS | |
 | Node-cloneNode-XMLDocument.html | SKIP | requires XML Document support |
 | Node-cloneNode-document-allow-declarative-shadow-roots.window.js | SKIP | requires declarative shadow DOM |
-| Node-cloneNode-document-with-doctype.html | PASS | |
+| Node-cloneNode-document-with-doctype.html | FAIL | 2/3; DOMParser not a constructor |
 | Node-cloneNode-external-stylesheet-no-bc.sub.html | SKIP | requires server-side substitution |
 | Node-cloneNode-on-inactive-document-crash.html | SKIP | requires inactive document |
 | Node-cloneNode-svg.html | SKIP | requires SVG namespace support |
@@ -462,29 +462,29 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Node-contains.html | PASS | |
 | Node-insertBefore.html | PASS | |
 | Node-isConnected-shadow-dom.html | SKIP | requires Shadow DOM |
-| Node-isConnected.html | PASS | |
-| Node-isEqualNode.html | PASS | |
+| Node-isConnected.html | FAIL | 1/2; iframe subtest fails |
+| Node-isEqualNode.html | FAIL | 8/9; attribute namespace prefix comparison |
 | Node-isSameNode.html | PASS | |
 | Node-lookupNamespaceURI.html | SKIP | requires lookupNamespaceURI |
 | Node-mutation-adoptNode.html | PASS | 2/2 |
 | Node-nodeName.html | PASS | |
 | Node-nodeValue.html | PASS | |
-| Node-normalize.html | PASS | |
+| Node-normalize.html | FAIL | 3/4; non-text nodes with empty textContent |
 | Node-parentElement.html | PASS | |
 | Node-parentNode-iframe.html | SKIP | requires iframes |
 | Node-parentNode.html | PASS | |
 | Node-properties.html | SKIP | 47 subtests still failing |
-| Node-removeChild.html | PASS | |
+| Node-removeChild.html | FAIL | 19/28; frames is not defined (9 iframe subtests) |
 | Node-replaceChild.html | PASS | 29/29 |
 | Node-textContent.html | PASS | 81/81 |
 | NodeList-Iterable.html | PASS | |
 | NodeList-live-mutations.window.js | PASS | |
 | NodeList-static-length-getter-tampered-1.html | PASS | |
-| NodeList-static-length-getter-tampered-2.html | PASS | |
-| NodeList-static-length-getter-tampered-3.html | PASS | |
+| NodeList-static-length-getter-tampered-2.html | FAIL | 0/1; assertion failure (slow, ~280s) |
+| NodeList-static-length-getter-tampered-3.html | FAIL | 0/1; assertion failure (slow, ~280s) |
 | NodeList-static-length-getter-tampered-indexOf-1.html | PASS | |
-| NodeList-static-length-getter-tampered-indexOf-2.html | PASS | |
-| NodeList-static-length-getter-tampered-indexOf-3.html | PASS | |
+| NodeList-static-length-getter-tampered-indexOf-2.html | FAIL | 0/1; assertion failure (slow, ~280s) |
+| NodeList-static-length-getter-tampered-indexOf-3.html | FAIL | 0/1; assertion failure (slow, ~280s) |
 | ParentNode-append.html | PASS | |
 | ParentNode-children.html | PASS | |
 | ParentNode-prepend.html | PASS | |
@@ -497,7 +497,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | ParentNode-querySelectors-exclusive.html | SKIP | requires setup({ single_test: true }) harness |
 | ParentNode-querySelectors-namespaces.html | SKIP | requires SVG xlink namespace attributes |
 | ParentNode-querySelectors-space-and-dash-attribute-value.html | PASS | |
-| ParentNode-replaceChildren.html | PASS | |
+| ParentNode-replaceChildren.html | FAIL | 25/29; MutationObserver is not defined |
 | Text-constructor.html | PASS | |
 | Text-splitText.html | PASS | |
 | Text-wholeText.html | PASS | |
@@ -510,7 +510,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | getElementsByClassName-32.html | PASS | |
 | getElementsByClassName-empty-set.html | PASS | |
 | getElementsByClassName-whitespace-class-names.html | PASS | |
-| insert-adjacent.html | PASS | |
+| insert-adjacent.html | FAIL | 13/14; insertAdjacentElement invalid object doesn't throw |
 | name-validation.html | SKIP | requires full name validation |
 | node-appendchild-crash.html | SKIP | requires iframe.contentDocument |
 | prepend-on-Document.html | PASS | |
@@ -521,7 +521,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | remove-from-shadow-host-and-adopt-into-iframe-ref.html | SKIP | requires iframes + Shadow DOM |
 | remove-from-shadow-host-and-adopt-into-iframe.html | SKIP | requires iframes + Shadow DOM |
 | remove-unscopable.html | SKIP | requires Symbol.unscopables |
-| rootNode.html | PASS | |
+| rootNode.html | FAIL | 0/1; not a callable function |
 | svg-template-querySelector.html | SKIP | requires template.content |
 
 #### Skip reasons summary (120 skipped tests)
