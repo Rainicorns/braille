@@ -1914,8 +1914,8 @@ mod tests {
         let t = tree.borrow();
         let div_id: NodeId = 3; // div#app
         let class_attr = t.get_attribute(div_id, "class");
-        // When all classes are removed, the attribute should be removed
-        assert_eq!(class_attr, None);
+        // Per spec, class attribute stays as empty string when all classes are removed
+        assert_eq!(class_attr, Some("".to_string()));
     }
 
     #[test]
@@ -1949,7 +1949,7 @@ mod tests {
         assert_eq!(result2.as_boolean(), Some(false));
 
         let t = tree.borrow();
-        assert_eq!(t.get_attribute(div_id, "class"), None);
+        assert_eq!(t.get_attribute(div_id, "class"), Some("".to_string()));
     }
 
     #[test]
@@ -2131,7 +2131,7 @@ mod tests {
         // All assertions passed in JS; verify final state in Rust
         let t = tree.borrow();
         let div_id: NodeId = 3;
-        assert_eq!(t.get_attribute(div_id, "class"), None);
+        assert_eq!(t.get_attribute(div_id, "class"), Some("".to_string()));
     }
 
     #[test]

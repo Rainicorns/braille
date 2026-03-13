@@ -85,16 +85,12 @@ impl JsClassList {
     }
 
     /// Helper to write class names back to the class attribute.
-    /// If empty, removes the attribute entirely.
+    /// Per spec, sets to empty string when all classes are removed (does not remove the attribute).
     fn set_classes(&self, classes: Vec<String>) {
-        if classes.is_empty() {
-            self.tree.borrow_mut().remove_attribute(self.node_id, "class");
-        } else {
-            let class_str = classes.join(" ");
-            self.tree
-                .borrow_mut()
-                .set_attribute(self.node_id, "class", &class_str);
-        }
+        let class_str = classes.join(" ");
+        self.tree
+            .borrow_mut()
+            .set_attribute(self.node_id, "class", &class_str);
     }
 
     /// Native implementation of classList.add(...classNames)
