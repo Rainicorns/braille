@@ -187,6 +187,12 @@ impl JsRuntime {
         let event_proto_for_closure = event_proto.as_object().expect("Event.prototype object").clone();
         let event_ctor = unsafe {
             NativeFunction::from_closure(move |_this, args, ctx| {
+                if _this.is_undefined() {
+                    return Err(JsError::from_native(
+                        boa_engine::JsNativeError::typ()
+                            .with_message("Failed to construct 'Event': Please use the 'new' operator, this DOM object constructor cannot be called as a function.")
+                    ));
+                }
                 // Parse args the same way as JsEvent::data_constructor
                 let event_type = args
                     .first()
@@ -267,6 +273,12 @@ impl JsRuntime {
         let custom_proto_for_closure = custom_proto.as_object().expect("CustomEvent.prototype object").clone();
         let custom_ctor = unsafe {
             NativeFunction::from_closure(move |_this, args, ctx| {
+                if _this.is_undefined() {
+                    return Err(JsError::from_native(
+                        boa_engine::JsNativeError::typ()
+                            .with_message("Failed to construct 'CustomEvent': Please use the 'new' operator, this DOM object constructor cannot be called as a function.")
+                    ));
+                }
                 let event_type = args
                     .first()
                     .ok_or_else(|| {
@@ -349,8 +361,15 @@ impl JsRuntime {
                     .expect(concat!($name, ".prototype should exist"));
 
                 let proto_for_closure = proto.as_object().expect(concat!($name, ".prototype object")).clone();
+                let ctor_name: &'static str = $name;
                 let ctor = unsafe {
                     NativeFunction::from_closure(move |_this, args, ctx| {
+                        if _this.is_undefined() {
+                            return Err(JsError::from_native(
+                                boa_engine::JsNativeError::typ()
+                                    .with_message(format!("Failed to construct '{}': Please use the 'new' operator, this DOM object constructor cannot be called as a function.", ctor_name))
+                            ));
+                        }
                         let event_type = args
                             .first()
                             .map(|v| v.to_string(ctx))

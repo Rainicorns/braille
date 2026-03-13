@@ -37,7 +37,7 @@ fn cross_tree_is_equal_node(tree_a: &DomTree, a: NodeId, tree_b: &DomTree, b: No
                 return false;
             }
             for attr in a1 {
-                if !a2.iter().any(|a| a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value && a.prefix == attr.prefix) {
+                if !a2.iter().any(|a| a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value) {
                     return false;
                 }
             }

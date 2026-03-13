@@ -1303,6 +1303,17 @@ fn insert_adjacent_element(this: &JsValue, args: &[JsValue], ctx: &mut Context) 
         .ok_or_else(|| JsNativeError::typ().with_message("insertAdjacentElement: second argument is not an Element"))?;
     let new_el_id = new_el.node_id;
 
+    // Per spec, insertAdjacentElement only accepts Element nodes (nodeType 1).
+    // DocumentType and other non-Element nodes must throw TypeError.
+    {
+        let t = tree.borrow();
+        if t.node_type(new_el_id) != 1 {
+            return Err(JsNativeError::typ()
+                .with_message("insertAdjacentElement: second argument is not an Element")
+                .into());
+        }
+    }
+
     let inserted = do_insert_adjacent(&tree, this_id, new_el_id, position)?;
     if inserted {
         Ok(new_el_arg.clone())

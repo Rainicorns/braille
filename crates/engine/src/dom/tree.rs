@@ -905,7 +905,7 @@ impl DomTree {
                     return false;
                 }
                 for attr in a1 {
-                    let found = a2.iter().any(|a| a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value && a.prefix == attr.prefix);
+                    let found = a2.iter().any(|a| a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value);
                     if !found {
                         return false;
                     }

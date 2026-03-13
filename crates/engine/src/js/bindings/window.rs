@@ -605,6 +605,23 @@ pub(crate) fn register_window(
         )
         .expect("failed to define window.document");
 
+    // Copy DOMParser from the global to the window object so `window.DOMParser` works
+    let dom_parser_val = global
+        .get(js_string!("DOMParser"), context)
+        .expect("DOMParser global should exist");
+    window
+        .define_property_or_throw(
+            js_string!("DOMParser"),
+            PropertyDescriptor::builder()
+                .value(dom_parser_val)
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define window.DOMParser");
+
     // getComputedStyle — register on window and as global
     let gcs = super::computed_style::make_get_computed_style(Rc::clone(&tree));
     let gcs_fn = gcs.to_js_function(context.realm());

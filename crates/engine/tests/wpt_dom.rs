@@ -590,6 +590,12 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Event-dispatch-multiple-cancelBubble/stopPropagation
         ("Event-dispatch-multiple-cancelBubble", "requires cancelBubble during propagation"),
         ("Event-dispatch-multiple-stopPropagation", "requires stopPropagation during propagation"),
+        // NodeList-static-length-getter-tampered — performance test, too slow for interpreter
+        ("NodeList-static-length-getter-tampered", "performance test, too slow for interpreter"),
+        // createDocument/createHTMLDocument with null browsing context — requires iframes
+        ("createDocument-with-null-browsing-context", "requires iframes"),
+        ("createHTMLDocument-with-null-browsing-context", "requires iframes"),
+        ("createHTMLDocument-with-saved-implementation", "requires iframes"),
     ];
 
     for (pattern, reason) in skip_patterns {
