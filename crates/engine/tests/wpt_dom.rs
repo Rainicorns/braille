@@ -395,12 +395,12 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("query-target-in-load-event", "requires iframes"),
         ("svg-template-querySelector", "requires template.content"),
         ("querySelector-mixed-case", "requires SVG/MathML foreignObject namespace handling"),
-        // EventTarget constructor
-        ("EventTarget-constructible", "requires EventTarget constructor"),
+        // EventTarget constructor — now implemented
+        // ("EventTarget-constructible", "requires EventTarget constructor"),
         // addEventListener advanced options
         ("AddEventListenerOptions-signal", "requires AbortSignal"),
-        // EventListener-handleEvent
-        ("EventListener-handleEvent", "requires handleEvent protocol"),
+        // EventListener-handleEvent — handleEvent protocol now implemented
+        // ("EventListener-handleEvent", "requires handleEvent protocol"),
         // Body/FrameSet event handlers
         ("Body-FrameSet", "requires body/frameset event forwarding"),
         // Event global
@@ -483,8 +483,11 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // append-on-Document, prepend-on-Document — now enabled (DOMImplementation available)
         // rootNode — now implemented
         // insert-adjacent: now enabled (DOMImplementation available)
-        // Event-timestamp (needs DOMHighResTimeStamp)
-        ("Event-timestamp", "requires DOMHighResTimeStamp"),
+        // Event-timestamp — DOMHighResTimeStamp now implemented; all timestamp tests pass
+        // ("Event-timestamp", "requires DOMHighResTimeStamp"),
+        // ("Event-timestamp-high-resolution", "requires performance.now() and MouseEvent/KeyboardEvent"),
+        // ("Event-timestamp-safe-resolution", "requires MouseEvent constructor"),
+        ("Event-timestamp-high-resolution.https", "requires GamepadEvent constructor"),
         // Event-dispatch-click (needs click() behavior)
         ("Event-dispatch-click", "requires click() activation"),
         ("Event-dispatch-detached-click", "requires click() activation"),
@@ -530,29 +533,27 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("no-focus-events", "requires focus events"),
         // keypress-dispatch-crash
         ("keypress-dispatch-crash", "requires KeyboardEvent"),
-        // EventTarget-this-of-listener
-        ("EventTarget-this-of-listener", "requires this binding in listeners"),
-        // Tests using new EventTarget()
-        ("EventTarget-addEventListener.any", "requires EventTarget constructor"),
-        ("EventTarget-add-remove-listener.any", "requires EventTarget constructor"),
-        ("EventTarget-removeEventListener.any", "requires EventTarget constructor"),
-        ("EventTarget-add-listener-platform-object", "requires EventTarget constructor"),
-        ("EventTarget-dispatchEvent.html", "requires EventTarget constructor"),
-        ("AddEventListenerOptions-once.any", "requires EventTarget constructor"),
-        ("AddEventListenerOptions-passive.any", "requires EventTarget constructor"),
-        // EventListenerOptions-capture needs complex dispatch chain
-        ("EventListenerOptions-capture", "requires EventTarget constructor"),
+        // EventTarget-this-of-listener — this binding now implemented
+        // ("EventTarget-this-of-listener", "requires this binding in listeners"),
+        // Tests using new EventTarget() — now implemented
+        // ("EventTarget-addEventListener.any", "requires EventTarget constructor"),
+        // ("EventTarget-add-remove-listener.any", "requires EventTarget constructor"),
+        // ("EventTarget-removeEventListener.any", "requires EventTarget constructor"),
+        ("EventTarget-add-listener-platform-object", "requires customElements.define and el.click()"),
+        // ("EventTarget-dispatchEvent.html", "requires createEvent InvalidStateError and exception swallowing in Element dispatch"),
+        // ("AddEventListenerOptions-once.any", "requires EventTarget constructor"),
+        // ("AddEventListenerOptions-passive.any", "requires EventTarget constructor"),
+        // ("EventListenerOptions-capture", "requires truthy-value capture handling and options parsing for null callback in Element dispatch"),
         // Event-dispatch-on-disabled-elements
         ("Event-dispatch-on-disabled-elements", "requires disabled element behavior"),
-        // EventListener-invoke-legacy (handleEvent)
-        ("EventListener-invoke-legacy", "requires handleEvent protocol"),
+        // EventListener-invoke-legacy — requires TransitionEvent/AnimationEvent constructors (keep skipped)
+        ("EventListener-invoke-legacy", "requires TransitionEvent/AnimationEvent constructors"),
         // Event-stopImmediatePropagation (test file has no test content captured)
         ("Event-stopImmediatePropagation.html", "requires full StopImmediatePropagation spec"),
-        // Event-dispatch-bubbles-true/false (uses cloneNode, new Document(), DOMImplementation)
-        ("Event-dispatch-bubbles-true", "requires cloneNode and Document constructor"),
-        ("Event-dispatch-bubbles-false", "requires cloneNode and Document constructor"),
-        // Event-dispatch-reenter (re-entrancy during dispatch)
-        ("Event-dispatch-reenter", "requires re-entrant dispatch"),
+        // Event-dispatch-bubbles-true/false — needs window event target + cross-document dispatch
+        ("Event-dispatch-bubbles-true", "requires window event target and cross-document dispatch"),
+        ("Event-dispatch-bubbles-false", "requires window event target and cross-document dispatch"),
+        // Event-dispatch-reenter — now supported (window participates in event propagation)
         // Event-dispatch-listener-order (window listener ordering)
         ("Event-dispatch-listener-order", "requires window event target"),
         // Tests needing frames/DOMImplementation — W2-D: now enabled

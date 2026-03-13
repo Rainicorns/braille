@@ -431,7 +431,45 @@ Also fixed: `template.content` getter (returns template's DocumentFragment), `cr
 - rootNode.html (4/5) — needs shadow DOM
 - NodeList-static-length-getter-tampered-indexOf-2.html — takes 164s, edge case
 
-**Permanently deferred** (~50 tests): iframes, Shadow DOM, workers, MutationObserver, Range/Selection, activation behavior
+**Permanently deferred** (~50 tests): iframes, Shadow DOM, workers, Range/Selection, activation behavior
+
+---
+
+### WPT Phase 4: Event System Enhancements (~15-20 test files)
+
+Improve event dispatch system. 5 agents total (3 original + 2 follow-up).
+
+**Agent A: DOMHighResTimeStamp — DONE**
+
+| What | Result |
+|------|--------|
+| Added `creation_time: Instant` to JsRuntime, stored in `RUNTIME_CREATION_TIME` thread-local. `event.timeStamp` returns real elapsed ms via `dom_high_res_time_stamp()`. | Event-timestamp-cross-realm-getter **1/1** passing. 3 remaining skipped (needed UIEvent subclasses — see Agent A2). |
+
+**Agent A2: UIEvent subclasses + performance.now() — DONE (landing next session)**
+
+| What | Result |
+|------|--------|
+| `performance.now()` global via `dom_high_res_time_stamp()`. 4 UIEvent subclass constructors (MouseEvent/KeyboardEvent/WheelEvent/FocusEvent) via `ui_event_subclass!` macro. `time_stamp: f64` stored at construction (not lazy). 5-microsecond coarsening per spec. Event constructors copied onto `window` object. Also stubbed JsEventTarget + composed_path in event_target.rs for build compat. Files: event.rs, runtime.rs, event_target.rs, document.rs, element.rs, wpt_dom.rs. | Event-timestamp-high-resolution **4/4**, Event-timestamp-safe-resolution **1/1**. Event-timestamp-high-resolution.https skipped (needs GamepadEvent). |
+
+**Agent B: handleEvent + this binding — DONE**
+
+| What | Result |
+|------|--------|
+| handleEvent protocol: object listeners with `.handleEvent()` method, looked up fresh at dispatch time. `this` binding: function listeners get `this` = currentTarget. Added `passive` field to ListenerEntry. | EventTarget-this-of-listener **6/6**, EventListener-handleEvent **3/3** sync (3 promise_test NOTRUN — expected). EventListener-invoke-legacy skipped (needs TransitionEvent/AnimationEvent). |
+
+**Agent B2: Window as event target + re-entrant dispatch — LANDING NEXT SESSION**
+
+| What | Target Tests |
+|------|-------------|
+| Window participates in event propagation path (appended after Document in capture/bubble). Window.dispatchEvent invokes listeners (was stub). Window listener storage upgraded to use EVENT_LISTENERS with WINDOW_LISTENER_ID (usize::MAX-1). WINDOW_OBJECT thread-local for propagation path. Files: window.rs, element.rs, wpt_dom.rs. | Event-dispatch-reenter |
+
+**Agent C: Standalone EventTarget constructor — LANDING NEXT SESSION**
+
+| What | Target Tests |
+|------|-------------|
+| `new EventTarget()` class (JsEventTarget) not tied to DOM nodes. Uses atomic counter IDs starting at usize::MAX/2. Own listener storage in EVENT_LISTENERS, addEventListener/removeEventListener/dispatchEvent methods. At-target-only dispatch (no tree to walk). composedPath() support. Files: event_target.rs, runtime.rs, mod.rs, wpt_dom.rs. | EventTarget-constructible, EventTarget-addEventListener, EventTarget-add-remove-listener, EventTarget-removeEventListener, EventTarget-dispatchEvent, AddEventListenerOptions-once/passive, EventListenerOptions-capture (~8 tests). EventTarget-add-listener-platform-object skipped (needs custom elements). |
+
+**Status: Agents A, B, A2 complete. Agents B2 (window event target) and C (standalone EventTarget) still running — will land next session. A2 already stubbed JsEventTarget + composed_path in event_target.rs, so C's full implementation needs to REPLACE A2's stubs (not add alongside). Merge order: C first (replaces A2's stubs with full JsEventTarget impl), then B2 (window.rs + element.rs propagation). Both modify wpt_dom.rs skip list (non-overlapping patterns). If build conflicts: check runtime.rs imports for `JsEventTarget`, `composed_path`, `RUNTIME_CREATION_TIME`.**
 
 ## Core Thesis
 

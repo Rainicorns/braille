@@ -17,6 +17,7 @@ use super::class_list::JsClassList;
 use super::document::JsDocument;
 use super::event::JsEvent;
 use super::event_target::{ListenerEntry, EVENT_LISTENERS};
+use super::window::{WINDOW_LISTENER_ID, WINDOW_OBJECT};
 
 /// Compare nodes from different DomTrees for equality (recursive).
 fn cross_tree_is_equal_node(tree_a: &DomTree, a: NodeId, tree_b: &DomTree, b: NodeId) -> bool {
@@ -950,10 +951,7 @@ impl JsElement {
         let mut once = false;
 
         if let Some(opt_val) = args.get(2) {
-            if let Some(b) = opt_val.as_boolean() {
-                // addEventListener(type, cb, useCapture)
-                capture = b;
-            } else if let Some(opt_obj) = opt_val.as_object() {
+            if let Some(opt_obj) = opt_val.as_object() {
                 let c = opt_obj.get(js_string!("capture"), ctx)?;
                 if !c.is_undefined() {
                     capture = c.to_boolean();
@@ -962,6 +960,9 @@ impl JsElement {
                 if !o.is_undefined() {
                     once = o.to_boolean();
                 }
+            } else {
+                // Coerce non-object values to boolean (handles numbers, strings, null, undefined, etc.)
+                capture = opt_val.to_boolean();
             }
         }
 
@@ -985,6 +986,9 @@ impl JsElement {
             .to_string(ctx)?
             .to_std_string_escaped();
 
+        // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
+        let (capture, once) = Self::parse_listener_options(args, ctx)?;
+
         // Second arg: callback (must be callable)
         let callback_val = args
             .get(1)
@@ -999,9 +1003,6 @@ impl JsElement {
             .as_object()
             .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
             .clone();
-
-        // Third arg: options
-        let (capture, once) = Self::parse_listener_options(args, ctx)?;
 
         EVENT_LISTENERS.with(|el| {
             let rc = el.borrow();
@@ -1022,6 +1023,7 @@ impl JsElement {
                     callback,
                     capture,
                     once,
+                    passive: None,
                 });
             }
         });
@@ -1046,6 +1048,9 @@ impl JsElement {
             .to_string(ctx)?
             .to_std_string_escaped();
 
+        // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
+        let (capture, _once) = Self::parse_listener_options(args, ctx)?;
+
         // Second arg: callback
         let callback_val = args
             .get(1)
@@ -1060,9 +1065,6 @@ impl JsElement {
             .as_object()
             .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: callback is not an object").into()))?
             .clone();
-
-        // Third arg: options (only capture matters for removal)
-        let (capture, _once) = Self::parse_listener_options(args, ctx)?;
 
         EVENT_LISTENERS.with(|el| {
             let rc = el.borrow();
@@ -1103,8 +1105,22 @@ impl JsElement {
 
         let event_val = args
             .first()
-            .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: missing event argument").into()))?
+            .ok_or_else(|| {
+                JsError::from_native(
+                    boa_engine::JsNativeError::typ()
+                        .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present.")
+                )
+            })?
             .clone();
+
+        // null/undefined arg -> TypeError
+        if event_val.is_null() || event_val.is_undefined() {
+            return Err(JsError::from_native(
+                boa_engine::JsNativeError::typ()
+                    .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
+            ));
+        }
+
         let event_obj = event_val
             .as_object()
             .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an object").into()))?
@@ -1114,9 +1130,31 @@ impl JsElement {
         let is_custom_event;
         let (event_type, bubbles) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
             is_custom_event = false;
+            // Check initialized flag
+            if !evt.initialized {
+                return Err(JsError::from_opaque(
+                    js_string!("InvalidStateError: The event is not initialized.").into(),
+                ));
+            }
+            // Check dispatching flag
+            if evt.dispatching {
+                return Err(JsError::from_opaque(
+                    js_string!("InvalidStateError: The event is already being dispatched.").into(),
+                ));
+            }
             (evt.event_type.clone(), evt.bubbles)
         } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
             is_custom_event = true;
+            if !evt.initialized {
+                return Err(JsError::from_opaque(
+                    js_string!("InvalidStateError: The event is not initialized.").into(),
+                ));
+            }
+            if evt.dispatching {
+                return Err(JsError::from_opaque(
+                    js_string!("InvalidStateError: The event is already being dispatched.").into(),
+                ));
+            }
             (evt.event_type.clone(), evt.bubbles)
         } else {
             return Err(JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()));
@@ -1143,6 +1181,17 @@ impl JsElement {
             }
             path.reverse();
             path
+        };
+
+        // Check if window should be in the propagation path.
+        // Window is added when the root of the path is the Document node.
+        let include_window = {
+            let tree_ref = tree.borrow();
+            if let Some(&root_id) = propagation_path.first() {
+                matches!(tree_ref.get_node(root_id).data, NodeData::Document)
+            } else {
+                false
+            }
         };
 
         // 2. Set event.target and dispatching flag
@@ -1178,7 +1227,33 @@ impl JsElement {
             }
         };
 
-        // 3. Capture phase (phase = 1): Walk from root down to (but NOT including) the target
+        // 3. Capture phase (phase = 1): Walk from window (if included) -> root down to (but NOT including) the target
+
+        // Window capture listeners first (if applicable)
+        if include_window {
+            // Set phase on native event data
+            if is_custom_event {
+                let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
+                evt.current_target = Some(WINDOW_LISTENER_ID);
+                evt.phase = 1;
+            } else {
+                let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+                evt.current_target = Some(WINDOW_LISTENER_ID);
+                evt.phase = 1;
+            }
+            let window_val: JsValue = WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
+                cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
+            }).unwrap_or(JsValue::undefined());
+            Self::set_event_prop(&event_obj, "currentTarget", window_val, ctx)?;
+
+            let should_stop = invoke_listeners_for_node(
+                WINDOW_LISTENER_ID, &event_type, &event_obj, &event_val, true, false, ctx,
+            )?;
+            if should_stop {
+                return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+            }
+        }
+
         let target_index = propagation_path.len() - 1;
         for i in 0..target_index {
             let node_id = propagation_path[i];
@@ -1216,7 +1291,7 @@ impl JsElement {
             return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
         }
 
-        // 5. Bubble phase (phase = 3): Only if event.bubbles. Walk from parent up to root.
+        // 5. Bubble phase (phase = 3): Only if event.bubbles. Walk from parent up to root, then window.
         if bubbles {
             for i in (0..target_index).rev() {
                 let node_id = propagation_path[i];
@@ -1227,6 +1302,30 @@ impl JsElement {
 
                 let should_stop = Self::invoke_listeners_for_node(
                     node_id, &event_type, &event_obj, &event_val, false, false, ctx,
+                )?;
+                if should_stop {
+                    return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+                }
+            }
+
+            // Window bubble listeners last (if applicable)
+            if include_window {
+                if is_custom_event {
+                    let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
+                    evt.current_target = Some(WINDOW_LISTENER_ID);
+                    evt.phase = 3;
+                } else {
+                    let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+                    evt.current_target = Some(WINDOW_LISTENER_ID);
+                    evt.phase = 3;
+                }
+                let window_val: JsValue = WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
+                    cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
+                }).unwrap_or(JsValue::undefined());
+                Self::set_event_prop(&event_obj, "currentTarget", window_val, ctx)?;
+
+                let should_stop = invoke_listeners_for_node(
+                    WINDOW_LISTENER_ID, &event_type, &event_obj, &event_val, false, false, ctx,
                 )?;
                 if should_stop {
                     return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
@@ -1350,7 +1449,21 @@ pub(crate) fn invoke_listeners_for_node(
             });
         }
 
-        callback.call(&JsValue::undefined(), &[event_val.clone()], ctx)?;
+        // Per spec: if callback is callable, call with this=currentTarget.
+        // If callback is an object with handleEvent method, look it up fresh and call with this=object.
+        if callback.is_callable() {
+            // Get currentTarget from the event to use as `this`
+            let current_target = event_obj
+                .get(js_string!("currentTarget"), ctx)
+                .unwrap_or(JsValue::undefined());
+            let _ = callback.call(&current_target, &[event_val.clone()], ctx);
+        } else {
+            // handleEvent protocol: look up handleEvent on the object each time
+            let handle = callback.get(js_string!("handleEvent"), ctx)?;
+            if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
+                let _ = handle_fn.call(&JsValue::from(callback.clone()), &[event_val.clone()], ctx);
+            }
+        }
 
         let (imm_stopped, prop_stopped) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
             (evt.immediate_propagation_stopped, evt.propagation_stopped)

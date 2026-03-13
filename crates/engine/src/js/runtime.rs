@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 
 use boa_engine::{
     class::Class,
@@ -18,6 +19,7 @@ use super::bindings::event_target::{ListenerMap, EVENT_LISTENERS};
 use super::bindings::element::{
     get_or_create_js_element, DomPrototypes, NodeCache, DOM_PROTOTYPES, DOM_TREE, NODE_CACHE,
 };
+use super::bindings::event::RUNTIME_CREATION_TIME;
 
 pub struct JsRuntime {
     pub(crate) context: Context,
@@ -25,6 +27,7 @@ pub struct JsRuntime {
     console_buffer: Rc<RefCell<Vec<String>>>,
     pub(crate) listeners: Rc<RefCell<ListenerMap>>,
     pub(crate) node_cache: Rc<RefCell<NodeCache>>,
+    creation_time: Instant,
 }
 
 impl JsRuntime {
@@ -32,6 +35,7 @@ impl JsRuntime {
     /// Registers the `document` global, the `Element` class,
     /// the `window` global, and the `console` object.
     pub fn new(tree: Rc<RefCell<DomTree>>) -> Self {
+        let creation_time = Instant::now();
         let mut context = Context::default();
         let console_buffer = Rc::new(RefCell::new(Vec::new()));
         let listeners: Rc<RefCell<ListenerMap>> = Rc::new(RefCell::new(HashMap::new()));
@@ -54,20 +58,32 @@ impl JsRuntime {
             *cell.borrow_mut() = Some(Rc::clone(&tree));
         });
 
+        // Store the creation time in the thread-local so event.rs can compute DOMHighResTimeStamp
+        RUNTIME_CREATION_TIME.with(|cell| {
+            *cell.borrow_mut() = Some(creation_time);
+        });
+
         // Register DOMImplementation global constructor (for instanceof) — must be before register_document
         bindings::document::register_domimplementation(&mut context);
 
         bindings::register_document(Rc::clone(&tree), &mut context);
         bindings::window::register_window(&mut context, Rc::clone(&console_buffer), Rc::clone(&tree));
 
-        // Register Event and CustomEvent classes
+        // Register Event, CustomEvent, and UIEvent subclass classes
         context.register_global_class::<bindings::event::JsEvent>().unwrap();
         context.register_global_class::<bindings::event::JsCustomEvent>().unwrap();
+        context.register_global_class::<bindings::event::JsMouseEvent>().unwrap();
+        context.register_global_class::<bindings::event::JsKeyboardEvent>().unwrap();
+        context.register_global_class::<bindings::event::JsWheelEvent>().unwrap();
+        context.register_global_class::<bindings::event::JsFocusEvent>().unwrap();
 
-        // Wrap Event/CustomEvent constructors to add isTrusted as own property on each instance.
+        // Wrap Event/CustomEvent/UIEvent subclass constructors to add isTrusted as own property on each instance.
         // Must happen BEFORE register_event_constants so constants go on the wrapper constructors.
         Self::wrap_event_constructors(&mut context);
         bindings::event::register_event_constants(&mut context);
+
+        // Register performance.now() global
+        Self::register_performance_global(&mut context);
 
         // Register CSSStyleDeclaration class for getComputedStyle
         context.register_global_class::<bindings::computed_style::JsComputedStyle>().unwrap();
@@ -84,7 +100,69 @@ impl JsRuntime {
         // Register DOMParser global constructor
         bindings::dom_parser::register_dom_parser(&mut context);
 
-        Self { context, tree, console_buffer, listeners, node_cache }
+        // Register EventTarget class (standalone constructor: new EventTarget())
+        context.register_global_class::<bindings::event_target::JsEventTarget>().unwrap();
+
+        // Add composedPath() to Event.prototype and CustomEvent.prototype
+        Self::register_composed_path(&mut context);
+
+        // Copy EventTarget to window, and copy event listener methods to global
+        // so that globalThis.addEventListener/removeEventListener/dispatchEvent work.
+        {
+            let global = context.global_object();
+            let window_val = global.get(js_string!("window"), &mut context)
+                .expect("window global should exist");
+            if let Some(window_obj) = window_val.as_object() {
+                let et_val = global.get(js_string!("EventTarget"), &mut context)
+                    .expect("EventTarget should be registered");
+                let _ = window_obj.define_property_or_throw(
+                    js_string!("EventTarget"),
+                    boa_engine::property::PropertyDescriptor::builder()
+                        .value(et_val)
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(false)
+                        .build(),
+                    &mut context,
+                );
+
+                // Copy UIEvent subclass constructors to window so window["MouseEvent"] etc. work
+                for ctor_name in &["MouseEvent", "KeyboardEvent", "WheelEvent", "FocusEvent", "Event", "CustomEvent"] {
+                    let ctor_val = global.get(js_string!(*ctor_name), &mut context)
+                        .expect("event constructor should be registered");
+                    let _ = window_obj.define_property_or_throw(
+                        js_string!(*ctor_name),
+                        boa_engine::property::PropertyDescriptor::builder()
+                            .value(ctor_val)
+                            .writable(true)
+                            .configurable(true)
+                            .enumerable(false)
+                            .build(),
+                        &mut context,
+                    );
+                }
+
+                // Copy addEventListener, removeEventListener, dispatchEvent from window to global
+                for method_name in &["addEventListener", "removeEventListener", "dispatchEvent"] {
+                    if let Ok(method_val) = window_obj.get(js_string!(*method_name), &mut context) {
+                        if !method_val.is_undefined() {
+                            let _ = global.define_property_or_throw(
+                                js_string!(*method_name),
+                                boa_engine::property::PropertyDescriptor::builder()
+                                    .value(method_val)
+                                    .writable(true)
+                                    .configurable(true)
+                                    .enumerable(false)
+                                    .build(),
+                                &mut context,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        Self { context, tree, console_buffer, listeners, node_cache, creation_time }
     }
 
     /// Replace the Event and CustomEvent global constructors with wrappers that:
@@ -94,7 +172,7 @@ impl JsRuntime {
     /// This is needed because Boa's `Class::data_constructor` returns the Rust struct,
     /// not the JsObject, so there's no hook to add own properties within the trait.
     fn wrap_event_constructors(context: &mut Context) {
-        use bindings::event::{JsEvent, JsCustomEvent, attach_is_trusted_own_property};
+        use bindings::event::{JsEvent, JsCustomEvent, JsMouseEvent, JsKeyboardEvent, JsWheelEvent, JsFocusEvent, attach_is_trusted_own_property};
 
         let global = context.global_object();
 
@@ -146,6 +224,8 @@ impl JsRuntime {
                     current_target: None,
                     phase: 0,
                     dispatching: false,
+                    time_stamp: bindings::event::dom_high_res_time_stamp(),
+                    initialized: true,
                 };
                 let js_obj = JsEvent::from_data(event, ctx)?;
                 js_obj.set_prototype(Some(event_proto_for_closure.clone()));
@@ -227,6 +307,8 @@ impl JsRuntime {
                     current_target: None,
                     phase: 0,
                     dispatching: false,
+                    time_stamp: bindings::event::dom_high_res_time_stamp(),
+                    initialized: true,
                 };
                 let js_obj = JsCustomEvent::from_data(event, ctx)?;
                 js_obj.set_prototype(Some(custom_proto_for_closure.clone()));
@@ -255,6 +337,88 @@ impl JsRuntime {
         context
             .register_global_property(js_string!("CustomEvent"), custom_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
             .expect("failed to register CustomEvent wrapper");
+
+        // --- UIEvent subclasses: MouseEvent, KeyboardEvent, WheelEvent, FocusEvent ---
+        // Each gets the same treatment: wrap the constructor to attach isTrusted own property.
+        macro_rules! wrap_ui_event_subclass {
+            ($struct_type:ident, $name:expr) => {{
+                let orig_ctor = global
+                    .get(js_string!($name), context)
+                    .expect(concat!($name, " constructor should exist"));
+                let proto = orig_ctor
+                    .as_object()
+                    .expect(concat!($name, " should be object"))
+                    .get(js_string!("prototype"), context)
+                    .expect(concat!($name, ".prototype should exist"));
+
+                let proto_for_closure = proto.as_object().expect(concat!($name, ".prototype object")).clone();
+                let ctor = unsafe {
+                    NativeFunction::from_closure(move |_this, args, ctx| {
+                        let event_type = args
+                            .first()
+                            .map(|v| v.to_string(ctx))
+                            .transpose()?
+                            .map(|s| s.to_std_string_escaped())
+                            .unwrap_or_default();
+
+                        let mut bubbles = false;
+                        let mut cancelable = false;
+                        if let Some(opts_val) = args.get(1) {
+                            if let Some(opts_obj) = opts_val.as_object() {
+                                let b = opts_obj.get(js_string!("bubbles"), ctx)?;
+                                if !b.is_undefined() { bubbles = b.to_boolean(); }
+                                let c = opts_obj.get(js_string!("cancelable"), ctx)?;
+                                if !c.is_undefined() { cancelable = c.to_boolean(); }
+                            }
+                        }
+
+                        let event = $struct_type {
+                            event_type,
+                            bubbles,
+                            cancelable,
+                            default_prevented: false,
+                            propagation_stopped: false,
+                            immediate_propagation_stopped: false,
+                            target: None,
+                            current_target: None,
+                            phase: 0,
+                            dispatching: false,
+                            time_stamp: bindings::event::dom_high_res_time_stamp(),
+                        };
+                        let js_obj = $struct_type::from_data(event, ctx)?;
+                        js_obj.set_prototype(Some(proto_for_closure.clone()));
+                        attach_is_trusted_own_property(&js_obj, ctx)?;
+                        Ok(JsValue::from(js_obj))
+                    })
+                };
+
+                let ctor_fn = FunctionObjectBuilder::new(context.realm(), ctor)
+                    .name(js_string!($name))
+                    .length(1)
+                    .constructor(true)
+                    .build();
+
+                ctor_fn.define_property_or_throw(
+                    js_string!("prototype"),
+                    boa_engine::property::PropertyDescriptor::builder()
+                        .value(proto)
+                        .writable(false)
+                        .configurable(false)
+                        .enumerable(false)
+                        .build(),
+                    context,
+                ).expect(concat!("failed to define ", $name, ".prototype on wrapper"));
+
+                context
+                    .register_global_property(js_string!($name), ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+                    .expect(concat!("failed to register ", $name, " wrapper"));
+            }};
+        }
+
+        wrap_ui_event_subclass!(JsMouseEvent, "MouseEvent");
+        wrap_ui_event_subclass!(JsKeyboardEvent, "KeyboardEvent");
+        wrap_ui_event_subclass!(JsWheelEvent, "WheelEvent");
+        wrap_ui_event_subclass!(JsFocusEvent, "FocusEvent");
     }
 
     /// Register the full DOM type hierarchy:
@@ -1183,6 +1347,24 @@ impl JsRuntime {
         });
     }
 
+    /// Register the `performance` global object with a `now()` method.
+    /// `performance.now()` returns a DOMHighResTimeStamp: milliseconds elapsed since runtime creation.
+    fn register_performance_global(context: &mut Context) {
+        use bindings::event::dom_high_res_time_stamp;
+
+        let now_fn = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
+            Ok(JsValue::from(dom_high_res_time_stamp()))
+        });
+
+        let performance = ObjectInitializer::new(context)
+            .function(now_fn, js_string!("now"), 0)
+            .build();
+
+        context
+            .register_global_property(js_string!("performance"), performance, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register performance global");
+    }
+
     /// Register a minimal `location` global object stub.
     /// The Node-properties WPT test uses `String(location)` to get the document URL.
     fn register_location_global(context: &mut Context) {
@@ -1219,6 +1401,46 @@ impl JsRuntime {
         context
             .register_global_property(js_string!("location"), location, Attribute::WRITABLE | Attribute::CONFIGURABLE)
             .expect("failed to register location global");
+    }
+
+    /// Add composedPath() to Event.prototype and CustomEvent.prototype.
+    /// This is needed for EventTarget-constructible WPT test which checks e.composedPath().
+    fn register_composed_path(context: &mut Context) {
+        let global = context.global_object();
+        let composed_path_fn = NativeFunction::from_fn_ptr(bindings::event_target::composed_path)
+            .to_js_function(context.realm());
+
+        // Add to Event.prototype
+        let event_ctor = global.get(js_string!("Event"), context)
+            .expect("Event constructor should exist");
+        if let Some(event_obj) = event_ctor.as_object() {
+            let proto = event_obj.get(js_string!("prototype"), context)
+                .expect("Event.prototype should exist");
+            if let Some(proto_obj) = proto.as_object() {
+                proto_obj.set(
+                    js_string!("composedPath"),
+                    composed_path_fn.clone(),
+                    false,
+                    context,
+                ).expect("failed to set Event.prototype.composedPath");
+            }
+        }
+
+        // Add to CustomEvent.prototype
+        let custom_ctor = global.get(js_string!("CustomEvent"), context)
+            .expect("CustomEvent constructor should exist");
+        if let Some(custom_obj) = custom_ctor.as_object() {
+            let proto = custom_obj.get(js_string!("prototype"), context)
+                .expect("CustomEvent.prototype should exist");
+            if let Some(proto_obj) = proto.as_object() {
+                proto_obj.set(
+                    js_string!("composedPath"),
+                    composed_path_fn,
+                    false,
+                    context,
+                ).expect("failed to set CustomEvent.prototype.composedPath");
+            }
+        }
     }
 
     /// Creates a constructor function that throws "Illegal constructor" when called.

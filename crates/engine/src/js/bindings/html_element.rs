@@ -237,6 +237,8 @@ fn click(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
         current_target: None,
         phase: 0,
         dispatching: false,
+        time_stamp: super::event::dom_high_res_time_stamp(),
+        initialized: true,
     };
 
     let event_obj = JsEvent::from_data(event, ctx)?;

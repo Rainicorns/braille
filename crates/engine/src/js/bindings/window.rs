@@ -5,14 +5,26 @@ use std::rc::Rc;
 use boa_engine::{
     js_string,
     native_function::NativeFunction,
-    object::ObjectInitializer,
+    object::{JsObject, ObjectInitializer},
     property::{Attribute, PropertyDescriptor},
     Context, JsResult, JsValue,
 };
 
+use super::event_target::{ListenerEntry, EVENT_LISTENERS};
+
 type ConsoleBuffer = Rc<RefCell<Vec<String>>>;
 type TimerMap = Rc<RefCell<HashMap<u32, JsValue>>>;
-type WindowListenerMap = Rc<RefCell<HashMap<String, Vec<JsValue>>>>;
+
+/// Well-known ID for window in the EVENT_LISTENERS map.
+/// Uses usize::MAX - 1 to avoid collision with DOM NodeIds (start at 0)
+/// and standalone EventTarget IDs (start at usize::MAX / 2).
+pub(crate) const WINDOW_LISTENER_ID: usize = usize::MAX - 1;
+
+thread_local! {
+    /// Thread-local storing the window JsObject so dispatch_event in element.rs
+    /// can include window in the event propagation path.
+    pub(crate) static WINDOW_OBJECT: RefCell<Option<JsObject>> = const { RefCell::new(None) };
+}
 
 fn console_format_args(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
     let parts: Vec<String> = args
@@ -328,43 +340,202 @@ pub(crate) fn register_window(
     let location = build_location("about:blank", context);
     let navigator = build_navigator(context);
 
-    // Window event listeners (for testharness.js "load" event, etc.)
-    let win_listeners: WindowListenerMap = Rc::new(RefCell::new(HashMap::new()));
-
-    let listeners_for_add = Rc::clone(&win_listeners);
+    // Window event listeners — stored in EVENT_LISTENERS with WINDOW_LISTENER_ID
     let add_event_listener = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
         let event_type = args.first()
             .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
             .transpose()?
             .unwrap_or_default();
-        if let Some(callback) = args.get(1) {
-            listeners_for_add.borrow_mut()
-                .entry(event_type)
-                .or_default()
-                .push(callback.clone());
+
+        // Parse options (3rd argument): boolean or {capture, once, passive}
+        let mut capture = false;
+        let mut once = false;
+        let mut passive = None;
+        if let Some(opt_val) = args.get(2) {
+            if let Some(b) = opt_val.as_boolean() {
+                capture = b;
+            } else if let Some(opt_obj) = opt_val.as_object() {
+                let c = opt_obj.get(js_string!("capture"), ctx)?;
+                if !c.is_undefined() {
+                    capture = c.to_boolean();
+                }
+                let o = opt_obj.get(js_string!("once"), ctx)?;
+                if !o.is_undefined() {
+                    once = o.to_boolean();
+                }
+                let p = opt_obj.get(js_string!("passive"), ctx)?;
+                if !p.is_undefined() {
+                    passive = Some(p.to_boolean());
+                }
+            }
         }
+
+        let callback_val = match args.get(1) {
+            Some(v) => v,
+            None => return Ok(JsValue::undefined()),
+        };
+        if callback_val.is_null() || callback_val.is_undefined() {
+            return Ok(JsValue::undefined());
+        }
+        let callback = callback_val
+            .as_object()
+            .ok_or_else(|| boa_engine::JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
+            .clone();
+
+        EVENT_LISTENERS.with(|el| {
+            let rc = el.borrow();
+            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
+            let mut map = listeners_rc.borrow_mut();
+            let entries = map.entry(WINDOW_LISTENER_ID).or_insert_with(Vec::new);
+
+            let duplicate = entries.iter().any(|entry| {
+                entry.event_type == event_type
+                    && entry.capture == capture
+                    && entry.callback == callback
+            });
+
+            if !duplicate {
+                entries.push(ListenerEntry {
+                    event_type,
+                    callback,
+                    capture,
+                    once,
+                    passive,
+                });
+            }
+        });
+
         Ok(JsValue::undefined())
     }) };
 
-    let listeners_for_remove = Rc::clone(&win_listeners);
     let remove_event_listener = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
         let event_type = args.first()
             .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
             .transpose()?
             .unwrap_or_default();
-        if let Some(callback) = args.get(1) {
-            if let Some(list) = listeners_for_remove.borrow_mut().get_mut(&event_type) {
-                list.retain(|cb| cb != callback);
+
+        let callback_val = match args.get(1) {
+            Some(v) => v,
+            None => return Ok(JsValue::undefined()),
+        };
+        if callback_val.is_null() || callback_val.is_undefined() {
+            return Ok(JsValue::undefined());
+        }
+        let callback = callback_val
+            .as_object()
+            .ok_or_else(|| boa_engine::JsError::from_opaque(js_string!("removeEventListener: callback is not an object").into()))?
+            .clone();
+
+        let mut capture = false;
+        if let Some(opt_val) = args.get(2) {
+            if let Some(b) = opt_val.as_boolean() {
+                capture = b;
+            } else if let Some(opt_obj) = opt_val.as_object() {
+                let c = opt_obj.get(js_string!("capture"), ctx)?;
+                if !c.is_undefined() {
+                    capture = c.to_boolean();
+                }
             }
         }
+
+        EVENT_LISTENERS.with(|el| {
+            let rc = el.borrow();
+            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
+            let mut map = listeners_rc.borrow_mut();
+            if let Some(entries) = map.get_mut(&WINDOW_LISTENER_ID) {
+                entries.retain(|entry| {
+                    !(entry.event_type == event_type
+                        && entry.capture == capture
+                        && entry.callback == callback)
+                });
+                if entries.is_empty() {
+                    map.remove(&WINDOW_LISTENER_ID);
+                }
+            }
+        });
+
         Ok(JsValue::undefined())
     }) };
 
-    let listeners_for_dispatch = Rc::clone(&win_listeners);
-    let dispatch_event = unsafe { NativeFunction::from_closure(move |_this, _args, _ctx| {
-        // Stub — just return true
-        let _ = &listeners_for_dispatch;
-        Ok(JsValue::from(true))
+    let dispatch_event = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
+        let event_val = args.first().cloned().unwrap_or(JsValue::undefined());
+        if event_val.is_null() || event_val.is_undefined() {
+            return Ok(JsValue::from(true));
+        }
+        let event_obj = match event_val.as_object() {
+            Some(o) => o.clone(),
+            None => return Ok(JsValue::from(true)),
+        };
+
+        let is_custom_event;
+        let event_type;
+        if let Some(evt) = event_obj.downcast_ref::<super::event::JsEvent>() {
+            is_custom_event = false;
+            event_type = evt.event_type.clone();
+        } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
+            is_custom_event = true;
+            event_type = evt.event_type.clone();
+        } else {
+            return Ok(JsValue::from(true));
+        }
+
+        if is_custom_event {
+            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
+            evt.dispatching = true;
+            evt.phase = 2;
+        } else {
+            let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
+            evt.dispatching = true;
+            evt.phase = 2;
+        }
+
+        let window_val: JsValue = WINDOW_OBJECT.with(|cell: &RefCell<Option<JsObject>>| {
+            cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
+        }).unwrap_or(JsValue::undefined());
+
+        event_obj.define_property_or_throw(
+            js_string!("target"),
+            PropertyDescriptor::builder().value(window_val.clone()).writable(true).configurable(true).enumerable(true).build(),
+            ctx,
+        )?;
+        event_obj.define_property_or_throw(
+            js_string!("srcElement"),
+            PropertyDescriptor::builder().value(window_val.clone()).writable(true).configurable(true).enumerable(true).build(),
+            ctx,
+        )?;
+        event_obj.define_property_or_throw(
+            js_string!("currentTarget"),
+            PropertyDescriptor::builder().value(window_val).writable(true).configurable(true).enumerable(true).build(),
+            ctx,
+        )?;
+
+        super::element::invoke_listeners_for_node(
+            WINDOW_LISTENER_ID, &event_type, &event_obj, &event_val, false, true, ctx,
+        )?;
+
+        let default_prevented = if is_custom_event {
+            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
+            evt.phase = 0;
+            evt.dispatching = false;
+            evt.propagation_stopped = false;
+            evt.immediate_propagation_stopped = false;
+            evt.default_prevented
+        } else {
+            let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
+            evt.phase = 0;
+            evt.dispatching = false;
+            evt.propagation_stopped = false;
+            evt.immediate_propagation_stopped = false;
+            evt.default_prevented
+        };
+
+        event_obj.define_property_or_throw(
+            js_string!("currentTarget"),
+            PropertyDescriptor::builder().value(JsValue::null()).writable(true).configurable(true).enumerable(true).build(),
+            ctx,
+        )?;
+
+        Ok(JsValue::from(!default_prevented))
     }) };
 
     let window = ObjectInitializer::new(context)
@@ -449,6 +620,12 @@ pub(crate) fn register_window(
             context,
         )
         .expect("failed to define window.getComputedStyle");
+
+    // Store the window object in the thread-local so dispatch_event in element.rs
+    // can include window in event propagation paths.
+    WINDOW_OBJECT.with(|cell: &RefCell<Option<JsObject>>| {
+        *cell.borrow_mut() = Some(window.clone());
+    });
 
     context
         .register_global_property(js_string!("window"), window, Attribute::all())

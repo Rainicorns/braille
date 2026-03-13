@@ -15,7 +15,7 @@ use crate::dom::DomTree;
 
 use crate::dom::NodeData;
 
-use super::element::{JsElement, get_or_create_js_element};
+use super::element::{JsElement, get_or_create_js_element, NODE_CACHE};
 use super::event::{JsEvent, JsCustomEvent};
 use super::event_target::{ListenerEntry, EVENT_LISTENERS};
 use super::class_list::register_class_list_class;
@@ -544,6 +544,8 @@ fn document_create_event(
             current_target: None,
             phase: 0,
             dispatching: false,
+            time_stamp: super::event::dom_high_res_time_stamp(),
+            initialized: false,
         };
         let js_obj = JsCustomEvent::from_data(event, ctx)?;
         super::event::attach_is_trusted_own_property(&js_obj, ctx)?;
@@ -560,6 +562,8 @@ fn document_create_event(
             current_target: None,
             phase: 0,
             dispatching: false,
+            time_stamp: super::event::dom_high_res_time_stamp(),
+            initialized: false,
         };
         let js_obj = JsEvent::from_data(event, ctx)?;
         super::event::attach_is_trusted_own_property(&js_obj, ctx)?;
@@ -574,9 +578,7 @@ fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool
     let mut once = false;
 
     if let Some(opt_val) = args.get(2) {
-        if let Some(b) = opt_val.as_boolean() {
-            capture = b;
-        } else if let Some(opt_obj) = opt_val.as_object() {
+        if let Some(opt_obj) = opt_val.as_object() {
             let c = opt_obj.get(js_string!("capture"), ctx)?;
             if !c.is_undefined() {
                 capture = c.to_boolean();
@@ -585,6 +587,9 @@ fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool
             if !o.is_undefined() {
                 once = o.to_boolean();
             }
+        } else {
+            // Coerce non-object values to boolean (handles numbers, strings, null, undefined, etc.)
+            capture = opt_val.to_boolean();
         }
     }
 
@@ -611,6 +616,9 @@ fn document_add_event_listener(
         .to_string(ctx)?
         .to_std_string_escaped();
 
+    // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
+    let (capture, once) = parse_listener_options(args, ctx)?;
+
     let callback_val = args
         .get(1)
         .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: missing callback argument").into()))?;
@@ -623,8 +631,6 @@ fn document_add_event_listener(
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
         .clone();
-
-    let (capture, once) = parse_listener_options(args, ctx)?;
 
     EVENT_LISTENERS.with(|el| {
         let rc = el.borrow();
@@ -644,6 +650,7 @@ fn document_add_event_listener(
                 callback,
                 capture,
                 once,
+                passive: None,
             });
         }
     });
@@ -671,6 +678,9 @@ fn document_remove_event_listener(
         .to_string(ctx)?
         .to_std_string_escaped();
 
+    // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
+    let (capture, _once) = parse_listener_options(args, ctx)?;
+
     let callback_val = args
         .get(1)
         .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: missing callback argument").into()))?;
@@ -683,8 +693,6 @@ fn document_remove_event_listener(
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: callback is not an object").into()))?
         .clone();
-
-    let (capture, _once) = parse_listener_options(args, ctx)?;
 
     EVENT_LISTENERS.with(|el| {
         let rc = el.borrow();
@@ -723,8 +731,22 @@ fn document_dispatch_event(
 
     let event_val = args
         .first()
-        .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: missing event argument").into()))?
+        .ok_or_else(|| {
+            JsError::from_native(
+                boa_engine::JsNativeError::typ()
+                    .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present.")
+            )
+        })?
         .clone();
+
+    // null/undefined arg -> TypeError
+    if event_val.is_null() || event_val.is_undefined() {
+        return Err(JsError::from_native(
+            boa_engine::JsNativeError::typ()
+                .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
+        ));
+    }
+
     let event_obj = event_val
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an object").into()))?
@@ -733,9 +755,31 @@ fn document_dispatch_event(
     let is_custom_event;
     let (event_type, bubbles) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
         is_custom_event = false;
+        // Check initialized flag
+        if !evt.initialized {
+            return Err(JsError::from_opaque(
+                js_string!("InvalidStateError: The event is not initialized.").into(),
+            ));
+        }
+        // Check dispatching flag
+        if evt.dispatching {
+            return Err(JsError::from_opaque(
+                js_string!("InvalidStateError: The event is already being dispatched.").into(),
+            ));
+        }
         (evt.event_type.clone(), evt.bubbles)
     } else if let Some(evt) = event_obj.downcast_ref::<JsCustomEvent>() {
         is_custom_event = true;
+        if !evt.initialized {
+            return Err(JsError::from_opaque(
+                js_string!("InvalidStateError: The event is not initialized.").into(),
+            ));
+        }
+        if evt.dispatching {
+            return Err(JsError::from_opaque(
+                js_string!("InvalidStateError: The event is already being dispatched.").into(),
+            ));
+        }
         (evt.event_type.clone(), evt.bubbles)
     } else {
         return Err(JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()));
@@ -1884,6 +1928,10 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
     // Register the CSSStyleDeclaration class so from_data works for style getter
     register_style_class(context);
 
+    // Save tree pointer and doc_id for NODE_CACHE registration below
+    let tree_ptr = Rc::as_ptr(&tree) as usize;
+    let doc_id = tree.borrow().document();
+
     let doc_data = JsDocument { tree };
 
     let document: JsObject = ObjectInitializer::with_native_data(doc_data, context)
@@ -2400,6 +2448,17 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
             context,
         )
         .expect("failed to define document.contentType");
+
+    // Store the document JsObject in NODE_CACHE so that get_or_create_js_element
+    // returns this same object when looking up the Document node. This ensures
+    // evt.currentTarget === document during event propagation.
+    NODE_CACHE.with(|cell| {
+        let rc = cell.borrow();
+        if let Some(cache_rc) = rc.as_ref() {
+            let mut cache = cache_rc.borrow_mut();
+            cache.insert((tree_ptr, doc_id), document.clone());
+        }
+    });
 
     context
         .register_global_property(js_string!("document"), document, Attribute::all())
