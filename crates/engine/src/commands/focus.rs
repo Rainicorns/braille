@@ -21,7 +21,7 @@ impl Engine {
                     true
                 } else {
                     // Check for tabindex attribute
-                    attributes.iter().any(|(k, _)| k == "tabindex")
+                    attributes.iter().any(|a| a.local_name == "tabindex")
                 }
             }
             _ => false,

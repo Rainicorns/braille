@@ -10,7 +10,7 @@ use boa_engine::{
 };
 
 use crate::dom::DomTree;
-use crate::dom::node::NodeId;
+use crate::dom::node::{DomAttribute, NodeId};
 use crate::html::parser::parse_html;
 
 use super::document::add_document_properties_to_element;
@@ -60,13 +60,23 @@ fn parse_xml_into_tree(input: &str) -> Rc<RefCell<DomTree>> {
                 };
 
                 // Collect attributes
-                let attrs: Vec<(String, String)> = e
+                let attrs: Vec<DomAttribute> = e
                     .attributes()
                     .filter_map(|a| {
                         let a = a.ok()?;
                         let key = std::str::from_utf8(a.key.as_ref()).ok()?.to_string();
                         let val = a.unescape_value().ok()?.to_string();
-                        Some((key, val))
+                        let (prefix, local_name) = if let Some(colon_pos) = key.find(':') {
+                            (key[..colon_pos].to_string(), key[colon_pos + 1..].to_string())
+                        } else {
+                            (String::new(), key)
+                        };
+                        Some(DomAttribute {
+                            local_name,
+                            prefix,
+                            namespace: String::new(),
+                            value: val,
+                        })
                     })
                     .collect();
 
@@ -104,13 +114,23 @@ fn parse_xml_into_tree(input: &str) -> Rc<RefCell<DomTree>> {
                     local_name
                 };
 
-                let attrs: Vec<(String, String)> = e
+                let attrs: Vec<DomAttribute> = e
                     .attributes()
                     .filter_map(|a| {
                         let a = a.ok()?;
                         let key = std::str::from_utf8(a.key.as_ref()).ok()?.to_string();
                         let val = a.unescape_value().ok()?.to_string();
-                        Some((key, val))
+                        let (prefix, local_name) = if let Some(colon_pos) = key.find(':') {
+                            (key[..colon_pos].to_string(), key[colon_pos + 1..].to_string())
+                        } else {
+                            (String::new(), key)
+                        };
+                        Some(DomAttribute {
+                            local_name,
+                            prefix,
+                            namespace: String::new(),
+                            value: val,
+                        })
                     })
                     .collect();
 

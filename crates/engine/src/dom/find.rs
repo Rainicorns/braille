@@ -82,7 +82,7 @@ mod tests {
         tree.append_child(tree.document(), div);
 
         if let NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(div).data {
-            attributes.push(("id".to_string(), "myid".to_string()));
+            attributes.push(crate::dom::node::DomAttribute::new("id", "myid"));
         }
 
         assert_eq!(resolve_id(&tree, "#myid"), Some(div));
@@ -95,7 +95,7 @@ mod tests {
         tree.append_child(tree.document(), div);
 
         if let NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(div).data {
-            attributes.push(("id".to_string(), "myid".to_string()));
+            attributes.push(crate::dom::node::DomAttribute::new("id", "myid"));
         }
 
         assert_eq!(resolve_id(&tree, "#nonexistent"), None);
@@ -108,7 +108,7 @@ mod tests {
         tree.append_child(tree.document(), div);
 
         if let NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(div).data {
-            attributes.push(("id".to_string(), "myid".to_string()));
+            attributes.push(crate::dom::node::DomAttribute::new("id", "myid"));
         }
 
         assert_eq!(resolve_id(&tree, "myid"), None);
@@ -172,7 +172,7 @@ mod tests {
         tree.append_child(tree.document(), div);
 
         if let NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(div).data {
-            attributes.push(("id".to_string(), "myid".to_string()));
+            attributes.push(crate::dom::node::DomAttribute::new("id", "myid"));
         }
 
         let ref_map = HashMap::new();
@@ -209,7 +209,7 @@ mod tests {
 
         // Add an id attribute to div2
         if let NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(div2).data {
-            attributes.push(("id".to_string(), "test".to_string()));
+            attributes.push(crate::dom::node::DomAttribute::new("id", "test"));
         }
 
         let mut ref_map = HashMap::new();
@@ -229,7 +229,7 @@ mod tests {
 
         // Add an id attribute to div2
         if let NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(div2).data {
-            attributes.push(("id".to_string(), "test".to_string()));
+            attributes.push(crate::dom::node::DomAttribute::new("id", "test"));
         }
 
         let ref_map = HashMap::new();

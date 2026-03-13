@@ -408,6 +408,13 @@ fn document_create_attribute(
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_else(|| "undefined".to_string());
 
+    // Per spec: validate the name — empty string is not a valid XML name
+    if local_name.is_empty() {
+        return Err(JsError::from_opaque(
+            js_string!("InvalidCharacterError: The string contains invalid characters.").into(),
+        ));
+    }
+
     // Per spec: if the document is an HTML document, lowercase the name
     let local_name = if tree.borrow().is_html_document() {
         local_name.to_ascii_lowercase()
@@ -1038,6 +1045,11 @@ pub(crate) fn add_document_properties_to_element(
     let create_attr_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
             let local_name = args.first().map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_else(|| "undefined".to_string());
+            if local_name.is_empty() {
+                return Err(JsError::from_opaque(
+                    js_string!("InvalidCharacterError: The string contains invalid characters.").into(),
+                ));
+            }
             let local_name = if tree_for_ca.borrow().is_html_document() {
                 local_name.to_ascii_lowercase()
             } else {
@@ -1177,6 +1189,55 @@ pub(crate) fn add_document_properties_to_element(
         })
     };
     js_obj.set(js_string!("importNode"), import_node_fn.to_js_function(&realm), false, ctx)?;
+
+    // adoptNode method
+    let tree_for_adopt = new_tree.clone();
+    let adopt_node_fn = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx2| {
+            let node_val = args.first()
+                .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: missing argument").into()))?;
+            let node_obj = node_val.as_object()
+                .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: argument is not an object").into()))?;
+            let node_el = node_obj.downcast_ref::<JsElement>()
+                .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: argument is not a Node").into()))?;
+
+            let source_tree = node_el.tree.clone();
+            let source_id = node_el.node_id;
+
+            // If node is a Document, throw NotSupportedError
+            {
+                let src = source_tree.borrow();
+                if matches!(src.get_node(source_id).data, NodeData::Document) {
+                    return Err(JsError::from_opaque(
+                        js_string!("NotSupportedError: Cannot adopt a Document node").into(),
+                    ));
+                }
+            }
+
+            if Rc::ptr_eq(&source_tree, &tree_for_adopt) {
+                // Same tree: just remove from parent
+                tree_for_adopt.borrow_mut().remove_from_parent(source_id);
+                Ok(node_val.clone())
+            } else {
+                // Different tree: use adopt_node_with_mapping to move node and all descendants
+                drop(node_el);
+                let (adopted_id, mapping) = super::mutation::adopt_node_with_mapping(
+                    &source_tree, source_id, &tree_for_adopt,
+                );
+                // Update all cached JS objects (root + descendants) to point to new tree/nodes
+                super::mutation::update_node_cache_for_adoption_mapping(
+                    &source_tree, &tree_for_adopt, &mapping,
+                );
+                // Also update the root node_obj directly (in case it wasn't cached yet)
+                let mut el_mut = node_obj.downcast_mut::<JsElement>().unwrap();
+                el_mut.node_id = adopted_id;
+                el_mut.tree = tree_for_adopt.clone();
+                drop(el_mut);
+                Ok(node_val.clone())
+            }
+        })
+    };
+    js_obj.set(js_string!("adoptNode"), adopt_node_fn.to_js_function(&realm), false, ctx)?;
 
     // location = null (documents not associated with a browsing context)
     js_obj.define_property_or_throw(
@@ -1550,6 +1611,67 @@ fn document_import_node(
     Ok(js_obj.into())
 }
 
+/// Native implementation of document.adoptNode(node)
+fn document_adopt_node(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: `this` is not document").into()))?;
+    let target_tree = doc.tree.clone();
+
+    let node_val = args
+        .first()
+        .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: missing argument").into()))?;
+    let node_obj = node_val
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: argument is not an object").into()))?;
+    let node_el = node_obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: argument is not a Node").into()))?;
+
+    let source_tree = node_el.tree.clone();
+    let source_id = node_el.node_id;
+
+    // Step 1: If node is a Document, throw NotSupportedError
+    {
+        let src = source_tree.borrow();
+        if matches!(src.get_node(source_id).data, NodeData::Document) {
+            return Err(JsError::from_opaque(
+                js_string!("NotSupportedError: Cannot adopt a Document node").into(),
+            ));
+        }
+    }
+
+    if Rc::ptr_eq(&source_tree, &target_tree) {
+        // Same tree: just remove from parent
+        target_tree.borrow_mut().remove_from_parent(source_id);
+        // Return the same JS object
+        Ok(node_val.clone())
+    } else {
+        // Different tree: use adopt_node_with_mapping to move node and all descendants
+        drop(node_el);
+        let (adopted_id, mapping) = super::mutation::adopt_node_with_mapping(
+            &source_tree, source_id, &target_tree,
+        );
+        // Update all cached JS objects (root + descendants) to point to new tree/nodes
+        super::mutation::update_node_cache_for_adoption_mapping(
+            &source_tree, &target_tree, &mapping,
+        );
+        // Also update the root node_obj directly (in case it wasn't cached yet)
+        let mut el_mut = node_obj.downcast_mut::<JsElement>().unwrap();
+        el_mut.node_id = adopted_id;
+        el_mut.tree = target_tree.clone();
+        drop(el_mut);
+        Ok(node_val.clone())
+    }
+}
+
 /// Native implementation of document.appendChild(child)
 fn document_append_child(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
@@ -1899,6 +2021,11 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
             NativeFunction::from_fn_ptr(document_import_node),
             js_string!("importNode"),
             2,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(document_adopt_node),
+            js_string!("adoptNode"),
+            1,
         )
         .function(
             NativeFunction::from_fn_ptr(super::element::node_compare_document_position),
@@ -2282,7 +2409,7 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
 /// Create a blank XML document (used by `new Document()` constructor).
 /// Returns a JsElement-backed Document node with all Document-specific methods.
 pub(crate) fn create_blank_xml_document(ctx: &mut Context) -> JsResult<JsValue> {
-    let new_tree = Rc::new(RefCell::new(crate::dom::DomTree::new()));
+    let new_tree = Rc::new(RefCell::new(crate::dom::DomTree::new_xml()));
     let doc_id = new_tree.borrow().document();
     let js_obj = get_or_create_js_element(doc_id, new_tree.clone(), ctx)?;
     add_document_properties_to_element(&js_obj, new_tree.clone(), "application/xml".to_string(), ctx)?;

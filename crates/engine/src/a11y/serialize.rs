@@ -98,8 +98,8 @@ fn walk(
             } else if tag == "img" {
                 attributes
                     .iter()
-                    .find(|(k, _)| k == "alt")
-                    .map(|(_, v)| v.clone())
+                    .find(|a| a.local_name == "alt")
+                    .map(|a| a.value.clone())
                     .unwrap_or_default()
             } else {
                 collect_direct_text(tree, node_id)
@@ -164,7 +164,7 @@ fn walk(
 }
 
 /// Map an element tag to its accessibility role string.
-fn element_role(tag: &str, attributes: &[(String, String)]) -> String {
+fn element_role(tag: &str, attributes: &[crate::dom::node::DomAttribute]) -> String {
     match tag {
         "h1" => "heading[1]".to_string(),
         "h2" => "heading[2]".to_string(),
@@ -176,7 +176,7 @@ fn element_role(tag: &str, attributes: &[(String, String)]) -> String {
         "a" => "link".to_string(),
         "button" => "button".to_string(),
         "input" => {
-            if let Some(type_val) = attributes.iter().find(|(k, _)| k == "type").map(|(_, v)| v) {
+            if let Some(type_val) = attributes.iter().find(|a| a.local_name == "type").map(|a| &a.value) {
                 format!("input[type={}]", type_val)
             } else {
                 "input".to_string()
@@ -217,14 +217,14 @@ fn get_interactive_value(
     tree: &DomTree,
     node_id: NodeId,
     tag: &str,
-    attributes: &[(String, String)],
+    attributes: &[crate::dom::node::DomAttribute],
 ) -> Option<String> {
     match tag {
         "input" => {
             attributes
                 .iter()
-                .find(|(k, _)| k == "value")
-                .map(|(_, v)| v.clone())
+                .find(|a| a.local_name == "value")
+                .map(|a| a.value.clone())
         }
         "select" => {
             let node = tree.get_node(node_id);
@@ -240,7 +240,7 @@ fn get_interactive_value(
                     if tag_name.to_ascii_lowercase() == "option" {
                         let text = tree.get_text_content(child_id);
                         let text = text.trim().to_string();
-                        if child_attrs.iter().any(|(k, _)| k == "selected") {
+                        if child_attrs.iter().any(|a| a.local_name == "selected") {
                             return Some(text);
                         }
                         if first_option_text.is_none() {
@@ -303,7 +303,7 @@ mod tests {
             ref mut attributes, ..
         } = tree.get_node_mut(node_id).data
         {
-            attributes.push((key.to_string(), value.to_string()));
+            attributes.push(crate::dom::node::DomAttribute::new(key, value));
         }
     }
 
@@ -1117,7 +1117,7 @@ form
         tree.append_child(body, input);
         // Add type attribute manually
         if let crate::dom::node::NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(input).data {
-            attributes.push(("type".to_string(), "text".to_string()));
+            attributes.push(crate::dom::node::DomAttribute::new("type", "text"));
         }
         let mut style = HashMap::new();
         style.insert("visibility".to_string(), "hidden".to_string());
@@ -1145,7 +1145,7 @@ form
         tree.append_child(nav, a);
         // Add href
         if let crate::dom::node::NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(a).data {
-            attributes.push(("href".to_string(), "/home".to_string()));
+            attributes.push(crate::dom::node::DomAttribute::new("href", "/home"));
         }
         let a_text = tree.create_text("Home");
         tree.append_child(a, a_text);

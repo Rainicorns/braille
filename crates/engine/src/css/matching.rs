@@ -605,6 +605,7 @@ fn collect_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dom::node::DomAttribute;
 
     fn setup_test_tree() -> DomTree {
         let mut tree = DomTree::new();
@@ -626,18 +627,18 @@ mod tests {
         let html = tree.create_element("html");
         let body = tree.create_element("body");
         let div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "container".to_string()),
+            DomAttribute::new("class", "container"),
         ]);
         let p1 = tree.create_element_with_attrs("p", vec![
-            ("id".to_string(), "first".to_string()),
+            DomAttribute::new("id", "first"),
         ]);
         let p1_text = tree.create_text("First paragraph");
         let p2 = tree.create_element_with_attrs("p", vec![
-            ("class".to_string(), "highlight".to_string()),
+            DomAttribute::new("class", "highlight"),
         ]);
         let p2_text = tree.create_text("Second paragraph");
         let nested_div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "nested".to_string()),
+            DomAttribute::new("class", "nested"),
         ]);
         let span = tree.create_element("span");
         let span_text = tree.create_text("Nested span");
@@ -853,7 +854,7 @@ mod tests {
     fn test_is_link_method() {
         let mut tree = DomTree::new();
         let link = tree.create_element_with_attrs("a", vec![
-            ("href".to_string(), "https://example.com".to_string()),
+            DomAttribute::new("href", "https://example.com"),
         ]);
         let not_link = tree.create_element("a"); // <a> without href
         let div = tree.create_element("div");

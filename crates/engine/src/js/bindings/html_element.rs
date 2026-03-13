@@ -38,7 +38,7 @@ fn get_tab_index(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
     // Determine the tag name (lowercased) and the tabindex attribute
     let (tag_name, tabindex_attr) = match &node.data {
         NodeData::Element { tag_name, attributes, .. } => {
-            let attr_val = attributes.iter().find(|(k, _)| k == "tabindex").map(|(_, v)| v.clone());
+            let attr_val = attributes.iter().find(|a| a.local_name == "tabindex").map(|a| a.value.clone());
             (tag_name.to_lowercase(), attr_val)
         }
         _ => return Ok(JsValue::from(-1)),

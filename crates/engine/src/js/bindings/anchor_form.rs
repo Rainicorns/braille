@@ -272,10 +272,10 @@ fn get_dataset(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult
     let mut builder = ObjectInitializer::new(ctx);
 
     if let NodeData::Element { ref attributes, .. } = node.data {
-        for (key, value) in attributes {
-            if let Some(suffix) = key.strip_prefix("data-") {
+        for attr in attributes {
+            if let Some(suffix) = attr.local_name.strip_prefix("data-") {
                 let camel = kebab_to_camel(suffix);
-                builder.property(js_string!(camel), js_string!(value.clone()), Attribute::all());
+                builder.property(js_string!(camel), js_string!(attr.value.clone()), Attribute::all());
             }
         }
     }

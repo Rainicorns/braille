@@ -313,7 +313,7 @@ mod tests {
             let body = t.create_element("body");
             let div = t.create_element("div");
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(div).data {
-                attributes.push(("id".to_string(), "app".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "app"));
             }
             let doc = t.document();
             t.append_child(doc, html);

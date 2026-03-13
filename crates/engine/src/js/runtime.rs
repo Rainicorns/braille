@@ -8,7 +8,7 @@ use boa_engine::{
     native_function::NativeFunction,
     object::{FunctionObjectBuilder, JsObject, ObjectInitializer},
     property::Attribute,
-    Context, JsError, JsResult, JsValue, Source,
+    Context, JsError, JsNativeError, JsResult, JsValue, Source,
 };
 
 use crate::dom::DomTree;
@@ -687,6 +687,7 @@ impl JsRuntime {
         Self::register_document_fragment_type(context, &element_proto_obj);
         Self::register_document_type_type(context, &element_proto_obj);
         Self::register_document_constructor(context, &element_proto_obj);
+        Self::register_xml_document_global(context);
         Self::populate_dom_prototypes(context);
 
         // ---------------------------------------------------------------
@@ -841,12 +842,31 @@ impl JsRuntime {
         }
     }
 
-    /// Register DocumentFragment constructor
+    /// Register DocumentFragment constructor.
+    /// `new DocumentFragment()` creates a new empty DocumentFragment node per spec.
     fn register_document_fragment_type(context: &mut Context, element_proto: &JsObject) {
         let proto = ObjectInitializer::new(context).build();
         proto.set_prototype(Some(element_proto.clone()));
 
-        let ctor = Self::make_illegal_constructor(context, "DocumentFragment");
+        let ctor_native = unsafe {
+            NativeFunction::from_closure(move |_this, _args, ctx| {
+                // Get the global document's tree, or create a standalone tree
+                let tree = DOM_TREE.with(|cell| cell.borrow().clone());
+                let tree = tree.unwrap_or_else(|| {
+                    std::rc::Rc::new(std::cell::RefCell::new(crate::dom::DomTree::new()))
+                });
+                let node_id = tree.borrow_mut().create_document_fragment();
+                let js_obj = bindings::element::get_or_create_js_element(node_id, tree, ctx)?;
+                Ok(js_obj.into())
+            })
+        };
+
+        let ctor = FunctionObjectBuilder::new(context.realm(), ctor_native)
+            .name(js_string!("DocumentFragment"))
+            .length(0)
+            .constructor(true)
+            .build();
+
         ctor.define_property_or_throw(
             js_string!("prototype"),
             boa_engine::property::PropertyDescriptor::builder()
@@ -868,6 +888,17 @@ impl JsRuntime {
                 .build(),
             context,
         ).expect("failed to set DocumentFragment.prototype.constructor");
+
+        // Add getElementById to DocumentFragment.prototype (NonElementParentNode mixin)
+        let get_by_id_fn = NativeFunction::from_fn_ptr(
+            bindings::query::fragment_get_element_by_id,
+        );
+        proto.set(
+            js_string!("getElementById"),
+            get_by_id_fn.to_js_function(context.realm()),
+            false,
+            context,
+        ).expect("failed to set DocumentFragment.prototype.getElementById");
 
         context
             .register_global_property(js_string!("DocumentFragment"), ctor, Attribute::WRITABLE | Attribute::CONFIGURABLE)
@@ -975,6 +1006,65 @@ impl JsRuntime {
         context
             .register_global_property(js_string!("Document"), ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
             .expect("failed to register Document global");
+    }
+
+    /// Register XMLDocument as a global constructor.
+    /// XMLDocument extends Document in the spec. We create a simple constructor
+    /// whose prototype inherits from Document.prototype so `instanceof XMLDocument` works.
+    fn register_xml_document_global(context: &mut Context) {
+        // Get Document.prototype from the global Document constructor
+        let global = context.global_object();
+        let doc_ctor = global
+            .get(js_string!("Document"), context)
+            .expect("Document not registered");
+        let doc_ctor_obj = doc_ctor.as_object().expect("Document should be an object");
+        let doc_proto = doc_ctor_obj
+            .get(js_string!("prototype"), context)
+            .expect("Document.prototype missing");
+        let doc_proto_obj = doc_proto.as_object().expect("Document.prototype should be an object");
+
+        // Create XMLDocument.prototype that inherits from Document.prototype
+        let xml_proto = ObjectInitializer::new(context).build();
+        xml_proto.set_prototype(Some(doc_proto_obj.clone()));
+
+        // XMLDocument constructor (not callable from JS in practice, but needed for instanceof)
+        let ctor = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
+            Err(JsNativeError::typ()
+                .with_message("Illegal constructor")
+                .into())
+        });
+
+        let ctor_fn = FunctionObjectBuilder::new(context.realm(), ctor)
+            .name(js_string!("XMLDocument"))
+            .length(0)
+            .constructor(true)
+            .build();
+
+        ctor_fn.define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(xml_proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define XMLDocument.prototype");
+
+        xml_proto.define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(ctor_fn.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to set XMLDocument.prototype.constructor");
+
+        context
+            .register_global_property(js_string!("XMLDocument"), ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register XMLDocument global");
     }
 
     /// Populate the DomPrototypes thread-local with prototypes from the globally
@@ -1178,7 +1268,7 @@ mod tests {
 
             // Set id="app" on the div
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(div).data {
-                attributes.push(("id".to_string(), "app".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "app"));
             }
 
             let doc = t.document();

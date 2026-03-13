@@ -171,20 +171,21 @@ fn url_encode(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::dom::DomTree;
+    use crate::dom::node::DomAttribute;
 
     #[test]
     fn collect_form_data_from_form_with_text_inputs() {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
         let input1 = tree.create_element_with_attrs("input", vec![
-            ("type".to_string(), "text".to_string()),
-            ("name".to_string(), "username".to_string()),
-            ("value".to_string(), "alice".to_string()),
+            DomAttribute::new("type", "text"),
+            DomAttribute::new("name", "username"),
+            DomAttribute::new("value", "alice"),
         ]);
         let input2 = tree.create_element_with_attrs("input", vec![
-            ("type".to_string(), "email".to_string()),
-            ("name".to_string(), "email".to_string()),
-            ("value".to_string(), "alice@example.com".to_string()),
+            DomAttribute::new("type", "email"),
+            DomAttribute::new("name", "email"),
+            DomAttribute::new("value", "alice@example.com"),
         ]);
 
         tree.append_child(tree.document(), form);
@@ -203,13 +204,13 @@ mod tests {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
         let input1 = tree.create_element_with_attrs("input", vec![
-            ("type".to_string(), "text".to_string()),
-            ("value".to_string(), "no-name".to_string()),
+            DomAttribute::new("type", "text"),
+            DomAttribute::new("value", "no-name"),
         ]);
         let input2 = tree.create_element_with_attrs("input", vec![
-            ("type".to_string(), "text".to_string()),
-            ("name".to_string(), "username".to_string()),
-            ("value".to_string(), "alice".to_string()),
+            DomAttribute::new("type", "text"),
+            DomAttribute::new("name", "username"),
+            DomAttribute::new("value", "alice"),
         ]);
 
         tree.append_child(tree.document(), form);
@@ -227,10 +228,10 @@ mod tests {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
         let checkbox = tree.create_element_with_attrs("input", vec![
-            ("type".to_string(), "checkbox".to_string()),
-            ("name".to_string(), "subscribe".to_string()),
-            ("value".to_string(), "yes".to_string()),
-            ("checked".to_string(), "".to_string()),
+            DomAttribute::new("type", "checkbox"),
+            DomAttribute::new("name", "subscribe"),
+            DomAttribute::new("value", "yes"),
+            DomAttribute::new("checked", ""),
         ]);
 
         tree.append_child(tree.document(), form);
@@ -247,9 +248,9 @@ mod tests {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
         let checkbox = tree.create_element_with_attrs("input", vec![
-            ("type".to_string(), "checkbox".to_string()),
-            ("name".to_string(), "subscribe".to_string()),
-            ("value".to_string(), "yes".to_string()),
+            DomAttribute::new("type", "checkbox"),
+            DomAttribute::new("name", "subscribe"),
+            DomAttribute::new("value", "yes"),
         ]);
 
         tree.append_child(tree.document(), form);
@@ -265,8 +266,8 @@ mod tests {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
         let select = tree.create_element_with_attrs("select", vec![
-            ("name".to_string(), "country".to_string()),
-            ("value".to_string(), "USA".to_string()),
+            DomAttribute::new("name", "country"),
+            DomAttribute::new("value", "USA"),
         ]);
 
         tree.append_child(tree.document(), form);
@@ -283,8 +284,8 @@ mod tests {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
         let textarea = tree.create_element_with_attrs("textarea", vec![
-            ("name".to_string(), "message".to_string()),
-            ("value".to_string(), "Hello world".to_string()),
+            DomAttribute::new("name", "message"),
+            DomAttribute::new("value", "Hello world"),
         ]);
 
         tree.append_child(tree.document(), form);
@@ -302,9 +303,9 @@ mod tests {
         let form = tree.create_element("form");
         let div = tree.create_element("div");
         let input = tree.create_element_with_attrs("input", vec![
-            ("type".to_string(), "text".to_string()),
-            ("name".to_string(), "nested".to_string()),
-            ("value".to_string(), "value".to_string()),
+            DomAttribute::new("type", "text"),
+            DomAttribute::new("name", "nested"),
+            DomAttribute::new("value", "value"),
         ]);
 
         tree.append_child(tree.document(), form);

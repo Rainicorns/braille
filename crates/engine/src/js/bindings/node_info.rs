@@ -352,54 +352,70 @@ fn get_attributes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
 
     match &node.data {
         NodeData::Element { attributes, .. } => {
+            let el_tree = el.tree.clone();
+            drop(tree);
+
+            // Compute ownerDocument for attrs (same as element's ownerDocument)
+            let owner_doc = {
+                let is_global = DOM_TREE.with(|cell| {
+                    let rc = cell.borrow();
+                    match rc.as_ref() {
+                        Some(global_tree) => std::rc::Rc::ptr_eq(&el_tree, global_tree),
+                        None => false,
+                    }
+                });
+                if is_global {
+                    let global = ctx.global_object();
+                    global.get(js_string!("document"), ctx)?
+                } else {
+                    let doc_obj = get_or_create_js_element(0, el_tree.clone(), ctx)?;
+                    JsValue::from(doc_obj)
+                }
+            };
+
+            let tree = el_tree.borrow();
+            let node = tree.get_node(el.node_id);
+            let attributes = match &node.data {
+                NodeData::Element { attributes, .. } => attributes,
+                _ => unreachable!(),
+            };
+
             // Build a NamedNodeMap-like object: { length: N, 0: Attr, 1: Attr, ... }
             let attrs_obj = ObjectInitializer::new(ctx).build();
             let len = attributes.len();
 
-            for (i, (name, value)) in attributes.iter().enumerate() {
+            for (i, attr) in attributes.iter().enumerate() {
                 // Create an Attr-like object with name, value, prefix, namespaceURI, localName
                 let attr_obj = ObjectInitializer::new(ctx).build();
 
-                // Parse prefix and localName from the attribute name
-                let (prefix, local_name, namespace_uri) = if let Some(colon_pos) = name.find(':') {
-                    let pfx = &name[..colon_pos];
-                    let local = &name[colon_pos + 1..];
-                    // Common namespace prefixes
-                    let ns = match pfx {
-                        "xmlns" => "http://www.w3.org/2000/xmlns/",
-                        "xml" => "http://www.w3.org/XML/1998/namespace",
-                        "xlink" => "http://www.w3.org/1999/xlink",
-                        _ => "",
-                    };
-                    (Some(pfx.to_string()), local.to_string(), ns.to_string())
-                } else if name == "xmlns" {
-                    (None, "xmlns".to_string(), "http://www.w3.org/2000/xmlns/".to_string())
-                } else {
-                    (None, name.clone(), String::new())
-                };
+                let qname = attr.qualified_name();
 
-                attr_obj.set(js_string!("name"), JsValue::from(js_string!(name.clone())), false, ctx)?;
-                attr_obj.set(js_string!("value"), JsValue::from(js_string!(value.clone())), false, ctx)?;
-                attr_obj.set(js_string!("localName"), JsValue::from(js_string!(local_name)), false, ctx)?;
+                attr_obj.set(js_string!("name"), JsValue::from(js_string!(qname.clone())), false, ctx)?;
+                attr_obj.set(js_string!("value"), JsValue::from(js_string!(attr.value.clone())), false, ctx)?;
+                attr_obj.set(js_string!("nodeValue"), JsValue::from(js_string!(attr.value.clone())), false, ctx)?;
+                attr_obj.set(js_string!("textContent"), JsValue::from(js_string!(attr.value.clone())), false, ctx)?;
+                attr_obj.set(js_string!("localName"), JsValue::from(js_string!(attr.local_name.clone())), false, ctx)?;
 
-                if let Some(pfx) = prefix {
-                    attr_obj.set(js_string!("prefix"), JsValue::from(js_string!(pfx)), false, ctx)?;
-                } else {
+                if attr.prefix.is_empty() {
                     attr_obj.set(js_string!("prefix"), JsValue::null(), false, ctx)?;
+                } else {
+                    attr_obj.set(js_string!("prefix"), JsValue::from(js_string!(attr.prefix.clone())), false, ctx)?;
                 }
 
-                if namespace_uri.is_empty() {
+                if attr.namespace.is_empty() {
                     attr_obj.set(js_string!("namespaceURI"), JsValue::null(), false, ctx)?;
                 } else {
-                    attr_obj.set(js_string!("namespaceURI"), JsValue::from(js_string!(namespace_uri)), false, ctx)?;
+                    attr_obj.set(js_string!("namespaceURI"), JsValue::from(js_string!(attr.namespace.clone())), false, ctx)?;
                 }
 
                 // Set nodeType = 2 (ATTRIBUTE_NODE)
                 attr_obj.set(js_string!("nodeType"), JsValue::from(2), false, ctx)?;
-                // Set nodeName = name
-                attr_obj.set(js_string!("nodeName"), JsValue::from(js_string!(name.clone())), false, ctx)?;
+                // Set nodeName = qualified name
+                attr_obj.set(js_string!("nodeName"), JsValue::from(js_string!(qname)), false, ctx)?;
                 // Set specified = true (always for DOM4)
                 attr_obj.set(js_string!("specified"), JsValue::from(true), false, ctx)?;
+                // Set ownerDocument (same as the element's ownerDocument)
+                attr_obj.set(js_string!("ownerDocument"), owner_doc.clone(), false, ctx)?;
 
                 // Set by index
                 attrs_obj.set(js_string!(i.to_string()), JsValue::from(attr_obj), false, ctx)?;
@@ -413,6 +429,12 @@ fn get_attributes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
             Ok(JsValue::undefined())
         }
     }
+}
+
+/// Native getter for node.baseURI
+/// Returns: "about:blank" for all node types (matches our Document.URL default)
+fn get_base_uri(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+    Ok(JsValue::from(js_string!("about:blank")))
 }
 
 /// Getter for DocumentType.name (returns doctype name, empty string for non-Doctype)
@@ -567,6 +589,15 @@ pub(crate) fn register_node_info(class: &mut ClassBuilder) -> JsResult<()> {
         Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
     );
 
+    // baseURI (read-only)
+    let getter = NativeFunction::from_fn_ptr(get_base_uri);
+    class.accessor(
+        js_string!("baseURI"),
+        Some(getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
     // Node type constants on the prototype (so instances inherit them)
     class.property(js_string!("ELEMENT_NODE"), JsValue::from(1), Attribute::READONLY | Attribute::NON_ENUMERABLE);
     class.property(js_string!("ATTRIBUTE_NODE"), JsValue::from(2), Attribute::READONLY | Attribute::NON_ENUMERABLE);
@@ -611,7 +642,7 @@ mod tests {
 
             // Set id="test" on the div
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(div).data {
-                attributes.push(("id".to_string(), "test".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "test"));
             }
 
             // Add text content to div

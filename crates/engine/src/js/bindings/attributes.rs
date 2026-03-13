@@ -6,7 +6,8 @@ use boa_engine::{
     Context, JsError, JsResult, JsValue,
 };
 
-use super::element::JsElement;
+use crate::dom::NodeData;
+use super::element::{JsElement, get_or_create_js_element};
 
 /// Register all attribute methods and properties on the Element class.
 pub(crate) fn register_attributes(class: &mut ClassBuilder) -> JsResult<()> {
@@ -33,6 +34,42 @@ pub(crate) fn register_attributes(class: &mut ClassBuilder) -> JsResult<()> {
         js_string!("hasAttribute"),
         1,
         NativeFunction::from_fn_ptr(has_attribute_fn),
+    );
+
+    class.method(
+        js_string!("getAttributeNode"),
+        1,
+        NativeFunction::from_fn_ptr(get_attribute_node_fn),
+    );
+
+    class.method(
+        js_string!("setAttributeNS"),
+        3,
+        NativeFunction::from_fn_ptr(set_attribute_ns_fn),
+    );
+
+    class.method(
+        js_string!("getAttributeNS"),
+        2,
+        NativeFunction::from_fn_ptr(get_attribute_ns_fn),
+    );
+
+    class.method(
+        js_string!("removeAttributeNS"),
+        2,
+        NativeFunction::from_fn_ptr(remove_attribute_ns_fn),
+    );
+
+    class.method(
+        js_string!("hasAttributeNS"),
+        2,
+        NativeFunction::from_fn_ptr(has_attribute_ns_fn),
+    );
+
+    class.method(
+        js_string!("hasAttributes"),
+        0,
+        NativeFunction::from_fn_ptr(has_attributes_fn),
     );
 
     // Register properties (id and className)
@@ -76,7 +113,9 @@ fn get_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
+    // Per spec, lowercase the name for HTML elements in HTML documents
     let tree = el.tree.borrow();
+    let name = if tree.is_html_document() { name.to_ascii_lowercase() } else { name };
     match tree.get_attribute(el.node_id, &name) {
         Some(val) => Ok(JsValue::from(js_string!(val))),
         None => Ok(JsValue::null()),
@@ -104,6 +143,8 @@ fn set_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
+    // Per spec, lowercase the name for HTML elements in HTML documents
+    let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
     el.tree.borrow_mut().set_attribute(el.node_id, &name, &value);
     Ok(JsValue::undefined())
 }
@@ -123,6 +164,8 @@ fn remove_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
+    // Per spec, lowercase the name for HTML elements in HTML documents
+    let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
     el.tree.borrow_mut().remove_attribute(el.node_id, &name);
     Ok(JsValue::undefined())
 }
@@ -142,9 +185,185 @@ fn has_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
+    // Per spec, lowercase the name for HTML elements in HTML documents
     let tree = el.tree.borrow();
+    let name = if tree.is_html_document() { name.to_ascii_lowercase() } else { name };
     let has_attr = tree.has_attribute(el.node_id, &name);
     Ok(JsValue::from(has_attr))
+}
+
+/// Native implementation of element.getAttributeNode(name)
+/// Returns an Attr node for the named attribute, or null if not found.
+fn get_attribute_node_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNode: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNode: `this` is not an Element").into()))?;
+    let name = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let tree = el.tree.clone();
+
+    // Find the attribute on this element
+    let attr_info = {
+        let t = tree.borrow();
+        let node = t.get_node(el.node_id);
+        match &node.data {
+            NodeData::Element { attributes, .. } => {
+                attributes.iter().find(|a| a.qualified_name() == name || a.local_name == name).map(|a| (a.qualified_name(), a.value.clone()))
+            }
+            _ => None,
+        }
+    };
+
+    match attr_info {
+        Some((_attr_name, attr_value)) => {
+            // Create an Attr node in the tree
+            let node_id = tree.borrow_mut().create_attr(&name, "", "", &attr_value);
+            let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
+            Ok(js_obj.into())
+        }
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// Native implementation of element.setAttributeNS(namespace, qualifiedName, value)
+fn set_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("setAttributeNS: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("setAttributeNS: `this` is not an Element").into()))?;
+
+    let ns_val = args.first().cloned().unwrap_or(JsValue::null());
+    let namespace = if ns_val.is_null() || ns_val.is_undefined() {
+        String::new()
+    } else {
+        ns_val.to_string(ctx)?.to_std_string_escaped()
+    };
+
+    let qualified_name = args
+        .get(1)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let value = args
+        .get(2)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    el.tree.borrow_mut().set_attribute_ns(el.node_id, &namespace, &qualified_name, &value);
+    Ok(JsValue::undefined())
+}
+
+/// Native implementation of element.getAttributeNS(namespace, localName)
+fn get_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNS: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNS: `this` is not an Element").into()))?;
+
+    let ns_val = args.first().cloned().unwrap_or(JsValue::null());
+    let namespace = if ns_val.is_null() || ns_val.is_undefined() {
+        String::new()
+    } else {
+        ns_val.to_string(ctx)?.to_std_string_escaped()
+    };
+
+    let local_name = args
+        .get(1)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let tree = el.tree.borrow();
+    match tree.get_attribute_ns(el.node_id, &namespace, &local_name) {
+        Some(val) => Ok(JsValue::from(js_string!(val))),
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// Native implementation of element.removeAttributeNS(namespace, localName)
+fn remove_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("removeAttributeNS: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("removeAttributeNS: `this` is not an Element").into()))?;
+
+    let ns_val = args.first().cloned().unwrap_or(JsValue::null());
+    let namespace = if ns_val.is_null() || ns_val.is_undefined() {
+        String::new()
+    } else {
+        ns_val.to_string(ctx)?.to_std_string_escaped()
+    };
+
+    let local_name = args
+        .get(1)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    el.tree.borrow_mut().remove_attribute_ns(el.node_id, &namespace, &local_name);
+    Ok(JsValue::undefined())
+}
+
+/// Native implementation of element.hasAttributeNS(namespace, localName)
+fn has_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttributeNS: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttributeNS: `this` is not an Element").into()))?;
+
+    let ns_val = args.first().cloned().unwrap_or(JsValue::null());
+    let namespace = if ns_val.is_null() || ns_val.is_undefined() {
+        String::new()
+    } else {
+        ns_val.to_string(ctx)?.to_std_string_escaped()
+    };
+
+    let local_name = args
+        .get(1)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let tree = el.tree.borrow();
+    let has = tree.has_attribute_ns(el.node_id, &namespace, &local_name);
+    Ok(JsValue::from(has))
+}
+
+/// Native implementation of element.hasAttributes()
+fn has_attributes_fn(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttributes: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttributes: `this` is not an Element").into()))?;
+
+    let tree = el.tree.borrow();
+    let has = tree.has_attributes(el.node_id);
+    Ok(JsValue::from(has))
 }
 
 /// Native getter for element.id
@@ -241,7 +460,7 @@ mod tests {
 
             // Set id="app" on the div
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(div).data {
-                attributes.push(("id".to_string(), "app".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "app"));
             }
 
             let doc = t.document();
@@ -533,5 +752,23 @@ mod tests {
         assert_eq!(t.get_attribute(div_id, "id"), Some("main".to_string()));
         assert_eq!(t.get_attribute(div_id, "class"), Some("wrapper".to_string()));
         assert_eq!(t.get_attribute(div_id, "data-value"), None);
+    }
+
+    #[test]
+    fn set_attribute_ns_then_read_attributes_array() {
+        let tree = make_test_tree();
+        let mut rt = JsRuntime::new(Rc::clone(&tree));
+
+        let result = rt.eval(
+            r#"
+            var el = document.createElement("foo");
+            el.setAttributeNS("http://www.w3.org/XML/1998/namespace", "a:bb", "pass");
+            var attr = el.attributes[0];
+            attr ? attr.value : "NO_ATTR";
+        "#,
+        ).unwrap();
+
+        let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert_eq!(value, "pass");
     }
 }

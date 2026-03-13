@@ -10,7 +10,7 @@ use markup5ever::{ns, Namespace, LocalName};
 use tendril::{StrTendril, TendrilSink};
 
 use crate::dom::tree::DomTree;
-use crate::dom::node::{NodeData, NodeId};
+use crate::dom::node::{DomAttribute, NodeData, NodeId};
 
 /// A TreeSink implementation that builds our DomTree from html5ever's parser events.
 ///
@@ -85,11 +85,21 @@ impl TreeSink for BrailleSink {
         flags: ElementFlags,
     ) -> NodeId {
         let tag_name = name.local.to_string();
-        let attributes: Vec<(String, String)> = attrs
+        let attributes: Vec<DomAttribute> = attrs
             .into_iter()
             .map(|a| {
-                let key = format_attr_name(&a.name);
-                (key, a.value.to_string())
+                let local_name = a.name.local.to_string();
+                let prefix = a.name.prefix.as_ref().map(|p| p.to_string()).unwrap_or_else(|| {
+                    let p = ns_to_attr_prefix(&a.name.ns);
+                    p.to_string()
+                });
+                let namespace = ns_to_attr_ns_uri(&a.name.ns).to_string();
+                DomAttribute {
+                    local_name,
+                    prefix,
+                    namespace,
+                    value: a.value.to_string(),
+                }
             })
             .collect();
 
@@ -271,11 +281,23 @@ impl TreeSink for BrailleSink {
             ref mut attributes, ..
         } = node.data
         {
-            let existing: Vec<String> = attributes.iter().map(|(k, _)| k.clone()).collect();
+            let existing: Vec<String> = attributes.iter().map(|a| a.qualified_name()).collect();
             for attr in attrs {
-                let name = format_attr_name(&attr.name);
-                if !existing.contains(&name) {
-                    attributes.push((name, attr.value.to_string()));
+                let local_name = attr.name.local.to_string();
+                let prefix = attr.name.prefix.as_ref().map(|p| p.to_string()).unwrap_or_else(|| {
+                    let p = ns_to_attr_prefix(&attr.name.ns);
+                    p.to_string()
+                });
+                let namespace = ns_to_attr_ns_uri(&attr.name.ns).to_string();
+                let dom_attr = DomAttribute {
+                    local_name,
+                    prefix,
+                    namespace,
+                    value: attr.value.to_string(),
+                };
+                let qname = dom_attr.qualified_name();
+                if !existing.contains(&qname) {
+                    attributes.push(dom_attr);
                 }
             }
         }
@@ -398,7 +420,7 @@ fn collect_options(
                 if first_option.is_none() {
                     *first_option = Some(child_id);
                 }
-                if attributes.iter().any(|(k, _)| k == "selected") {
+                if attributes.iter().any(|a| a.local_name == "selected") {
                     *selected_option = Some(child_id);
                 }
                 continue; // options don't nest
@@ -427,6 +449,19 @@ fn ns_to_attr_prefix(ns: &Namespace) -> &'static str {
         "xml"
     } else if *ns == ns!(xmlns) {
         "xmlns"
+    } else {
+        ""
+    }
+}
+
+/// Maps an html5ever namespace URL to a full namespace URI string for attributes.
+fn ns_to_attr_ns_uri(ns: &Namespace) -> &'static str {
+    if *ns == ns!(xlink) {
+        "http://www.w3.org/1999/xlink"
+    } else if *ns == ns!(xml) {
+        "http://www.w3.org/XML/1998/namespace"
+    } else if *ns == ns!(xmlns) {
+        "http://www.w3.org/2000/xmlns/"
     } else {
         ""
     }
@@ -547,7 +582,7 @@ mod tests {
         } = div_node.data
         {
             assert_eq!(tag_name, "div");
-            assert!(attributes.contains(&("id".to_string(), "app".to_string())));
+            assert!(attributes.iter().any(|a| a.local_name == "id" && a.value == "app"));
         } else {
             panic!("expected Element node");
         }
@@ -564,7 +599,7 @@ mod tests {
         } = span_node.data
         {
             assert_eq!(tag_name, "span");
-            assert!(attributes.contains(&("class".to_string(), "x".to_string())));
+            assert!(attributes.iter().any(|a| a.local_name == "class" && a.value == "x"));
         } else {
             panic!("expected Element node");
         }

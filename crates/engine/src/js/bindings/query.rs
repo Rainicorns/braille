@@ -4,10 +4,9 @@
 //! getElementsByTagName on Element and document objects.
 
 use boa_engine::{
-    class::{Class, ClassBuilder},
+    class::ClassBuilder,
     js_string,
     native_function::NativeFunction,
-    object::builtins::JsArray,
     Context, JsError, JsResult, JsValue,
 };
 
@@ -41,8 +40,8 @@ fn collect_by_class_recursive(
     if let NodeData::Element { ref attributes, .. } = node.data {
         if let Some(class_attr) = attributes
             .iter()
-            .find(|(k, _)| k == "class")
-            .map(|(_, v)| v.as_str())
+            .find(|a| a.local_name == "class")
+            .map(|a| a.value.as_str())
         {
             if class_attr.split_whitespace().any(|c| c == class_name) {
                 results.push(node_id);
@@ -81,6 +80,66 @@ fn collect_by_tag_recursive(
     for child_id in children {
         collect_by_tag_recursive(tree, child_id, tag_lower, results);
     }
+}
+
+// ---------------------------------------------------------------------------
+// DocumentFragment.prototype.getElementById (NonElementParentNode mixin)
+// ---------------------------------------------------------------------------
+
+/// Search descendants of a DocumentFragment (or any JsElement node) for the
+/// first Element with a matching `id` attribute. Returns null if not found.
+/// Per spec, empty-string id never matches.
+pub(crate) fn fragment_get_element_by_id(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getElementById: this is not an object").into()))?;
+    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("getElementById: this is not a node").into())
+    })?;
+    let tree = el.tree.clone();
+    let root_id = el.node_id;
+
+    let id = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    // Per spec, empty-string ID never matches
+    if id.is_empty() {
+        return Ok(JsValue::null());
+    }
+
+    let found = find_by_id_in_subtree(&tree.borrow(), root_id, &id);
+    match found {
+        Some(node_id) => {
+            let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
+            Ok(js_obj.into())
+        }
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// Depth-first search for an element with the given id in the subtree rooted at `root`.
+/// Does NOT include `root` itself (only descendants).
+fn find_by_id_in_subtree(tree: &DomTree, root: NodeId, id: &str) -> Option<NodeId> {
+    let children: Vec<NodeId> = tree.get_node(root).children.clone();
+    for child_id in children {
+        if let NodeData::Element { ref attributes, .. } = tree.get_node(child_id).data {
+            if attributes.iter().any(|a| a.local_name == "id" && a.value == id) {
+                return Some(child_id);
+            }
+        }
+        if let Some(found) = find_by_id_in_subtree(tree, child_id, id) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -182,16 +241,9 @@ fn element_get_elements_by_class_name(
 
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
-    let tree = tree_rc.borrow();
-    let results = collect_by_class(&tree, node_id, &class_name);
-    drop(tree);
 
-    let arr = JsArray::new(ctx);
-    for found_id in results {
-        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
-        arr.push(js_obj, ctx)?;
-    }
-    Ok(arr.into())
+    let collection = collections::create_live_htmlcollection_by_class(node_id, tree_rc, class_name, ctx)?;
+    Ok(collection.into())
 }
 
 fn element_get_elements_by_tag_name(
@@ -220,16 +272,9 @@ fn element_get_elements_by_tag_name(
 
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
-    let tree = tree_rc.borrow();
-    let results = collect_by_tag(&tree, node_id, &tag_name);
-    drop(tree);
 
-    let arr = JsArray::new(ctx);
-    for found_id in results {
-        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
-        arr.push(js_obj, ctx)?;
-    }
-    Ok(arr.into())
+    let collection = collections::create_live_htmlcollection_by_tag(node_id, tree_rc, tag_name, ctx)?;
+    Ok(collection.into())
 }
 
 // ---------------------------------------------------------------------------
@@ -336,17 +381,10 @@ pub(crate) fn document_get_elements_by_class_name(
         .unwrap_or_default();
 
     let tree_rc = doc.tree.clone();
-    let tree = tree_rc.borrow();
-    let root = tree.document();
-    let results = collect_by_class(&tree, root, &class_name);
-    drop(tree);
+    let root = tree_rc.borrow().document();
 
-    let arr = JsArray::new(ctx);
-    for found_id in results {
-        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
-        arr.push(js_obj, ctx)?;
-    }
-    Ok(arr.into())
+    let collection = collections::create_live_htmlcollection_by_class(root, tree_rc, class_name, ctx)?;
+    Ok(collection.into())
 }
 
 pub(crate) fn document_get_elements_by_tag_name(
@@ -374,17 +412,10 @@ pub(crate) fn document_get_elements_by_tag_name(
         .unwrap_or_default();
 
     let tree_rc = doc.tree.clone();
-    let tree = tree_rc.borrow();
-    let root = tree.document();
-    let results = collect_by_tag(&tree, root, &tag_name);
-    drop(tree);
+    let root = tree_rc.borrow().document();
 
-    let arr = JsArray::new(ctx);
-    for found_id in results {
-        let js_obj = get_or_create_js_element(found_id, tree_rc.clone(), ctx)?;
-        arr.push(js_obj, ctx)?;
-    }
-    Ok(arr.into())
+    let collection = collections::create_live_htmlcollection_by_tag(root, tree_rc, tag_name, ctx)?;
+    Ok(collection.into())
 }
 
 // ---------------------------------------------------------------------------
@@ -494,6 +525,7 @@ pub(crate) fn register_query(class: &mut ClassBuilder) -> JsResult<()> {
 #[cfg(test)]
 mod tests {
     use crate::dom::{DomTree, NodeData};
+    use crate::dom::node::DomAttribute;
     use crate::js::runtime::JsRuntime;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -507,24 +539,24 @@ mod tests {
 
             let container = t.create_element("div");
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(container).data {
-                attributes.push(("class".to_string(), "container".to_string()));
+                attributes.push(DomAttribute::new("class", "container"));
             }
 
             let p1 = t.create_element("p");
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(p1).data {
-                attributes.push(("id".to_string(), "first".to_string()));
+                attributes.push(DomAttribute::new("id", "first"));
             }
             t.set_text_content(p1, "First paragraph");
 
             let p2 = t.create_element("p");
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(p2).data {
-                attributes.push(("class".to_string(), "highlight".to_string()));
+                attributes.push(DomAttribute::new("class", "highlight"));
             }
             t.set_text_content(p2, "Second paragraph");
 
             let nested = t.create_element("div");
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(nested).data {
-                attributes.push(("class".to_string(), "nested".to_string()));
+                attributes.push(DomAttribute::new("class", "nested"));
             }
 
             let span = t.create_element("span");

@@ -241,10 +241,12 @@ mod tests {
         tag: &str,
         attrs: Vec<(String, String)>,
     ) -> (DomTree, NodeId) {
+        use crate::dom::node::DomAttribute;
         let mut tree = DomTree::new();
         let html = tree.create_element("html");
         let body = tree.create_element("body");
-        let target = tree.create_element_with_attrs(tag, attrs);
+        let dom_attrs: Vec<DomAttribute> = attrs.into_iter().map(|(k, v)| DomAttribute::new(&k, &v)).collect();
+        let target = tree.create_element_with_attrs(tag, dom_attrs);
         tree.append_child(tree.document(), html);
         tree.append_child(html, body);
         tree.append_child(body, target);

@@ -77,6 +77,36 @@ pub(crate) fn update_node_cache_after_adoption(
     });
 }
 
+/// Update the NODE_CACHE for all entries in a (src_id, dst_id) mapping.
+/// For each pair, find the cached JsObject for (src_tree_ptr, src_id),
+/// update its internal JsElement data to (dst_id, dst_tree), and re-cache
+/// under (dst_tree_ptr, dst_id).
+pub(crate) fn update_node_cache_for_adoption_mapping(
+    src_tree: &Rc<RefCell<DomTree>>,
+    dst_tree: &Rc<RefCell<DomTree>>,
+    mapping: &[(NodeId, NodeId)],
+) {
+    let src_ptr = Rc::as_ptr(src_tree) as usize;
+    let dst_ptr = Rc::as_ptr(dst_tree) as usize;
+
+    NODE_CACHE.with(|cell| {
+        let rc = cell.borrow();
+        let cache_rc = rc.as_ref().expect("NODE_CACHE not initialized");
+        let mut cache = cache_rc.borrow_mut();
+
+        for &(src_id, dst_id) in mapping {
+            if let Some(js_obj) = cache.remove(&(src_ptr, src_id)) {
+                // Update the JsElement inside the JsObject to point to the new tree/node
+                if let Some(mut el_mut) = js_obj.downcast_mut::<JsElement>() {
+                    el_mut.node_id = dst_id;
+                    el_mut.tree = dst_tree.clone();
+                }
+                cache.insert((dst_ptr, dst_id), js_obj);
+            }
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Cross-tree node adoption
 // ---------------------------------------------------------------------------
@@ -88,6 +118,38 @@ pub(crate) fn adopt_node(
     src_tree: &Rc<RefCell<DomTree>>,
     src_id: NodeId,
     dst_tree: &Rc<RefCell<DomTree>>,
+) -> NodeId {
+    let mut mapping = Vec::new();
+    let new_id = adopt_node_recursive(src_tree, src_id, dst_tree, &mut mapping);
+
+    // Remove the original node from its parent in the source tree
+    src_tree.borrow_mut().remove_from_parent(src_id);
+
+    new_id
+}
+
+/// Adopt a node cross-tree and collect a mapping of (src_id, dst_id) pairs
+/// for the node and all its descendants. The caller is responsible for
+/// updating cached JS objects using this mapping.
+pub(crate) fn adopt_node_with_mapping(
+    src_tree: &Rc<RefCell<DomTree>>,
+    src_id: NodeId,
+    dst_tree: &Rc<RefCell<DomTree>>,
+) -> (NodeId, Vec<(NodeId, NodeId)>) {
+    let mut mapping = Vec::new();
+    let new_id = adopt_node_recursive(src_tree, src_id, dst_tree, &mut mapping);
+
+    // Remove the original node from its parent in the source tree
+    src_tree.borrow_mut().remove_from_parent(src_id);
+
+    (new_id, mapping)
+}
+
+fn adopt_node_recursive(
+    src_tree: &Rc<RefCell<DomTree>>,
+    src_id: NodeId,
+    dst_tree: &Rc<RefCell<DomTree>>,
+    mapping: &mut Vec<(NodeId, NodeId)>,
 ) -> NodeId {
     let src = src_tree.borrow();
     let node = src.get_node(src_id);
@@ -111,7 +173,7 @@ pub(crate) fn adopt_node(
             drop(src);
             let id = dst_tree.borrow_mut().create_element_ns(&tag, attrs, &ns);
             for child_id in child_ids {
-                let adopted_child = adopt_node(src_tree, child_id, dst_tree);
+                let adopted_child = adopt_node_recursive(src_tree, child_id, dst_tree, mapping);
                 dst_tree.borrow_mut().append_child(id, adopted_child);
             }
             id
@@ -128,7 +190,7 @@ pub(crate) fn adopt_node(
             drop(src);
             let id = dst_tree.borrow_mut().create_document_fragment();
             for child_id in child_ids {
-                let adopted_child = adopt_node(src_tree, child_id, dst_tree);
+                let adopted_child = adopt_node_recursive(src_tree, child_id, dst_tree, mapping);
                 dst_tree.borrow_mut().append_child(id, adopted_child);
             }
             id
@@ -153,9 +215,7 @@ pub(crate) fn adopt_node(
         }
     };
 
-    // Remove the original node from its parent in the source tree
-    src_tree.borrow_mut().remove_from_parent(src_id);
-
+    mapping.push((src_id, new_id));
     new_id
 }
 
@@ -1415,16 +1475,16 @@ mod tests {
             let span_b = t.create_element("span");
             let span_c = t.create_element("span");
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(div).data {
-                attributes.push(("id".to_string(), "parent".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "parent"));
             }
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(span_a).data {
-                attributes.push(("id".to_string(), "a".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "a"));
             }
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(span_b).data {
-                attributes.push(("id".to_string(), "b".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "b"));
             }
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(span_c).data {
-                attributes.push(("id".to_string(), "c".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "c"));
             }
             let doc = t.document();
             t.append_child(doc, html);

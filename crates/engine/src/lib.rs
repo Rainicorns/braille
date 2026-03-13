@@ -148,7 +148,7 @@ impl Engine {
                 if tag_name.to_ascii_lowercase() == "script" {
                     // Per HTML spec: if src attribute exists, it's an external script
                     // (inline text content is ignored when src is present)
-                    let src = attributes.iter().find(|(k, _)| k == "src").map(|(_, v)| v.clone());
+                    let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
                     if let Some(url) = src {
                         descriptors.push(ScriptDescriptor::External(url));
                     } else {

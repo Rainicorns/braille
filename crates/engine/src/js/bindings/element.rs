@@ -35,8 +35,8 @@ fn cross_tree_is_equal_node(tree_a: &DomTree, a: NodeId, tree_b: &DomTree, b: No
             if t1 != t2 || ns1 != ns2 || a1.len() != a2.len() {
                 return false;
             }
-            for (name, value) in a1 {
-                if !a2.iter().any(|(n, v)| n == name && v == value) {
+            for attr in a1 {
+                if !a2.iter().any(|a| a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value && a.prefix == attr.prefix) {
                     return false;
                 }
             }
@@ -465,6 +465,39 @@ pub(crate) fn get_or_create_js_element(
                 .build(),
             ctx,
         )?;
+    }
+
+    // Set own property for <template> elements (content -> DocumentFragment)
+    if let NodeKind::HtmlElement(ref tag) = node_kind {
+        if tag == "template" {
+            let tree_for_content = tree.clone();
+            let nid_for_content = node_id;
+            let content_getter = unsafe {
+                NativeFunction::from_closure(move |_this, _args, ctx2| {
+                    let content_id = {
+                        let tree_ref = tree_for_content.borrow();
+                        tree_ref.get_node(nid_for_content).template_contents
+                    };
+                    match content_id {
+                        Some(cid) => {
+                            let obj = get_or_create_js_element(cid, tree_for_content.clone(), ctx2)?;
+                            Ok(JsValue::from(obj))
+                        }
+                        None => Ok(JsValue::null()),
+                    }
+                })
+            };
+            let realm = ctx.realm().clone();
+            js_obj.define_property_or_throw(
+                js_string!("content"),
+                PropertyDescriptor::builder()
+                    .get(content_getter.to_js_function(&realm))
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx,
+            )?;
+        }
     }
 
     NODE_CACHE.with(|cell| {

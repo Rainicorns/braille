@@ -58,13 +58,14 @@ fn testharness_preamble() -> String {
 
     self.test = function(fn, name) {
         run_setup();
+        var cleanups = [];
         var t = {
             name: name || "(unnamed)",
             step: function(f) { return function() { return f.apply(t, arguments); }; },
             step_func: function(f) { return function() { return f.apply(t, arguments); }; },
             step_func_done: function(f) { return function() { return f.apply(t, arguments); }; },
             unreached_func: function(msg) { return function() { throw new Error(msg || "unreached"); }; },
-            add_cleanup: function() {}
+            add_cleanup: function(f) { cleanups.push(f); }
         };
         var result = { name: name || "(unnamed)", status: 0, message: "" };
         try {
@@ -72,6 +73,10 @@ fn testharness_preamble() -> String {
         } catch(e) {
             result.status = 1;
             result.message = e.message || String(e);
+        }
+        // Run cleanups even on failure
+        for (var i = 0; i < cleanups.length; i++) {
+            try { cleanups[i](); } catch(e) {}
         }
         results.push(result);
     };
@@ -307,15 +312,16 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // DOMImplementation — now have document.implementation (W2 un-skip)
         // ("DOMImplementation", "requires DOMImplementation"),
         // Processing instructions / XHTML
-        ("ProcessingInstruction", "requires ProcessingInstruction"),
+        // ProcessingInstruction — now implemented (unskip)
+        // ("ProcessingInstruction", "requires ProcessingInstruction"),
         ("xml", "requires XML support"),
         ("XHTML", "requires XHTML"),
         ("xhtml", "requires XHTML"),
         // NodeIterator / TreeWalker
         ("NodeIterator", "requires NodeIterator"),
         ("TreeWalker", "requires TreeWalker"),
-        // Attr node
-        ("Attr-", "requires Attr node interface"),
+        // Attr node — now implemented (unskip)
+        // ("Attr-", "requires Attr node interface"),
         // Workers
         (".worker.", "requires Web Workers"),
         ("worker", "requires Web Workers"),
@@ -326,8 +332,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Abort", "requires AbortController"),
         // Historical features
         ("historical", "tests removed features"),
-        // DOMTokenList edge cases
-        ("DOMTokenList-coverage", "requires full DOMTokenList"),
+        // DOMTokenList — classList fully implemented (1420/1420) (unskip)
+        // ("DOMTokenList-coverage", "requires full DOMTokenList"),
         // Namespace-heavy tests
         // createElementNS — now have proper namespace support (W2 un-skip)
         // ("createElementNS", "requires namespace support"),
@@ -345,9 +351,9 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("pre-insertion", "requires DOMException types"),
         // Document.URL, baseURI, etc.
         ("Document-URL", "requires Document.URL"),
-        ("Node-baseURI", "requires baseURI"),
-        ("Document-doctype", "requires doctype node access"),
-        ("Document-adoptNode", "requires adoptNode"),
+        // Document-doctype — doctype getter implemented (unskip)
+        // ("Document-doctype", "requires doctype node access"),
+        // ("Document-adoptNode", "requires adoptNode"),  // adoptNode now implemented
         // Comment/Text constructor — now implemented
         // ChildNode-after/before/replaceWith — now implemented
         // ParentNode.append/prepend/replaceChildren — now implemented
@@ -365,8 +371,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Node-cloneNode-document-allow-declarative-shadow-roots", "requires declarative shadow DOM"),
         ("Node-cloneNode-on-inactive-document-crash", "requires inactive document"),
         // Node-parentNode, Node-contains — now implemented
-        // getElementsByClassName edge cases
-        ("getElementsByClassName", "requires full getElementsByClassName"),
+        // getElementsByClassName — now returns live HTMLCollection (unskip)
+        // ("getElementsByClassName", "requires full getElementsByClassName"),
         // Document-characterSet
         ("Document-characterSet", "requires characterSet"),
         // Creators
@@ -377,8 +383,18 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("case.html", "requires case-sensitivity tests"),
         // Document-createEvent full spec
         ("Document-createEvent.html", "requires full createEvent spec"),
-        // Selector tests that need complex selectors
-        ("query", "requires full querySelector"),
+        // querySelector — now working; skip specific tests that need unimplemented features
+        // ("query", "requires full querySelector"),  // removed broad pattern
+        ("ParentNode-querySelector-All.html", "requires iframes and requestAnimationFrame"),
+        ("ParentNode-querySelector-All-content", "content file for iframe-based test"),
+        ("ParentNode-querySelectors-namespaces", "requires SVG xlink namespace attributes"),
+        ("ParentNode-querySelectors-exclusive", "requires setup({ single_test: true }) harness"),
+        ("ParentNode-querySelectorAll-removed", "requires setup({ single_test: true }) harness"),
+        ("DocumentFragment-querySelectorAll-after", "requires setup({ single_test: true }) harness"),
+        ("ParentNode-querySelector-scope", "2/4 pass; sibling combinator (+) not yet supported"),
+        ("query-target-in-load-event", "requires iframes"),
+        ("svg-template-querySelector", "requires template.content"),
+        ("querySelector-mixed-case", "requires SVG/MathML foreignObject namespace handling"),
         // EventTarget constructor
         ("EventTarget-constructible", "requires EventTarget constructor"),
         // addEventListener advanced options
@@ -398,11 +414,11 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // touch events
         ("touch", "requires touch events"),
         ("Touch", "requires touch events"),
-        // Document/DocumentFragment/DocumentType constructors
-        ("Document-constructor", "requires Document constructor"),
-        ("DocumentFragment-constructor", "requires DocumentFragment constructor"),
-        ("DocumentType-literal", "requires DocumentType interface"),
-        ("DocumentType-remove", "requires DocumentType interface"),
+        // Document/DocumentFragment/DocumentType — constructors + interface implemented (unskip)
+        // ("Document-constructor", "requires Document constructor"),
+        // ("DocumentFragment-constructor", "requires DocumentFragment constructor"),
+        // ("DocumentType-literal", "requires DocumentType interface"),
+        // ("DocumentType-remove", "requires DocumentType interface"),
         // CDATA (XML only)
         ("createCDATASection", "requires XML CDATA support"),
         // Full createEvent spec (hundreds of event types)
@@ -417,15 +433,18 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Namespace-heavy tests
         // Document-createElement-namespace — now have namespace support (W2 un-skip)
         // ("Document-createElement-namespace", "requires namespace support"),
-        ("Element-firstElementChild-namespace", "requires setAttributeNS"),
-        ("Element-removeAttributeNS", "requires setAttributeNS"),
-        ("Element-setAttribute-crbug", "requires setAttributeNS"),
+        // Element-firstElementChild-namespace — now have setAttributeNS (Wave B un-skip)
+        // ("Element-firstElementChild-namespace", "requires setAttributeNS"),
+        // Element-removeAttributeNS — now have setAttributeNS (Wave B un-skip)
+        // ("Element-removeAttributeNS", "requires setAttributeNS"),
+        // Element-setAttribute-crbug — now have setAttributeNS (Wave B un-skip)
+        // ("Element-setAttribute-crbug", "requires setAttributeNS"),
         // Custom elements / CE reactions
         ("cereactions", "requires custom elements"),
         // Full Node spec tests we can't pass yet
-        ("Node-mutation-adoptNode", "requires adoptNode"),
+        // ("Node-mutation-adoptNode", "requires adoptNode"),  // adoptNode now implemented
         // adoptNode/remove+adopt crash tests
-        ("remove-and-adopt", "requires adoptNode"),
+        ("remove-and-adopt", "requires window.open and global id mapping"),
         // NodeList interface tests — now implemented (W2-F)
         // ("NodeList-Iterable", "requires NodeList interface"),
         // ("NodeList-static-length", "requires NodeList interface"),
@@ -433,17 +452,18 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // NamedNodeMap / attributes interface
         ("attributes-namednodemap", "requires NamedNodeMap"),
         ("attributes.html", "requires NamedNodeMap"),
-        // Document-createAttribute (Attr interface)
-        ("Document-createAttribute", "requires Attr interface"),
+        // Document-createAttribute — Attr interface implemented (unskip)
+        // ("Document-createAttribute", "requires Attr interface"),
         // Document-createComment.html — now implemented
         // Document-createTextNode — now implemented
-        // Full getElementsByTagName spec
-        ("Element-getElementsByTagName", "requires full getElementsByTagName"),
-        ("Document-getElementsByTagName", "requires full getElementsByTagName"),
+        // getElementsByTagName — now returns live HTMLCollection (unskip)
+        // ("Element-getElementsByTagName", "requires full getElementsByTagName"),
+        // ("Document-getElementsByTagName", "requires full getElementsByTagName"),
+        ("Element-getElementsByTagName-change-document-HTMLNess", "requires iframes for document HTMLNess change"),
         // Document-getElementById (needs HTMLDivElement, full spec)
         ("Document-getElementById", "requires HTMLDivElement and full spec"),
-        // DocumentFragment-getElementById (needs DocumentFragment constructor)
-        ("DocumentFragment-getElementById", "requires DocumentFragment constructor"),
+        // DocumentFragment-getElementById — constructor implemented (unskip)
+        // ("DocumentFragment-getElementById", "requires DocumentFragment constructor"),
         // Node-properties — 679/726 subtests pass, 47 fail (document props, XML case, ownerDocument identity)
         ("Node-properties", "47 subtests still failing (Document properties, XML, ownerDocument)"),
         // ParentNode-children — now implemented (W2-F)
@@ -459,7 +479,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // KeyEvent-initKeyEvent (legacy)
         ("KeyEvent-initKeyEvent", "requires KeyEvent"),
         // node-appendchild-crash
-        ("node-appendchild-crash", "requires adoptNode"),
+        ("node-appendchild-crash", "requires iframe.contentDocument"),
         // append-on-Document, prepend-on-Document — now enabled (DOMImplementation available)
         // rootNode — now implemented
         // insert-adjacent: now enabled (DOMImplementation available)
@@ -544,13 +564,13 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Element-tagName — now have SVG namespace and DOMImplementation (W2 un-skip)
         // ("Element-tagName", "requires SVG namespace and DOMImplementation"),
         // Element-remove — ENABLED (W2-E)
-        // Element-hasAttribute / hasAttributes (need setAttributeNS)
-        ("Element-hasAttribute", "requires setAttributeNS"),
-        ("Element-hasAttributes", "requires setAttributeNS"),
-        // Element-setAttribute (needs setAttributeNS)
-        ("Element-setAttribute", "requires setAttributeNS"),
-        // Element-removeAttribute (needs setAttributeNS)
-        ("Element-removeAttribute", "requires setAttributeNS"),
+        // Element-hasAttribute / hasAttributes — now have setAttributeNS (Wave B un-skip)
+        // ("Element-hasAttribute", "requires setAttributeNS"),
+        // ("Element-hasAttributes", "requires setAttributeNS"),
+        // Element-setAttribute — now have setAttributeNS (Wave B un-skip)
+        // ("Element-setAttribute", "requires setAttributeNS"),
+        // Element-removeAttribute — now have setAttributeNS (Wave B un-skip)
+        // ("Element-removeAttribute", "requires setAttributeNS"),
         // Element-insertAdjacentElement/Text — now implemented
         // ("Element-insertAdjacentElement", "requires insertAdjacentElement"),
         // ("Element-insertAdjacentText", "requires insertAdjacentText"),

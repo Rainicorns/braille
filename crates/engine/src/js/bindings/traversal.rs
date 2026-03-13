@@ -553,15 +553,15 @@ mod tests {
 
             // Set id="parent" on the div
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(div).data {
-                attributes.push(("id".to_string(), "parent".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "parent"));
             }
             // Set id="child1" on first span
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(span1).data {
-                attributes.push(("id".to_string(), "child1".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "child1"));
             }
             // Set id="child2" on second span
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(span2).data {
-                attributes.push(("id".to_string(), "child2".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "child2"));
             }
 
             let doc = t.document();
@@ -894,7 +894,7 @@ mod tests {
 
             // Set id="parent" on the div
             if let NodeData::Element { ref mut attributes, .. } = t.get_node_mut(div).data {
-                attributes.push(("id".to_string(), "parent".to_string()));
+                attributes.push(crate::dom::node::DomAttribute::new("id", "parent"));
             }
 
             let doc = t.document();

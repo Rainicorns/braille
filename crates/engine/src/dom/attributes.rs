@@ -1,15 +1,16 @@
-use super::node::{NodeData, NodeId};
+use super::node::{DomAttribute, NodeData, NodeId};
 use super::tree::DomTree;
 
 impl DomTree {
     /// Returns the attribute value if the node is an Element and has that attribute, None otherwise.
+    /// Matches on qualified name or local name.
     pub fn get_attribute(&self, node_id: NodeId, name: &str) -> Option<String> {
         let node = self.get_node(node_id);
         if let NodeData::Element { ref attributes, .. } = node.data {
             attributes
                 .iter()
-                .find(|(k, _)| k == name)
-                .map(|(_, v)| v.clone())
+                .find(|a| a.qualified_name() == name || a.local_name == name)
+                .map(|a| a.value.clone())
         } else {
             None
         }
@@ -21,25 +22,29 @@ impl DomTree {
         let node = self.get_node_mut(node_id);
         if let NodeData::Element { ref mut attributes, .. } = node.data {
             // Try to find existing attribute and update it
-            if let Some(existing) = attributes.iter_mut().find(|(k, _)| k == name) {
-                existing.1 = value.to_string();
+            if let Some(existing) = attributes.iter_mut().find(|a| a.qualified_name() == name || a.local_name == name) {
+                existing.value = value.to_string();
             } else {
                 // Add new attribute
-                attributes.push((name.to_string(), value.to_string()));
+                attributes.push(DomAttribute::new(name, value));
             }
         } else {
             panic!("set_attribute: node {} is not an Element", node_id);
         }
     }
 
-    /// Removes the attribute if present. Returns true if it was removed, false if it wasn't there.
+    /// Removes the first attribute matching the given name. Returns true if it was removed.
+    /// Per spec, only the first match is removed (not all).
     /// Panics if node is not an Element.
     pub fn remove_attribute(&mut self, node_id: NodeId, name: &str) -> bool {
         let node = self.get_node_mut(node_id);
         if let NodeData::Element { ref mut attributes, .. } = node.data {
-            let len_before = attributes.len();
-            attributes.retain(|(k, _)| k != name);
-            attributes.len() < len_before
+            if let Some(idx) = attributes.iter().position(|a| a.qualified_name() == name || a.local_name == name) {
+                attributes.remove(idx);
+                true
+            } else {
+                false
+            }
         } else {
             panic!("remove_attribute: node {} is not an Element", node_id);
         }
@@ -49,9 +54,85 @@ impl DomTree {
     pub fn has_attribute(&self, node_id: NodeId, name: &str) -> bool {
         let node = self.get_node(node_id);
         if let NodeData::Element { ref attributes, .. } = node.data {
-            attributes.iter().any(|(k, _)| k == name)
+            attributes.iter().any(|a| a.qualified_name() == name || a.local_name == name)
         } else {
             panic!("has_attribute: node {} is not an Element", node_id);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Namespace-aware attribute methods
+    // -----------------------------------------------------------------------
+
+    /// Returns the attribute value matching (namespace, localName), or None.
+    pub fn get_attribute_ns(&self, node_id: NodeId, namespace: &str, local_name: &str) -> Option<String> {
+        let node = self.get_node(node_id);
+        if let NodeData::Element { ref attributes, .. } = node.data {
+            attributes
+                .iter()
+                .find(|a| a.namespace == namespace && a.local_name == local_name)
+                .map(|a| a.value.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Sets a namespace-aware attribute. Parses prefix from qualifiedName.
+    /// If an attribute with matching (namespace, localName) already exists, updates it.
+    pub fn set_attribute_ns(&mut self, node_id: NodeId, namespace: &str, qualified_name: &str, value: &str) {
+        let (prefix, local_name) = if let Some(colon_pos) = qualified_name.find(':') {
+            (&qualified_name[..colon_pos], &qualified_name[colon_pos + 1..])
+        } else {
+            ("", qualified_name)
+        };
+
+        let node = self.get_node_mut(node_id);
+        if let NodeData::Element { ref mut attributes, .. } = node.data {
+            if let Some(existing) = attributes.iter_mut().find(|a| a.namespace == namespace && a.local_name == local_name) {
+                existing.value = value.to_string();
+                existing.prefix = prefix.to_string();
+            } else {
+                attributes.push(DomAttribute {
+                    local_name: local_name.to_string(),
+                    prefix: prefix.to_string(),
+                    namespace: namespace.to_string(),
+                    value: value.to_string(),
+                });
+            }
+        } else {
+            panic!("set_attribute_ns: node {} is not an Element", node_id);
+        }
+    }
+
+    /// Removes the attribute matching (namespace, localName). Returns true if removed.
+    pub fn remove_attribute_ns(&mut self, node_id: NodeId, namespace: &str, local_name: &str) -> bool {
+        let node = self.get_node_mut(node_id);
+        if let NodeData::Element { ref mut attributes, .. } = node.data {
+            let len_before = attributes.len();
+            attributes.retain(|a| !(a.namespace == namespace && a.local_name == local_name));
+            attributes.len() < len_before
+        } else {
+            panic!("remove_attribute_ns: node {} is not an Element", node_id);
+        }
+    }
+
+    /// Returns true if the Element has an attribute matching (namespace, localName).
+    pub fn has_attribute_ns(&self, node_id: NodeId, namespace: &str, local_name: &str) -> bool {
+        let node = self.get_node(node_id);
+        if let NodeData::Element { ref attributes, .. } = node.data {
+            attributes.iter().any(|a| a.namespace == namespace && a.local_name == local_name)
+        } else {
+            panic!("has_attribute_ns: node {} is not an Element", node_id);
+        }
+    }
+
+    /// Returns true if the Element has any attributes at all.
+    pub fn has_attributes(&self, node_id: NodeId) -> bool {
+        let node = self.get_node(node_id);
+        if let NodeData::Element { ref attributes, .. } = node.data {
+            !attributes.is_empty()
+        } else {
+            false
         }
     }
 }
@@ -64,8 +145,8 @@ mod tests {
     fn get_attribute_returns_some_for_existing_attr() {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "container".to_string()),
-            ("id".to_string(), "main".to_string()),
+            DomAttribute::new("class", "container"),
+            DomAttribute::new("id", "main"),
         ]);
 
         assert_eq!(tree.get_attribute(div, "class"), Some("container".to_string()));
@@ -76,7 +157,7 @@ mod tests {
     fn get_attribute_returns_none_for_missing_attr() {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "container".to_string()),
+            DomAttribute::new("class", "container"),
         ]);
 
         assert_eq!(tree.get_attribute(div, "id"), None);
@@ -110,7 +191,7 @@ mod tests {
     fn set_attribute_updates_existing_attribute() {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "old-value".to_string()),
+            DomAttribute::new("class", "old-value"),
         ]);
 
         assert_eq!(tree.get_attribute(div, "class"), Some("old-value".to_string()));
@@ -122,7 +203,7 @@ mod tests {
         // Verify that we didn't add a duplicate attribute
         let node = tree.get_node(div);
         if let NodeData::Element { ref attributes, .. } = node.data {
-            let class_count = attributes.iter().filter(|(k, _)| k == "class").count();
+            let class_count = attributes.iter().filter(|a| a.local_name == "class").count();
             assert_eq!(class_count, 1);
         }
     }
@@ -146,8 +227,8 @@ mod tests {
     fn remove_attribute_removes_existing_returns_true() {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "container".to_string()),
-            ("id".to_string(), "main".to_string()),
+            DomAttribute::new("class", "container"),
+            DomAttribute::new("id", "main"),
         ]);
 
         assert_eq!(tree.get_attribute(div, "class"), Some("container".to_string()));
@@ -163,7 +244,7 @@ mod tests {
     fn remove_attribute_returns_false_for_missing() {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "container".to_string()),
+            DomAttribute::new("class", "container"),
         ]);
 
         let removed = tree.remove_attribute(div, "id");
@@ -192,8 +273,8 @@ mod tests {
     fn has_attribute_returns_true_for_existing() {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "container".to_string()),
-            ("id".to_string(), "main".to_string()),
+            DomAttribute::new("class", "container"),
+            DomAttribute::new("id", "main"),
         ]);
 
         assert!(tree.has_attribute(div, "class"));
@@ -204,7 +285,7 @@ mod tests {
     fn has_attribute_returns_false_for_missing() {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "container".to_string()),
+            DomAttribute::new("class", "container"),
         ]);
 
         assert!(!tree.has_attribute(div, "id"));

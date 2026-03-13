@@ -56,7 +56,7 @@ pub fn collect_inline_styles(tree: &DomTree) -> Vec<(NodeId, Vec<(String, String
 
         // Check if it's an Element with a style attribute
         if let NodeData::Element { ref attributes, .. } = node.data {
-            if let Some(style_value) = attributes.iter().find(|(k, _)| k == "style").map(|(_, v)| v) {
+            if let Some(style_value) = attributes.iter().find(|a| a.local_name == "style").map(|a| &a.value) {
                 let declarations = parse_inline_style(style_value);
                 if !declarations.is_empty() {
                     inline_styles.push((node_id, declarations));
@@ -392,7 +392,7 @@ mod tests {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs(
             "div",
-            vec![("style".to_string(), "color: blue; font-size: 14px".to_string())]
+            vec![crate::dom::node::DomAttribute::new("style", "color: blue; font-size: 14px")]
         );
         tree.append_child(tree.document(), div);
 

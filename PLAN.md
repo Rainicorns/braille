@@ -11,7 +11,7 @@ A browser for those who read, not see.
 
 All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **1778 passed, 0 failed, 0 ignored** out of 1778 test cases (**100% pass rate**). html5lib-tests serializer suite: **204 passed, 0 failed, 26 ignored** (core + optionaltags fully passing; options/injectmeta/whitespace skipped as non-default serializer config). Fixed foster parenting text merge (8 tests), template contents with DocumentFragment (112 tests), test harness trailing newline (1 test), annotation-xml integration point polyfill (4 tests), and selectedcontent cloning polyfill (4 tests). Two polyfills in parser.rs are marked `POLYFILL` for removal when html5ever handles them internally: `is_mathml_annotation_xml_integration_point` flag storage and `polyfill_selectedcontent` post-processing (workaround for html5ever issue #712). The engine has a full DOM API surface (~70 methods), CSS cascade with selector matching wired into the load pipeline, full event system (addEventListener/dispatchEvent with capture/bubble/at-target), getComputedStyle, HTMLElement-specific properties (input.value/checked/type/disabled, select.value/selectedIndex/options, option.value/selected/text, a.href, form.action/method/elements, element.dataset/hidden/tabIndex/title/lang/dir, focus/blur/click stubs, getBoundingClientRect stub), and JS bindings for querySelector, innerHTML, classList, element.style, node mutation, window/console, and more. CLI has all commands routed through session manager, network client with cookie jar, navigation history, and external script loading. Full integration smoke tests (20) and CSS edge case tests (32) verify end-to-end behavior.
 
-**WPT Phase 2 — Wave 2 "Fix 5 Failing Tests" — ALL 5 TESTS AT 100%.** Wave 1 complete (49→62 passing). Wave 2: namespace fix, extract_node_id, pre-insertion validation, DOMImplementation, HTMLCollection enumerability, metadata properties, XHTML namespace fix, URL percent-encoding, DOMParser. **All remaining fixable tests now at 100%** — :invalid/:valid pseudo-classes, ProcessingInstruction node type, Attr node type.
+**WPT Phase 3 — ALL 3 WAVES COMPLETE.** Wave A: unskip done tests, baseURI, adoptNode. Wave B: attribute storage refactor (`DomAttribute` struct with namespace support, 5 new NS-aware methods, 16+ files updated). Wave C: querySelector unskip, live HTMLCollection for getElementsByClassName/TagName. **~15 WPT test files newly passing.** Phase 2 also complete — all 5 fixable tests at 100%.
 
 **Wave 2 completed tasks (13 total):**
 
@@ -42,7 +42,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 |-----------|--------|------------|
 | DOM tree | Arena-based, full ops | createElement, appendChild, removeChild, insertBefore, replaceChild, cloneNode, getElementById, getElementsByTagName, querySelector/All, textContent, innerHTML, attribute CRUD, class list, node traversal. Nodes carry namespace (svg/math/"") and 8 node types: Element, Text, Comment, Document, DocumentFragment, Doctype, ProcessingInstruction, Attr. |
 | HTML parser | html5ever TreeSink, 100% html5lib-tests (1778/1778 tree-construction, 204/204 serializer) | Full spec-compliant HTML parsing into DomTree, fragment parsing for innerHTML setter and html5lib fragment tests. Stores element namespace (SVG/MathML/HTML), doctype nodes (name/public_id/system_id), namespaced attribute prefixes (xlink/xml/xmlns). Supports scripting on/off flag. Template elements have proper content DocumentFragment. Foster parenting text merge in `append_before_sibling`. Two polyfills (grep `POLYFILL`): annotation-xml integration point flag storage, selectedcontent post-parse cloning (html5ever #712). Token-stream serializer test harness validates attribute quoting, text escaping, void elements, DOCTYPE serialization, and all HTML optional tag omission rules. |
-| JS engine | Boa bindings (~70 methods), NodeId→JsObject cache | document: createElement, getElementById, querySelector/All, getElementsByClassName/TagName, createTextNode, createProcessingInstruction, createAttribute, createAttributeNS, body, head, title. element: appendChild, textContent, classList, getAttribute/setAttribute/removeAttribute, parentNode, children, firstChild, lastChild, siblings, nodeType/nodeName/tagName, innerHTML/outerHTML, insertAdjacentHTML, insertBefore, replaceChild, cloneNode, element.style, querySelector/All, getElementsByClassName/TagName. input: value, checked, type, disabled, name, placeholder. select: value, selectedIndex, options. option: value, selected, text. anchor: href. form: action, method, elements. element: hidden, dataset, tabIndex, title, lang, dir, getBoundingClientRect (stub), focus/blur (stubs), click (dispatches event). Node types: Element, Text, Comment, Document, DocumentFragment, Doctype, ProcessingInstruction, Attr. **Object identity**: thread-local `NODE_CACHE` ensures `el.parentNode === el.parentNode` (same JsObject for same NodeId). |
+| JS engine | Boa bindings (~75 methods), NodeId→JsObject cache | document: createElement, getElementById, querySelector/All, getElementsByClassName/TagName, createTextNode, createProcessingInstruction, createAttribute, createAttributeNS, body, head, title. element: appendChild, textContent, classList, getAttribute/setAttribute/removeAttribute/hasAttribute + NS variants (getAttributeNS/setAttributeNS/removeAttributeNS/hasAttributeNS), hasAttributes, parentNode, children, firstChild, lastChild, siblings, nodeType/nodeName/tagName, innerHTML/outerHTML, insertAdjacentHTML, insertBefore, replaceChild, cloneNode, element.style, querySelector/All, getElementsByClassName/TagName (live HTMLCollection). input: value, checked, type, disabled, name, placeholder. select: value, selectedIndex, options. option: value, selected, text. anchor: href. form: action, method, elements. element: hidden, dataset, tabIndex, title, lang, dir, getBoundingClientRect (stub), focus/blur (stubs), click (dispatches event). Node types: Element, Text, Comment, Document, DocumentFragment, Doctype, ProcessingInstruction, Attr. **Object identity**: thread-local `NODE_CACHE` ensures `el.parentNode === el.parentNode` (same JsObject for same NodeId). **Attributes**: `DomAttribute` struct with `local_name`, `prefix`, `namespace`, `value` fields — full namespace support. |
 | CSS cascade | Parsing + matching + cascade + computed + wired + JS | cssparser stylesheet/inline parsing, selectors Element trait impl, selector matching (tag, class, id, attribute, pseudo-classes incl. :scope, :invalid, :valid, :has), cascade algorithm (origin, importance, specificity, source order), computed style resolution (inherit/initial/unset, em→px, color names), style tree DFS walk, compute_all_styles called in load_html/execute_scripts, getComputedStyle(el) JS binding with camelCase property accessors |
 | Event system | Full W3C dispatch | Event/CustomEvent constructors, addEventListener/removeEventListener (capture, once options), dispatchEvent with capture/bubble/at-target phases, stopPropagation, stopImmediatePropagation, preventDefault |
 | A11y serializer | Roles + values + CSS | headings, paragraphs, links, buttons, inputs (with value display), selects (with selected option), lists, images, nav, main, form; interactive refs (@e1); display:none skips element+descendants, visibility:hidden suppresses text but keeps structure |
@@ -54,7 +54,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 | Component | Gap |
 |-----------|-----|
-| WPT harness | **Phase 2 complete** (~70/263 passing, all fixable tests at 100%). Waves 1-2 added namespace support, pre-insertion validation, DOMImplementation, cross-type Node methods. Post-wave fixes: ProcessingInstruction, Attr, :invalid/:valid. Remaining ~178 ignored need iframes/Shadow DOM/workers/MutationObserver. |
+| WPT harness | **Phase 3 complete** (~85/263 passing, all fixable tests at 100%). Phase 2 Waves 1-2 added namespace support, pre-insertion validation, DOMImplementation, cross-type Node methods. Phase 3 added attribute NS refactor, live HTMLCollection, querySelector unskip. Remaining ~163 ignored need iframes/Shadow DOM/workers/MutationObserver. |
 | Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height |
 | WASM sandbox | Not started — engine runs in-process |
 
@@ -390,10 +390,40 @@ All independent, no cross-dependencies. Each agent adds Rust DomTree methods + J
 - ✅ Node-textContent.html: **81/81** (was 80) — ProcessingInstruction node type support
 - ✅ Node-cloneNode.html: **135/135** (was 132) — ProcessingInstruction + Attr node types, createAttribute/createAttributeNS
 
-**Remaining fixable test blueprints — ALL DONE:**
+**Previous fixable test blueprints — ALL DONE:**
 - ✅ **[IMPL_INVALID_PSEUDO.md](./IMPL_INVALID_PSEUDO.md)** — `:invalid`/`:valid` pseudo-classes. Element-closest 28→**29/29**.
 - ✅ **[IMPL_PROCESSING_INSTRUCTION.md](./IMPL_PROCESSING_INSTRUCTION.md)** — ProcessingInstruction node type (NodeData variant + ~28 match arms). Node-textContent 80→**81/81**, Node-cloneNode 132→133/135.
 - ✅ **[IMPL_ATTR_NODES.md](./IMPL_ATTR_NODES.md)** — Attr node type + createAttribute/createAttributeNS. Node-cloneNode 133→**135/135**.
+
+---
+
+### WPT Phase 3: Low-Hanging Fruit (~20-25 test files)
+
+Unskip already-implemented features, add small missing APIs, convert getElementsBy to live collections. 5 impl blueprints, 3 execution waves.
+
+**Wave A (parallel, no dependencies) — DONE:**
+
+| Blueprint | What | Result |
+|-----------|------|--------|
+| **[IMPL_UNSKIP_DONE.md](./IMPL_UNSKIP_DONE.md)** | Remove stale skip patterns, fix Document/DocumentFragment constructors, XMLDocument, createAttribute validation, DocumentFragment.getElementById | Document-doctype PASS, Document-constructor 5/5, DocumentFragment-constructor 2/2, DocumentType-literal PASS, DocumentType-remove PASS, Document-createAttribute 36/36, DocumentFragment-getElementById **5/5** |
+| **[IMPL_BASE_URI.md](./IMPL_BASE_URI.md)** | `Node.baseURI` getter + `getAttributeNode()` method | Node-baseURI **9/9** |
+| **[IMPL_ADOPT_NODE.md](./IMPL_ADOPT_NODE.md)** | `document.adoptNode(node)` JS binding with cross-tree NODE_CACHE mapping | Document-adoptNode **4/4**, Node-mutation-adoptNode **2/2** |
+
+Also fixed: `template.content` getter (returns template's DocumentFragment), `create_template_contents()` now uses `NodeData::DocumentFragment` instead of `NodeData::Document`, html5lib test serializer namespace labels.
+
+**Wave B (touches many files, run alone) — DONE:**
+
+| Blueprint | What | Result |
+|-----------|------|--------|
+| **[IMPL_SET_ATTRIBUTE_NS.md](./IMPL_SET_ATTRIBUTE_NS.md)** | Restructure attribute storage from `(String, String)` to `DomAttribute { local_name, prefix, namespace, value }`. Add `setAttributeNS`, `getAttributeNS`, `hasAttributeNS`, `removeAttributeNS`, `hasAttributes()`. 16+ files updated, ~30 change sites. | Element-hasAttribute **2/2**, Element-hasAttributes **1/1**, Element-setAttribute **2/2**, Element-removeAttribute **2/2**, Element-removeAttributeNS **1/1**, Element-firstElementChild-namespace **1/1**, Element-setAttribute-crbug **1/1** |
+
+**Wave C (parallel with B) — DONE:**
+
+| Blueprint | What | Result |
+|-----------|------|--------|
+| **[IMPL_QUERY_UNSKIP.md](./IMPL_QUERY_UNSKIP.md)** | Refine broad "query" skip pattern. Convert `getElementsByClassName`/`getElementsByTagName` from static JsArray to live HTMLCollection (Proxy-based, re-walks DOM on access). Added `add_cleanup` to test harness. | querySelector 3 passing, getElementsByClassName **5/5**, Document-getElementsByTagName **18/18**, Element-getElementsByTagName **19/19** |
+
+**Status: ALL 3 WAVES COMPLETE. ~15 WPT test files newly passing across Phase 3.**
 
 **Permanently blocked (not fixable):**
 - Node-removeChild.html (10/28) — 18 failures need iframes

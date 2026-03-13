@@ -152,20 +152,36 @@ fn serialize_node(tree: &DomTree, node_id: NodeId, depth: usize, out: &mut Strin
             }
         }
         NodeData::Element { tag_name, attributes, namespace } => {
-            if namespace.is_empty() {
+            if namespace.is_empty() || namespace == "http://www.w3.org/1999/xhtml" {
                 out.push_str(&format!("| {indent}<{tag_name}>\n"));
             } else {
-                out.push_str(&format!("| {indent}<{namespace} {tag_name}>\n"));
+                // html5lib format uses short prefixes for SVG/MathML
+                let ns_label = match namespace.as_str() {
+                    "http://www.w3.org/2000/svg" => "svg",
+                    "http://www.w3.org/1998/Math/MathML" => "math",
+                    other => other,
+                };
+                out.push_str(&format!("| {indent}<{ns_label} {tag_name}>\n"));
             }
 
             // Sort attributes lexicographically by key name for deterministic output.
             // html5lib tests expect sorted attributes.
             let mut sorted_attrs: Vec<_> = attributes.iter().collect();
-            sorted_attrs.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+            sorted_attrs.sort_by(|a, b| {
+                let key_a = if !a.prefix.is_empty() { format!("{} {}", a.prefix, a.local_name) } else { a.local_name.clone() };
+                let key_b = if !b.prefix.is_empty() { format!("{} {}", b.prefix, b.local_name) } else { b.local_name.clone() };
+                key_a.cmp(&key_b)
+            });
 
-            for (key, value) in sorted_attrs {
-                // For namespaced attributes stored as "prefix localname",
-                // emit as: prefix localname="value"
+            for attr in sorted_attrs {
+                // html5lib test format uses "prefix localname" (space-separated) for
+                // namespaced attributes, not "prefix:localname" (colon-separated).
+                let key = if !attr.prefix.is_empty() {
+                    format!("{} {}", attr.prefix, attr.local_name)
+                } else {
+                    attr.local_name.clone()
+                };
+                let value = &attr.value;
                 out.push_str(&format!("| {indent}  {key}=\"{value}\"\n"));
             }
 
@@ -198,6 +214,9 @@ fn serialize_node(tree: &DomTree, node_id: NodeId, depth: usize, out: &mut Strin
             for &child_id in &node.children {
                 serialize_node(tree, child_id, depth, out);
             }
+        }
+        NodeData::Attr { .. } => {
+            // Attr nodes don't appear in tree-construction serialization
         }
     }
 }

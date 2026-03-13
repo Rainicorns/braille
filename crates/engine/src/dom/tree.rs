@@ -1,4 +1,4 @@
-use super::node::{Node, NodeData, NodeId};
+use super::node::{DomAttribute, Node, NodeData, NodeId};
 
 #[derive(Debug)]
 pub struct DomTree {
@@ -102,7 +102,7 @@ impl DomTree {
     pub fn get_element_by_id(&self, id: &str) -> Option<NodeId> {
         self.nodes.iter().find_map(|node| {
             if let NodeData::Element { ref attributes, .. } = node.data {
-                if attributes.iter().any(|(k, v)| k == "id" && v == id) {
+                if attributes.iter().any(|a| a.local_name == "id" && a.value == id) {
                     return Some(node.id);
                 }
             }
@@ -263,7 +263,7 @@ impl DomTree {
     pub fn create_element_with_attrs(
         &mut self,
         tag_name: &str,
-        attributes: Vec<(String, String)>,
+        attributes: Vec<DomAttribute>,
     ) -> NodeId {
         let id = self.nodes.len();
         self.nodes.push(Node {
@@ -303,7 +303,7 @@ impl DomTree {
     pub fn create_element_ns(
         &mut self,
         tag_name: &str,
-        attributes: Vec<(String, String)>,
+        attributes: Vec<DomAttribute>,
         namespace: &str,
     ) -> NodeId {
         let id = self.nodes.len();
@@ -328,7 +328,7 @@ impl DomTree {
         let id = self.nodes.len();
         self.nodes.push(Node {
             id,
-            data: NodeData::Document, // content fragment acts like a document fragment
+            data: NodeData::DocumentFragment, // template content is a DocumentFragment per spec
             parent: None,
             children: Vec::new(),
             computed_style: None,
@@ -518,11 +518,11 @@ impl DomTree {
                 let mut o = String::new();
                 o.push('<');
                 o.push_str(tag_name);
-                for (k, v) in attributes {
+                for a in attributes {
                     o.push(' ');
-                    o.push_str(k);
+                    o.push_str(&a.qualified_name());
                     o.push_str("=\"");
-                    o.push_str(&Self::escape_html(v));
+                    o.push_str(&Self::escape_html(&a.value));
                     o.push('"');
                 }
                 o.push('>');
@@ -898,8 +898,8 @@ impl DomTree {
                 if a1.len() != a2.len() {
                     return false;
                 }
-                for (name, value) in a1 {
-                    let found = a2.iter().any(|(n, v)| n == name && v == value);
+                for attr in a1 {
+                    let found = a2.iter().any(|a| a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value && a.prefix == attr.prefix);
                     if !found {
                         return false;
                     }
@@ -1215,7 +1215,7 @@ mod tests {
 
         // Add an "id" attribute
         if let NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(div).data {
-            attributes.push(("id".to_string(), "main".to_string()));
+            attributes.push(DomAttribute::new("id", "main"));
         }
 
         assert_eq!(tree.get_element_by_id("main"), Some(div));
@@ -1381,7 +1381,7 @@ mod tests {
     fn clone_node_shallow_no_children() {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![
-            ("class".to_string(), "container".to_string()),
+            DomAttribute::new("class", "container"),
         ]);
         let span = tree.create_element("span");
         tree.append_child(div, span);
@@ -1394,7 +1394,7 @@ mod tests {
         match &tree.get_node(cloned).data {
             NodeData::Element { tag_name, attributes, .. } => {
                 assert_eq!(tag_name, "div");
-                assert_eq!(attributes, &vec![("class".to_string(), "container".to_string())]);
+                assert_eq!(attributes, &vec![DomAttribute::new("class", "container")]);
             }
             _ => panic!("expected Element"),
         }
@@ -1428,9 +1428,9 @@ mod tests {
     fn clone_node_preserves_attributes() {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![
-            ("id".to_string(), "main".to_string()),
-            ("class".to_string(), "container".to_string()),
-            ("data-x".to_string(), "42".to_string()),
+            DomAttribute::new("id", "main"),
+            DomAttribute::new("class", "container"),
+            DomAttribute::new("data-x", "42"),
         ]);
 
         let cloned = tree.clone_node(div, false);
@@ -1439,9 +1439,9 @@ mod tests {
             NodeData::Element { tag_name, attributes, .. } => {
                 assert_eq!(tag_name, "div");
                 assert_eq!(attributes.len(), 3);
-                assert!(attributes.contains(&("id".to_string(), "main".to_string())));
-                assert!(attributes.contains(&("class".to_string(), "container".to_string())));
-                assert!(attributes.contains(&("data-x".to_string(), "42".to_string())));
+                assert!(attributes.contains(&DomAttribute::new("id", "main")));
+                assert!(attributes.contains(&DomAttribute::new("class", "container")));
+                assert!(attributes.contains(&DomAttribute::new("data-x", "42")));
             }
             _ => panic!("expected Element"),
         }

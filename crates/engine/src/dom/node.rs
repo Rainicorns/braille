@@ -4,6 +4,37 @@ pub type NodeId = usize;
 /// when the CSS property system is integrated.
 pub type ComputedStyles = std::collections::HashMap<String, String>;
 
+/// Structured attribute storage supporting namespace-aware methods.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DomAttribute {
+    pub local_name: String,
+    pub prefix: String,
+    pub namespace: String,
+    pub value: String,
+}
+
+impl DomAttribute {
+    /// Convenience constructor for simple (non-namespaced) attributes.
+    pub fn new(name: &str, value: &str) -> Self {
+        DomAttribute {
+            local_name: name.to_string(),
+            prefix: String::new(),
+            namespace: String::new(),
+            value: value.to_string(),
+        }
+    }
+
+    /// Returns the qualified name: "prefix:localName" if prefix is non-empty,
+    /// otherwise just localName.
+    pub fn qualified_name(&self) -> String {
+        if self.prefix.is_empty() {
+            self.local_name.clone()
+        } else {
+            format!("{}:{}", self.prefix, self.local_name)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum NodeData {
     Document,
@@ -14,7 +45,7 @@ pub enum NodeData {
     },
     Element {
         tag_name: String,
-        attributes: Vec<(String, String)>,
+        attributes: Vec<DomAttribute>,
         namespace: String,
     },
     Text {
