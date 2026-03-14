@@ -13,7 +13,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 **Build quality:** Workspace lint configuration enforces `warnings = "deny"` and `clippy::all = "warn"`. Zero compiler warnings, zero clippy lints. `rustfmt.toml` configured (edition 2021, max_width 120).
 
-**WPT Phase 4 — ALL 5 AGENTS COMPLETE.** Event system enhancements: DOMHighResTimeStamp, UIEvent subclasses (MouseEvent/KeyboardEvent/WheelEvent/FocusEvent), handleEvent protocol, window as event target, standalone `new EventTarget()` constructor, composedPath(). **~15 new event test files passing.** Phase 3 also complete (attribute NS refactor, live HTMLCollection, querySelector unskip). Phase 2 also complete — all 5 fixable tests at 100%. **Post-phase fixes:** validate-and-extract namespace validation (createElementNS), createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count + implementation methods on created docs, createDocument doctype adoption (identity preservation), lenient NameStartChar ranges, `>` rejection in names, TypeError for invalid doctype arg. **126/263 WPT tests passing.**
+**WPT Phase 4 — ALL 5 AGENTS COMPLETE.** Event system enhancements: DOMHighResTimeStamp, UIEvent subclasses (MouseEvent/KeyboardEvent/WheelEvent/FocusEvent), handleEvent protocol, window as event target, standalone `new EventTarget()` constructor, composedPath(). **~15 new event test files passing.** Phase 3 also complete (attribute NS refactor, live HTMLCollection, querySelector unskip). Phase 2 also complete — all 5 fixable tests at 100%. **Post-phase fixes:** validate-and-extract namespace validation (createElementNS), createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count + implementation methods on created docs, createDocument doctype adoption (identity preservation), lenient NameStartChar ranges, `>` rejection in names, TypeError for invalid doctype arg. **Event dispatch edge cases:** cross-document listener isolation (ListenerMap key `(usize, NodeId)`), document-to-window bubble propagation, document.cloneNode, createEvent/getElementById on created documents — 8 new tests passing. **137/263 WPT tests passing.**
 
 **Wave 2 completed tasks (13 total):**
 
@@ -56,7 +56,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 | Component | Gap |
 |-----------|-----|
-| WPT harness | **Phase 4 complete** (~100/263 passing, all fixable tests at 100%). Phase 4 added event system enhancements (UIEvent subclasses, standalone EventTarget, window event target, handleEvent, DOMHighResTimeStamp). Phase 3 added attribute NS refactor, live HTMLCollection, querySelector unskip. Remaining ~163 ignored need iframes/Shadow DOM/workers/MutationObserver. |
+| WPT harness | **Phase 4 complete + event dispatch edge cases** (137/263 passing, all fixable tests at 100%). Phase 4 added event system enhancements (UIEvent subclasses, standalone EventTarget, window event target, handleEvent, DOMHighResTimeStamp). Post-phase: cross-document listener isolation, doc-to-window bubble, document.cloneNode. Remaining ~119 skipped need iframes/Shadow DOM/workers/MutationObserver. |
 | Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height |
 | WASM sandbox | Not started — engine runs in-process |
 
@@ -247,11 +247,11 @@ Run all three directions concurrently where dependencies allow. Recommended inte
 
 ### WPT DOM Conformance — Comprehensive Test Status
 
-**263 total test files** across `dom/nodes/` and `dom/events/`. **126 pass, 8 fail (partial subtest failures — 7 accepted, 1 fixable), 129 skipped.** Implemented across 4 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system). Post-phase fixes: validate-and-extract namespace validation for createElementNS, createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count check.
+**263 total test files** across `dom/nodes/` and `dom/events/`. **140 pass, 8 fail (partial subtest failures — most accepted), 115 skipped.** Implemented across 4 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system). Post-phase fixes: validate-and-extract namespace validation for createElementNS, createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count check. Event dispatch edge cases: cross-document listener isolation, doc-to-window bubble, document.cloneNode.
 
-Known subtest counts where recorded: Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, DOMImplementation-createDocument 434/434, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19.
+Known subtest counts where recorded: Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, DOMImplementation-createDocument 434/434, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19, Event-dispatch-bubbles-false 5/5, Event-dispatch-bubbles-true 5/5.
 
-#### dom/events/ (27 pass, 1 fail, 68 skip)
+#### dom/events/ (43 pass, 1 fail, 49 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -266,37 +266,37 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Event-defaultPrevented-after-dispatch.html | PASS | |
 | Event-defaultPrevented.html | PASS | |
 | Event-dispatch-bubble-canceled.html | PASS | |
-| Event-dispatch-bubbles-false.html | SKIP | requires cross-document dispatch |
-| Event-dispatch-bubbles-true.html | SKIP | requires cross-document dispatch |
+| Event-dispatch-bubbles-false.html | PASS | 5/5 |
+| Event-dispatch-bubbles-true.html | PASS | 5/5 |
 | Event-dispatch-click.html | SKIP | requires click() activation |
 | Event-dispatch-click.tentative.html | SKIP | requires click() activation |
 | Event-dispatch-detached-click.html | SKIP | requires click() activation |
 | Event-dispatch-detached-input-and-change.html | SKIP | requires input events |
-| Event-dispatch-handlers-changed.html | SKIP | requires live handler mutation |
-| Event-dispatch-listener-order.window.js | SKIP | requires window event target |
-| Event-dispatch-multiple-cancelBubble.html | SKIP | requires cancelBubble during propagation |
-| Event-dispatch-multiple-stopPropagation.html | SKIP | requires stopPropagation during propagation |
-| Event-dispatch-omitted-capture.html | SKIP | requires window EventTarget and initEvent |
+| Event-dispatch-handlers-changed.html | SKIP | BorrowMutError: addEventListener during dispatch borrows EVENT_LISTENERS |
+| Event-dispatch-listener-order.window.js | SKIP | not a callable function: missing API on window or document |
+| Event-dispatch-multiple-cancelBubble.html | PASS | |
+| Event-dispatch-multiple-stopPropagation.html | PASS | |
+| Event-dispatch-omitted-capture.html | PASS | |
 | Event-dispatch-on-disabled-elements.html | SKIP | requires disabled element behavior |
 | Event-dispatch-order-at-target.html | PASS | |
 | Event-dispatch-order.html | PASS | |
-| Event-dispatch-other-document.html | SKIP | requires multi-document |
+| Event-dispatch-other-document.html | PASS | |
 | Event-dispatch-propagation-stopped.html | PASS | |
 | Event-dispatch-redispatch.html | SKIP | requires re-dispatch semantics |
 | Event-dispatch-reenter.html | PASS | |
 | Event-dispatch-single-activation-behavior.html | SKIP | requires activation behavior |
-| Event-dispatch-target-moved.html | SKIP | requires live dispatch mutation |
-| Event-dispatch-target-removed.html | SKIP | requires live dispatch mutation |
+| Event-dispatch-target-moved.html | PASS | |
+| Event-dispatch-target-removed.html | PASS | |
 | Event-dispatch-throwing-multiple-globals.html | SKIP | requires multi-globals |
 | Event-dispatch-throwing.html | SKIP | requires window.onerror |
 | Event-init-while-dispatching.html | PASS | |
 | Event-initEvent.html | PASS | |
 | Event-isTrusted.any.js | PASS | 1/1 |
-| Event-propagation.html | SKIP | requires Event.cancelBubble getter |
+| Event-propagation.html | PASS | |
 | Event-returnValue.html | PASS | |
-| Event-stopImmediatePropagation.html | SKIP | requires full stopImmediatePropagation spec |
-| Event-stopPropagation-cancel-bubbling.html | SKIP | requires Event constructor |
-| Event-subclasses-constructors.html | SKIP | requires UIEvent/MouseEvent constructors |
+| Event-stopImmediatePropagation.html | PASS | |
+| Event-stopPropagation-cancel-bubbling.html | SKIP | dispatchEvent rejects createEvent result as non-Event |
+| Event-subclasses-constructors.html | SKIP | missing CompositionEvent, UIEvent not on global, no class inheritance |
 | Event-timestamp-cross-realm-getter.html | PASS | 1/1 |
 | Event-timestamp-high-resolution.html | PASS | 4/4 |
 | Event-timestamp-high-resolution.https.html | SKIP | requires GamepadEvent constructor |
@@ -347,9 +347,9 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | webkit-animation-iteration-event.html | SKIP | requires AnimationEvent |
 | webkit-animation-start-event.html | SKIP | requires AnimationEvent |
 | webkit-transition-end-event.html | SKIP | requires TransitionEvent |
-| window-composed-path.html | SKIP | requires composedPath with window |
+| window-composed-path.html | PASS | |
 
-#### dom/nodes/ (99 pass, 7 fail, 61 skip)
+#### dom/nodes/ (97 pass, 7 fail, 66 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -398,7 +398,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Document-importNode.html | SKIP | requires importNode |
 | DocumentFragment-constructor.html | PASS | 2/2 |
 | DocumentFragment-getElementById.html | PASS | 5/5 |
-| DocumentFragment-querySelectorAll-after-modification.html | SKIP | requires setup({ single_test: true }) harness |
+| DocumentFragment-querySelectorAll-after-modification.html | PASS | |
 | DocumentType-literal.html | PASS | |
 | DocumentType-remove.html | PASS | |
 | Element-childElement-null.html | PASS | |
@@ -452,7 +452,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Node-childNodes.html | PASS | |
 | Node-cloneNode-XMLDocument.html | SKIP | requires XML Document support |
 | Node-cloneNode-document-allow-declarative-shadow-roots.window.js | SKIP | requires declarative shadow DOM |
-| Node-cloneNode-document-with-doctype.html | FAIL | 2/3; window.DOMParser not constructable (FIXABLE) |
+| Node-cloneNode-document-with-doctype.html | PASS | 3/3 |
 | Node-cloneNode-external-stylesheet-no-bc.sub.html | SKIP | requires server-side substitution |
 | Node-cloneNode-on-inactive-document-crash.html | SKIP | requires inactive document |
 | Node-cloneNode-svg.html | SKIP | requires SVG namespace support |
@@ -493,8 +493,8 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | ParentNode-querySelector-case-insensitive.html | PASS | |
 | ParentNode-querySelector-escapes.html | PASS | |
 | ParentNode-querySelector-scope.html | SKIP | 2/4 pass; sibling combinator (+) not yet supported |
-| ParentNode-querySelectorAll-removed-elements.html | SKIP | requires setup({ single_test: true }) harness |
-| ParentNode-querySelectors-exclusive.html | SKIP | requires setup({ single_test: true }) harness |
+| ParentNode-querySelectorAll-removed-elements.html | PASS | |
+| ParentNode-querySelectors-exclusive.html | FAIL | JS error in assertion (opaque object throw) |
 | ParentNode-querySelectors-namespaces.html | SKIP | requires SVG xlink namespace attributes |
 | ParentNode-querySelectors-space-and-dash-attribute-value.html | PASS | |
 | ParentNode-replaceChildren.html | FAIL | 25/29; MutationObserver subtests (accepted partial) |
@@ -524,7 +524,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | rootNode.html | FAIL | 0/1; Shadow DOM subtest (accepted partial) |
 | svg-template-querySelector.html | SKIP | requires template.content |
 
-#### Skip reasons summary (129 skipped tests)
+#### Skip reasons summary (115 skipped tests)
 
 | Category | Count | Tests |
 |----------|-------|-------|
@@ -541,7 +541,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | NamedNodeMap / attributes | 3 | attributes-namednodemap*, attributes.html |
 | Custom elements | 2 | Node-appendChild-cereactions, EventTarget-add-listener-platform-object |
 | Misc (Symbol.unscopables, characterSet, etc.) | 13 | remove-unscopable, Document-characterSet-*, Document-URL, Document-getElementById, Node-properties, name-validation, case.html, etc. |
-| Event dispatch edge cases | 15 | Event-dispatch-bubbles-*, Event-dispatch-handlers-changed, Event-dispatch-target-*, Event-dispatch-redispatch, Event-dispatch-multiple-*, Event-dispatch-omitted-capture, Event-dispatch-listener-order, etc. |
+| Event dispatch edge cases | 5 | Event-dispatch-handlers-changed (BorrowMutError), Event-dispatch-redispatch, Event-dispatch-throwing-multiple-globals, Event-dispatch-single-activation-behavior, Event-dispatch-throwing |
 | Other (GamepadEvent, composedPath, browsing context, etc.) | 14 | remaining miscellaneous skips |
 
 ## Core Thesis

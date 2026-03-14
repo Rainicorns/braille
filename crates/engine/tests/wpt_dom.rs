@@ -48,6 +48,7 @@ fn testharness_preamble() -> String {
     var results = [];
     var setup_fn = null;
     var setup_ran = false;
+    var single_test_mode = false;
 
     function run_setup() {
         if (!setup_ran && setup_fn) {
@@ -131,11 +132,16 @@ fn testharness_preamble() -> String {
         if (typeof fn_or_props === 'function') {
             fn_or_props();
             setup_ran = true;
+        } else if (fn_or_props && fn_or_props.single_test) {
+            single_test_mode = true;
         }
-        // If it's props, ignore for now
     };
 
-    self.done = function() {};
+    self.done = function() {
+        if (single_test_mode && results.length === 0) {
+            results.push({ name: "(single test)", status: 0, message: "" });
+        }
+    };
 
     self.add_completion_callback = function() {};
     self.add_result_callback = function() {};
@@ -388,9 +394,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("ParentNode-querySelector-All.html", "requires iframes and requestAnimationFrame"),
         ("ParentNode-querySelector-All-content", "content file for iframe-based test"),
         ("ParentNode-querySelectors-namespaces", "requires SVG xlink namespace attributes"),
-        ("ParentNode-querySelectors-exclusive", "requires setup({ single_test: true }) harness"),
-        ("ParentNode-querySelectorAll-removed", "requires setup({ single_test: true }) harness"),
-        ("DocumentFragment-querySelectorAll-after", "requires setup({ single_test: true }) harness"),
+        ("ParentNode-querySelectors-exclusive", "JS error in assertion (opaque object throw)"),
         ("ParentNode-querySelector-scope", "2/4 pass; sibling combinator (+) not yet supported"),
         ("query-target-in-load-event", "requires iframes"),
         ("svg-template-querySelector", "requires template.content"),
@@ -424,7 +428,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Full createEvent spec (hundreds of event types)
         ("Document-createEvent.https", "requires full createEvent spec"),
         // Event subclasses (UIEvent, MouseEvent, etc.)
-        ("Event-subclasses", "requires UIEvent/MouseEvent constructors"),
+        ("Event-subclasses", "missing CompositionEvent, UIEvent not on global, no class inheritance support"),
         // Document.implementation
         // Document-implementation — now have document.implementation (W2 un-skip)
         // ("Document-implementation", "requires DOMImplementation"),
@@ -514,8 +518,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("label-default-action", "requires label activation"),
         // preventDefault during activation behavior
         ("preventDefault-during-activation", "requires activation behavior"),
-        // Window composed path
-        ("window-composed-path", "requires composedPath with window"),
+        // Window composed path — unskipped: composedPath now implemented
+        // ("window-composed-path", "requires composedPath with window"),
         // webkit animation/transition events
         ("webkit-animation", "requires AnimationEvent"),
         ("webkit-transition", "requires TransitionEvent"),
@@ -548,14 +552,12 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Event-dispatch-on-disabled-elements", "requires disabled element behavior"),
         // EventListener-invoke-legacy — requires TransitionEvent/AnimationEvent constructors (keep skipped)
         ("EventListener-invoke-legacy", "requires TransitionEvent/AnimationEvent constructors"),
-        // Event-stopImmediatePropagation (test file has no test content captured)
-        ("Event-stopImmediatePropagation.html", "requires full StopImmediatePropagation spec"),
         // Event-dispatch-bubbles-true/false — now supported (cross-document listener isolation + window check)
         // ("Event-dispatch-bubbles-true", "requires window event target and cross-document dispatch"),
         // ("Event-dispatch-bubbles-false", "requires window event target and cross-document dispatch"),
         // Event-dispatch-reenter — now supported (window participates in event propagation)
-        // Event-dispatch-listener-order (window listener ordering)
-        ("Event-dispatch-listener-order", "requires window event target"),
+        // Event-dispatch-listener-order — fails with "not a callable function"
+        ("Event-dispatch-listener-order", "not a callable function: missing API on window or document"),
         // Tests needing frames/DOMImplementation — W2-D: now enabled
         // ("Node-removeChild", "requires frames and DOMImplementation"),
         // ("Node-insertBefore.html", "requires frames and DOMImplementation"),
@@ -579,10 +581,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Node-childNodes.html", "requires NodeList interface"),
         // Node-parentElement (needs document.doctype, Document as EventTarget parent)
         // Node-parentElement — now implemented
-        // Event-propagation (needs Event constructor)
-        ("Event-propagation.html", "requires Event.cancelBubble getter"),
-        // Event-stopPropagation-cancel-bubbling
-        ("Event-stopPropagation-cancel-bubbling", "requires Event constructor"),
+        // Event-propagation — unskipped: cancelBubble getter implemented
+        // ("Event-propagation.html", "requires Event.cancelBubble getter"),
+        // Event-stopPropagation-cancel-bubbling — dispatchEvent rejects non-Event arg
+        ("Event-stopPropagation-cancel-bubbling", "dispatchEvent rejects document.createEvent result as non-Event"),
         // Event-dispatch-throwing
         ("Event-dispatch-throwing", "requires window.onerror"),
         // Event-dispatch-omitted-capture — unskipped: window now participates in document dispatch
