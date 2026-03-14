@@ -63,6 +63,12 @@ impl JsRuntime {
         // Register DOMImplementation global constructor (for instanceof) — must be before register_document
         bindings::document::register_domimplementation(&mut context);
 
+        // Register DOMParser global constructor — must be before register_window which copies globals to window
+        bindings::dom_parser::register_dom_parser(&mut context);
+
+        // Register DOMException global constructor — must be before register_window
+        bindings::register_dom_exception(&mut context);
+
         bindings::register_document(Rc::clone(&tree), &mut context);
         bindings::window::register_window(&mut context, Rc::clone(&console_buffer), Rc::clone(&tree));
 
@@ -93,9 +99,6 @@ impl JsRuntime {
 
         // Register `location` global stub (needed by WPT Node-properties test)
         Self::register_location_global(&mut context);
-
-        // Register DOMParser global constructor
-        bindings::dom_parser::register_dom_parser(&mut context);
 
         // Register EventTarget class (standalone constructor: new EventTarget())
         context.register_global_class::<bindings::event_target::JsEventTarget>().unwrap();

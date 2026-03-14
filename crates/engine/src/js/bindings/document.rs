@@ -7,11 +7,12 @@ use boa_engine::{
     native_function::NativeFunction,
     object::ObjectInitializer,
     property::{Attribute, PropertyDescriptor},
-    Context, JsData, JsError, JsObject, JsResult, JsValue,
+    Context, JsData, JsError, JsNativeError, JsObject, JsResult, JsValue,
 };
 use boa_gc::{Finalize, Trace};
 
 use crate::dom::DomTree;
+use crate::dom::is_valid_xml_name;
 
 use crate::dom::NodeData;
 
@@ -21,6 +22,93 @@ use super::event_target::{ListenerEntry, EVENT_LISTENERS};
 use super::class_list::register_class_list_class;
 use super::style::register_style_class;
 use super::query;
+
+// ---------------------------------------------------------------------------
+// DOM "validate and extract" algorithm (namespace validation)
+// https://dom.spec.whatwg.org/#validate-and-extract
+// ---------------------------------------------------------------------------
+
+/// Implements the DOM spec's "validate and extract a namespace and qualifiedName" algorithm.
+/// Returns (namespace, prefix, local_name) or throws InvalidCharacterError / NamespaceError.
+fn validate_and_extract(
+    namespace: &str,
+    qualified_name: &str,
+    ctx: &mut Context,
+) -> JsResult<(String, String, String)> {
+    // Step 1: Validate the qualifiedName as an XML QName
+    if let Some(colon_pos) = qualified_name.find(':') {
+        let prefix_part = &qualified_name[..colon_pos];
+        let local_part = &qualified_name[colon_pos + 1..];
+        // Both parts must be valid XML Names and non-empty
+        if prefix_part.is_empty()
+            || local_part.is_empty()
+            || !is_valid_xml_name(prefix_part)
+            || !is_valid_xml_name(local_part)
+        {
+            let exc = super::create_dom_exception(
+                ctx,
+                "InvalidCharacterError",
+                "String contains an invalid character",
+                5,
+            )?;
+            return Err(JsError::from_opaque(exc.into()));
+        }
+    } else {
+        // No colon — the whole string must be a valid XML Name (or empty for createDocument)
+        if !qualified_name.is_empty() && !is_valid_xml_name(qualified_name) {
+            let exc = super::create_dom_exception(
+                ctx,
+                "InvalidCharacterError",
+                "String contains an invalid character",
+                5,
+            )?;
+            return Err(JsError::from_opaque(exc.into()));
+        }
+    }
+
+    // Step 2: Extract prefix and localName
+    let (prefix, local_name) = if let Some(colon_pos) = qualified_name.find(':') {
+        (qualified_name[..colon_pos].to_string(), qualified_name[colon_pos + 1..].to_string())
+    } else {
+        (String::new(), qualified_name.to_string())
+    };
+
+    let ns = namespace.to_string();
+
+    // Step 3: Namespace validation
+    // 3a: prefix present but namespace is empty
+    if !prefix.is_empty() && ns.is_empty() {
+        let exc = super::create_dom_exception(
+            ctx,
+            "NamespaceError",
+            "Namespace error",
+            14,
+        )?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
+
+    // 3b: prefix is "xml" but namespace is not the XML namespace
+    if prefix == "xml" && ns != "http://www.w3.org/XML/1998/namespace" {
+        let exc = super::create_dom_exception(ctx, "NamespaceError", "Namespace error", 14)?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
+
+    // 3c: prefix or qualifiedName is "xmlns" but namespace is not the XMLNS namespace
+    if (prefix == "xmlns" || qualified_name == "xmlns")
+        && ns != "http://www.w3.org/2000/xmlns/"
+    {
+        let exc = super::create_dom_exception(ctx, "NamespaceError", "Namespace error", 14)?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
+
+    // 3d: namespace is XMLNS but neither prefix nor qualifiedName is "xmlns"
+    if ns == "http://www.w3.org/2000/xmlns/" && prefix != "xmlns" && qualified_name != "xmlns" {
+        let exc = super::create_dom_exception(ctx, "NamespaceError", "Namespace error", 14)?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
+
+    Ok((ns, prefix, local_name))
+}
 
 // ---------------------------------------------------------------------------
 // DOMImplementation prototype (for instanceof checks)
@@ -361,6 +449,17 @@ fn document_create_processing_instruction(
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
+    if !is_valid_xml_name(&target) {
+        return Err(JsError::from_opaque(
+            super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?.into(),
+        ));
+    }
+    if data.contains("?>") {
+        return Err(JsError::from_opaque(
+            super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?.into(),
+        ));
+    }
+
     let node_id = tree.borrow_mut().create_processing_instruction(&target, &data);
 
     let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
@@ -501,12 +600,15 @@ fn document_create_element_ns(
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_else(|| "undefined".to_string());
 
-    let ns = if namespace.is_empty() { "" } else { &namespace };
+    // Validate and extract per DOM spec
+    let (ns, _prefix, _local_name) = validate_and_extract(&namespace, &qualified_name, ctx)?;
+
+    let ns_ref = if ns.is_empty() { "" } else { &ns };
 
     let node_id = tree.borrow_mut().create_element_ns(
         &qualified_name,
         Vec::new(),
-        ns,
+        ns_ref,
     );
 
     let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
@@ -1168,6 +1270,16 @@ pub(crate) fn add_document_properties_to_element(
     let has_feature_fn = NativeFunction::from_fn_ptr(domimpl_has_feature);
     let implementation = boa_engine::object::ObjectInitializer::new(ctx)
         .function(impl_create_dt, js_string!("createDocumentType"), 3)
+        .function(
+            NativeFunction::from_fn_ptr(domimpl_create_html_document),
+            js_string!("createHTMLDocument"),
+            0,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(domimpl_create_document),
+            js_string!("createDocument"),
+            2,
+        )
         .function(has_feature_fn, js_string!("hasFeature"), 0)
         .build();
     let domimpl_proto = DOMIMPL_PROTO.with(|cell| cell.borrow().clone());
@@ -1506,6 +1618,11 @@ fn domimpl_create_document(
     args: &[JsValue],
     ctx: &mut Context,
 ) -> JsResult<JsValue> {
+    if args.len() < 2 {
+        return Err(JsNativeError::typ()
+            .with_message("Failed to execute 'createDocument' on 'DOMImplementation': 2 arguments required")
+            .into());
+    }
     let namespace = args
         .first()
         .map(|v| {
@@ -1529,6 +1646,10 @@ fn domimpl_create_document(
         })
         .transpose()?
         .unwrap_or_default();
+
+    // Validate and extract per DOM spec (must happen before creating the tree)
+    let (validated_ns, _prefix, _local_name) =
+        validate_and_extract(&namespace, &qualified_name, ctx)?;
 
     // Handle the optional doctype argument (3rd arg)
     let doctype_info: Option<(String, String, String)> = args
@@ -1562,13 +1683,14 @@ fn domimpl_create_document(
 
         // If qualified name is non-empty, create a document element
         if !qualified_name.is_empty() {
-            let elem = t.create_element_ns(&qualified_name, Vec::new(), &namespace);
+            let ns_ref = if validated_ns.is_empty() { "" } else { &validated_ns };
+            let elem = t.create_element_ns(&qualified_name, Vec::new(), ns_ref);
             t.append_child(doc, elem);
         }
     }
 
     // Compute contentType based on namespace (needed by both createElement and the property)
-    let content_type = match namespace.as_str() {
+    let content_type = match validated_ns.as_str() {
         "http://www.w3.org/1999/xhtml" => "application/xhtml+xml",
         "http://www.w3.org/2000/svg" => "image/svg+xml",
         _ => "application/xml",
@@ -2524,7 +2646,9 @@ pub(crate) fn create_blank_xml_document(ctx: &mut Context) -> JsResult<JsValue> 
                 .transpose()?
                 .map(|s| s.to_std_string_escaped())
                 .unwrap_or_else(|| "undefined".to_string());
-            let ns = if namespace.is_empty() { "" } else { &namespace };
+            let (validated_ns, _prefix, _local_name) =
+                validate_and_extract(&namespace, &qualified_name, ctx2)?;
+            let ns = if validated_ns.is_empty() { "" } else { validated_ns.as_str() };
             let node_id = tree_for_cens.borrow_mut().create_element_ns(
                 &qualified_name,
                 Vec::new(),

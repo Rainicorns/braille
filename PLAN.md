@@ -247,11 +247,11 @@ Run all three directions concurrently where dependencies allow. Recommended inte
 
 ### WPT DOM Conformance — Comprehensive Test Status
 
-**263 total test files** across `dom/nodes/` and `dom/events/`. **122 pass, 21 fail (partial subtest failures), 120 skipped.** Implemented across 4 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system).
+**263 total test files** across `dom/nodes/` and `dom/events/`. **123 pass, 11 fail (partial subtest failures — 7 accepted, 4 fixable), 129 skipped.** Implemented across 4 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system).
 
 Known subtest counts where recorded: Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19.
 
-#### dom/events/ (26 pass, 2 fail, 68 skip)
+#### dom/events/ (27 pass, 1 fail, 68 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -305,7 +305,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Event-type.html | PASS | |
 | EventListener-addEventListener.sub.window.js | SKIP | requires server-side substitution |
 | EventListener-handleEvent-cross-realm.html | PASS | |
-| EventListener-handleEvent.html | FAIL | 3/6; promise_test not supported |
+| EventListener-handleEvent.html | FAIL | 3/6; promise_test not supported (accepted partial) |
 | EventListener-incumbent-global-1.sub.html | SKIP | requires server-side substitution |
 | EventListener-incumbent-global-2.sub.html | SKIP | requires server-side substitution |
 | EventListener-incumbent-global-subframe-1.sub.html | SKIP | requires server-side substitution |
@@ -349,7 +349,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | webkit-transition-end-event.html | SKIP | requires TransitionEvent |
 | window-composed-path.html | SKIP | requires composedPath with window |
 
-#### dom/nodes/ (96 pass, 19 fail, 52 skip)
+#### dom/nodes/ (96 pass, 10 fail, 61 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -367,7 +367,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | ChildNode-replaceWith.html | PASS | |
 | Comment-constructor.html | PASS | |
 | DOMImplementation-createDocument-with-null-browsing-context-crash.html | SKIP | requires iframes |
-| DOMImplementation-createDocument.html | FAIL | 0/2; not a callable function |
+| DOMImplementation-createDocument.html | FAIL | needs XML Name validation + arg count check (FIXABLE) |
 | DOMImplementation-createDocumentType.html | PASS | 82/82 |
 | DOMImplementation-createHTMLDocument-with-null-browsing-context-crash.html | SKIP | requires iframes |
 | DOMImplementation-createHTMLDocument-with-saved-implementation.html | SKIP | requires iframes |
@@ -386,7 +386,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Document-createElementNS.html | PASS | 596/596 |
 | Document-createEvent-touchevent.window.js | SKIP | requires touch events |
 | Document-createEvent.https.html | SKIP | requires full createEvent spec |
-| Document-createProcessingInstruction.html | FAIL | missing INVALID_CHARACTER_ERR validation for target names |
+| Document-createProcessingInstruction.html | FAIL | missing XML Name validation + ?> check (FIXABLE) |
 | Document-createTextNode.html | PASS | |
 | Document-createTreeWalker.html | SKIP | requires TreeWalker |
 | Document-doctype.html | PASS | |
@@ -445,14 +445,14 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | MutationObserver-takeRecords.html | SKIP | requires MutationObserver |
 | MutationObserver-textContent.html | SKIP | requires MutationObserver |
 | Node-appendChild-cereactions-vs-script.window.js | SKIP | requires custom elements |
-| Node-appendChild.html | FAIL | frames is not defined (3 iframe subtests) |
+| Node-appendChild.html | FAIL | frames is not defined — 3 iframe subtests (accepted partial) |
 | Node-baseURI.html | PASS | 9/9 |
 | Node-childNodes-cache-2.html | PASS | |
 | Node-childNodes-cache.html | PASS | |
 | Node-childNodes.html | PASS | |
 | Node-cloneNode-XMLDocument.html | SKIP | requires XML Document support |
 | Node-cloneNode-document-allow-declarative-shadow-roots.window.js | SKIP | requires declarative shadow DOM |
-| Node-cloneNode-document-with-doctype.html | FAIL | 2/3; DOMParser not a constructor |
+| Node-cloneNode-document-with-doctype.html | FAIL | 2/3; window.DOMParser not constructable (FIXABLE) |
 | Node-cloneNode-external-stylesheet-no-bc.sub.html | SKIP | requires server-side substitution |
 | Node-cloneNode-on-inactive-document-crash.html | SKIP | requires inactive document |
 | Node-cloneNode-svg.html | SKIP | requires SVG namespace support |
@@ -462,19 +462,19 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Node-contains.html | PASS | |
 | Node-insertBefore.html | PASS | |
 | Node-isConnected-shadow-dom.html | SKIP | requires Shadow DOM |
-| Node-isConnected.html | FAIL | 1/2; iframe subtest fails |
+| Node-isConnected.html | FAIL | 1/2; iframe subtest (accepted partial) |
 | Node-isEqualNode.html | PASS | 9/9; fixed: removed prefix from attr equality check |
 | Node-isSameNode.html | PASS | |
 | Node-lookupNamespaceURI.html | SKIP | requires lookupNamespaceURI |
 | Node-mutation-adoptNode.html | PASS | 2/2 |
 | Node-nodeName.html | PASS | |
 | Node-nodeValue.html | PASS | |
-| Node-normalize.html | FAIL | 3/4; non-text nodes with empty textContent |
+| Node-normalize.html | FAIL | 3/4; CDATASection subtest (accepted partial) |
 | Node-parentElement.html | PASS | |
 | Node-parentNode-iframe.html | SKIP | requires iframes |
 | Node-parentNode.html | PASS | |
 | Node-properties.html | SKIP | 47 subtests still failing |
-| Node-removeChild.html | FAIL | 19/28; frames is not defined (9 iframe subtests) |
+| Node-removeChild.html | FAIL | 19/28; 9 iframe subtests (accepted partial) |
 | Node-replaceChild.html | PASS | 29/29 |
 | Node-textContent.html | PASS | 81/81 |
 | NodeList-Iterable.html | PASS | |
@@ -497,7 +497,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | ParentNode-querySelectors-exclusive.html | SKIP | requires setup({ single_test: true }) harness |
 | ParentNode-querySelectors-namespaces.html | SKIP | requires SVG xlink namespace attributes |
 | ParentNode-querySelectors-space-and-dash-attribute-value.html | PASS | |
-| ParentNode-replaceChildren.html | FAIL | 25/29; MutationObserver is not defined |
+| ParentNode-replaceChildren.html | FAIL | 25/29; MutationObserver subtests (accepted partial) |
 | Text-constructor.html | PASS | |
 | Text-splitText.html | PASS | |
 | Text-wholeText.html | PASS | |
@@ -521,10 +521,10 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | remove-from-shadow-host-and-adopt-into-iframe-ref.html | SKIP | requires iframes + Shadow DOM |
 | remove-from-shadow-host-and-adopt-into-iframe.html | SKIP | requires iframes + Shadow DOM |
 | remove-unscopable.html | SKIP | requires Symbol.unscopables |
-| rootNode.html | FAIL | 0/1; not a callable function |
+| rootNode.html | FAIL | 0/1; Shadow DOM subtest (accepted partial) |
 | svg-template-querySelector.html | SKIP | requires template.content |
 
-#### Skip reasons summary (120 skipped tests)
+#### Skip reasons summary (129 skipped tests)
 
 | Category | Count | Tests |
 |----------|-------|-------|
