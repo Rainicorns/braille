@@ -386,7 +386,7 @@ pub(crate) fn register_window(
             let rc = el.borrow();
             let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
             let mut map = listeners_rc.borrow_mut();
-            let entries = map.entry(WINDOW_LISTENER_ID).or_insert_with(Vec::new);
+            let entries = map.entry((usize::MAX, WINDOW_LISTENER_ID)).or_insert_with(Vec::new);
 
             let duplicate = entries.iter().any(|entry| {
                 entry.event_type == event_type
@@ -442,14 +442,14 @@ pub(crate) fn register_window(
             let rc = el.borrow();
             let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
             let mut map = listeners_rc.borrow_mut();
-            if let Some(entries) = map.get_mut(&WINDOW_LISTENER_ID) {
+            if let Some(entries) = map.get_mut(&(usize::MAX, WINDOW_LISTENER_ID)) {
                 entries.retain(|entry| {
                     !(entry.event_type == event_type
                         && entry.capture == capture
                         && entry.callback == callback)
                 });
                 if entries.is_empty() {
-                    map.remove(&WINDOW_LISTENER_ID);
+                    map.remove(&(usize::MAX, WINDOW_LISTENER_ID));
                 }
             }
         });
@@ -510,7 +510,7 @@ pub(crate) fn register_window(
         )?;
 
         super::element::invoke_listeners_for_node(
-            WINDOW_LISTENER_ID, &event_type, &event_obj, &event_val, false, true, ctx,
+            (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, false, true, ctx,
         )?;
 
         let default_prevented = if is_custom_event {

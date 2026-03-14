@@ -936,10 +936,68 @@ fn clone_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
         .map(|v| v.to_boolean())
         .unwrap_or(false);
 
+    // Special case: cloning a Document node creates a new DomTree
+    let is_document = matches!(tree.borrow().get_node(node_id).data, NodeData::Document);
+    if is_document {
+        let is_html = tree.borrow().is_html_document();
+        let new_tree = Rc::new(RefCell::new(if is_html {
+            DomTree::new()
+        } else {
+            DomTree::new_xml()
+        }));
+
+        if deep {
+            // Clone all children of the source document into the new document
+            let child_ids: Vec<NodeId> = tree.borrow().get_node(node_id).children.clone();
+            let new_doc_id = new_tree.borrow().document();
+            for child_id in child_ids {
+                let cloned_child = clone_node_cross_tree(&tree.borrow(), child_id, &mut new_tree.borrow_mut());
+                new_tree.borrow_mut().append_child(new_doc_id, cloned_child);
+            }
+        }
+
+        let doc_id = new_tree.borrow().document();
+        let js_obj = get_or_create_js_element(doc_id, new_tree.clone(), ctx)?;
+        let content_type = if is_html { "text/html" } else { "application/xml" };
+        super::document::add_document_properties_to_element(&js_obj, new_tree, content_type.to_string(), ctx)?;
+        return Ok(js_obj.into());
+    }
+
     let cloned_id = tree.borrow_mut().clone_node(node_id, deep);
 
     let js_obj = get_or_create_js_element(cloned_id, tree, ctx)?;
     Ok(js_obj.into())
+}
+
+/// Recursively clone a node from one DomTree into another.
+pub(crate) fn clone_node_cross_tree(src: &DomTree, src_id: NodeId, dst: &mut DomTree) -> NodeId {
+    let src_node = src.get_node(src_id);
+    let new_id = match &src_node.data {
+        NodeData::Element { tag_name, attributes, namespace } => {
+            let id = dst.create_element(tag_name);
+            if let NodeData::Element { attributes: ref mut dst_attrs, namespace: ref mut dst_ns, .. } = dst.get_node_mut(id).data {
+                *dst_attrs = attributes.clone();
+                *dst_ns = namespace.clone();
+            }
+            id
+        }
+        NodeData::Text { content } => dst.create_text(content),
+        NodeData::Comment { content } => dst.create_comment(content),
+        NodeData::Doctype { name, public_id, system_id } => dst.create_doctype(name, public_id, system_id),
+        NodeData::ProcessingInstruction { target, data } => dst.create_processing_instruction(target, data),
+        NodeData::DocumentFragment => dst.create_document_fragment(),
+        NodeData::Document => unreachable!("nested Document nodes not supported"),
+        NodeData::Attr { .. } => unreachable!("Attr nodes should not be children"),
+    };
+
+    // Recursively clone children
+    let child_ids: Vec<NodeId> = src.get_node(src_id).children.clone();
+    for child_id in child_ids {
+        let cloned_child = clone_node_cross_tree(src, child_id, dst);
+        dst.append_child(new_id, cloned_child);
+    }
+
+    new_id
 }
 
 /// Convert variadic args (nodes or strings) into a Vec<NodeId>.

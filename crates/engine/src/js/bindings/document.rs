@@ -36,13 +36,17 @@ fn validate_and_extract(
     ctx: &mut Context,
 ) -> JsResult<(String, String, String)> {
     // Step 1: Validate the qualifiedName as an XML QName
+    // Browsers validate colon-containing names asymmetrically:
+    //   - Prefix: must be non-empty, no whitespace or '>', but start char NOT validated
+    //   - Local:  must be non-empty and pass is_valid_dom_name (lenient NameStartChar check)
+    // For no-colon names, the whole name is validated via is_valid_dom_name.
     if let Some(colon_pos) = qualified_name.find(':') {
         let prefix_part = &qualified_name[..colon_pos];
         let local_part = &qualified_name[colon_pos + 1..];
-        // Both parts must be non-empty with valid start chars (lenient browser behavior)
         if prefix_part.is_empty()
             || local_part.is_empty()
-            || !is_valid_dom_name(prefix_part)
+            || prefix_part.contains(char::is_whitespace)
+            || prefix_part.contains('>')
             || !is_valid_dom_name(local_part)
         {
             let exc = super::create_dom_exception(
@@ -710,7 +714,9 @@ fn document_add_event_listener(
     let doc = obj
         .downcast_ref::<JsDocument>()
         .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: `this` is not document").into()))?;
-    let node_id = doc.tree.borrow().document();
+    let tree = doc.tree.clone();
+    let node_id = tree.borrow().document();
+    let listener_key = (Rc::as_ptr(&tree) as usize, node_id);
 
     let event_type = args
         .first()
@@ -738,7 +744,7 @@ fn document_add_event_listener(
         let rc = el.borrow();
         let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
         let mut map = listeners_rc.borrow_mut();
-        let entries = map.entry(node_id).or_insert_with(Vec::new);
+        let entries = map.entry(listener_key).or_insert_with(Vec::new);
 
         let duplicate = entries.iter().any(|entry| {
             entry.event_type == event_type
@@ -772,7 +778,9 @@ fn document_remove_event_listener(
     let doc = obj
         .downcast_ref::<JsDocument>()
         .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: `this` is not document").into()))?;
-    let node_id = doc.tree.borrow().document();
+    let tree = doc.tree.clone();
+    let node_id = tree.borrow().document();
+    let listener_key = (Rc::as_ptr(&tree) as usize, node_id);
 
     let event_type = args
         .first()
@@ -800,14 +808,14 @@ fn document_remove_event_listener(
         let rc = el.borrow();
         let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
         let mut map = listeners_rc.borrow_mut();
-        if let Some(entries) = map.get_mut(&node_id) {
+        if let Some(entries) = map.get_mut(&listener_key) {
             entries.retain(|entry| {
                 !(entry.event_type == event_type
                     && entry.capture == capture
                     && entry.callback == callback)
             });
             if entries.is_empty() {
-                map.remove(&node_id);
+                map.remove(&listener_key);
             }
         }
     });
@@ -887,9 +895,6 @@ fn document_dispatch_event(
         return Err(JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()));
     };
 
-    // Document is the root, so propagation path is just [document]
-    let propagation_path = vec![target_node_id];
-
     // Set event.target and dispatching flag
     if is_custom_event {
         let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
@@ -923,31 +928,126 @@ fn document_dispatch_event(
         ctx,
     )?;
 
-    // At-target phase (document is both root and target)
-    if is_custom_event {
-        let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
-        evt.current_target = Some(target_node_id);
-        evt.phase = 2; // AT_TARGET
-    } else {
-        let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
-        evt.current_target = Some(target_node_id);
-        evt.phase = 2; // AT_TARGET
-    }
-    event_obj.define_property_or_throw(
-        js_string!("currentTarget"),
-        PropertyDescriptor::builder()
-            .value(this.clone())
-            .writable(true)
-            .configurable(true)
-            .enumerable(true)
-            .build(),
-        ctx,
-    )?;
+    use super::window::{WINDOW_LISTENER_ID, WINDOW_OBJECT};
 
-    // Invoke listeners at target
-    let _should_stop = super::element::invoke_listeners_for_node(
-        target_node_id, &event_type, &event_obj, &event_val, false, true, ctx,
-    )?;
+    let is_global_doc = super::element::DOM_TREE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|global| Rc::ptr_eq(&tree, global))
+            .unwrap_or(false)
+    });
+
+    let mut stopped = false;
+
+    // Capture phase on window (if global document)
+    if is_global_doc && !stopped {
+        if is_custom_event {
+            let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
+            evt.current_target = Some(WINDOW_LISTENER_ID);
+            evt.phase = 1; // CAPTURING_PHASE
+        } else {
+            let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+            evt.current_target = Some(WINDOW_LISTENER_ID);
+            evt.phase = 1; // CAPTURING_PHASE
+        }
+        let window_val: JsValue =
+            WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
+                cell.borrow()
+                    .as_ref()
+                    .map(|w| JsValue::from(w.clone()))
+            })
+            .unwrap_or(JsValue::undefined());
+        event_obj.define_property_or_throw(
+            js_string!("currentTarget"),
+            PropertyDescriptor::builder()
+                .value(window_val)
+                .writable(true)
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            ctx,
+        )?;
+        stopped = super::element::invoke_listeners_for_node(
+            (usize::MAX, WINDOW_LISTENER_ID),
+            &event_type,
+            &event_obj,
+            &event_val,
+            true,
+            false,
+            ctx,
+        )?;
+    }
+
+    // At-target phase (document is both root and target)
+    if !stopped {
+        if is_custom_event {
+            let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
+            evt.current_target = Some(target_node_id);
+            evt.phase = 2; // AT_TARGET
+        } else {
+            let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+            evt.current_target = Some(target_node_id);
+            evt.phase = 2; // AT_TARGET
+        }
+        event_obj.define_property_or_throw(
+            js_string!("currentTarget"),
+            PropertyDescriptor::builder()
+                .value(this.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            ctx,
+        )?;
+        stopped = super::element::invoke_listeners_for_node(
+            (Rc::as_ptr(&tree) as usize, target_node_id),
+            &event_type,
+            &event_obj,
+            &event_val,
+            false,
+            true,
+            ctx,
+        )?;
+    }
+
+    // Bubble phase on window (if global document AND bubbles)
+    if is_global_doc && bubbles && !stopped {
+        if is_custom_event {
+            let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
+            evt.current_target = Some(WINDOW_LISTENER_ID);
+            evt.phase = 3; // BUBBLING_PHASE
+        } else {
+            let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+            evt.current_target = Some(WINDOW_LISTENER_ID);
+            evt.phase = 3; // BUBBLING_PHASE
+        }
+        let window_val: JsValue =
+            WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
+                cell.borrow()
+                    .as_ref()
+                    .map(|w| JsValue::from(w.clone()))
+            })
+            .unwrap_or(JsValue::undefined());
+        event_obj.define_property_or_throw(
+            js_string!("currentTarget"),
+            PropertyDescriptor::builder()
+                .value(window_val)
+                .writable(true)
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            ctx,
+        )?;
+        let _should_stop = super::element::invoke_listeners_for_node(
+            (usize::MAX, WINDOW_LISTENER_ID),
+            &event_type,
+            &event_obj,
+            &event_val,
+            false,
+            false,
+            ctx,
+        )?;
+    }
 
     // Reset event state
     let default_prevented = if is_custom_event {
@@ -978,8 +1078,50 @@ fn document_dispatch_event(
         ctx,
     )?;
 
-    let _ = (bubbles, propagation_path); // document has no parent to bubble to
     Ok(JsValue::from(!default_prevented))
+}
+
+/// document.cloneNode(deep) — clone the document into a new tree
+fn document_clone_node(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("cloneNode: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("cloneNode: `this` is not document").into()))?;
+    let tree = doc.tree.clone();
+
+    let deep = args
+        .first()
+        .map(|v| v.to_boolean())
+        .unwrap_or(false);
+
+    let is_html = tree.borrow().is_html_document();
+    let new_tree = Rc::new(RefCell::new(if is_html {
+        crate::dom::DomTree::new()
+    } else {
+        crate::dom::DomTree::new_xml()
+    }));
+
+    if deep {
+        let doc_node_id = tree.borrow().document();
+        let child_ids: Vec<crate::dom::NodeId> = tree.borrow().get_node(doc_node_id).children.clone();
+        let new_doc_id = new_tree.borrow().document();
+        for child_id in child_ids {
+            let cloned = super::mutation::clone_node_cross_tree(&tree.borrow(), child_id, &mut new_tree.borrow_mut());
+            new_tree.borrow_mut().append_child(new_doc_id, cloned);
+        }
+    }
+
+    let doc_id = new_tree.borrow().document();
+    let js_obj = get_or_create_js_element(doc_id, new_tree.clone(), ctx)?;
+    let content_type = if is_html { "text/html" } else { "application/xml" };
+    add_document_properties_to_element(&js_obj, new_tree, content_type.to_string(), ctx)?;
+    Ok(js_obj.into())
 }
 
 /// document.getRootNode() — document is always its own root
@@ -1499,6 +1641,41 @@ pub(crate) fn add_document_properties_to_element(
         ctx,
     )?;
 
+    // createEvent method
+    js_obj.set(
+        js_string!("createEvent"),
+        NativeFunction::from_fn_ptr(document_create_event).to_js_function(&realm),
+        false,
+        ctx,
+    )?;
+
+    // getElementById — closure-based version that captures the tree
+    let tree_for_gid = new_tree.clone();
+    let gid_fn = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx2| {
+            let id = args
+                .first()
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+            let found = tree_for_gid.borrow().get_element_by_id(&id);
+            match found {
+                Some(node_id) => {
+                    let js_obj = get_or_create_js_element(node_id, tree_for_gid.clone(), ctx2)?;
+                    Ok(js_obj.into())
+                }
+                None => Ok(JsValue::null()),
+            }
+        })
+    };
+    js_obj.set(
+        js_string!("getElementById"),
+        gid_fn.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
+
     Ok(())
 }
 
@@ -1650,37 +1827,60 @@ fn domimpl_create_document(
         validate_and_extract(&namespace, &qualified_name, ctx)?;
 
     // Handle the optional doctype argument (3rd arg)
-    let doctype_info: Option<(String, String, String)> = args
-        .get(2)
-        .and_then(|v| {
-            if v.is_null() || v.is_undefined() {
-                return None;
-            }
-            let obj = v.as_object()?;
-            let el = obj.downcast_ref::<JsElement>()?;
-            let tree = el.tree.borrow();
-            let node = tree.get_node(el.node_id);
-            if let NodeData::Doctype { name, public_id, system_id } = &node.data {
-                Some((name.clone(), public_id.clone(), system_id.clone()))
+    // Per spec, must be null, undefined, or a DocumentType node — anything else is TypeError.
+    // We preserve the JS object reference so that `doc.doctype === doctype` holds after adoption.
+    let doctype_arg: Option<(Rc<RefCell<crate::dom::DomTree>>, crate::dom::NodeId, JsObject)> = match args.get(2) {
+        None => None,
+        Some(v) if v.is_null() || v.is_undefined() => None,
+        Some(v) => {
+            let obj = v.as_object().ok_or_else(|| {
+                JsNativeError::typ().with_message("Value provided is not a DocumentType")
+            })?;
+            let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
+                JsNativeError::typ().with_message("Value provided is not a DocumentType")
+            })?;
+            let is_doctype = matches!(el.tree.borrow().get_node(el.node_id).data, NodeData::Doctype { .. });
+            if is_doctype {
+                Some((el.tree.clone(), el.node_id, obj.clone()))
             } else {
-                None
+                return Err(JsNativeError::typ()
+                    .with_message("Value provided is not a DocumentType")
+                    .into());
             }
-        });
+        }
+    };
 
     // Create a new DomTree for the new document (XML, not HTML)
     let new_tree = Rc::new(RefCell::new(crate::dom::DomTree::new_xml()));
+
+    // If doctype was provided, adopt it from its source tree into the new tree.
+    // This preserves JS object identity so `doc.doctype === originalDoctype` holds.
+    if let Some((ref src_tree, src_id, ref doctype_obj)) = doctype_arg {
+        let adopted_id = if Rc::ptr_eq(src_tree, &new_tree) {
+            // Same tree (unlikely but handle it): just remove from parent and reuse
+            new_tree.borrow_mut().remove_from_parent(src_id);
+            src_id
+        } else {
+            // Cross-tree adoption: move the node and update caches
+            let (adopted_id, mapping) =
+                super::mutation::adopt_node_with_mapping(src_tree, src_id, &new_tree);
+            super::mutation::update_node_cache_for_adoption_mapping(src_tree, &new_tree, &mapping);
+            // Update the doctype JS object directly to point to the new tree/node
+            let mut el_mut = doctype_obj.downcast_mut::<JsElement>().unwrap();
+            el_mut.node_id = adopted_id;
+            el_mut.tree = new_tree.clone();
+            drop(el_mut);
+            adopted_id
+        };
+        let doc = new_tree.borrow().document();
+        new_tree.borrow_mut().append_child(doc, adopted_id);
+    }
+
     {
-        let mut t = new_tree.borrow_mut();
-        let doc = t.document();
-
-        // If doctype was provided, create it in the new tree
-        if let Some((name, public_id, system_id)) = doctype_info {
-            let dt = t.create_doctype(&name, &public_id, &system_id);
-            t.append_child(doc, dt);
-        }
-
         // If qualified name is non-empty, create a document element
         if !qualified_name.is_empty() {
+            let mut t = new_tree.borrow_mut();
+            let doc = t.document();
             let ns_ref = if validated_ns.is_empty() { "" } else { &validated_ns };
             let elem = t.create_element_ns(&qualified_name, Vec::new(), ns_ref);
             t.append_child(doc, elem);
@@ -2211,6 +2411,11 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
         .function(
             NativeFunction::from_fn_ptr(super::element::node_compare_document_position),
             js_string!("compareDocumentPosition"),
+            1,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(document_clone_node),
+            js_string!("cloneNode"),
             1,
         )
         .function(

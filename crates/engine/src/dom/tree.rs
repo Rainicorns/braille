@@ -1161,14 +1161,32 @@ fn is_name_char(c: char) -> bool {
         )
 }
 
+/// Lenient start-character check matching actual browser behavior for DOM APIs.
+/// Browsers accept any non-ASCII character (>= U+0080) as a valid name start
+/// character, plus ASCII letters, `_`, and `:`. This is broader than the strict
+/// XML NameStartChar production, which excludes certain Unicode ranges (e.g.
+/// U+037E, U+0300, U+FFFF). Colon is included because local parts of QNames
+/// can start with `:` (e.g. `f::oo`); the QName colon splitting is handled
+/// separately in validate_and_extract.
+fn is_lenient_name_start_char(c: char) -> bool {
+    matches!(c, ':' | 'A'..='Z' | '_' | 'a'..='z') || c as u32 >= 0x80
+}
+
 /// Lenient name validation matching actual browser behavior for DOM APIs like
-/// createElementNS and createDocument. Only checks that the first character is a
-/// valid NameStartChar and that the name contains no whitespace — subsequent
-/// characters are otherwise completely unchecked. This contradicts the spec
-/// (which says to validate against the full QName production) but it's what
-/// every browser does, and what WPT tests demand. C'est la vie.
+/// createElementNS and createDocument. Checks that the first character passes
+/// the lenient NameStartChar check (ASCII letter, `_`, or any char >= U+0080)
+/// and that the name contains no whitespace or '>' chars. Subsequent characters
+/// are otherwise completely unchecked. This contradicts the spec (which says to
+/// validate against the full QName production) but it's what every browser does,
+/// and what WPT tests demand. C'est la vie.
+///
+/// NOTE: '>' is rejected in ALL positions (not just first). Browsers treat '>'
+/// as invalid anywhere in a DOM name, unlike most other non-NameChar characters
+/// which are leniently accepted in non-first positions.
 pub fn is_valid_dom_name(name: &str) -> bool {
-    name.chars().next().is_some_and(is_name_start_char) && !name.contains(char::is_whitespace)
+    name.chars().next().is_some_and(is_lenient_name_start_char)
+        && !name.contains(char::is_whitespace)
+        && !name.contains('>')
 }
 
 /// Validates whether a string is a valid XML Name per the XML spec.

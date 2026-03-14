@@ -32,7 +32,7 @@ pub(crate) struct ListenerEntry {
 // ListenerMap — NodeId -> Vec<ListenerEntry>
 // ---------------------------------------------------------------------------
 
-pub(crate) type ListenerMap = HashMap<NodeId, Vec<ListenerEntry>>;
+pub(crate) type ListenerMap = HashMap<(usize, NodeId), Vec<ListenerEntry>>;
 
 // ---------------------------------------------------------------------------
 // Thread-local storage for the listener map.
@@ -130,7 +130,7 @@ impl JsEventTarget {
             let rc = el.borrow();
             let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
             let mut map = listeners_rc.borrow_mut();
-            let entries = map.entry(id).or_insert_with(Vec::new);
+            let entries = map.entry((0usize, id)).or_insert_with(Vec::new);
 
             let duplicate = entries.iter().any(|entry| {
                 entry.event_type == event_type
@@ -197,14 +197,14 @@ impl JsEventTarget {
             let rc = el.borrow();
             let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
             let mut map = listeners_rc.borrow_mut();
-            if let Some(entries) = map.get_mut(&id) {
+            if let Some(entries) = map.get_mut(&(0usize, id)) {
                 entries.retain(|entry| {
                     !(entry.event_type == event_type
                         && entry.capture == capture
                         && entry.callback == callback)
                 });
                 if entries.is_empty() {
-                    map.remove(&id);
+                    map.remove(&(0usize, id));
                 }
             }
         });
@@ -337,7 +337,7 @@ impl JsEventTarget {
             let rc = el.borrow();
             let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
             let map = listeners_rc.borrow();
-            match map.get(&id) {
+            match map.get(&(0usize, id)) {
                 Some(entries) => entries
                     .iter()
                     .filter(|entry| entry.event_type == event_type)
@@ -353,12 +353,12 @@ impl JsEventTarget {
                     let rc = el.borrow();
                     let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
                     let mut map = listeners_rc.borrow_mut();
-                    if let Some(entries) = map.get_mut(&id) {
+                    if let Some(entries) = map.get_mut(&(0usize, id)) {
                         entries.retain(|entry| {
                             !(entry.event_type == event_type && entry.callback == *callback && entry.once)
                         });
                         if entries.is_empty() {
-                            map.remove(&id);
+                            map.remove(&(0usize, id));
                         }
                     }
                 });

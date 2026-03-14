@@ -491,17 +491,17 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Event-dispatch-click (needs click() behavior)
         ("Event-dispatch-click", "requires click() activation"),
         ("Event-dispatch-detached-click", "requires click() activation"),
-        // Event-dispatch-other-document (needs multi-document)
-        ("Event-dispatch-other-document", "requires multi-document"),
+        // Event-dispatch-other-document — now supported (cross-document listener isolation)
+        // ("Event-dispatch-other-document", "requires multi-document"),
         // Event-dispatch-throwing-multiple-globals
         ("Event-dispatch-throwing-multiple-globals", "requires multi-globals"),
         // Event-dispatch-single-activation-behavior
         ("Event-dispatch-single-activation-behavior", "requires activation behavior"),
-        // Event-dispatch-target-moved/removed (needs live event dispatch mutation)
-        ("Event-dispatch-target-moved", "requires live dispatch mutation"),
-        ("Event-dispatch-target-removed", "requires live dispatch mutation"),
-        // Event-dispatch-handlers-changed (needs live handler update during dispatch)
-        ("Event-dispatch-handlers-changed", "requires live handler mutation"),
+        // Event-dispatch-target-moved/removed — propagation path is snapshot, arena nodes survive (unskip)
+        // ("Event-dispatch-target-moved", "requires live dispatch mutation"),
+        // ("Event-dispatch-target-removed", "requires live dispatch mutation"),
+        // Event-dispatch-handlers-changed — panics on BorrowMutError when addEventListener called during dispatch
+        ("Event-dispatch-handlers-changed", "BorrowMutError: addEventListener during dispatch borrows EVENT_LISTENERS"),
         // Event-dispatch-detached-input-and-change
         ("Event-dispatch-detached-input-and-change", "requires input events"),
         // focus/pointer/mouse events (need specific event types)
@@ -550,9 +550,9 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("EventListener-invoke-legacy", "requires TransitionEvent/AnimationEvent constructors"),
         // Event-stopImmediatePropagation (test file has no test content captured)
         ("Event-stopImmediatePropagation.html", "requires full StopImmediatePropagation spec"),
-        // Event-dispatch-bubbles-true/false — needs window event target + cross-document dispatch
-        ("Event-dispatch-bubbles-true", "requires window event target and cross-document dispatch"),
-        ("Event-dispatch-bubbles-false", "requires window event target and cross-document dispatch"),
+        // Event-dispatch-bubbles-true/false — now supported (cross-document listener isolation + window check)
+        // ("Event-dispatch-bubbles-true", "requires window event target and cross-document dispatch"),
+        // ("Event-dispatch-bubbles-false", "requires window event target and cross-document dispatch"),
         // Event-dispatch-reenter — now supported (window participates in event propagation)
         // Event-dispatch-listener-order (window listener ordering)
         ("Event-dispatch-listener-order", "requires window event target"),
@@ -585,11 +585,11 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Event-stopPropagation-cancel-bubbling", "requires Event constructor"),
         // Event-dispatch-throwing
         ("Event-dispatch-throwing", "requires window.onerror"),
-        // Event-dispatch-omitted-capture (needs window EventTarget, initEvent)
-        ("Event-dispatch-omitted-capture", "requires window EventTarget and initEvent"),
-        // Event-dispatch-multiple-cancelBubble/stopPropagation
-        ("Event-dispatch-multiple-cancelBubble", "requires cancelBubble during propagation"),
-        ("Event-dispatch-multiple-stopPropagation", "requires stopPropagation during propagation"),
+        // Event-dispatch-omitted-capture — unskipped: window now participates in document dispatch
+        // ("Event-dispatch-omitted-capture", "requires window EventTarget and initEvent"),
+        // Event-dispatch-multiple-cancelBubble/stopPropagation — unskipped: window propagation enabled
+        // ("Event-dispatch-multiple-cancelBubble", "requires cancelBubble during propagation"),
+        // ("Event-dispatch-multiple-stopPropagation", "requires stopPropagation during propagation"),
         // NodeList-static-length-getter-tampered — performance test, too slow for interpreter
         ("NodeList-static-length-getter-tampered", "performance test, too slow for interpreter"),
         // createDocument/createHTMLDocument with null browsing context — requires iframes

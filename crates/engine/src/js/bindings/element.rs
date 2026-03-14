@@ -1005,11 +1005,13 @@ impl JsElement {
             .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
             .clone();
 
+        let listener_key = (Rc::as_ptr(&el.tree) as usize, node_id);
+
         EVENT_LISTENERS.with(|el| {
             let rc = el.borrow();
             let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
             let mut map = listeners_rc.borrow_mut();
-            let entries = map.entry(node_id).or_insert_with(Vec::new);
+            let entries = map.entry(listener_key).or_insert_with(Vec::new);
 
             // Check for duplicates: same event_type + same callback object (by pointer) + same capture
             let duplicate = entries.iter().any(|entry| {
@@ -1067,11 +1069,13 @@ impl JsElement {
             .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: callback is not an object").into()))?
             .clone();
 
+        let listener_key = (Rc::as_ptr(&el.tree) as usize, node_id);
+
         EVENT_LISTENERS.with(|el| {
             let rc = el.borrow();
             let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
             let mut map = listeners_rc.borrow_mut();
-            if let Some(entries) = map.get_mut(&node_id) {
+            if let Some(entries) = map.get_mut(&listener_key) {
                 entries.retain(|entry| {
                     !(entry.event_type == event_type
                         && entry.capture == capture
@@ -1079,7 +1083,7 @@ impl JsElement {
                 });
                 // Clean up empty vec
                 if entries.is_empty() {
-                    map.remove(&node_id);
+                    map.remove(&listener_key);
                 }
             }
         });
@@ -1103,6 +1107,7 @@ impl JsElement {
             .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not an Element").into()))?;
         let target_node_id = el.node_id;
         let tree = el.tree.clone();
+        let tree_scope = Rc::as_ptr(&tree) as usize;
 
         let event_val = args
             .first()
@@ -1189,7 +1194,17 @@ impl JsElement {
         let include_window = {
             let tree_ref = tree.borrow();
             if let Some(&root_id) = propagation_path.first() {
-                matches!(tree_ref.get_node(root_id).data, NodeData::Document)
+                if matches!(tree_ref.get_node(root_id).data, NodeData::Document) {
+                    // Only include window for the global document, not created documents
+                    DOM_TREE.with(|cell| {
+                        cell.borrow()
+                            .as_ref()
+                            .map(|global| Rc::ptr_eq(&tree, global))
+                            .unwrap_or(false)
+                    })
+                } else {
+                    false
+                }
             } else {
                 false
             }
@@ -1248,7 +1263,7 @@ impl JsElement {
             Self::set_event_prop(&event_obj, "currentTarget", window_val, ctx)?;
 
             let should_stop = invoke_listeners_for_node(
-                WINDOW_LISTENER_ID, &event_type, &event_obj, &event_val, true, false, ctx,
+                (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, true, false, ctx,
             )?;
             if should_stop {
                 return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
@@ -1263,7 +1278,7 @@ impl JsElement {
             Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
 
             let should_stop = Self::invoke_listeners_for_node(
-                node_id, &event_type, &event_obj, &event_val, true, false, ctx,
+                (tree_scope, node_id), &event_type, &event_obj, &event_val, true, false, ctx,
             )?;
             if should_stop {
                 return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
@@ -1276,7 +1291,7 @@ impl JsElement {
 
         // First: capture listeners at target
         let should_stop = Self::invoke_listeners_for_node(
-            target_node_id, &event_type, &event_obj, &event_val, true, false, ctx,
+            (tree_scope, target_node_id), &event_type, &event_obj, &event_val, true, false, ctx,
         )?;
         if should_stop {
             return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
@@ -1285,7 +1300,7 @@ impl JsElement {
         // Second: non-capture listeners at target
         set_phase(&event_obj, Some(target_node_id), 2, is_custom_event);
         let should_stop = Self::invoke_listeners_for_node(
-            target_node_id, &event_type, &event_obj, &event_val, false, false, ctx,
+            (tree_scope, target_node_id), &event_type, &event_obj, &event_val, false, false, ctx,
         )?;
         if should_stop {
             return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
@@ -1301,7 +1316,7 @@ impl JsElement {
                 Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
 
                 let should_stop = Self::invoke_listeners_for_node(
-                    node_id, &event_type, &event_obj, &event_val, false, false, ctx,
+                    (tree_scope, node_id), &event_type, &event_obj, &event_val, false, false, ctx,
                 )?;
                 if should_stop {
                     return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
@@ -1325,7 +1340,7 @@ impl JsElement {
                 Self::set_event_prop(&event_obj, "currentTarget", window_val, ctx)?;
 
                 let should_stop = invoke_listeners_for_node(
-                    WINDOW_LISTENER_ID, &event_type, &event_obj, &event_val, false, false, ctx,
+                    (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, false, false, ctx,
                 )?;
                 if should_stop {
                     return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
@@ -1338,7 +1353,7 @@ impl JsElement {
 
     /// Delegates to the standalone `invoke_listeners_for_node` function.
     fn invoke_listeners_for_node(
-        node_id: NodeId,
+        listener_key: (usize, NodeId),
         event_type: &str,
         event_obj: &JsObject,
         event_val: &JsValue,
@@ -1346,7 +1361,7 @@ impl JsElement {
         at_target: bool,
         ctx: &mut Context,
     ) -> JsResult<bool> {
-        invoke_listeners_for_node(node_id, event_type, event_obj, event_val, capture_only, at_target, ctx)
+        invoke_listeners_for_node(listener_key, event_type, event_obj, event_val, capture_only, at_target, ctx)
     }
 
     /// Set an own data property on the event object, overriding any prototype accessor.
@@ -1398,7 +1413,7 @@ impl JsElement {
 ///
 /// Returns true if propagation was stopped and dispatch should halt.
 pub(crate) fn invoke_listeners_for_node(
-    node_id: NodeId,
+    listener_key: (usize, NodeId),
     event_type: &str,
     event_obj: &JsObject,
     event_val: &JsValue,
@@ -1411,7 +1426,7 @@ pub(crate) fn invoke_listeners_for_node(
         let rc = el.borrow();
         let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
         let map = listeners_rc.borrow();
-        match map.get(&node_id) {
+        match map.get(&listener_key) {
             Some(entries) => entries
                 .iter()
                 .filter(|entry| {
@@ -1438,12 +1453,12 @@ pub(crate) fn invoke_listeners_for_node(
                 let rc = el.borrow();
                 let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
                 let mut map = listeners_rc.borrow_mut();
-                if let Some(entries) = map.get_mut(&node_id) {
+                if let Some(entries) = map.get_mut(&listener_key) {
                     entries.retain(|entry| {
                         !(entry.event_type == event_type && entry.callback == *callback && entry.once)
                     });
                     if entries.is_empty() {
-                        map.remove(&node_id);
+                        map.remove(&listener_key);
                     }
                 }
             });
