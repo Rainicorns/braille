@@ -88,9 +88,7 @@ impl JsClassList {
     /// Per spec, sets to empty string when all classes are removed (does not remove the attribute).
     fn set_classes(&self, classes: Vec<String>) {
         let class_str = classes.join(" ");
-        self.tree
-            .borrow_mut()
-            .set_attribute(self.node_id, "class", &class_str);
+        super::mutation_observer::set_attribute_with_observer(&self.tree, self.node_id, "class", &class_str);
     }
 
     /// Native implementation of classList.add(...classNames)
@@ -363,10 +361,7 @@ impl JsClassList {
             .map(|s| s.to_std_string_escaped())
             .unwrap_or_default();
 
-        class_list
-            .tree
-            .borrow_mut()
-            .set_attribute(class_list.node_id, "class", &value);
+        super::mutation_observer::set_attribute_with_observer(&class_list.tree, class_list.node_id, "class", &value);
         Ok(JsValue::undefined())
     }
 

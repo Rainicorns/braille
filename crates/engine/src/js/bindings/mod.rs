@@ -19,6 +19,7 @@ pub(crate) mod computed_style;
 pub(crate) mod character_data;
 pub(crate) mod collections;
 pub(crate) mod dom_parser;
+pub(crate) mod mutation_observer;
 
 pub(crate) use document::register_document;
 

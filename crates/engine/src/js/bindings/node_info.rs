@@ -174,7 +174,7 @@ fn set_node_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
         }
     }
 
-    el.tree.borrow_mut().character_data_set(el.node_id, &data);
+    super::mutation_observer::character_data_set_with_observer(&el.tree, el.node_id, &data);
     Ok(JsValue::undefined())
 }
 

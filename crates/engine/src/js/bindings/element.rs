@@ -131,6 +131,7 @@ thread_local! {
 // ---------------------------------------------------------------------------
 thread_local! {
     /// Maps (tree_ptr, iframe_node_id) -> the iframe's content document DomTree.
+    #[allow(clippy::type_complexity)]
     pub(crate) static IFRAME_CONTENT_DOCS: RefCell<Option<Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>>> = const { RefCell::new(None) };
 }
 
@@ -810,7 +811,7 @@ impl JsElement {
                 } else {
                     val.to_string(ctx)?.to_std_string_escaped()
                 };
-                el.tree.borrow_mut().character_data_set(el.node_id, &data);
+                super::mutation_observer::character_data_set_with_observer(&el.tree, el.node_id, &data);
                 return Ok(JsValue::undefined());
             }
         }
@@ -828,14 +829,30 @@ impl JsElement {
             }
         };
 
+        // Capture existing children for MutationObserver
+        let removed_children: Vec<crate::dom::NodeId> = el.tree.borrow().get_node(el.node_id).children.clone();
+
         let mut tree = el.tree.borrow_mut();
         // Remove all children
         tree.clear_children(el.node_id);
 
         // If value is non-empty, create a single Text child
-        if let Some(text_str) = text {
+        let added_id = if let Some(text_str) = text {
             let text_id = tree.create_text(&text_str);
             tree.append_child(el.node_id, text_id);
+            Some(text_id)
+        } else {
+            None
+        };
+
+        drop(tree);
+
+        // Queue MutationObserver childList record
+        let added_ids = added_id.map(|id| vec![id]).unwrap_or_default();
+        if !removed_children.is_empty() || !added_ids.is_empty() {
+            super::mutation_observer::queue_childlist_mutation(
+                &el.tree, el.node_id, added_ids, removed_children, None, None,
+            );
         }
 
         Ok(JsValue::undefined())
@@ -969,7 +986,30 @@ impl JsElement {
             .ok_or_else(|| JsError::from_opaque(js_string!("remove: `this` is not an Element").into()))?;
         let node_id = el.node_id;
         let tree = el.tree.clone();
+
+        // Capture parent and siblings for MutationObserver
+        let parent_info = {
+            let t = tree.borrow();
+            if let Some(parent_id) = t.get_node(node_id).parent {
+                let parent_children = &t.get_node(parent_id).children;
+                let pos = parent_children.iter().position(|&c| c == node_id);
+                let prev = pos.and_then(|p| if p > 0 { Some(parent_children[p - 1]) } else { None });
+                let next = pos.and_then(|p| parent_children.get(p + 1).copied());
+                Some((parent_id, prev, next))
+            } else {
+                None
+            }
+        };
+
         tree.borrow_mut().remove_from_parent(node_id);
+
+        // Queue MutationObserver record
+        if let Some((parent_id, prev_sib, next_sib)) = parent_info {
+            super::mutation_observer::queue_childlist_mutation(
+                &tree, parent_id, vec![], vec![node_id], prev_sib, next_sib,
+            );
+        }
+
         Ok(JsValue::undefined())
     }
 
@@ -1685,6 +1725,7 @@ pub(crate) fn report_listener_error(err: JsError, ctx: &mut Context) {
             Ok(v) if !v.is_undefined() && !v.is_null() => v,
             _ => return None,
         };
+        #[allow(clippy::map_clone)]
         val.as_object().filter(|o| o.is_callable()).map(|o| o.clone())
     });
 

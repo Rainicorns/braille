@@ -65,6 +65,7 @@ impl Engine {
             if !script_content.trim().is_empty() {
                 // Execute the script; let errors propagate as panics (fail fast)
                 runtime.eval(&script_content).unwrap();
+                runtime.notify_mutation_observers();
             }
         }
 
@@ -193,12 +194,14 @@ impl Engine {
                 ScriptDescriptor::Inline(text) => {
                     if !text.trim().is_empty() {
                         runtime.eval(text).unwrap();
+                        runtime.notify_mutation_observers();
                     }
                 }
                 ScriptDescriptor::External(url) => {
                     if let Some(script_content) = fetched.get(url) {
                         if !script_content.trim().is_empty() {
                             runtime.eval(script_content).unwrap();
+                            runtime.notify_mutation_observers();
                         }
                     }
                     // Skip if URL not found in fetched map
@@ -249,8 +252,11 @@ impl Engine {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 runtime.eval(&code)
             })) {
-                Ok(Ok(_)) => {}
+                Ok(Ok(_)) => {
+                    runtime.notify_mutation_observers();
+                }
                 Ok(Err(e)) => {
+                    runtime.notify_mutation_observers();
                     errors.push(format!("{:?}", e));
                 }
                 Err(panic_err) => {

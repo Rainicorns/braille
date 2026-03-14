@@ -92,7 +92,7 @@ fn testharness_preamble() -> String {
         var t = {
             name: name || "(unnamed)",
             step: function(f) {
-                return function() { return f.apply(t, arguments); };
+                f.apply(t, [t]);
             },
             step_func: function(f) {
                 return function() { return f.apply(t, arguments); };
@@ -307,10 +307,11 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("moveBefore-iframe", "requires moveBefore with iframes"),
         ("cross-doc", "requires cross-document"),
         ("adoption", "requires cross-document adoption"),
-        // MutationObserver
-        ("MutationObserver", "requires MutationObserver"),
-        ("mutation-observer", "requires MutationObserver"),
-        ("mutationobserver", "requires MutationObserver"),
+        // MutationObserver — specific tests that need features beyond basic MutationObserver
+        ("MutationObserver-document", "requires parser-time mutations"),
+        ("MutationObserver-textContent", "requires microtask queue (Promise.resolve)"),
+        ("MutationObserver-cross-realm", "requires cross-realm iframe + frames[N].Function"),
+        ("mutation-observer", "requires moveBefore"),
         // Range / Selection
         ("Range", "requires Range API"),
         ("range", "requires Range API"),
@@ -463,7 +464,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("NodeList-live-mutations", "requires NodeList interface"),
         // NamedNodeMap / attributes interface
         ("attributes-namednodemap", "requires NamedNodeMap"),
-        ("attributes.html", "requires NamedNodeMap"),
+        ("/attributes.html", "requires NamedNodeMap"),
         // Document-createAttribute — Attr interface implemented (unskip)
         // ("Document-createAttribute", "requires Attr interface"),
         // Document-createComment.html — now implemented

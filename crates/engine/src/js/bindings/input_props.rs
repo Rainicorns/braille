@@ -110,7 +110,7 @@ fn set_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<Js
             }
         }
     } else {
-        tree_rc.borrow_mut().set_attribute(node_id, "value", &val);
+        super::mutation_observer::set_attribute_with_observer(&tree_rc, node_id, "value", &val);
     }
 
     Ok(JsValue::undefined())
@@ -144,9 +144,9 @@ fn set_checked(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult
     let val = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
     if val {
-        el.tree.borrow_mut().set_attribute(el.node_id, "checked", "");
+        super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "checked", "");
     } else {
-        el.tree.borrow_mut().remove_attribute(el.node_id, "checked");
+        super::mutation_observer::remove_attribute_with_observer(&el.tree, el.node_id, "checked");
     }
 
     Ok(JsValue::undefined())
@@ -186,7 +186,7 @@ fn set_type(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    el.tree.borrow_mut().set_attribute(el.node_id, "type", &val);
+    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "type", &val);
     Ok(JsValue::undefined())
 }
 
@@ -218,9 +218,9 @@ fn set_disabled(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResul
     let val = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
     if val {
-        el.tree.borrow_mut().set_attribute(el.node_id, "disabled", "");
+        super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "disabled", "");
     } else {
-        el.tree.borrow_mut().remove_attribute(el.node_id, "disabled");
+        super::mutation_observer::remove_attribute_with_observer(&el.tree, el.node_id, "disabled");
     }
 
     Ok(JsValue::undefined())
@@ -260,7 +260,7 @@ fn set_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    el.tree.borrow_mut().set_attribute(el.node_id, "name", &val);
+    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "name", &val);
     Ok(JsValue::undefined())
 }
 
@@ -298,7 +298,7 @@ fn set_placeholder(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRes
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    el.tree.borrow_mut().set_attribute(el.node_id, "placeholder", &val);
+    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "placeholder", &val);
     Ok(JsValue::undefined())
 }
 

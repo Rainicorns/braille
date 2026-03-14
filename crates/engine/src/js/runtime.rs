@@ -65,6 +65,9 @@ impl JsRuntime {
             *cell.borrow_mut() = Some(creation_time);
         });
 
+        // Initialize MutationObserver state
+        bindings::mutation_observer::init_mutation_observer_state();
+
         // Register DOMImplementation global constructor (for instanceof) — must be before register_document
         bindings::document::register_domimplementation(&mut context);
 
@@ -108,6 +111,10 @@ impl JsRuntime {
         // Register EventTarget class (standalone constructor: new EventTarget())
         context.register_global_class::<bindings::event_target::JsEventTarget>().unwrap();
 
+        // Register MutationObserver and MutationRecord globals
+        bindings::mutation_observer::register_mutation_observer_global(&mut context);
+        bindings::mutation_observer::register_mutation_record_global(&mut context);
+
         // Add composedPath() to Event.prototype and CustomEvent.prototype
         Self::register_composed_path(&mut context);
 
@@ -132,7 +139,7 @@ impl JsRuntime {
                 );
 
                 // Copy UIEvent subclass constructors to window so window["MouseEvent"] etc. work
-                for ctor_name in &["MouseEvent", "KeyboardEvent", "WheelEvent", "FocusEvent", "Event", "CustomEvent"] {
+                for ctor_name in &["MouseEvent", "KeyboardEvent", "WheelEvent", "FocusEvent", "Event", "CustomEvent", "MutationObserver", "MutationRecord"] {
                     let ctor_val = global.get(js_string!(*ctor_name), &mut context)
                         .expect("event constructor should be registered");
                     let _ = window_obj.define_property_or_throw(
@@ -1486,6 +1493,11 @@ impl JsRuntime {
     /// Evaluates a JS source string and returns the result.
     pub fn eval(&mut self, code: &str) -> JsResult<JsValue> {
         self.context.eval(Source::from_bytes(code))
+    }
+
+    /// Deliver pending MutationObserver records to their callbacks.
+    pub fn notify_mutation_observers(&mut self) {
+        bindings::mutation_observer::notify_mutation_observers(&mut self.context);
     }
 
     /// Returns a reference to the shared DomTree.

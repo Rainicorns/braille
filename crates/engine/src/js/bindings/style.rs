@@ -120,7 +120,7 @@ fn set_property(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
     }
 
     let serialized = serialize_style(&props);
-    tree.borrow_mut().set_attribute(node_id, "style", &serialized);
+    super::mutation_observer::set_attribute_with_observer(&tree, node_id, "style", &serialized);
 
     Ok(JsValue::undefined())
 }
@@ -155,9 +155,9 @@ fn remove_property(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRes
 
     let serialized = serialize_style(&props);
     if serialized.is_empty() {
-        tree.borrow_mut().remove_attribute(node_id, "style");
+        super::mutation_observer::remove_attribute_with_observer(&tree, node_id, "style");
     } else {
-        tree.borrow_mut().set_attribute(node_id, "style", &serialized);
+        super::mutation_observer::set_attribute_with_observer(&tree, node_id, "style", &serialized);
     }
 
     Ok(JsValue::from(js_string!(old_value)))
@@ -196,9 +196,9 @@ fn set_css_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
     let tree = style.tree.clone();
 
     if value.is_empty() {
-        tree.borrow_mut().remove_attribute(node_id, "style");
+        super::mutation_observer::remove_attribute_with_observer(&tree, node_id, "style");
     } else {
-        tree.borrow_mut().set_attribute(node_id, "style", &value);
+        super::mutation_observer::set_attribute_with_observer(&tree, node_id, "style", &value);
     }
 
     Ok(JsValue::undefined())

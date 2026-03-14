@@ -40,18 +40,30 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
     let node_id = el.node_id;
     let tree_rc = el.tree.clone();
 
+    // Capture existing children for MutationObserver
+    let removed_children: Vec<NodeId> = tree_rc.borrow().get_node(node_id).children.clone();
+
     let wrapper = format!("<html><body>{}</body></html>", html_string);
     let temp_tree_rc = crate::html::parse_html(&wrapper);
     let temp_tree = temp_tree_rc.borrow();
 
     tree_rc.borrow_mut().clear_children(node_id);
 
+    let mut added_ids: Vec<NodeId> = Vec::new();
     if let Some(temp_body) = temp_tree.body() {
         let temp_body_children: Vec<NodeId> = temp_tree.get_node(temp_body).children.clone();
         for &child_id in &temp_body_children {
             let new_id = tree_rc.borrow_mut().import_subtree(&temp_tree, child_id);
             tree_rc.borrow_mut().append_child(node_id, new_id);
+            added_ids.push(new_id);
         }
+    }
+
+    // Queue MutationObserver childList record
+    if !removed_children.is_empty() || !added_ids.is_empty() {
+        super::mutation_observer::queue_childlist_mutation(
+            &tree_rc, node_id, added_ids, removed_children, None, None,
+        );
     }
 
     Ok(JsValue::undefined())

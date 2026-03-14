@@ -145,7 +145,7 @@ fn set_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
 
     // Per spec, lowercase the name for HTML elements in HTML documents
     let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
-    el.tree.borrow_mut().set_attribute(el.node_id, &name, &value);
+    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, &name, &value);
     Ok(JsValue::undefined())
 }
 
@@ -166,7 +166,7 @@ fn remove_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
 
     // Per spec, lowercase the name for HTML elements in HTML documents
     let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
-    el.tree.borrow_mut().remove_attribute(el.node_id, &name);
+    super::mutation_observer::remove_attribute_with_observer(&el.tree, el.node_id, &name);
     Ok(JsValue::undefined())
 }
 
@@ -263,7 +263,7 @@ fn set_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    el.tree.borrow_mut().set_attribute_ns(el.node_id, &namespace, &qualified_name, &value);
+    super::mutation_observer::set_attribute_ns_with_observer(&el.tree, el.node_id, &namespace, &qualified_name, &value);
     Ok(JsValue::undefined())
 }
 
@@ -320,7 +320,7 @@ fn remove_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    el.tree.borrow_mut().remove_attribute_ns(el.node_id, &namespace, &local_name);
+    super::mutation_observer::remove_attribute_ns_with_observer(&el.tree, el.node_id, &namespace, &local_name);
     Ok(JsValue::undefined())
 }
 
@@ -397,7 +397,7 @@ fn set_id(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    el.tree.borrow_mut().set_attribute(el.node_id, "id", &value);
+    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "id", &value);
     Ok(JsValue::undefined())
 }
 
@@ -432,7 +432,7 @@ fn set_class_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    el.tree.borrow_mut().set_attribute(el.node_id, "class", &value);
+    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "class", &value);
     Ok(JsValue::undefined())
 }
 

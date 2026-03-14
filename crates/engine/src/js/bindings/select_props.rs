@@ -180,9 +180,9 @@ fn set_option_selected(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> 
     }
 
     if val {
-        tree_rc.borrow_mut().set_attribute(node_id, "selected", "");
+        super::mutation_observer::set_attribute_with_observer(&tree_rc, node_id, "selected", "");
     } else {
-        tree_rc.borrow_mut().remove_attribute(node_id, "selected");
+        super::mutation_observer::remove_attribute_with_observer(&tree_rc, node_id, "selected");
     }
 
     Ok(JsValue::undefined())

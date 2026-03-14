@@ -639,6 +639,86 @@ fn has_element_before(tree: &DomTree, parent_id: NodeId, ref_id: NodeId) -> bool
 // Perform the actual insertion after validation
 // ---------------------------------------------------------------------------
 
+/// Info about removal from old parent: (parent_id, prev_sibling, next_sibling).
+type RemovalInfo = Option<(NodeId, Option<NodeId>, Option<NodeId>)>;
+
+/// Capture the pre-state needed to fire MutationObserver childList records
+/// for an insertion (insertBefore, appendChild, append, prepend, etc.).
+///
+/// Returns (added_ids, removal_info, prev_sibling, next_sibling).
+fn capture_insert_state(
+    tree: &Rc<RefCell<DomTree>>,
+    parent_id: NodeId,
+    node_id: NodeId,
+    child_ref: Option<NodeId>,
+) -> (Vec<NodeId>, RemovalInfo, Option<NodeId>, Option<NodeId>) {
+    let t = tree.borrow();
+    let is_fragment = matches!(t.get_node(node_id).data, NodeData::DocumentFragment);
+    let added = if is_fragment {
+        t.get_node(node_id).children.clone()
+    } else {
+        vec![node_id]
+    };
+
+    // Capture removal from old parent if node is being moved
+    let old_parent = t.get_node(node_id).parent;
+    let removal_info = if let Some(old_pid) = old_parent {
+        if !is_fragment {
+            let old_children = &t.get_node(old_pid).children;
+            let pos = old_children.iter().position(|&c| c == node_id);
+            let old_prev = pos.and_then(|p| if p > 0 { Some(old_children[p - 1]) } else { None });
+            let old_next = pos.and_then(|p| old_children.get(p + 1).copied());
+            Some((old_pid, old_prev, old_next))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Capture siblings at insertion point
+    let parent_children = &t.get_node(parent_id).children;
+    let (ps, ns) = if let Some(ref_child) = child_ref {
+        let pos = parent_children.iter().position(|&c| c == ref_child);
+        let prev = pos.and_then(|p| if p > 0 { Some(parent_children[p - 1]) } else { None });
+        // Filter out the node being moved (if it's the prev sibling)
+        let prev = prev.filter(|&p| p != node_id);
+        (prev, Some(ref_child))
+    } else {
+        // Appending at end
+        let prev = parent_children.last().copied();
+        // Filter out the node being moved
+        let prev = prev.filter(|&p| p != node_id);
+        (prev, None)
+    };
+
+    (added, removal_info, ps, ns)
+}
+
+/// Fire MutationObserver childList records after an insertion.
+fn fire_insert_records(
+    tree: &Rc<RefCell<DomTree>>,
+    parent_id: NodeId,
+    added_ids: &[NodeId],
+    removal_info: RemovalInfo,
+    prev_sib: Option<NodeId>,
+    next_sib: Option<NodeId>,
+) {
+    // Queue removal from old parent
+    if let Some((old_pid, old_prev, old_next)) = removal_info {
+        super::mutation_observer::queue_childlist_mutation(
+            tree, old_pid, vec![], vec![added_ids[0]], old_prev, old_next,
+        );
+    }
+
+    // Queue addition to new parent
+    if !added_ids.is_empty() {
+        super::mutation_observer::queue_childlist_mutation(
+            tree, parent_id, added_ids.to_vec(), vec![], prev_sib, next_sib,
+        );
+    }
+}
+
 pub(crate) fn do_insert(
     tree: &Rc<RefCell<DomTree>>,
     parent_id: NodeId,
@@ -790,7 +870,13 @@ fn insert_before(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResu
     // Pre-insertion validation (node is now in same tree after adoption)
     validate_pre_insert(&tree.borrow(), parent_id, new_node_id, ref_id, None)?;
 
+    // Capture pre-state for MutationObserver
+    let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, new_node_id, ref_id);
+
     do_insert(&tree, parent_id, new_node_id, ref_id);
+
+    // Queue MutationObserver records
+    fire_insert_records(&tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
 
     Ok(new_node_arg.clone())
 }
@@ -868,7 +954,54 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
     // Pre-replace validation (new child is now in same tree after adoption)
     validate_pre_replace(&tree.borrow(), parent_id, new_child_id, old_child_id, None)?;
 
+    // Capture pre-state for MutationObserver
+    let (added_ids, removal_info, prev_sib, next_sib) = {
+        let t = tree.borrow();
+        let is_fragment = matches!(t.get_node(new_child_id).data, NodeData::DocumentFragment);
+        let added = if is_fragment {
+            t.get_node(new_child_id).children.clone()
+        } else {
+            vec![new_child_id]
+        };
+
+        // Capture removal from old parent if new_child is being moved
+        let old_parent = t.get_node(new_child_id).parent;
+        let removal = if let Some(old_pid) = old_parent {
+            if !is_fragment && old_pid != parent_id {
+                let old_children = &t.get_node(old_pid).children;
+                let pos = old_children.iter().position(|&c| c == new_child_id);
+                let old_prev = pos.and_then(|p| if p > 0 { Some(old_children[p - 1]) } else { None });
+                let old_next = pos.and_then(|p| old_children.get(p + 1).copied());
+                Some((old_pid, old_prev, old_next))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Siblings around the old_child being replaced
+        let parent_children = &t.get_node(parent_id).children;
+        let pos = parent_children.iter().position(|&c| c == old_child_id);
+        let ps = pos.and_then(|p| if p > 0 { Some(parent_children[p - 1]) } else { None });
+        let ns = pos.and_then(|p| parent_children.get(p + 1).copied());
+
+        (added, removal, ps, ns)
+    };
+
     do_replace(&tree, parent_id, new_child_id, old_child_id);
+
+    // Queue removal of new_child from old parent (if moved)
+    if let Some((old_pid, old_prev, old_next)) = removal_info {
+        super::mutation_observer::queue_childlist_mutation(
+            &tree, old_pid, vec![], vec![new_child_id], old_prev, old_next,
+        );
+    }
+
+    // Queue the replace record (both added and removed on the parent)
+    super::mutation_observer::queue_childlist_mutation(
+        &tree, parent_id, added_ids, vec![old_child_id], prev_sib, next_sib,
+    );
 
     let js_obj = get_or_create_js_element(old_child_id, tree, ctx)?;
     Ok(js_obj.into())
@@ -905,7 +1038,7 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
     }
     let child_id = child.node_id;
 
-    {
+    let (prev_sib, next_sib) = {
         let t = tree.borrow();
         let parent_node = t.get_node(parent_id);
         if !parent_node.children.contains(&child_id) {
@@ -913,9 +1046,16 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
                 "The node to be removed is not a child of this node",
             ));
         }
-    }
+        let parent_children = &parent_node.children;
+        let pos = parent_children.iter().position(|&c| c == child_id);
+        let prev = pos.and_then(|p| if p > 0 { Some(parent_children[p - 1]) } else { None });
+        let next = pos.and_then(|p| parent_children.get(p + 1).copied());
+        (prev, next)
+    };
 
     tree.borrow_mut().remove_child(parent_id, child_id);
+
+    super::mutation_observer::queue_childlist_mutation(&tree, parent_id, vec![], vec![child_id], prev_sib, next_sib);
 
     let js_obj = get_or_create_js_element(child_id, tree, ctx)?;
     Ok(js_obj.into())
@@ -1045,7 +1185,9 @@ fn append(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
     let node_ids = convert_nodes_from_args(args, &tree, ctx)?;
     for nid in node_ids {
         validate_pre_insert(&tree.borrow(), parent_id, nid, None, None)?;
+        let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, None);
         do_insert(&tree, parent_id, nid, None);
+        fire_insert_records(&tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1065,7 +1207,9 @@ fn prepend(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVa
     let original_first_child = tree.borrow().first_child(parent_id);
     for nid in node_ids {
         validate_pre_insert(&tree.borrow(), parent_id, nid, original_first_child, None)?;
+        let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, original_first_child);
         do_insert(&tree, parent_id, nid, original_first_child);
+        fire_insert_records(&tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1086,9 +1230,18 @@ fn replace_children(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     for &nid in &node_ids {
         validate_pre_insert(&tree.borrow(), parent_id, nid, None, None)?;
     }
+    // Capture removed children for MutationObserver
+    let removed_children: Vec<NodeId> = tree.borrow().get_node(parent_id).children.clone();
     tree.borrow_mut().clear_children(parent_id);
+    if !removed_children.is_empty() {
+        super::mutation_observer::queue_childlist_mutation(
+            &tree, parent_id, vec![], removed_children, None, None,
+        );
+    }
     for nid in node_ids {
+        let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, None);
         do_insert(&tree, parent_id, nid, None);
+        fire_insert_records(&tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1134,6 +1287,9 @@ fn child_node_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsR
         }
     };
 
+    // Capture the previous sibling before the insertion point for MutationObserver
+    let mo_prev_sib = viable_prev;
+
     for &nid in &node_ids {
         tree.borrow_mut().remove_from_parent(nid);
     }
@@ -1143,11 +1299,18 @@ fn child_node_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsR
         None => tree.borrow().first_child(parent_id),
     };
 
-    for nid in node_ids {
+    for nid in &node_ids {
         match reference {
-            Some(ref_id) => tree.borrow_mut().insert_child_before(parent_id, nid, ref_id),
-            None => tree.borrow_mut().append_child(parent_id, nid),
+            Some(ref_id) => tree.borrow_mut().insert_child_before(parent_id, *nid, ref_id),
+            None => tree.borrow_mut().append_child(parent_id, *nid),
         }
+    }
+
+    // Queue MutationObserver record for the batch insertion
+    if !node_ids.is_empty() {
+        super::mutation_observer::queue_childlist_mutation(
+            &tree, parent_id, node_ids, vec![], mo_prev_sib, reference,
+        );
     }
 
     Ok(JsValue::undefined())
@@ -1194,15 +1357,26 @@ fn child_node_after(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
         }
     };
 
+    // Capture MutationObserver siblings: prev is this_id, next is viable_next
+    let mo_prev_sib = Some(this_id);
+    let mo_next_sib = viable_next;
+
     for &nid in &node_ids {
         tree.borrow_mut().remove_from_parent(nid);
     }
 
-    for nid in node_ids {
+    for nid in &node_ids {
         match viable_next {
-            Some(ref_id) => tree.borrow_mut().insert_child_before(parent_id, nid, ref_id),
-            None => tree.borrow_mut().append_child(parent_id, nid),
+            Some(ref_id) => tree.borrow_mut().insert_child_before(parent_id, *nid, ref_id),
+            None => tree.borrow_mut().append_child(parent_id, *nid),
         }
+    }
+
+    // Queue MutationObserver record
+    if !node_ids.is_empty() {
+        super::mutation_observer::queue_childlist_mutation(
+            &tree, parent_id, node_ids, vec![], mo_prev_sib, mo_next_sib,
+        );
     }
 
     Ok(JsValue::undefined())
@@ -1246,18 +1420,33 @@ fn child_node_replace_with(this: &JsValue, args: &[JsValue], ctx: &mut Context) 
         }
     };
 
+    // Capture MutationObserver siblings around this_id
+    let (mo_prev_sib, mo_next_sib) = {
+        let t = tree.borrow();
+        let parent_children = t.children(parent_id);
+        let pos = parent_children.iter().position(|&c| c == this_id);
+        let ps = pos.and_then(|p| if p > 0 { Some(parent_children[p - 1]) } else { None });
+        let ns = viable_next;
+        (ps, ns)
+    };
+
     tree.borrow_mut().remove_from_parent(this_id);
 
     for &nid in &node_ids {
         tree.borrow_mut().remove_from_parent(nid);
     }
 
-    for nid in node_ids {
+    for nid in &node_ids {
         match viable_next {
-            Some(ref_id) => tree.borrow_mut().insert_child_before(parent_id, nid, ref_id),
-            None => tree.borrow_mut().append_child(parent_id, nid),
+            Some(ref_id) => tree.borrow_mut().insert_child_before(parent_id, *nid, ref_id),
+            None => tree.borrow_mut().append_child(parent_id, *nid),
         }
     }
+
+    // Queue MutationObserver record: this_id removed, node_ids added
+    super::mutation_observer::queue_childlist_mutation(
+        &tree, parent_id, node_ids, vec![this_id], mo_prev_sib, mo_next_sib,
+    );
 
     Ok(JsValue::undefined())
 }
@@ -1456,7 +1645,9 @@ pub(crate) fn document_append(this: &JsValue, args: &[JsValue], ctx: &mut Contex
     let node_ids = convert_nodes_from_args(args, &tree, ctx)?;
     for nid in node_ids {
         validate_pre_insert(&tree.borrow(), doc_id, nid, None, None)?;
+        let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, None);
         do_insert(&tree, doc_id, nid, None);
+        fire_insert_records(&tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1475,7 +1666,9 @@ pub(crate) fn document_prepend(this: &JsValue, args: &[JsValue], ctx: &mut Conte
     let original_first_child = tree.borrow().first_child(doc_id);
     for nid in node_ids {
         validate_pre_insert(&tree.borrow(), doc_id, nid, original_first_child, None)?;
+        let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, original_first_child);
         do_insert(&tree, doc_id, nid, original_first_child);
+        fire_insert_records(&tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1494,9 +1687,17 @@ pub(crate) fn document_replace_children(this: &JsValue, args: &[JsValue], ctx: &
     for &nid in &node_ids {
         validate_pre_insert(&tree.borrow(), doc_id, nid, None, None)?;
     }
+    let removed_children: Vec<NodeId> = tree.borrow().get_node(doc_id).children.clone();
     tree.borrow_mut().clear_children(doc_id);
+    if !removed_children.is_empty() {
+        super::mutation_observer::queue_childlist_mutation(
+            &tree, doc_id, vec![], removed_children, None, None,
+        );
+    }
     for nid in node_ids {
+        let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, None);
         do_insert(&tree, doc_id, nid, None);
+        fire_insert_records(&tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }

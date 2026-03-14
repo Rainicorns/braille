@@ -13,7 +13,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 **Build quality:** Workspace lint configuration enforces `warnings = "deny"` and `clippy::all = "warn"`. Zero compiler warnings, zero clippy lints. `rustfmt.toml` configured (edition 2021, max_width 120).
 
-**WPT Phase 4 — ALL 5 AGENTS COMPLETE.** Event system enhancements: DOMHighResTimeStamp, UIEvent subclasses (MouseEvent/KeyboardEvent/WheelEvent/FocusEvent), handleEvent protocol, window as event target, standalone `new EventTarget()` constructor, composedPath(). **~15 new event test files passing.** Phase 3 also complete (attribute NS refactor, live HTMLCollection, querySelector unskip). Phase 2 also complete — all 5 fixable tests at 100%. **Post-phase fixes:** validate-and-extract namespace validation (createElementNS), createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count + implementation methods on created docs, createDocument doctype adoption (identity preservation), lenient NameStartChar ranges, `>` rejection in names, TypeError for invalid doctype arg. **Event dispatch edge cases:** cross-document listener isolation (ListenerMap key `(usize, NodeId)`), document-to-window bubble propagation, document.cloneNode, createEvent/getElementById on created documents — 8 new tests passing. **window.event + window.onerror:** CURRENT_EVENT thread-local tracks event during dispatch, `window.event` getter, `window.onerror` handler, error catching in listener invocations (per spec: other listeners still fire when one throws) — 2 new tests passing. **Basic iframe support:** IFRAME_CONTENT_DOCS thread-local, contentDocument/contentWindow getters, frames[] on window, crash test detection in WPT harness — 7 new tests passing (Node-appendChild 8→11, Node-removeChild 19→28, Node-isConnected 1→2, +4 new tests). **147/263 WPT tests passing.**
+**WPT Phase 5 — MutationObserver COMPLETE.** Full MutationObserver implementation: constructor, observe()/disconnect()/takeRecords(), MutationRecord global, attribute/characterData/childList mutation hooks across 14 binding files, record delivery after each script execution. 9 test files unskipped (7 pass, 2 fail only on Range API subtests), ParentNode-replaceChildren fixed (25/29→29/29). **155/263 WPT tests passing.** Phase 4 also complete: event system enhancements (DOMHighResTimeStamp, UIEvent subclasses, handleEvent, window event target, standalone EventTarget, composedPath()). Phase 3 also complete (attribute NS refactor, live HTMLCollection, querySelector unskip). Phase 2 also complete — all 5 fixable tests at 100%. **Post-phase fixes:** validate-and-extract namespace validation (createElementNS), createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count + implementation methods on created docs, createDocument doctype adoption (identity preservation), lenient NameStartChar ranges, `>` rejection in names, TypeError for invalid doctype arg. **Event dispatch edge cases:** cross-document listener isolation (ListenerMap key `(usize, NodeId)`), document-to-window bubble propagation, document.cloneNode, createEvent/getElementById on created documents — 8 new tests passing. **window.event + window.onerror:** CURRENT_EVENT thread-local tracks event during dispatch, `window.event` getter, `window.onerror` handler, error catching in listener invocations (per spec: other listeners still fire when one throws) — 2 new tests passing. **Basic iframe support:** IFRAME_CONTENT_DOCS thread-local, contentDocument/contentWindow getters, frames[] on window, crash test detection in WPT harness — 7 new tests passing.
 
 **Wave 2 completed tasks (13 total):**
 
@@ -56,7 +56,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 | Component | Gap |
 |-----------|-----|
-| WPT harness | **Phase 4 complete + event dispatch edge cases + window.event/onerror + basic iframe support** (147/263 passing). Phase 4 added event system enhancements (UIEvent subclasses, standalone EventTarget, window event target, handleEvent, DOMHighResTimeStamp). Post-phase: cross-document listener isolation, doc-to-window bubble, document.cloneNode, window.event getter, window.onerror, error catching in dispatch. Basic iframe: contentDocument/contentWindow/frames[], crash test detection. Remaining ~109 skipped need Shadow DOM/workers/MutationObserver/advanced iframes. |
+| WPT harness | **Phase 5 complete (MutationObserver)** (155/263 passing). Phase 5 added full MutationObserver (observe/disconnect/takeRecords, attribute+characterData+childList hooks, record delivery). Phase 4: event system enhancements. Remaining ~101 skipped need Shadow DOM/workers/Range/advanced iframes/NamedNodeMap. |
 | Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height |
 | WASM sandbox | Not started — engine runs in-process |
 
@@ -247,9 +247,9 @@ Run all three directions concurrently where dependencies allow. Recommended inte
 
 ### WPT DOM Conformance — Comprehensive Test Status
 
-**263 total test files** across `dom/nodes/` and `dom/events/`. **147 pass, 6 fail (partial subtest failures — most accepted), 110 skipped.** Implemented across 4 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system). Post-phase fixes: validate-and-extract namespace validation for createElementNS, createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count check. Event dispatch edge cases: cross-document listener isolation, doc-to-window bubble, document.cloneNode. window.event/onerror: CURRENT_EVENT thread-local, window.event getter, error catching in listener invocations. Basic iframe support: IFRAME_CONTENT_DOCS thread-local, contentDocument/contentWindow getters, frames[] on window, crash test detection in WPT harness.
+**263 total test files** across `dom/nodes/` and `dom/events/`. **155 pass, 7 fail (partial subtest failures — most accepted), 101 skipped.** Implemented across 5 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system, Phase 5: MutationObserver). Phase 5 added full MutationObserver: constructor, observe()/disconnect()/takeRecords(), MutationRecord global, attribute+characterData+childList mutation hooks across 14 binding files, record delivery after each script execution via notify_mutation_observers(). Also fixed async_test.step() in WPT harness to call fn immediately (matching spec).
 
-Known subtest counts where recorded: Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Node-appendChild 11/11, Node-removeChild 28/28, Node-isConnected 2/2, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, DOMImplementation-createDocument 434/434, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19, Event-dispatch-bubbles-false 5/5, Event-dispatch-bubbles-true 5/5, Event-dispatch-throwing 2/2, event-global-set-before-handleEvent-lookup 1/1.
+Known subtest counts where recorded: Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Node-appendChild 11/11, Node-removeChild 28/28, Node-isConnected 2/2, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, DOMImplementation-createDocument 434/434, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19, Event-dispatch-bubbles-false 5/5, Event-dispatch-bubbles-true 5/5, Event-dispatch-throwing 2/2, event-global-set-before-handleEvent-lookup 1/1, MutationObserver-sanity 12/12, MutationObserver-disconnect 2/2, MutationObserver-takeRecords 3/3, MutationObserver-callback-arguments 1/1, MutationObserver-characterData 15/16, MutationObserver-childList 25/26, ParentNode-replaceChildren 29/29.
 
 #### dom/events/ (46 pass, 1 fail, 46 skip)
 
@@ -349,7 +349,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | webkit-transition-end-event.html | SKIP | requires TransitionEvent |
 | window-composed-path.html | PASS | |
 
-#### dom/nodes/ (101 pass, 5 fail, 64 skip)
+#### dom/nodes/ (109 pass, 6 fail, 55 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -432,18 +432,18 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Element-siblingElement-null.html | PASS | |
 | Element-tagName.html | PASS | 6/6 |
 | Element-webkitMatchesSelector.html | SKIP | requires webkitMatchesSelector alias |
-| MutationObserver-attributes.html | SKIP | requires MutationObserver |
-| MutationObserver-callback-arguments.html | SKIP | requires MutationObserver |
-| MutationObserver-characterData.html | SKIP | requires MutationObserver |
-| MutationObserver-childList.html | SKIP | requires MutationObserver |
-| MutationObserver-cross-realm-callback-report-exception.html | SKIP | requires MutationObserver |
-| MutationObserver-disconnect.html | SKIP | requires MutationObserver |
-| MutationObserver-document.html | SKIP | requires MutationObserver |
-| MutationObserver-inner-outer.html | SKIP | requires MutationObserver |
-| MutationObserver-nested-crash.html | SKIP | requires MutationObserver |
-| MutationObserver-sanity.html | SKIP | requires MutationObserver |
-| MutationObserver-takeRecords.html | SKIP | requires MutationObserver |
-| MutationObserver-textContent.html | SKIP | requires MutationObserver |
+| MutationObserver-attributes.html | PASS | |
+| MutationObserver-callback-arguments.html | PASS | 1/1 |
+| MutationObserver-characterData.html | FAIL | 15/16; 1 Range subtest (no Range API) |
+| MutationObserver-childList.html | FAIL | 25/26; 1 Range subtest (no Range API) |
+| MutationObserver-cross-realm-callback-report-exception.html | SKIP | requires cross-realm iframe + frames[N].Function |
+| MutationObserver-disconnect.html | PASS | 2/2 |
+| MutationObserver-document.html | SKIP | requires parser-time mutations |
+| MutationObserver-inner-outer.html | PASS | |
+| MutationObserver-nested-crash.html | PASS | crash test |
+| MutationObserver-sanity.html | PASS | 12/12 |
+| MutationObserver-takeRecords.html | PASS | 3/3 |
+| MutationObserver-textContent.html | SKIP | requires microtask queue (Promise.resolve) |
 | Node-appendChild-cereactions-vs-script.window.js | SKIP | requires custom elements |
 | Node-appendChild.html | PASS | 11/11 |
 | Node-baseURI.html | PASS | 9/9 |
@@ -497,7 +497,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | ParentNode-querySelectors-exclusive.html | SKIP | JS error in assertion (opaque object throw) |
 | ParentNode-querySelectors-namespaces.html | SKIP | requires SVG xlink namespace attributes |
 | ParentNode-querySelectors-space-and-dash-attribute-value.html | PASS | |
-| ParentNode-replaceChildren.html | FAIL | 25/29; MutationObserver subtests (accepted partial) |
+| ParentNode-replaceChildren.html | PASS | 29/29 |
 | Text-constructor.html | PASS | |
 | Text-splitText.html | PASS | |
 | Text-wholeText.html | PASS | |
@@ -524,11 +524,11 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | rootNode.html | FAIL | 0/1; Shadow DOM subtest (accepted partial) |
 | svg-template-querySelector.html | SKIP | requires template.content |
 
-#### Skip reasons summary (110 skipped tests)
+#### Skip reasons summary (101 skipped tests)
 
 | Category | Count | Tests |
 |----------|-------|-------|
-| MutationObserver | 12 | MutationObserver-*.html |
+| MutationObserver (remaining) | 3 | MutationObserver-document (parser-time), MutationObserver-textContent (microtask), MutationObserver-cross-realm (iframe+Function) |
 | Iframes / cross-document | 10 | Node-parentNode-iframe, adoption.window.js, query-target-*, Element-getElementsByTagName-change-*, event-global-extra, etc. |
 | Shadow DOM | 5 | Node-isConnected-shadow-dom, shadow-relatedTarget, remove-from-shadow-host-* |
 | Server-side substitution (.sub.) | 7 | EventListener-incumbent-global-*, Node-cloneNode-external-stylesheet, EventListener-addEventListener.sub |
@@ -544,22 +544,15 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Event dispatch edge cases | 5 | Event-dispatch-handlers-changed (BorrowMutError), Event-dispatch-redispatch, Event-dispatch-throwing-multiple-globals, Event-dispatch-single-activation-behavior, Event-dispatch-throwing |
 | Other (GamepadEvent, composedPath, browsing context, etc.) | 14 | remaining miscellaneous skips |
 
-### WPT Phase 5 — Next Implementation Targets
+### WPT Phase 5 — Implementation Targets
 
-Prioritized by tests-unblocked and cascading dependencies. Target: 147 → ~167 passing.
+Prioritized by tests-unblocked and cascading dependencies. Started at 147, now at 155 passing.
 
-**Tier 1: MutationObserver (4 agents, parallel) — +13 tests**
+**Tier 1: MutationObserver (3 agents, parallel) — DONE (+8 pass, +2 fail)**
 
-Biggest single win. 12 MutationObserver-*.html tests all need just this API. Also fixes ParentNode-replaceChildren (FAIL 25/29 → PASS, 4 failing subtests are MutationObserver). Self-contained, no dependencies on other missing features.
+Biggest single win. 9 MutationObserver-*.html tests unskipped (7 pass, 2 fail only on Range API subtests). ParentNode-replaceChildren fixed (25/29 → 29/29). 3 MutationObserver tests remain correctly skipped (document/textContent/cross-realm need parser-time mutations, microtask queue, cross-realm iframe respectively).
 
-| Agent | What | Tests unblocked |
-|-------|------|-----------------|
-| MO-A | MutationObserver constructor, observe(), disconnect(), takeRecords() core API | MutationObserver-sanity, MutationObserver-disconnect, MutationObserver-takeRecords |
-| MO-B | childList mutations — appendChild, removeChild, insertBefore, replaceChild trigger records | MutationObserver-childList, MutationObserver-inner-outer, MutationObserver-nested-crash |
-| MO-C | attributes + characterData mutations — setAttribute, textContent trigger records | MutationObserver-attributes, MutationObserver-characterData, MutationObserver-textContent |
-| MO-D | callback arguments, document observation, cross-realm, ParentNode-replaceChildren unskip | MutationObserver-callback-arguments, MutationObserver-document, MutationObserver-cross-realm-callback-report-exception, ParentNode-replaceChildren fix |
-
-Architecture: `MutationObserver` JS class with `observe(target, options)`, `disconnect()`, `takeRecords()`. Thread-local `MUTATION_OBSERVERS: Vec<ObserverEntry>`. Mutation hooks in DomTree methods (appendChild, removeChild, etc.) queue `MutationRecord` objects. Records delivered synchronously after each JS script completes (microtask checkpoint). `MutationRecord` has type/target/addedNodes/removedNodes/previousSibling/nextSibling/attributeName/oldValue.
+Architecture: `mutation_observer.rs` (~940 lines). `MutationObserverState` thread-local with `ObserverEntry` (callback + pending records) and `NodeRegistration` per observed node. `RawMutationRecord` pure-Rust struct captured at mutation time, converted to JS `MutationRecord` at delivery. 9 wrapper functions (`set_attribute_with_observer`, `character_data_set_with_observer`, etc.) and `queue_childlist_mutation()` hook childList mutations across 14 binding files. `notify_mutation_observers()` called after each `runtime.eval()`. Also fixed `async_test.step()` in WPT harness to call fn immediately (matching real WPT testharness.js).
 
 **Tier 2: Quick wins (3 agents, parallel with Tier 1) — +7 tests**
 
@@ -787,7 +780,7 @@ Must support: clicking links/buttons, filling form inputs, selecting dropdowns, 
   - Git submodule at `tests/wpt/` with sparse checkout: `resources`, `dom/nodes`, `dom/events`
   - 164 HTML test files in `dom/nodes/`, 78 in `dom/events/`
   - jsdom's `to-run.yaml` provides a curated roadmap of which tests are feasible for non-browser DOM implementations
-  - **Phase 4 COMPLETE + basic iframe support** — 147/263 passing, remainder permanently deferred (Shadow DOM/workers/MutationObserver/advanced iframes)
+  - **Phase 5 COMPLETE (MutationObserver)** — 155/263 passing, remainder deferred (Shadow DOM/workers/Range/advanced iframes)
   - Future phases: `html/dom/`, `css/selectors/`
 - **html5lib-tests** — integrated as git submodule at `tests/html5lib-tests/`
   - **Tree-construction:** 1778 test cases from 56 `.dat` files, run via `cargo test --test html5lib_tree_construction`
