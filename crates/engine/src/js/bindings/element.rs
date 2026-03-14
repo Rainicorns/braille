@@ -6,6 +6,7 @@ use boa_engine::{
     class::{Class, ClassBuilder},
     js_string,
     native_function::NativeFunction,
+    object::ObjectInitializer,
     property::{Attribute, PropertyDescriptor},
     Context, JsData, JsError, JsNativeError, JsObject, JsResult, JsValue,
 };
@@ -123,6 +124,64 @@ thread_local! {
     /// The event currently being dispatched (for window.event).
     /// Stored as a stack-like Option: set before each listener callback, restored after.
     pub(crate) static CURRENT_EVENT: RefCell<Option<JsObject>> = const { RefCell::new(None) };
+}
+
+// ---------------------------------------------------------------------------
+// Iframe content document storage
+// ---------------------------------------------------------------------------
+thread_local! {
+    /// Maps (tree_ptr, iframe_node_id) -> the iframe's content document DomTree.
+    pub(crate) static IFRAME_CONTENT_DOCS: RefCell<Option<Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>>> = const { RefCell::new(None) };
+}
+
+/// Lazily creates (or retrieves) the content document for an `<iframe>` element.
+/// Returns the JsObject representing the iframe's content document.
+pub(crate) fn ensure_iframe_content_doc(
+    tree_ptr: usize,
+    node_id: NodeId,
+    ctx: &mut Context,
+) -> JsResult<JsObject> {
+    // Check if we already have a content doc for this iframe
+    let existing = IFRAME_CONTENT_DOCS.with(|cell| {
+        let rc = cell.borrow();
+        let map_rc = rc.as_ref().expect("IFRAME_CONTENT_DOCS not initialized");
+        let map = map_rc.borrow();
+        map.get(&(tree_ptr, node_id)).cloned()
+    });
+
+    if let Some(ref existing_tree) = existing {
+        // Already exists -- return its document JsObject from NODE_CACHE
+        let doc_id = existing_tree.borrow().document();
+        return get_or_create_js_element(doc_id, existing_tree.clone(), ctx);
+    }
+
+    // Create a new DomTree for the iframe content document
+    let new_tree = Rc::new(RefCell::new(DomTree::new()));
+    {
+        let mut t = new_tree.borrow_mut();
+        let html = t.create_element("html");
+        let head = t.create_element("head");
+        let body = t.create_element("body");
+        let doc = t.document();
+        t.append_child(doc, html);
+        t.append_child(html, head);
+        t.append_child(html, body);
+    }
+
+    // Store in IFRAME_CONTENT_DOCS
+    IFRAME_CONTENT_DOCS.with(|cell| {
+        let rc = cell.borrow();
+        let map_rc = rc.as_ref().expect("IFRAME_CONTENT_DOCS not initialized");
+        let mut map = map_rc.borrow_mut();
+        map.insert((tree_ptr, node_id), new_tree.clone());
+    });
+
+    // Create document JsObject
+    let doc_id = new_tree.borrow().document();
+    let js_obj = get_or_create_js_element(doc_id, new_tree.clone(), ctx)?;
+    super::document::add_document_properties_to_element(&js_obj, new_tree, "text/html".to_string(), ctx)?;
+
+    Ok(js_obj)
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +562,64 @@ pub(crate) fn get_or_create_js_element(
                 js_string!("content"),
                 PropertyDescriptor::builder()
                     .get(content_getter.to_js_function(&realm))
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx,
+            )?;
+        }
+    }
+
+    // Set contentDocument/contentWindow for <iframe> elements
+    if let NodeKind::HtmlElement(ref tag) = node_kind {
+        if tag == "iframe" {
+            // contentDocument getter
+            let tree_for_cd = tree.clone();
+            let nid_for_cd = node_id;
+            let content_doc_getter = unsafe {
+                NativeFunction::from_closure(move |_this, _args, ctx2| {
+                    let tp = Rc::as_ptr(&tree_for_cd) as usize;
+                    let doc_obj = ensure_iframe_content_doc(tp, nid_for_cd, ctx2)?;
+                    Ok(JsValue::from(doc_obj))
+                })
+            };
+            let realm = ctx.realm().clone();
+            js_obj.define_property_or_throw(
+                js_string!("contentDocument"),
+                PropertyDescriptor::builder()
+                    .get(content_doc_getter.to_js_function(&realm))
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx,
+            )?;
+
+            // contentWindow getter -- returns a plain object with a document property
+            let tree_for_cw = tree.clone();
+            let nid_for_cw = node_id;
+            let content_window_getter = unsafe {
+                NativeFunction::from_closure(move |_this, _args, ctx2| {
+                    let tp = Rc::as_ptr(&tree_for_cw) as usize;
+                    let doc_obj = ensure_iframe_content_doc(tp, nid_for_cw, ctx2)?;
+                    let win = ObjectInitializer::new(ctx2).build();
+                    win.define_property_or_throw(
+                        js_string!("document"),
+                        PropertyDescriptor::builder()
+                            .value(JsValue::from(doc_obj))
+                            .writable(true)
+                            .configurable(true)
+                            .enumerable(true)
+                            .build(),
+                        ctx2,
+                    )?;
+                    Ok(JsValue::from(win))
+                })
+            };
+            let realm2 = ctx.realm().clone();
+            js_obj.define_property_or_throw(
+                js_string!("contentWindow"),
+                PropertyDescriptor::builder()
+                    .get(content_window_getter.to_js_function(&realm2))
                     .configurable(true)
                     .enumerable(true)
                     .build(),

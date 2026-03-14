@@ -299,8 +299,12 @@ fn testharnessreport_shim() -> String {
 fn should_skip(rel_path: &str) -> Option<&'static str> {
     // Files requiring iframes / cross-document
     let skip_patterns: &[(&str, &str)] = &[
-        // Iframes
-        ("iframe", "requires iframes"),
+        // Iframes — broad skip removed; specific patterns below for tests needing advanced iframe features
+        ("Node-parentNode-iframe", "requires iframe src loading"),
+        ("Node-appendChild-script-and-iframe", "requires advanced iframe insertion steps"),
+        ("insertion-removing-steps-iframe", "requires advanced iframe insertion steps"),
+        ("iframe-document-preserve", "requires moveBefore with iframes"),
+        ("moveBefore-iframe", "requires moveBefore with iframes"),
         ("cross-doc", "requires cross-document"),
         ("adoption", "requires cross-document adoption"),
         // MutationObserver
@@ -410,9 +414,9 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Event global — window.event now implemented
         // event-global.html: 4/8 pass, 4 fail (Shadow DOM + XMLHttpRequest)
         ("event-global.html", "4/8 pass; 4 fail requiring Shadow DOM and XMLHttpRequest"),
-        ("event-global-extra", "requires iframes"),
+        ("event-global-extra", "requires contentWindow with own globals"),
         ("event-global-is-still-set-when-coercing-beforeunload-result", "requires iframes and beforeunload"),
-        ("event-global-is-still-set-when-reporting-exception-onerror", "requires iframes"),
+        ("event-global-is-still-set-when-reporting-exception-onerror", "requires cross-realm Function via contentWindow"),
         // relatedTarget
         ("relatedTarget", "requires relatedTarget"),
         // legacy-pre-activation
@@ -487,7 +491,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // KeyEvent-initKeyEvent (legacy)
         ("KeyEvent-initKeyEvent", "requires KeyEvent"),
         // node-appendchild-crash
-        ("node-appendchild-crash", "requires iframe.contentDocument"),
+        ("node-appendchild-crash", "requires window.onload IDL attribute"),
         // append-on-Document, prepend-on-Document — now enabled (DOMImplementation available)
         // rootNode — now implemented
         // insert-adjacent: now enabled (DOMImplementation available)
@@ -532,7 +536,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Event-dispatch-redispatch
         ("Event-dispatch-redispatch", "requires re-dispatch semantics"),
         // replace-event-listener-null-browsing-context-crash
-        ("replace-event-listener-null-browsing-context", "requires browsing context"),
+        // unskipped: basic iframe support added
+        // ("replace-event-listener-null-browsing-context", "requires browsing context"),
         // remove-all-listeners
         ("remove-all-listeners", "requires full listener removal"),
         // passive-by-default
@@ -598,10 +603,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Event-dispatch-multiple-stopPropagation", "requires stopPropagation during propagation"),
         // NodeList-static-length-getter-tampered — performance test, too slow for interpreter
         ("NodeList-static-length-getter-tampered", "performance test, too slow for interpreter"),
-        // createDocument/createHTMLDocument with null browsing context — requires iframes
-        ("createDocument-with-null-browsing-context", "requires iframes"),
-        ("createHTMLDocument-with-null-browsing-context", "requires iframes"),
-        ("createHTMLDocument-with-saved-implementation", "requires iframes"),
+        // unskipped: basic iframe support added (crash tests — no testharness.js)
+        // ("createDocument-with-null-browsing-context", "requires iframes"),
+        // ("createHTMLDocument-with-null-browsing-context", "requires iframes"),
+        // ("createHTMLDocument-with-saved-implementation", "requires iframes"),
     ];
 
     for (pattern, reason) in skip_patterns {
@@ -714,6 +719,12 @@ fn run_wpt_test(
 
     let mut engine = Engine::new();
     let js_errors = engine.load_html_with_scripts_lossy(&html, &fetched);
+
+    // Crash tests don't include testharness.js — if we got here, the test passed
+    let is_crash_test = !srcs.iter().any(|s| s.contains("testharness.js"));
+    if is_crash_test {
+        return Ok(());
+    }
 
     // Check if our preamble loaded
     let has_test_fn = engine.eval_js("typeof test").unwrap_or_default();

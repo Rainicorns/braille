@@ -55,6 +55,11 @@ impl JsRuntime {
             *cell.borrow_mut() = Some(Rc::clone(&tree));
         });
 
+        // Initialize the iframe content docs map
+        super::bindings::element::IFRAME_CONTENT_DOCS.with(|cell| {
+            *cell.borrow_mut() = Some(Rc::new(RefCell::new(HashMap::new())));
+        });
+
         // Store the creation time in the thread-local so event.rs can compute DOMHighResTimeStamp
         RUNTIME_CREATION_TIME.with(|cell| {
             *cell.borrow_mut() = Some(creation_time);

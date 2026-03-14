@@ -572,6 +572,76 @@ pub(crate) fn register_window(
         )
         .expect("failed to define window.event");
 
+    // frames getter -- returns array-like object of iframe contentWindow objects
+    let tree_for_frames = Rc::clone(&tree);
+    let frames_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx2| {
+            let tree_ref = tree_for_frames.borrow();
+            let tree_ptr = Rc::as_ptr(&tree_for_frames) as usize;
+
+            // Collect iframe node IDs in document order
+            let mut iframe_ids = Vec::new();
+            let doc = tree_ref.document();
+            collect_iframes(&tree_ref, doc, &mut iframe_ids);
+            drop(tree_ref);
+
+            let frames_obj = ObjectInitializer::new(ctx2).build();
+
+            // Set numeric indices
+            for (i, &nid) in iframe_ids.iter().enumerate() {
+                let doc_obj = super::element::ensure_iframe_content_doc(tree_ptr, nid, ctx2)?;
+                let cw = ObjectInitializer::new(ctx2).build();
+                cw.define_property_or_throw(
+                    js_string!("document"),
+                    PropertyDescriptor::builder()
+                        .value(JsValue::from(doc_obj))
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(true)
+                        .build(),
+                    ctx2,
+                )?;
+                frames_obj.define_property_or_throw(
+                    js_string!(i.to_string()),
+                    PropertyDescriptor::builder()
+                        .value(JsValue::from(cw))
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(true)
+                        .build(),
+                    ctx2,
+                )?;
+            }
+
+            // Set length
+            frames_obj.define_property_or_throw(
+                js_string!("length"),
+                PropertyDescriptor::builder()
+                    .value(JsValue::from(iframe_ids.len() as u32))
+                    .writable(false)
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx2,
+            )?;
+
+            Ok(JsValue::from(frames_obj))
+        })
+    };
+
+    let realm_for_frames = context.realm().clone();
+    window
+        .define_property_or_throw(
+            js_string!("frames"),
+            PropertyDescriptor::builder()
+                .get(frames_getter.to_js_function(&realm_for_frames))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define window.frames");
+
     window
         .define_property_or_throw(
             js_string!("location"),
@@ -685,6 +755,88 @@ pub(crate) fn register_window(
     context
         .register_global_property(js_string!("getComputedStyle"), gcs_fn, Attribute::all())
         .expect("failed to register getComputedStyle global");
+
+    // Register `frames` as a direct global getter so bare `frames[0]` works
+    let tree_for_frames_global = Rc::clone(&tree);
+    let frames_getter_global = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx2| {
+            let tree_ref = tree_for_frames_global.borrow();
+            let tree_ptr = Rc::as_ptr(&tree_for_frames_global) as usize;
+
+            let mut iframe_ids = Vec::new();
+            let doc = tree_ref.document();
+            collect_iframes(&tree_ref, doc, &mut iframe_ids);
+            drop(tree_ref);
+
+            let frames_obj = ObjectInitializer::new(ctx2).build();
+
+            for (i, &nid) in iframe_ids.iter().enumerate() {
+                let doc_obj = super::element::ensure_iframe_content_doc(tree_ptr, nid, ctx2)?;
+                let cw = ObjectInitializer::new(ctx2).build();
+                cw.define_property_or_throw(
+                    js_string!("document"),
+                    PropertyDescriptor::builder()
+                        .value(JsValue::from(doc_obj))
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(true)
+                        .build(),
+                    ctx2,
+                )?;
+                frames_obj.define_property_or_throw(
+                    js_string!(i.to_string()),
+                    PropertyDescriptor::builder()
+                        .value(JsValue::from(cw))
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(true)
+                        .build(),
+                    ctx2,
+                )?;
+            }
+
+            frames_obj.define_property_or_throw(
+                js_string!("length"),
+                PropertyDescriptor::builder()
+                    .value(JsValue::from(iframe_ids.len() as u32))
+                    .writable(false)
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx2,
+            )?;
+
+            Ok(JsValue::from(frames_obj))
+        })
+    };
+
+    let realm_for_frames_global = context.realm().clone();
+    let global = context.global_object();
+    global
+        .define_property_or_throw(
+            js_string!("frames"),
+            PropertyDescriptor::builder()
+                .get(frames_getter_global.to_js_function(&realm_for_frames_global))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define global frames");
+}
+
+/// Recursively collects NodeIds of `<iframe>` elements in document order.
+fn collect_iframes(tree: &crate::dom::DomTree, node_id: crate::dom::NodeId, out: &mut Vec<crate::dom::NodeId>) {
+    use crate::dom::NodeData;
+    let node = tree.get_node(node_id);
+    if let NodeData::Element { ref tag_name, .. } = node.data {
+        if tag_name == "iframe" {
+            out.push(node_id);
+        }
+    }
+    for child in tree.children(node_id) {
+        collect_iframes(tree, child, out);
+    }
 }
 
 #[cfg(test)]
