@@ -1485,6 +1485,308 @@ pub(crate) fn create_live_htmlcollection_by_tag(
     Ok(proxy_obj)
 }
 
+// ---------------------------------------------------------------------------
+// Live HTMLCollection creation for getElementsByTagNameNS
+// ---------------------------------------------------------------------------
+
+/// Collect all descendant elements (not `root` itself) that match the given namespace and local name.
+/// `"*"` as namespace matches any namespace; `"*"` as local_name matches any local name.
+/// An empty string namespace matches elements with null/empty namespace.
+fn collect_descendants_by_tag_ns(
+    tree: &DomTree,
+    root: NodeId,
+    namespace: &str,
+    local_name: &str,
+) -> Vec<NodeId> {
+    let mut results = Vec::new();
+    collect_descendants_by_tag_ns_recursive(tree, root, namespace, local_name, &mut results, true);
+    results
+}
+
+fn collect_descendants_by_tag_ns_recursive(
+    tree: &DomTree,
+    node_id: NodeId,
+    search_ns: &str,
+    search_local: &str,
+    results: &mut Vec<NodeId>,
+    is_root: bool,
+) {
+    let node = tree.get_node(node_id);
+    if !is_root {
+        if let NodeData::Element {
+            ref tag_name,
+            ref namespace,
+            ..
+        } = node.data
+        {
+            // Extract local name from qualified name (strip prefix if present)
+            let element_local = if let Some(colon_pos) = tag_name.find(':') {
+                &tag_name[colon_pos + 1..]
+            } else {
+                tag_name.as_str()
+            };
+
+            let ns_matches = search_ns == "*" || search_ns == namespace;
+            let local_matches = search_local == "*" || search_local == element_local;
+
+            if ns_matches && local_matches {
+                results.push(node_id);
+            }
+        }
+    }
+    let children: Vec<NodeId> = node.children.clone();
+    for child_id in children {
+        collect_descendants_by_tag_ns_recursive(tree, child_id, search_ns, search_local, results, false);
+    }
+}
+
+/// Create a live HTMLCollection for getElementsByTagNameNS.
+/// Re-walks the subtree on every access to provide live behavior.
+pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
+    root_id: NodeId,
+    tree: Rc<RefCell<DomTree>>,
+    namespace: String,
+    local_name: String,
+    context: &mut Context,
+) -> JsResult<JsObject> {
+    let backing = ObjectInitializer::new(context).build();
+
+    let proto = HTMLCOLLECTION_PROTO.with(|cell| cell.borrow().clone());
+    if let Some(p) = proto {
+        backing.set_prototype(Some(p));
+    }
+
+    let realm = context.realm().clone();
+
+    // item(index) method
+    let ns_item = namespace.clone();
+    let ln_item = local_name.clone();
+    let tree_for_item = tree.clone();
+    let item_fn = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let index = args
+                .first()
+                .map(|v| v.to_number(ctx))
+                .transpose()?
+                .unwrap_or(0.0) as i64;
+            if index < 0 {
+                return Ok(JsValue::null());
+            }
+            let tree_ref = tree_for_item.borrow();
+            let matches = collect_descendants_by_tag_ns(&tree_ref, root_id, &ns_item, &ln_item);
+            match matches.get(index as usize) {
+                Some(&nid) => {
+                    let tc = tree_for_item.clone();
+                    drop(tree_ref);
+                    Ok(get_or_create_js_element(nid, tc, ctx)?.into())
+                }
+                None => Ok(JsValue::null()),
+            }
+        })
+    };
+    backing.define_property_or_throw(
+        js_string!("__braille_item"),
+        PropertyDescriptor::builder()
+            .value(item_fn.to_js_function(&realm))
+            .writable(true)
+            .configurable(true)
+            .enumerable(false)
+            .build(),
+        context,
+    )?;
+
+    // namedItem(name) method
+    let ns_named = namespace.clone();
+    let ln_named = local_name.clone();
+    let tree_for_named = tree.clone();
+    let named_item_fn = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let name = args
+                .first()
+                .map(|v| v.to_string(ctx))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+            let tree_ref = tree_for_named.borrow();
+            let matches = collect_descendants_by_tag_ns(&tree_ref, root_id, &ns_named, &ln_named);
+            for &nid in &matches {
+                let node = tree_ref.get_node(nid);
+                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                    let is_html = namespace == "http://www.w3.org/1999/xhtml";
+                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                        if id_val == name {
+                            let tc = tree_for_named.clone();
+                            drop(tree_ref);
+                            return Ok(get_or_create_js_element(nid, tc, ctx)?.into());
+                        }
+                    }
+                    if is_html {
+                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                            if name_val == name {
+                                let tc = tree_for_named.clone();
+                                drop(tree_ref);
+                                return Ok(get_or_create_js_element(nid, tc, ctx)?.into());
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(JsValue::null())
+        })
+    };
+    backing.define_property_or_throw(
+        js_string!("__braille_namedItem"),
+        PropertyDescriptor::builder()
+            .value(named_item_fn.to_js_function(&realm))
+            .writable(true)
+            .configurable(true)
+            .enumerable(false)
+            .build(),
+        context,
+    )?;
+
+    // Length getter
+    let ns_len = namespace.clone();
+    let ln_len = local_name.clone();
+    let tree_for_len = tree.clone();
+    let length_fn = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let tree_ref = tree_for_len.borrow();
+            let matches = collect_descendants_by_tag_ns(&tree_ref, root_id, &ns_len, &ln_len);
+            Ok(JsValue::from(matches.len() as i32))
+        })
+    };
+
+    // getChild(index)
+    let ns_get = namespace.clone();
+    let ln_get = local_name.clone();
+    let tree_for_get = tree.clone();
+    let get_child_fn = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let index = args
+                .first()
+                .map(|v| v.to_number(ctx))
+                .transpose()?
+                .unwrap_or(0.0) as i64;
+            if index < 0 {
+                return Ok(JsValue::undefined());
+            }
+            let tree_ref = tree_for_get.borrow();
+            let matches = collect_descendants_by_tag_ns(&tree_ref, root_id, &ns_get, &ln_get);
+            match matches.get(index as usize) {
+                Some(&nid) => {
+                    let tc = tree_for_get.clone();
+                    drop(tree_ref);
+                    Ok(get_or_create_js_element(nid, tc, ctx)?.into())
+                }
+                None => Ok(JsValue::undefined()),
+            }
+        })
+    };
+
+    // getNamed(name) for proxy
+    let ns_named2 = namespace.clone();
+    let ln_named2 = local_name.clone();
+    let tree_for_named2 = tree.clone();
+    let get_named_fn = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let name = args
+                .first()
+                .map(|v| v.to_string(ctx))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+            let tree_ref = tree_for_named2.borrow();
+            let matches = collect_descendants_by_tag_ns(&tree_ref, root_id, &ns_named2, &ln_named2);
+            for &nid in &matches {
+                let node = tree_ref.get_node(nid);
+                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                    let is_html = namespace == "http://www.w3.org/1999/xhtml";
+                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                        if id_val == name {
+                            let tc = tree_for_named2.clone();
+                            drop(tree_ref);
+                            return Ok(get_or_create_js_element(nid, tc, ctx)?.into());
+                        }
+                    }
+                    if is_html {
+                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                            if name_val == name {
+                                let tc = tree_for_named2.clone();
+                                drop(tree_ref);
+                                return Ok(get_or_create_js_element(nid, tc, ctx)?.into());
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(JsValue::undefined())
+        })
+    };
+
+    // getNamedKeys()
+    let ns_keys = namespace.clone();
+    let ln_keys = local_name.clone();
+    let tree_for_keys = tree.clone();
+    let get_named_keys_fn = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let tree_ref = tree_for_keys.borrow();
+            let matches = collect_descendants_by_tag_ns(&tree_ref, root_id, &ns_keys, &ln_keys);
+            let mut names = Vec::new();
+            for &nid in &matches {
+                let node = tree_ref.get_node(nid);
+                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                    let is_html = namespace == "http://www.w3.org/1999/xhtml";
+                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.clone()) {
+                        if !id_val.is_empty() && !names.contains(&id_val) {
+                            names.push(id_val);
+                        }
+                    }
+                    if is_html {
+                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.clone()) {
+                            if !name_val.is_empty() && !names.contains(&name_val) {
+                                names.push(name_val);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(JsValue::from(js_string!(names.join("\x00"))))
+        })
+    };
+
+    // Call factory
+    let factory = HC_PROXY_FACTORY.with(|cell| {
+        cell.borrow()
+            .clone()
+            .expect("HTMLCollection proxy factory not initialized")
+    });
+
+    let length_js = length_fn.to_js_function(&realm);
+    let get_child_js = get_child_fn.to_js_function(&realm);
+    let get_named_js = get_named_fn.to_js_function(&realm);
+    let get_named_keys_js = get_named_keys_fn.to_js_function(&realm);
+
+    let result = factory.call(
+        &JsValue::undefined(),
+        &[
+            backing.into(),
+            length_js.into(),
+            get_child_js.into(),
+            get_named_js.into(),
+            get_named_keys_js.into(),
+        ],
+        context,
+    )?;
+
+    let proxy_obj = result
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("failed to create HTMLCollection proxy").into()))?
+        .clone();
+
+    Ok(proxy_obj)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::Engine;

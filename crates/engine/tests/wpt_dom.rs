@@ -348,7 +348,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Namespace-heavy tests
         // createElementNS — now have proper namespace support (W2 un-skip)
         // ("createElementNS", "requires namespace support"),
-        ("getElementsByTagNameNS", "requires namespace support"),
+        // ("getElementsByTagNameNS", "requires namespace support"),  // getElementsByTagNameNS now implemented
         ("namespaced", "requires namespace support"),
         ("NamedNodeMap", "requires NamedNodeMap"),
         // CharacterData-appendChild requires HierarchyRequestError (DOMException)
@@ -368,10 +368,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Comment/Text constructor — now implemented
         // ChildNode-after/before/replaceWith — now implemented
         // ParentNode.append/prepend/replaceChildren — now implemented
-        // Node-lookupPrefix, etc.
-        ("Node-lookupPrefix", "requires lookupPrefix"),
-        ("Node-lookupNamespaceURI", "requires lookupNamespaceURI"),
-        ("Node-isDefaultNamespace", "requires isDefaultNamespace"),
+        // Node-lookupPrefix, etc. — now implemented
+        // ("Node-lookupPrefix", "requires lookupPrefix"),  // lookupPrefix implemented (xhtml test still skipped by xhtml rule)
+        // ("Node-lookupNamespaceURI", "requires lookupNamespaceURI"),  // lookupNamespaceURI implemented
+        // ("Node-isDefaultNamespace", "requires isDefaultNamespace"),  // isDefaultNamespace implemented (tested in Node-lookupNamespaceURI.html)
         // Node-normalize — now implemented
         // Node-textContent, Node-nodeName, Node-nodeValue — now implemented
         // Node-cloneNode — now implemented (main test enabled)
@@ -390,8 +390,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("creators", "requires full creator functions"),
         // Productions
         ("productions", "requires productions"),
-        // case.html — fails getElementsByTagNameNS subtests
-        ("case.html", "requires getElementsByTagNameNS"),
+        // case.html — getElementsByTagNameNS now implemented (unskip)
+        // ("case.html", "requires getElementsByTagNameNS"),
         // Document-createEvent full spec
         ("Document-createEvent.html", "requires full createEvent spec"),
         // querySelector — now working; skip specific tests that need unimplemented features
@@ -441,8 +441,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Document.implementation
         // Document-implementation — now have document.implementation (W2 un-skip)
         // ("Document-implementation", "requires DOMImplementation"),
-        // importNode / adoptNode
-        ("Document-importNode", "requires importNode"),
+        // importNode / adoptNode — importNode + getAttributeNodeNS implemented (unskip)
+        // ("Document-importNode", "requires importNode"),
         // Namespace-heavy tests
         // Document-createElement-namespace — now have namespace support (W2 un-skip)
         // ("Document-createElement-namespace", "requires namespace support"),

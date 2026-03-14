@@ -1111,6 +1111,78 @@ impl JsElement {
         }
     }
 
+    /// Native implementation of node.lookupNamespaceURI(prefix)
+    /// Returns the namespace URI associated with the given prefix by walking ancestors.
+    fn lookup_namespace_uri(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let (node_id, tree) = extract_node_id(this)
+            .ok_or_else(|| JsError::from_opaque(js_string!("lookupNamespaceURI: `this` is not a Node").into()))?;
+
+        // Per spec: if prefix is null or empty string, treat as null (None)
+        let prefix_arg = args.first().cloned().unwrap_or(JsValue::undefined());
+        let prefix: Option<String> = if prefix_arg.is_null() || prefix_arg.is_undefined() {
+            None
+        } else {
+            let s = prefix_arg.to_string(ctx)?.to_std_string_escaped();
+            if s.is_empty() { None } else { Some(s) }
+        };
+
+        let tree_ref = tree.borrow();
+        let result = tree_ref.locate_namespace(node_id, prefix.as_deref());
+
+        match result {
+            Some(ns) => Ok(JsValue::from(js_string!(ns))),
+            None => Ok(JsValue::null()),
+        }
+    }
+
+    /// Native implementation of node.lookupPrefix(namespace)
+    /// Returns the prefix for the given namespace URI by walking ancestors.
+    fn lookup_prefix(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let (node_id, tree) = extract_node_id(this)
+            .ok_or_else(|| JsError::from_opaque(js_string!("lookupPrefix: `this` is not a Node").into()))?;
+
+        // Per spec: if namespace is null or empty string, return null immediately
+        let ns_arg = args.first().cloned().unwrap_or(JsValue::undefined());
+        if ns_arg.is_null() || ns_arg.is_undefined() {
+            return Ok(JsValue::null());
+        }
+        let namespace = ns_arg.to_string(ctx)?.to_std_string_escaped();
+        if namespace.is_empty() {
+            return Ok(JsValue::null());
+        }
+
+        let tree_ref = tree.borrow();
+        let result = tree_ref.locate_prefix(node_id, &namespace);
+
+        match result {
+            Some(pfx) => Ok(JsValue::from(js_string!(pfx))),
+            None => Ok(JsValue::null()),
+        }
+    }
+
+    /// Native implementation of node.isDefaultNamespace(namespace)
+    /// Returns true if the given namespace is the default namespace.
+    fn is_default_namespace(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let (node_id, tree) = extract_node_id(this)
+            .ok_or_else(|| JsError::from_opaque(js_string!("isDefaultNamespace: `this` is not a Node").into()))?;
+
+        // Per spec: if namespace is null or empty string, treat as null (None)
+        let ns_arg = args.first().cloned().unwrap_or(JsValue::undefined());
+        let namespace: Option<String> = if ns_arg.is_null() || ns_arg.is_undefined() {
+            None
+        } else {
+            let s = ns_arg.to_string(ctx)?.to_std_string_escaped();
+            if s.is_empty() { None } else { Some(s) }
+        };
+
+        // Get the default namespace (prefix = null)
+        let tree_ref = tree.borrow();
+        let default_ns = tree_ref.locate_namespace(node_id, None);
+
+        // Compare: both None (null) -> true, both Some with same value -> true
+        Ok(JsValue::from(default_ns == namespace))
+    }
+
     /// Parse the third argument to addEventListener/removeEventListener.
     /// Returns (capture, once). `once` only matters for addEventListener.
     fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, bool)> {
@@ -1856,6 +1928,23 @@ impl Class for JsElement {
             NativeFunction::from_fn_ptr(Self::compare_document_position),
         );
 
+        // lookupNamespaceURI / lookupPrefix / isDefaultNamespace
+        class.method(
+            js_string!("lookupNamespaceURI"),
+            1,
+            NativeFunction::from_fn_ptr(Self::lookup_namespace_uri),
+        );
+        class.method(
+            js_string!("lookupPrefix"),
+            1,
+            NativeFunction::from_fn_ptr(Self::lookup_prefix),
+        );
+        class.method(
+            js_string!("isDefaultNamespace"),
+            1,
+            NativeFunction::from_fn_ptr(Self::is_default_namespace),
+        );
+
         // addEventListener / removeEventListener / dispatchEvent
         class.method(
             js_string!("addEventListener"),
@@ -1895,6 +1984,18 @@ pub(crate) fn node_compare_document_position(this: &JsValue, args: &[JsValue], c
 
 pub(crate) fn node_contains(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     JsElement::contains(this, args, ctx)
+}
+
+pub(crate) fn node_lookup_namespace_uri(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    JsElement::lookup_namespace_uri(this, args, ctx)
+}
+
+pub(crate) fn node_lookup_prefix(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    JsElement::lookup_prefix(this, args, ctx)
+}
+
+pub(crate) fn node_is_default_namespace(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    JsElement::is_default_namespace(this, args, ctx)
 }
 
 // ---------------------------------------------------------------------------

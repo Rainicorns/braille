@@ -353,6 +353,90 @@ pub(crate) fn document_get_elements_by_tag_name(
     Ok(collection.into())
 }
 
+pub(crate) fn document_get_elements_by_tag_name_ns(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| {
+            JsError::from_opaque(
+                js_string!("document.getElementsByTagNameNS: `this` is not an object").into(),
+            )
+        })?;
+    let doc = obj.downcast_ref::<JsDocument>().ok_or_else(|| {
+        JsError::from_opaque(
+            js_string!("document.getElementsByTagNameNS: `this` is not document").into(),
+        )
+    })?;
+
+    // First arg: namespace (null/undefined -> empty string)
+    let namespace = match args.first() {
+        Some(v) if !v.is_null() && !v.is_undefined() => {
+            v.to_string(ctx)?.to_std_string_escaped()
+        }
+        _ => String::new(),
+    };
+
+    // Second arg: local name
+    let local_name = args
+        .get(1)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let tree_rc = doc.tree.clone();
+    let root = tree_rc.borrow().document();
+
+    let collection =
+        collections::create_live_htmlcollection_by_tag_name_ns(root, tree_rc, namespace, local_name, ctx)?;
+    Ok(collection.into())
+}
+
+fn element_get_elements_by_tag_name_ns(
+    this: &JsValue,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| {
+            JsError::from_opaque(
+                js_string!("getElementsByTagNameNS: `this` is not an object").into(),
+            )
+        })?;
+    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
+        JsError::from_opaque(
+            js_string!("getElementsByTagNameNS: `this` is not an Element").into(),
+        )
+    })?;
+
+    // First arg: namespace (null/undefined -> empty string)
+    let namespace = match args.first() {
+        Some(v) if !v.is_null() && !v.is_undefined() => {
+            v.to_string(ctx)?.to_std_string_escaped()
+        }
+        _ => String::new(),
+    };
+
+    // Second arg: local name
+    let local_name = args
+        .get(1)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let tree_rc = el.tree.clone();
+    let node_id = el.node_id;
+
+    let collection =
+        collections::create_live_htmlcollection_by_tag_name_ns(node_id, tree_rc, namespace, local_name, ctx)?;
+    Ok(collection.into())
+}
+
 // ---------------------------------------------------------------------------
 // Element.matches() and Element.closest()
 // ---------------------------------------------------------------------------
@@ -443,6 +527,11 @@ pub(crate) fn register_query(class: &mut ClassBuilder) -> JsResult<()> {
         js_string!("getElementsByTagName"),
         1,
         NativeFunction::from_fn_ptr(element_get_elements_by_tag_name),
+    );
+    class.method(
+        js_string!("getElementsByTagNameNS"),
+        2,
+        NativeFunction::from_fn_ptr(element_get_elements_by_tag_name_ns),
     );
     class.method(
         js_string!("matches"),

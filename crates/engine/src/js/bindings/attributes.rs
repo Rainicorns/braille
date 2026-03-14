@@ -43,6 +43,12 @@ pub(crate) fn register_attributes(class: &mut ClassBuilder) -> JsResult<()> {
     );
 
     class.method(
+        js_string!("getAttributeNodeNS"),
+        2,
+        NativeFunction::from_fn_ptr(get_attribute_node_ns_fn),
+    );
+
+    class.method(
         js_string!("setAttributeNS"),
         3,
         NativeFunction::from_fn_ptr(set_attribute_ns_fn),
@@ -226,6 +232,58 @@ fn get_attribute_node_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) ->
         Some((_attr_name, attr_value)) => {
             // Create an Attr node in the tree
             let node_id = tree.borrow_mut().create_attr(&name, "", "", &attr_value);
+            let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
+            Ok(js_obj.into())
+        }
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// Native implementation of element.getAttributeNodeNS(namespace, localName)
+/// Returns an Attr node for the named attribute, or null if not found.
+fn get_attribute_node_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNodeNS: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNodeNS: `this` is not an Element").into()))?;
+
+    let ns_val = args.first().cloned().unwrap_or(JsValue::null());
+    let namespace = if ns_val.is_null() || ns_val.is_undefined() {
+        String::new()
+    } else {
+        ns_val.to_string(ctx)?.to_std_string_escaped()
+    };
+
+    let local_name = args
+        .get(1)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let tree = el.tree.clone();
+
+    // Find the attribute on this element by namespace + localName
+    let attr_info = {
+        let t = tree.borrow();
+        let node = t.get_node(el.node_id);
+        match &node.data {
+            NodeData::Element { attributes, .. } => {
+                attributes
+                    .iter()
+                    .find(|a| a.namespace == namespace && a.local_name == local_name)
+                    .map(|a| (a.local_name.clone(), a.namespace.clone(), a.prefix.clone(), a.value.clone()))
+            }
+            _ => None,
+        }
+    };
+
+    match attr_info {
+        Some((attr_local, attr_ns, attr_prefix, attr_value)) => {
+            // Create an Attr node in the tree with full namespace info
+            let node_id = tree.borrow_mut().create_attr(&attr_local, &attr_ns, &attr_prefix, &attr_value);
             let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
             Ok(js_obj.into())
         }

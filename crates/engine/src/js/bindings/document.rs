@@ -1450,6 +1450,17 @@ pub(crate) fn add_document_properties_to_element(
 
             let source_tree = node_el.tree.clone();
             let source_id = node_el.node_id;
+
+            // If node is a Document, throw NotSupportedError
+            {
+                let src = source_tree.borrow();
+                if matches!(src.get_node(source_id).data, NodeData::Document) {
+                    return Err(JsError::from_opaque(
+                        js_string!("NotSupportedError: Cannot import a Document node").into(),
+                    ));
+                }
+            }
+
             let deep = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
 
             let new_id = if deep {
@@ -1474,9 +1485,7 @@ pub(crate) fn add_document_properties_to_element(
                     NodeData::Attr { local_name, namespace, prefix, value } => {
                         t.create_attr(local_name, namespace, prefix, value)
                     }
-                    NodeData::Document => {
-                        return Err(JsError::from_opaque(js_string!("NotSupportedError: Cannot import a Document node").into()));
-                    }
+                    NodeData::Document => unreachable!("Document check above"),
                 }
             };
 
@@ -1953,6 +1962,16 @@ fn document_import_node(
     let source_tree = node_el.tree.clone();
     let source_id = node_el.node_id;
 
+    // If node is a Document, throw NotSupportedError
+    {
+        let src = source_tree.borrow();
+        if matches!(src.get_node(source_id).data, NodeData::Document) {
+            return Err(JsError::from_opaque(
+                js_string!("NotSupportedError: Cannot import a Document node").into(),
+            ));
+        }
+    }
+
     let deep = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
 
     let new_id = if deep {
@@ -1978,9 +1997,7 @@ fn document_import_node(
             NodeData::Attr { local_name, namespace, prefix, value } => {
                 t.create_attr(local_name, namespace, prefix, value)
             }
-            NodeData::Document => {
-                return Err(JsError::from_opaque(js_string!("NotSupportedError: Cannot import a Document node").into()));
-            }
+            NodeData::Document => unreachable!("Document check above"),
         }
     };
 
@@ -2304,6 +2321,11 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
             1,
         )
         .function(
+            NativeFunction::from_fn_ptr(query::document_get_elements_by_tag_name_ns),
+            js_string!("getElementsByTagNameNS"),
+            2,
+        )
+        .function(
             NativeFunction::from_fn_ptr(document_create_element_ns),
             js_string!("createElementNS"),
             2,
@@ -2431,6 +2453,21 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
         .function(
             NativeFunction::from_fn_ptr(super::element::node_contains),
             js_string!("contains"),
+            1,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(super::element::node_lookup_namespace_uri),
+            js_string!("lookupNamespaceURI"),
+            1,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(super::element::node_lookup_prefix),
+            js_string!("lookupPrefix"),
+            1,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(super::element::node_is_default_namespace),
+            js_string!("isDefaultNamespace"),
             1,
         )
         .build();
