@@ -548,6 +548,30 @@ pub(crate) fn register_window(
         .function(dispatch_event, js_string!("dispatchEvent"), 1)
         .build();
 
+    // window.event getter — returns the current event during dispatch, undefined otherwise
+    let event_getter = unsafe {
+        NativeFunction::from_closure(|_this, _args, _ctx| {
+            let event = super::element::CURRENT_EVENT.with(|cell| cell.borrow().clone());
+            match event {
+                Some(obj) => Ok(JsValue::from(obj)),
+                None => Ok(JsValue::undefined()),
+            }
+        })
+    };
+
+    let realm = context.realm().clone();
+    window
+        .define_property_or_throw(
+            js_string!("event"),
+            PropertyDescriptor::builder()
+                .get(event_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define window.event");
+
     window
         .define_property_or_throw(
             js_string!("location"),

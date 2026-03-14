@@ -385,8 +385,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("creators", "requires full creator functions"),
         // Productions
         ("productions", "requires productions"),
-        // Case tests
-        ("case.html", "requires case-sensitivity tests"),
+        // case.html — fails getElementsByTagNameNS subtests
+        ("case.html", "requires getElementsByTagNameNS"),
         // Document-createEvent full spec
         ("Document-createEvent.html", "requires full createEvent spec"),
         // querySelector — now working; skip specific tests that need unimplemented features
@@ -407,8 +407,12 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("EventListener-handleEvent", "requires handleEvent protocol"),
         // Body/FrameSet event handlers
         ("Body-FrameSet", "requires body/frameset event forwarding"),
-        // Event global
-        ("event-global", "requires window.event"),
+        // Event global — window.event now implemented
+        // event-global.html: 4/8 pass, 4 fail (Shadow DOM + XMLHttpRequest)
+        ("event-global.html", "4/8 pass; 4 fail requiring Shadow DOM and XMLHttpRequest"),
+        ("event-global-extra", "requires iframes"),
+        ("event-global-is-still-set-when-coercing-beforeunload-result", "requires iframes and beforeunload"),
+        ("event-global-is-still-set-when-reporting-exception-onerror", "requires iframes"),
         // relatedTarget
         ("relatedTarget", "requires relatedTarget"),
         // legacy-pre-activation
@@ -464,18 +468,18 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Element-getElementsByTagName", "requires full getElementsByTagName"),
         // ("Document-getElementsByTagName", "requires full getElementsByTagName"),
         ("Element-getElementsByTagName-change-document-HTMLNess", "requires iframes for document HTMLNess change"),
-        // Document-getElementById (needs HTMLDivElement, full spec)
-        ("Document-getElementById", "requires HTMLDivElement and full spec"),
+        // Document-getElementById — 6/18 pass; needs innerHTML/outerHTML, id-cache-on-insert semantics
+        ("Document-getElementById", "6/18 pass; needs innerHTML/outerHTML, in-document id-cache semantics"),
         // DocumentFragment-getElementById — constructor implemented (unskip)
         // ("DocumentFragment-getElementById", "requires DocumentFragment constructor"),
-        // Node-properties — 679/726 subtests pass, 47 fail (document props, XML case, ownerDocument identity)
-        ("Node-properties", "47 subtests still failing (Document properties, XML, ownerDocument)"),
+        // Node-properties — 722/726 pass; 4 fail (document.nextSibling/previousSibling/ownerDocument=undefined, hasChildNodes)
+        ("Node-properties", "4 subtests fail: document.nextSibling/previousSibling/ownerDocument return undefined not null, hasChildNodes"),
         // ParentNode-children — now implemented (W2-F)
         // ("ParentNode-children", "requires HTMLCollection"),
         // Element-children — now implemented (W2-F)
         // ("Element-children.html", "requires HTMLCollection"),
-        // name-validation
-        ("name-validation", "requires full name validation"),
+        // name-validation — 0/5 pass; needs toggleAttribute, surrogates in name validation
+        ("name-validation", "requires toggleAttribute, surrogate-pair name validation"),
         // remove-unscopable (needs @@unscopables)
         ("remove-unscopable", "requires Symbol.unscopables"),
         // Element-webkitMatchesSelector (alias test)
@@ -585,8 +589,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Event-propagation.html", "requires Event.cancelBubble getter"),
         // Event-stopPropagation-cancel-bubbling — dispatchEvent rejects non-Event arg
         ("Event-stopPropagation-cancel-bubbling", "dispatchEvent rejects document.createEvent result as non-Event"),
-        // Event-dispatch-throwing
-        ("Event-dispatch-throwing", "requires window.onerror"),
+        // Event-dispatch-throwing — window.onerror now implemented (unskip)
+        // ("Event-dispatch-throwing", "requires window.onerror"),
         // Event-dispatch-omitted-capture — unskipped: window now participates in document dispatch
         // ("Event-dispatch-omitted-capture", "requires window EventTarget and initEvent"),
         // Event-dispatch-multiple-cancelBubble/stopPropagation — unskipped: window propagation enabled

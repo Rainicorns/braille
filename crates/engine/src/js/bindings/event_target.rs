@@ -347,6 +347,12 @@ impl JsEventTarget {
             }
         });
 
+        // Save previous CURRENT_EVENT and set to current event (for window.event)
+        let prev_event = super::element::CURRENT_EVENT.with(|cell| cell.borrow().clone());
+        super::element::CURRENT_EVENT.with(|cell| {
+            *cell.borrow_mut() = Some(event_obj.clone());
+        });
+
         for (callback, once, passive) in &matching {
             if *once {
                 EVENT_LISTENERS.with(|el| {
@@ -365,7 +371,7 @@ impl JsEventTarget {
             }
 
             let is_passive = passive.unwrap_or(false);
-            if is_passive {
+            let call_result = if is_passive {
                 let saved_cancelable;
                 if let Some(evt) = event_obj.downcast_ref::<super::event::JsEvent>() {
                     saved_cancelable = evt.cancelable;
@@ -383,29 +389,50 @@ impl JsEventTarget {
 
                 // Per spec: callable → call with this=currentTarget; object → look up handleEvent
                 let current_target = event_obj.get(js_string!("currentTarget"), ctx).unwrap_or(JsValue::undefined());
-                if callback.is_callable() {
-                    let _ = callback.call(&current_target, std::slice::from_ref(event_val), ctx);
-                } else if let Ok(handle) = callback.get(js_string!("handleEvent"), ctx) {
-                    if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
-                        let _ = handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx);
+                let result = if callback.is_callable() {
+                    callback.call(&current_target, std::slice::from_ref(event_val), ctx)
+                } else {
+                    match callback.get(js_string!("handleEvent"), ctx) {
+                        Ok(handle) => {
+                            if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
+                                handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx)
+                            } else {
+                                Ok(JsValue::undefined())
+                            }
+                        }
+                        Err(e) => Err(e),
                     }
-                }
+                };
 
                 if let Some(mut evt) = event_obj.downcast_mut::<super::event::JsEvent>() {
                     evt.cancelable = saved_cancelable;
                 } else if let Some(mut evt) = event_obj.downcast_mut::<super::event::JsCustomEvent>() {
                     evt.cancelable = saved_cancelable;
                 }
+
+                result
             } else {
                 // Per spec: callable → call with this=currentTarget; object → look up handleEvent
                 let current_target = event_obj.get(js_string!("currentTarget"), ctx).unwrap_or(JsValue::undefined());
                 if callback.is_callable() {
-                    let _ = callback.call(&current_target, std::slice::from_ref(event_val), ctx);
-                } else if let Ok(handle) = callback.get(js_string!("handleEvent"), ctx) {
-                    if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
-                        let _ = handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx);
+                    callback.call(&current_target, std::slice::from_ref(event_val), ctx)
+                } else {
+                    match callback.get(js_string!("handleEvent"), ctx) {
+                        Ok(handle) => {
+                            if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
+                                handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx)
+                            } else {
+                                Ok(JsValue::undefined())
+                            }
+                        }
+                        Err(e) => Err(e),
                     }
                 }
+            };
+
+            // If the listener threw, report via window.onerror and continue
+            if let Err(err) = call_result {
+                super::element::report_listener_error(err, ctx);
             }
 
             let imm_stopped = if let Some(evt) = event_obj.downcast_ref::<super::event::JsEvent>() {
@@ -417,9 +444,18 @@ impl JsEventTarget {
             };
 
             if imm_stopped {
+                // Restore previous CURRENT_EVENT before returning
+                super::element::CURRENT_EVENT.with(|cell| {
+                    *cell.borrow_mut() = prev_event.clone();
+                });
                 return Ok(true);
             }
         }
+
+        // Restore previous CURRENT_EVENT
+        super::element::CURRENT_EVENT.with(|cell| {
+            *cell.borrow_mut() = prev_event;
+        });
 
         let propagation_stopped = if let Some(evt) = event_obj.downcast_ref::<super::event::JsEvent>() {
             evt.propagation_stopped

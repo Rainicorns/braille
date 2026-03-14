@@ -117,6 +117,15 @@ thread_local! {
 }
 
 // ---------------------------------------------------------------------------
+// Current event thread-local (for window.event)
+// ---------------------------------------------------------------------------
+thread_local! {
+    /// The event currently being dispatched (for window.event).
+    /// Stored as a stack-like Option: set before each listener callback, restored after.
+    pub(crate) static CURRENT_EVENT: RefCell<Option<JsObject>> = const { RefCell::new(None) };
+}
+
+// ---------------------------------------------------------------------------
 // Prototype objects for proper instanceof support
 // (Node.prototype -> CharacterData.prototype -> Text.prototype / Comment.prototype)
 // ---------------------------------------------------------------------------
@@ -1447,6 +1456,12 @@ pub(crate) fn invoke_listeners_for_node(
         }
     });
 
+    // Save previous CURRENT_EVENT and set to current event (for window.event)
+    let prev_event = CURRENT_EVENT.with(|cell| cell.borrow().clone());
+    CURRENT_EVENT.with(|cell| {
+        *cell.borrow_mut() = Some(event_obj.clone());
+    });
+
     for (callback, once) in &matching {
         if *once {
             EVENT_LISTENERS.with(|el| {
@@ -1466,18 +1481,31 @@ pub(crate) fn invoke_listeners_for_node(
 
         // Per spec: if callback is callable, call with this=currentTarget.
         // If callback is an object with handleEvent method, look it up fresh and call with this=object.
-        if callback.is_callable() {
+        // Per spec: if a listener throws, report the error and continue to the next listener.
+        let call_result = if callback.is_callable() {
             // Get currentTarget from the event to use as `this`
             let current_target = event_obj
                 .get(js_string!("currentTarget"), ctx)
                 .unwrap_or(JsValue::undefined());
-            let _ = callback.call(&current_target, std::slice::from_ref(event_val), ctx);
+            callback.call(&current_target, std::slice::from_ref(event_val), ctx)
         } else {
             // handleEvent protocol: look up handleEvent on the object each time
-            let handle = callback.get(js_string!("handleEvent"), ctx)?;
-            if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
-                let _ = handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx);
+            let handle = callback.get(js_string!("handleEvent"), ctx);
+            match handle {
+                Ok(handle_val) => {
+                    if let Some(handle_fn) = handle_val.as_object().filter(|o| o.is_callable()) {
+                        handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx)
+                    } else {
+                        Ok(JsValue::undefined())
+                    }
+                }
+                Err(e) => Err(e),
             }
+        };
+
+        // If the listener threw, report via window.onerror and continue
+        if let Err(err) = call_result {
+            report_listener_error(err, ctx);
         }
 
         let (imm_stopped, prop_stopped) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
@@ -1489,11 +1517,20 @@ pub(crate) fn invoke_listeners_for_node(
         };
 
         if imm_stopped {
+            // Restore previous CURRENT_EVENT before returning
+            CURRENT_EVENT.with(|cell| {
+                *cell.borrow_mut() = prev_event.clone();
+            });
             return Ok(true);
         }
         // prop_stopped: don't return yet -- continue processing listeners on this node
         let _ = prop_stopped;
     }
+
+    // Restore previous CURRENT_EVENT
+    CURRENT_EVENT.with(|cell| {
+        *cell.borrow_mut() = prev_event;
+    });
 
     let propagation_stopped = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
         evt.propagation_stopped
@@ -1503,6 +1540,50 @@ pub(crate) fn invoke_listeners_for_node(
         false
     };
     Ok(propagation_stopped)
+}
+
+/// Report a listener error via window.onerror. Per spec, when a listener throws,
+/// the error is reported and dispatch continues to the next listener.
+pub(crate) fn report_listener_error(err: JsError, ctx: &mut Context) {
+    let message = err
+        .as_opaque()
+        .map(|v| {
+            v.to_string(ctx)
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_else(|_| "unknown error".to_string())
+        })
+        .or_else(|| {
+            err.as_native().map(|n| n.message().to_string())
+        })
+        .unwrap_or_else(|| "unknown error".to_string());
+
+    // Try to call window.onerror(message, filename, lineno, colno, error)
+    let onerror: Option<JsObject> = WINDOW_OBJECT.with(|cell| {
+        let borrow = cell.borrow();
+        let w = match borrow.as_ref() {
+            Some(w) => w,
+            None => return None,
+        };
+        let val = match w.get(js_string!("onerror"), ctx) {
+            Ok(v) if !v.is_undefined() && !v.is_null() => v,
+            _ => return None,
+        };
+        val.as_object().filter(|o| o.is_callable()).map(|o| o.clone())
+    });
+
+    if let Some(onerror_fn) = onerror {
+        let _ = onerror_fn.call(
+            &JsValue::undefined(),
+            &[
+                JsValue::from(js_string!(message)),
+                JsValue::from(js_string!("")),      // filename
+                JsValue::from(0),                     // lineno
+                JsValue::from(0),                     // colno
+                JsValue::undefined(),                 // error object
+            ],
+            ctx,
+        );
+    }
 }
 
 impl Class for JsElement {
