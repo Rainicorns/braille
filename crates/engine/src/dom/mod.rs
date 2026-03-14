@@ -6,4 +6,4 @@ pub mod find;
 pub mod css_support;
 
 pub use node::{Node, NodeData, NodeId};
-pub use tree::{DomTree, is_valid_xml_name};
+pub use tree::{DomTree, is_valid_dom_name, is_valid_xml_name};

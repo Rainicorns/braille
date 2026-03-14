@@ -851,6 +851,7 @@ impl JsRuntime {
                 document_fragment_proto: None,
                 document_type_proto: None,
                 document_proto: None,
+                xml_document_proto: None,
             });
         });
 
@@ -1350,6 +1351,7 @@ impl JsRuntime {
         let document_fragment_proto = get_proto("DocumentFragment");
         let document_type_proto = get_proto("DocumentType");
         let document_proto = get_proto("Document");
+        let xml_document_proto = get_proto("XMLDocument");
 
         DOM_PROTOTYPES.with(|cell| {
             let mut protos = cell.borrow_mut();
@@ -1360,6 +1362,7 @@ impl JsRuntime {
                 p.document_fragment_proto = document_fragment_proto;
                 p.document_type_proto = document_type_proto;
                 p.document_proto = document_proto;
+                p.xml_document_proto = xml_document_proto;
             }
         });
     }

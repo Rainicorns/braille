@@ -1161,6 +1161,16 @@ fn is_name_char(c: char) -> bool {
         )
 }
 
+/// Lenient name validation matching actual browser behavior for DOM APIs like
+/// createElementNS and createDocument. Only checks that the first character is a
+/// valid NameStartChar and that the name contains no whitespace — subsequent
+/// characters are otherwise completely unchecked. This contradicts the spec
+/// (which says to validate against the full QName production) but it's what
+/// every browser does, and what WPT tests demand. C'est la vie.
+pub fn is_valid_dom_name(name: &str) -> bool {
+    name.chars().next().is_some_and(is_name_start_char) && !name.contains(char::is_whitespace)
+}
+
 /// Validates whether a string is a valid XML Name per the XML spec.
 /// Used by createProcessingInstruction and other DOM APIs that require valid XML names.
 pub fn is_valid_xml_name(name: &str) -> bool {

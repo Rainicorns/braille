@@ -12,11 +12,11 @@ use boa_engine::{
 use boa_gc::{Finalize, Trace};
 
 use crate::dom::DomTree;
-use crate::dom::is_valid_xml_name;
+use crate::dom::{is_valid_dom_name, is_valid_xml_name};
 
 use crate::dom::NodeData;
 
-use super::element::{JsElement, get_or_create_js_element, NODE_CACHE};
+use super::element::{JsElement, get_or_create_js_element, NODE_CACHE, DOM_PROTOTYPES};
 use super::event::{JsEvent, JsCustomEvent};
 use super::event_target::{ListenerEntry, EVENT_LISTENERS};
 use super::class_list::register_class_list_class;
@@ -39,11 +39,11 @@ fn validate_and_extract(
     if let Some(colon_pos) = qualified_name.find(':') {
         let prefix_part = &qualified_name[..colon_pos];
         let local_part = &qualified_name[colon_pos + 1..];
-        // Both parts must be valid XML Names and non-empty
+        // Both parts must be non-empty with valid start chars (lenient browser behavior)
         if prefix_part.is_empty()
             || local_part.is_empty()
-            || !is_valid_xml_name(prefix_part)
-            || !is_valid_xml_name(local_part)
+            || !is_valid_dom_name(prefix_part)
+            || !is_valid_dom_name(local_part)
         {
             let exc = super::create_dom_exception(
                 ctx,
@@ -54,8 +54,8 @@ fn validate_and_extract(
             return Err(JsError::from_opaque(exc.into()));
         }
     } else {
-        // No colon — the whole string must be a valid XML Name (or empty for createDocument)
-        if !qualified_name.is_empty() && !is_valid_xml_name(qualified_name) {
+        // No colon — must have a valid start char (lenient browser behavior)
+        if !qualified_name.is_empty() && !is_valid_dom_name(qualified_name) {
             let exc = super::create_dom_exception(
                 ctx,
                 "InvalidCharacterError",
@@ -102,7 +102,7 @@ fn validate_and_extract(
     }
 
     // 3d: namespace is XMLNS but neither prefix nor qualifiedName is "xmlns"
-    if ns == "http://www.w3.org/2000/xmlns/" && prefix != "xmlns" && qualified_name != "xmlns" {
+    if ns == "http://www.w3.org/2000/xmlns/" && !qualified_name.is_empty() && prefix != "xmlns" && qualified_name != "xmlns" {
         let exc = super::create_dom_exception(ctx, "NamespaceError", "Namespace error", 14)?;
         return Err(JsError::from_opaque(exc.into()));
     }
@@ -993,7 +993,7 @@ fn document_get_root_node(this: &JsValue, _args: &[JsValue], _ctx: &mut Context)
 pub(crate) fn add_document_properties_to_element(
     js_obj: &JsObject,
     new_tree: Rc<RefCell<DomTree>>,
-    content_type: String,
+    _content_type: String,
     ctx: &mut Context,
 ) -> JsResult<()> {
     let realm = ctx.realm().clone();
@@ -1102,9 +1102,8 @@ pub(crate) fn add_document_properties_to_element(
         ctx,
     )?;
 
-    // createElement method — respects is_html_document and content_type for lowercasing and namespace
+    // createElement method — respects is_html_document for lowercasing and namespace
     let tree_for_ce = new_tree.clone();
-    let content_type_for_ce = content_type;
     let create_element = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
             let tag = args
@@ -1114,12 +1113,11 @@ pub(crate) fn add_document_properties_to_element(
                 .map(|s| s.to_std_string_escaped())
                 .unwrap_or_else(|| "undefined".to_string());
             let is_html = tree_for_ce.borrow().is_html_document();
-            let is_xhtml_content = content_type_for_ce == "application/xhtml+xml";
-            let node_id = if is_html || is_xhtml_content {
-                // HTML or XHTML doc: lowercase tag, XHTML namespace (create_element default)
+            let node_id = if is_html {
+                // HTML doc: lowercase tag, HTML namespace (create_element default)
                 tree_for_ce.borrow_mut().create_element(&tag.to_ascii_lowercase())
             } else {
-                // XML doc: preserve case, null namespace
+                // XML/XHTML doc: preserve case, null namespace
                 tree_for_ce.borrow_mut().create_element_ns(&tag, vec![], "")
             };
             let js_el = get_or_create_js_element(node_id, tree_for_ce.clone(), ctx2)?;
@@ -1626,7 +1624,7 @@ fn domimpl_create_document(
     let namespace = args
         .first()
         .map(|v| {
-            if v.is_null() {
+            if v.is_null() || v.is_undefined() {
                 Ok(String::new())
             } else {
                 v.to_string(ctx).map(|s| s.to_std_string_escaped())
@@ -1638,7 +1636,7 @@ fn domimpl_create_document(
     let qualified_name = args
         .get(1)
         .map(|v| {
-            if v.is_null() || v.is_undefined() {
+            if v.is_null() {
                 Ok(String::new())
             } else {
                 v.to_string(ctx).map(|s| s.to_std_string_escaped())
@@ -1698,6 +1696,19 @@ fn domimpl_create_document(
 
     let doc_id = new_tree.borrow().document();
     let js_obj = get_or_create_js_element(doc_id, new_tree.clone(), ctx)?;
+
+    // Per DOM spec, createDocument returns an XMLDocument (subinterface of Document).
+    // Override the prototype from Document.prototype to XMLDocument.prototype so that
+    // `doc instanceof XMLDocument` returns true.
+    DOM_PROTOTYPES.with(|cell| {
+        let protos = cell.borrow();
+        if let Some(ref p) = *protos {
+            if let Some(ref xml_proto) = p.xml_document_proto {
+                js_obj.set_prototype(Some(xml_proto.clone()));
+            }
+        }
+    });
+
     add_document_properties_to_element(&js_obj, new_tree, content_type.to_string(), ctx)?;
 
     // Set contentType property on the document object

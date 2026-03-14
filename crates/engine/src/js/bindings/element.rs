@@ -143,6 +143,8 @@ pub(crate) struct DomPrototypes {
     pub(crate) document_type_proto: Option<JsObject>,
     /// Document.prototype
     pub(crate) document_proto: Option<JsObject>,
+    /// XMLDocument.prototype
+    pub(crate) xml_document_proto: Option<JsObject>,
 }
 
 thread_local! {

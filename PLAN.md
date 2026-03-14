@@ -13,7 +13,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 **Build quality:** Workspace lint configuration enforces `warnings = "deny"` and `clippy::all = "warn"`. Zero compiler warnings, zero clippy lints. `rustfmt.toml` configured (edition 2021, max_width 120).
 
-**WPT Phase 4 — ALL 5 AGENTS COMPLETE.** Event system enhancements: DOMHighResTimeStamp, UIEvent subclasses (MouseEvent/KeyboardEvent/WheelEvent/FocusEvent), handleEvent protocol, window as event target, standalone `new EventTarget()` constructor, composedPath(). **~15 new event test files passing.** Phase 3 also complete (attribute NS refactor, live HTMLCollection, querySelector unskip). Phase 2 also complete — all 5 fixable tests at 100%.
+**WPT Phase 4 — ALL 5 AGENTS COMPLETE.** Event system enhancements: DOMHighResTimeStamp, UIEvent subclasses (MouseEvent/KeyboardEvent/WheelEvent/FocusEvent), handleEvent protocol, window as event target, standalone `new EventTarget()` constructor, composedPath(). **~15 new event test files passing.** Phase 3 also complete (attribute NS refactor, live HTMLCollection, querySelector unskip). Phase 2 also complete — all 5 fixable tests at 100%. **Post-phase fixes:** validate-and-extract namespace validation (createElementNS), createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count + implementation methods on created docs. **125/263 WPT tests passing.**
 
 **Wave 2 completed tasks (13 total):**
 
@@ -247,9 +247,9 @@ Run all three directions concurrently where dependencies allow. Recommended inte
 
 ### WPT DOM Conformance — Comprehensive Test Status
 
-**263 total test files** across `dom/nodes/` and `dom/events/`. **123 pass, 11 fail (partial subtest failures — 7 accepted, 4 fixable), 129 skipped.** Implemented across 4 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system).
+**263 total test files** across `dom/nodes/` and `dom/events/`. **125 pass, 9 fail (partial subtest failures — 8 accepted, 1 fixable), 129 skipped.** Implemented across 4 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system). Post-phase fixes: validate-and-extract namespace validation for createElementNS, createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count check.
 
-Known subtest counts where recorded: Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19.
+Known subtest counts where recorded: Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, DOMImplementation-createDocument 400/434, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19.
 
 #### dom/events/ (27 pass, 1 fail, 68 skip)
 
@@ -349,7 +349,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | webkit-transition-end-event.html | SKIP | requires TransitionEvent |
 | window-composed-path.html | SKIP | requires composedPath with window |
 
-#### dom/nodes/ (96 pass, 10 fail, 61 skip)
+#### dom/nodes/ (98 pass, 8 fail, 61 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -367,7 +367,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | ChildNode-replaceWith.html | PASS | |
 | Comment-constructor.html | PASS | |
 | DOMImplementation-createDocument-with-null-browsing-context-crash.html | SKIP | requires iframes |
-| DOMImplementation-createDocument.html | FAIL | needs XML Name validation + arg count check (FIXABLE) |
+| DOMImplementation-createDocument.html | FAIL | 287/434; prototype identity (`XMLDocument.prototype`), `assert_equals` on created docs (accepted partial) |
 | DOMImplementation-createDocumentType.html | PASS | 82/82 |
 | DOMImplementation-createHTMLDocument-with-null-browsing-context-crash.html | SKIP | requires iframes |
 | DOMImplementation-createHTMLDocument-with-saved-implementation.html | SKIP | requires iframes |
@@ -386,7 +386,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Document-createElementNS.html | PASS | 596/596 |
 | Document-createEvent-touchevent.window.js | SKIP | requires touch events |
 | Document-createEvent.https.html | SKIP | requires full createEvent spec |
-| Document-createProcessingInstruction.html | FAIL | missing XML Name validation + ?> check (FIXABLE) |
+| Document-createProcessingInstruction.html | PASS | |
 | Document-createTextNode.html | PASS | |
 | Document-createTreeWalker.html | SKIP | requires TreeWalker |
 | Document-doctype.html | PASS | |
