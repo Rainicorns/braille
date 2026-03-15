@@ -513,8 +513,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Event-dispatch-target-moved/removed — propagation path is snapshot, arena nodes survive (unskip)
         // ("Event-dispatch-target-moved", "requires live dispatch mutation"),
         // ("Event-dispatch-target-removed", "requires live dispatch mutation"),
-        // Event-dispatch-handlers-changed — panics on BorrowMutError when addEventListener called during dispatch
-        ("Event-dispatch-handlers-changed", "BorrowMutError: addEventListener during dispatch borrows EVENT_LISTENERS"),
+        // Event-dispatch-handlers-changed — fixed: scoped downcast_ref in dispatch_event to drop borrow before callbacks
         // Event-dispatch-detached-input-and-change
         ("Event-dispatch-detached-input-and-change", "requires input events"),
         // focus/pointer/mouse events (need specific event types)

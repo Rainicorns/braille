@@ -1340,11 +1340,12 @@ impl JsElement {
         let this_obj = this
             .as_object()
             .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not an object").into()))?;
-        let el = this_obj
-            .downcast_ref::<JsElement>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not an Element").into()))?;
-        let target_node_id = el.node_id;
-        let tree = el.tree.clone();
+        let (target_node_id, tree) = {
+            let el = this_obj
+                .downcast_ref::<JsElement>()
+                .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not an Element").into()))?;
+            (el.node_id, el.tree.clone())
+        };
         let tree_scope = Rc::as_ptr(&tree) as usize;
 
         let event_val = args
