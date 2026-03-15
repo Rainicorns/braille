@@ -1374,6 +1374,43 @@ pub fn is_valid_dom_name(name: &str) -> bool {
         && !name.contains('>')
 }
 
+/// Validates whether a string is a valid element name per the HTML spec.
+/// Rules match the WPT name-validation test regex:
+///   /^(?:[A-Za-z][^\0\t\n\f\r\u0020/>]*|[:_\u0080-\u{10FFFF}][A-Za-z0-9-.:_\u0080-\u{10FFFF}]*)$/u
+///
+/// Two cases:
+/// 1. ASCII alpha start → subsequent chars must not be: \0, \t, \n, \x0C, \r, space, /, >
+/// 2. :, _, or >= U+0080 start → subsequent chars only: A-Za-z0-9, -, ., :, _, >= U+0080
+/// Everything else (empty, digit start, other control chars) is invalid.
+pub fn is_valid_element_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        None => false,
+        Some(first) if first.is_ascii_alphabetic() => {
+            // ASCII alpha start: reject \0, whitespace subset, /, >
+            chars.all(|c| !matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '/' | '>'))
+        }
+        Some(first) if first == ':' || first == '_' || first as u32 >= 0x80 => {
+            // :, _, or non-ASCII start: strict subsequent char set
+            chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':' | '_') || c as u32 >= 0x80)
+        }
+        _ => false,
+    }
+}
+
+/// Validates whether a string is a valid attribute name per the HTML spec.
+/// Invalid chars: empty, \0, ASCII whitespace (\t, \n, \x0C, \r, space), /, >, =
+pub fn is_valid_attribute_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '/' | '>' | '='))
+}
+
+/// Validates whether a string is a valid doctype name.
+/// Invalid chars: empty allowed, \0, ASCII whitespace (\t, \n, \x0C, \r, space), >
+pub fn is_valid_doctype_name(name: &str) -> bool {
+    !name.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '>'))
+}
+
 /// Validates whether a string is a valid XML Name per the XML spec.
 /// Used by createProcessingInstruction and other DOM APIs that require valid XML names.
 pub fn is_valid_xml_name(name: &str) -> bool {

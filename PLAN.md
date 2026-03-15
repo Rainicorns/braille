@@ -56,7 +56,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 | Component | Gap |
 |-----------|-----|
-| WPT harness | **Phase 5 complete (MutationObserver + Tier 2 quick wins)** (160/263 passing). Phase 5: MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode. Remaining ~96 skipped need Shadow DOM/workers/Range/advanced iframes/NamedNodeMap. |
+| WPT harness | **Phase 5 complete (MutationObserver + Tier 2 quick wins)** (161/263 passing). Phase 5: MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode. Remaining ~96 skipped need Shadow DOM/workers/Range/advanced iframes/NamedNodeMap. |
 | Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height |
 | WASM sandbox | Not started — engine runs in-process |
 
@@ -511,7 +511,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | getElementsByClassName-empty-set.html | PASS | |
 | getElementsByClassName-whitespace-class-names.html | PASS | |
 | insert-adjacent.html | PASS | 14/14; fixed: added nodeType==1 check for insertAdjacentElement |
-| name-validation.html | SKIP | requires toggleAttribute, surrogate-pair name validation |
+| name-validation.html | PASS | 5/5; added toggleAttribute, is_valid_element_name/attribute_name/doctype_name, name validation in createElement/setAttribute/createAttribute/createDocumentType/createElementNS/setAttributeNS/createAttributeNS |
 | node-appendchild-crash.html | SKIP | requires window.onload IDL attribute |
 | prepend-on-Document.html | PASS | |
 | query-target-in-load-event.html | SKIP | requires iframe src loading |
@@ -778,7 +778,7 @@ Must support: clicking links/buttons, filling form inputs, selecting dropdowns, 
   - Git submodule at `tests/wpt/` with sparse checkout: `resources`, `dom/nodes`, `dom/events`
   - 164 HTML test files in `dom/nodes/`, 78 in `dom/events/`
   - jsdom's `to-run.yaml` provides a curated roadmap of which tests are feasible for non-browser DOM implementations
-  - **Phase 5 COMPLETE (MutationObserver + Tier 2)** — 160/263 passing, remainder deferred (Shadow DOM/workers/Range/advanced iframes)
+  - **Phase 5 COMPLETE (MutationObserver + Tier 2)** — 161/263 passing, remainder deferred (Shadow DOM/workers/Range/advanced iframes)
   - Future phases: `html/dom/`, `css/selectors/`
 - **html5lib-tests** — integrated as git submodule at `tests/html5lib-tests/`
   - **Tree-construction:** 1778 test cases from 56 `.dat` files, run via `cargo test --test html5lib_tree_construction`

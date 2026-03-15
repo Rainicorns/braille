@@ -78,6 +78,12 @@ pub(crate) fn register_attributes(class: &mut ClassBuilder) -> JsResult<()> {
         NativeFunction::from_fn_ptr(has_attributes_fn),
     );
 
+    class.method(
+        js_string!("toggleAttribute"),
+        1,
+        NativeFunction::from_fn_ptr(toggle_attribute_fn),
+    );
+
     // Register properties (id and className)
     let realm = class.context().realm().clone();
 
@@ -142,6 +148,13 @@ fn set_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
         .transpose()?
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
+
+    // Validate the attribute name per spec
+    if !crate::dom::is_valid_attribute_name(&name) {
+        let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
+
     let value = args
         .get(1)
         .map(|v| v.to_string(ctx))
@@ -314,6 +327,21 @@ fn set_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
+    // Validate the qualified name for attribute names
+    if let Some(colon_pos) = qualified_name.find(':') {
+        let prefix_part = &qualified_name[..colon_pos];
+        let local_part = &qualified_name[colon_pos + 1..];
+        let invalid_prefix = prefix_part.is_empty()
+            || prefix_part.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '/' | '>'));
+        if invalid_prefix || !crate::dom::is_valid_attribute_name(local_part) {
+            let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+            return Err(JsError::from_opaque(exc.into()));
+        }
+    } else if !crate::dom::is_valid_attribute_name(&qualified_name) {
+        let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
+
     let value = args
         .get(2)
         .map(|v| v.to_string(ctx))
@@ -422,6 +450,56 @@ fn has_attributes_fn(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> J
     let tree = el.tree.borrow();
     let has = tree.has_attributes(el.node_id);
     Ok(JsValue::from(has))
+}
+
+/// Native implementation of element.toggleAttribute(qualifiedName, force?)
+fn toggle_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("toggleAttribute: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("toggleAttribute: `this` is not an Element").into()))?;
+    let name = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    // Validate the attribute name per spec
+    if !crate::dom::is_valid_attribute_name(&name) {
+        let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
+
+    // Per spec, lowercase the name for HTML elements in HTML documents
+    let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
+
+    let force_arg = args.get(1);
+    let has_force = force_arg.is_some_and(|v| !v.is_undefined());
+
+    let has_attr = el.tree.borrow().has_attribute(el.node_id, &name);
+
+    if has_attr {
+        if has_force && force_arg.unwrap().to_boolean() {
+            // force=true and attribute exists: keep it, return true
+            Ok(JsValue::from(true))
+        } else if !has_force || !force_arg.unwrap().to_boolean() {
+            // force missing or false: remove the attribute, return false
+            super::mutation_observer::remove_attribute_with_observer(&el.tree, el.node_id, &name);
+            Ok(JsValue::from(false))
+        } else {
+            Ok(JsValue::from(true))
+        }
+    } else if !has_force || force_arg.unwrap().to_boolean() {
+        // force missing or true: add the attribute with empty value, return true
+        super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, &name, "");
+        Ok(JsValue::from(true))
+    } else {
+        // force=false and attribute doesn't exist: return false
+        Ok(JsValue::from(false))
+    }
 }
 
 /// Native getter for element.id

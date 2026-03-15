@@ -12,7 +12,7 @@ use boa_engine::{
 use boa_gc::{Finalize, Trace};
 
 use crate::dom::DomTree;
-use crate::dom::{is_valid_dom_name, is_valid_xml_name};
+use crate::dom::is_valid_xml_name;
 
 use crate::dom::NodeData;
 
@@ -35,20 +35,15 @@ fn validate_and_extract(
     qualified_name: &str,
     ctx: &mut Context,
 ) -> JsResult<(String, String, String)> {
-    // Step 1: Validate the qualifiedName as an XML QName
-    // Browsers validate colon-containing names asymmetrically:
-    //   - Prefix: must be non-empty, no whitespace or '>', but start char NOT validated
-    //   - Local:  must be non-empty and pass is_valid_dom_name (lenient NameStartChar check)
-    // For no-colon names, the whole name is validated via is_valid_dom_name.
+    // Step 1: Validate the qualifiedName
+    // For colon-containing names, split into prefix:localName and validate each.
+    // For no-colon names, validate the whole name as an element name.
     if let Some(colon_pos) = qualified_name.find(':') {
         let prefix_part = &qualified_name[..colon_pos];
         let local_part = &qualified_name[colon_pos + 1..];
-        if prefix_part.is_empty()
-            || local_part.is_empty()
-            || prefix_part.contains(char::is_whitespace)
-            || prefix_part.contains('>')
-            || !is_valid_dom_name(local_part)
-        {
+        let invalid_prefix = prefix_part.is_empty()
+            || prefix_part.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '/' | '>'));
+        if invalid_prefix || !crate::dom::is_valid_element_name(local_part) {
             let exc = super::create_dom_exception(
                 ctx,
                 "InvalidCharacterError",
@@ -58,8 +53,8 @@ fn validate_and_extract(
             return Err(JsError::from_opaque(exc.into()));
         }
     } else {
-        // No colon — must have a valid start char (lenient browser behavior)
-        if !qualified_name.is_empty() && !is_valid_dom_name(qualified_name) {
+        // No colon — validate the whole name as an element name
+        if !qualified_name.is_empty() && !crate::dom::is_valid_element_name(qualified_name) {
             let exc = super::create_dom_exception(
                 ctx,
                 "InvalidCharacterError",
@@ -217,6 +212,12 @@ fn document_create_element(
         .transpose()?
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_else(|| "undefined".to_string());
+
+    // Validate the element name per spec
+    if !crate::dom::is_valid_element_name(&tag) {
+        let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
 
     // Global document is always HTML — lowercase the tag name per spec
     let tag_lower = tag.to_ascii_lowercase();
@@ -511,11 +512,10 @@ fn document_create_attribute(
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_else(|| "undefined".to_string());
 
-    // Per spec: validate the name — empty string is not a valid XML name
-    if local_name.is_empty() {
-        return Err(JsError::from_opaque(
-            js_string!("InvalidCharacterError: The string contains invalid characters.").into(),
-        ));
+    // Per spec: validate the attribute name
+    if !crate::dom::is_valid_attribute_name(&local_name) {
+        let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+        return Err(JsError::from_opaque(exc.into()));
     }
 
     // Per spec: if the document is an HTML document, lowercase the name
@@ -560,6 +560,21 @@ fn document_create_attribute_ns(
         .transpose()?
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_else(|| "undefined".to_string());
+
+    // Validate the qualified name for attribute names
+    if let Some(colon_pos) = qualified_name.find(':') {
+        let prefix_part = &qualified_name[..colon_pos];
+        let local_part = &qualified_name[colon_pos + 1..];
+        let invalid_prefix = prefix_part.is_empty()
+            || prefix_part.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '/' | '>'));
+        if invalid_prefix || !crate::dom::is_valid_attribute_name(local_part) {
+            let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+            return Err(JsError::from_opaque(exc.into()));
+        }
+    } else if !crate::dom::is_valid_attribute_name(&qualified_name) {
+        let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
 
     // Parse prefix and local name from qualified name
     let (prefix, local_name) = if let Some(colon_pos) = qualified_name.find(':') {
@@ -1254,6 +1269,16 @@ pub(crate) fn add_document_properties_to_element(
                 .transpose()?
                 .map(|s| s.to_std_string_escaped())
                 .unwrap_or_else(|| "undefined".to_string());
+            // Validate the element name per spec
+            if !crate::dom::is_valid_element_name(&tag) {
+                let exc = super::create_dom_exception(
+                    ctx2,
+                    "InvalidCharacterError",
+                    "String contains an invalid character",
+                    5,
+                )?;
+                return Err(JsError::from_opaque(exc.into()));
+            }
             let is_html = tree_for_ce.borrow().is_html_document();
             let node_id = if is_html {
                 // HTML doc: lowercase tag, HTML namespace (create_element default)
@@ -1400,6 +1425,10 @@ pub(crate) fn add_document_properties_to_element(
     let impl_create_dt = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
             let name = args.first().map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
+            if !crate::dom::is_valid_doctype_name(&name) {
+                let exc = super::create_dom_exception(ctx2, "InvalidCharacterError", "String contains an invalid character", 5)?;
+                return Err(JsError::from_opaque(exc.into()));
+            }
             let public_id = args.get(1).map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
             let system_id = args.get(2).map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
             let node_id = tree_for_impl.borrow_mut().create_doctype(&name, &public_id, &system_id);
@@ -1701,9 +1730,10 @@ fn domimpl_create_document_type(
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    // Validate qualified name per spec
-    if name.contains('>') || name.contains(' ') {
-        return Err(JsError::from_opaque(js_string!("InvalidCharacterError: The string contains invalid characters").into()));
+    // Validate doctype name per spec
+    if !crate::dom::is_valid_doctype_name(&name) {
+        let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+        return Err(JsError::from_opaque(exc.into()));
     }
 
     let public_id = args

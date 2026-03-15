@@ -483,8 +483,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("ParentNode-children", "requires HTMLCollection"),
         // Element-children — now implemented (W2-F)
         // ("Element-children.html", "requires HTMLCollection"),
-        // name-validation — 0/5 pass; needs toggleAttribute, surrogates in name validation
-        ("name-validation", "requires toggleAttribute, surrogate-pair name validation"),
+        // name-validation — 5/5 pass
+        // ("name-validation", "all subtests pass"),
         // remove-unscopable (needs @@unscopables)
         ("remove-unscopable", "requires Symbol.unscopables"),
         // Element-webkitMatchesSelector (alias test)
