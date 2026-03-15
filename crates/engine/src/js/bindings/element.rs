@@ -8,7 +8,7 @@ use boa_engine::{
     native_function::NativeFunction,
     object::ObjectInitializer,
     property::{Attribute, PropertyDescriptor},
-    Context, JsData, JsError, JsNativeError, JsObject, JsResult, JsValue,
+    Context, JsData, JsError, JsNativeError, JsObject, JsResult, JsSymbol, JsValue,
 };
 use boa_gc::{Finalize, Trace};
 
@@ -1961,6 +1961,22 @@ impl Class for JsElement {
             js_string!("dispatchEvent"),
             1,
             NativeFunction::from_fn_ptr(Self::dispatch_event),
+        );
+
+        // Symbol.unscopables — spec requires null-prototype object with these ChildNode/ParentNode methods
+        let unscopables = ObjectInitializer::new(class.context())
+            .property(js_string!("before"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
+            .property(js_string!("after"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
+            .property(js_string!("replaceWith"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
+            .property(js_string!("remove"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
+            .property(js_string!("prepend"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
+            .property(js_string!("append"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
+            .build();
+        unscopables.set_prototype(None);
+        class.property(
+            JsSymbol::unscopables(),
+            unscopables,
+            Attribute::READONLY | Attribute::NON_ENUMERABLE | Attribute::CONFIGURABLE,
         );
 
         Ok(())

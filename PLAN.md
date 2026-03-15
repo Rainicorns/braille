@@ -56,7 +56,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 | Component | Gap |
 |-----------|-----|
-| WPT harness | **Phase 5 complete + quick wins in progress** (162/263 passing). Phase 5: MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode. Quick wins: name-validation, toggleAttribute, CharacterData-remove, svg-template-querySelector. Remaining ~95 skipped need Shadow DOM/workers/Range/advanced iframes/NamedNodeMap. |
+| WPT harness | **Phase 5 complete + quick wins DONE** (162/263 passing). Phase 5: MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode. Quick wins: name-validation, toggleAttribute, CharacterData-remove, svg-template-querySelector, webkitMatchesSelector alias, Symbol.unscopables, Document-URL skip reason update. Remaining ~95 skipped need Shadow DOM/workers/Range/advanced iframes/NamedNodeMap. |
 | Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height |
 | WASM sandbox | Not started — engine runs in-process |
 
@@ -373,7 +373,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | DOMImplementation-createHTMLDocument-with-saved-implementation.html | PASS | |
 | DOMImplementation-createHTMLDocument.html | PASS | 13/13 |
 | DOMImplementation-hasFeature.html | PASS | |
-| Document-URL.html | SKIP | requires Document.URL |
+| Document-URL.html | SKIP | requires iframe src loading with redirect |
 | Document-adoptNode.html | PASS | 4/4 |
 | Document-characterSet-normalization-1.html | SKIP | requires characterSet |
 | Document-characterSet-normalization-2.html | SKIP | requires characterSet |
@@ -520,7 +520,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | remove-and-adopt-thcrash.html | SKIP | requires window.open |
 | remove-from-shadow-host-and-adopt-into-iframe-ref.html | SKIP | requires Shadow DOM |
 | remove-from-shadow-host-and-adopt-into-iframe.html | SKIP | requires Shadow DOM |
-| remove-unscopable.html | SKIP | requires Symbol.unscopables |
+| remove-unscopable.html | SKIP | requires onclick attribute handlers (@@unscopables added) |
 | rootNode.html | FAIL | 0/1; Shadow DOM subtest (accepted partial) |
 | svg-template-querySelector.html | PASS | unskipped — template.content works |
 
@@ -540,7 +540,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | XML/XHTML/SVG namespace | 6 | *-xhtml, *-xml, Element-matches-namespaced, querySelector-mixed-case, Node-cloneNode-svg, Node-cloneNode-XMLDocument |
 | NamedNodeMap / attributes | 3 | attributes-namednodemap*, attributes.html |
 | Custom elements | 2 | Node-appendChild-cereactions, EventTarget-add-listener-platform-object |
-| Misc (Symbol.unscopables, characterSet, etc.) | 11 | remove-unscopable, Document-characterSet-*, Document-URL, Document-getElementById, Node-properties, name-validation, etc. |
+| Misc (characterSet, etc.) | 9 | Document-characterSet-*, Document-URL (iframe redirect), Document-getElementById, Node-properties, remove-unscopable (onclick handlers), etc. |
 | Event dispatch edge cases | 5 | Event-dispatch-handlers-changed (BorrowMutError), Event-dispatch-redispatch, Event-dispatch-throwing-multiple-globals, Event-dispatch-single-activation-behavior, Event-dispatch-throwing |
 | Other (GamepadEvent, composedPath, browsing context, etc.) | 14 | remaining miscellaneous skips |
 
@@ -778,7 +778,7 @@ Must support: clicking links/buttons, filling form inputs, selecting dropdowns, 
   - Git submodule at `tests/wpt/` with sparse checkout: `resources`, `dom/nodes`, `dom/events`
   - 164 HTML test files in `dom/nodes/`, 78 in `dom/events/`
   - jsdom's `to-run.yaml` provides a curated roadmap of which tests are feasible for non-browser DOM implementations
-  - **Phase 5 COMPLETE (MutationObserver + Tier 2) + quick wins** — 162/263 passing, remainder deferred (Shadow DOM/workers/Range/advanced iframes)
+  - **Phase 5 COMPLETE (MutationObserver + Tier 2) + quick wins DONE** — 162/263 passing, remainder deferred (Shadow DOM/workers/Range/advanced iframes)
   - Future phases: `html/dom/`, `css/selectors/`
 - **html5lib-tests** — integrated as git submodule at `tests/html5lib-tests/`
   - **Tree-construction:** 1778 test cases from 56 `.dat` files, run via `cargo test --test html5lib_tree_construction`

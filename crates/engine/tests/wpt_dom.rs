@@ -360,8 +360,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("CharacterData-surrogates", "requires UTF-16 internal string storage for lone surrogates"),
         // Pre-insertion validation (requires DOMException hierarchy)
         ("pre-insertion", "requires DOMException types"),
-        // Document.URL, baseURI, etc.
-        ("Document-URL", "requires Document.URL"),
+        // Document.URL — URL/documentURI defined as "about:blank", test requires iframe src loading with redirect
+        ("Document-URL", "requires iframe src loading with redirect"),
         // Document-doctype — doctype getter implemented (unskip)
         // ("Document-doctype", "requires doctype node access"),
         // ("Document-adoptNode", "requires adoptNode"),  // adoptNode now implemented
@@ -485,8 +485,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Element-children.html", "requires HTMLCollection"),
         // name-validation — 5/5 pass
         // ("name-validation", "all subtests pass"),
-        // remove-unscopable (needs @@unscopables)
-        ("remove-unscopable", "requires Symbol.unscopables"),
+        // remove-unscopable (@@unscopables added, test requires onclick attribute handlers)
+        ("remove-unscopable", "requires onclick attribute handlers"),
         // Element-webkitMatchesSelector (alias implemented, test requires iframe src loading)
         ("webkitMatchesSelector", "requires iframe src loading"),
         // KeyEvent-initKeyEvent (legacy)
