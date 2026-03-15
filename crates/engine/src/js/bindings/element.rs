@@ -135,6 +135,15 @@ thread_local! {
     pub(crate) static IFRAME_CONTENT_DOCS: RefCell<Option<Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>>> = const { RefCell::new(None) };
 }
 
+// ---------------------------------------------------------------------------
+// Pre-fetched iframe src content (populated from FetchedResources)
+// ---------------------------------------------------------------------------
+thread_local! {
+    /// Maps iframe src URL -> pre-fetched HTML content.
+    /// Populated by Engine::populate_iframe_src_content() before script execution.
+    pub(crate) static IFRAME_SRC_CONTENT: RefCell<Option<Rc<RefCell<HashMap<String, String>>>>> = const { RefCell::new(None) };
+}
+
 /// Lazily creates (or retrieves) the content document for an `<iframe>` element.
 /// Returns the JsObject representing the iframe's content document.
 pub(crate) fn ensure_iframe_content_doc(
@@ -156,18 +165,44 @@ pub(crate) fn ensure_iframe_content_doc(
         return get_or_create_js_element(doc_id, existing_tree.clone(), ctx);
     }
 
+    // Check if the iframe has a `src` attribute with pre-fetched content
+    let prefetched_html: Option<String> = DOM_TREE.with(|cell| {
+        let rc = cell.borrow();
+        let dom_tree = rc.as_ref()?;
+        let t = dom_tree.borrow();
+        let node = t.get_node(node_id);
+        if let NodeData::Element { attributes, .. } = &node.data {
+            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone())?;
+            IFRAME_SRC_CONTENT.with(|src_cell| {
+                let src_rc = src_cell.borrow();
+                let map_rc = src_rc.as_ref()?;
+                let map = map_rc.borrow();
+                map.get(&src).cloned()
+            })
+        } else {
+            None
+        }
+    });
+
     // Create a new DomTree for the iframe content document
-    let new_tree = Rc::new(RefCell::new(DomTree::new()));
-    {
-        let mut t = new_tree.borrow_mut();
-        let html = t.create_element("html");
-        let head = t.create_element("head");
-        let body = t.create_element("body");
-        let doc = t.document();
-        t.append_child(doc, html);
-        t.append_child(html, head);
-        t.append_child(html, body);
-    }
+    let new_tree = if let Some(ref html_content) = prefetched_html {
+        // Parse the pre-fetched HTML content into a real DomTree
+        crate::html::parse_html(html_content)
+    } else {
+        // No pre-fetched content — create a minimal empty document
+        let tree = Rc::new(RefCell::new(DomTree::new()));
+        {
+            let mut t = tree.borrow_mut();
+            let html = t.create_element("html");
+            let head = t.create_element("head");
+            let body = t.create_element("body");
+            let doc = t.document();
+            t.append_child(doc, html);
+            t.append_child(html, head);
+            t.append_child(html, body);
+        }
+        tree
+    };
 
     // Store in IFRAME_CONTENT_DOCS
     IFRAME_CONTENT_DOCS.with(|cell| {

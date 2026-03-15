@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use braille_wire::{SnapMode, EngineAction};
-use braille_engine::ScriptDescriptor;
+use braille_engine::{FetchedResources, ScriptDescriptor};
 use std::collections::HashMap;
 
 mod session;
@@ -116,7 +116,7 @@ fn fetch_and_load(net: &mut NetworkClient, session: &mut session::Session, url: 
     }
 
     // 3. Execute all scripts in document order
-    session.engine.execute_scripts(&descriptors, &fetched);
+    session.engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched));
 
     // 4. Record navigation in session history
     session.navigate(resp.url);

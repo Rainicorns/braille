@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use libtest_mimic::{Arguments, Failed, Trial};
 
-use braille_engine::Engine;
+use braille_engine::{Engine, FetchedResources};
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -300,7 +300,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
     // Files requiring iframes / cross-document
     let skip_patterns: &[(&str, &str)] = &[
         // Iframes — broad skip removed; specific patterns below for tests needing advanced iframe features
-        ("Node-parentNode-iframe", "requires iframe src loading"),
+        ("Node-parentNode-iframe", "content file for iframe-based test"),
         ("Node-appendChild-script-and-iframe", "requires advanced iframe insertion steps"),
         ("insertion-removing-steps-iframe", "requires advanced iframe insertion steps"),
         ("iframe-document-preserve", "requires moveBefore with iframes"),
@@ -695,6 +695,55 @@ fn extract_script_srcs(html: &str) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Iframe src resolution — resolve iframe src to filesystem content
+// ---------------------------------------------------------------------------
+
+/// Extract all `<iframe src="...">` values from the HTML source.
+fn extract_iframe_srcs(html: &str) -> Vec<String> {
+    let mut srcs = Vec::new();
+    let lower = html.to_ascii_lowercase();
+    let mut pos = 0;
+    while let Some(tag_start) = lower[pos..].find("<iframe") {
+        let abs_start = pos + tag_start;
+        let tag_end = match lower[abs_start..].find('>') {
+            Some(e) => abs_start + e,
+            None => break,
+        };
+        let tag = &html[abs_start..=tag_end];
+
+        // Extract src attribute value
+        if let Some(src_idx) = tag.to_ascii_lowercase().find("src=") {
+            let after_src = &tag[src_idx + 4..];
+            let quote = after_src.chars().next().unwrap_or(' ');
+            if quote == '"' || quote == '\'' {
+                if let Some(end_quote) = after_src[1..].find(quote) {
+                    let src_val = &after_src[1..1 + end_quote];
+                    srcs.push(src_val.to_string());
+                }
+            } else {
+                let end = after_src
+                    .find(|c: char| c.is_whitespace() || c == '>')
+                    .unwrap_or(after_src.len());
+                srcs.push(after_src[..end].to_string());
+            }
+        }
+
+        pos = tag_end + 1;
+    }
+    srcs
+}
+
+/// Resolve an iframe src to filesystem content.
+fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<String> {
+    let resolved_path = if src.starts_with('/') {
+        wpt_root().join(src.trim_start_matches('/'))
+    } else {
+        html_path.parent().unwrap().join(src)
+    };
+    std::fs::read_to_string(&resolved_path).ok()
+}
+
+// ---------------------------------------------------------------------------
 // Run a single WPT test file
 // ---------------------------------------------------------------------------
 
@@ -709,16 +758,30 @@ fn run_wpt_test(
 
     // Build the fetched map for external scripts
     let srcs = extract_script_srcs(&html);
-    let mut fetched = HashMap::new();
+    let mut fetched_scripts = HashMap::new();
 
     for src in &srcs {
         if let Some(content) = resolve_script_src(html_path, src, preamble, report_shim) {
-            fetched.insert(src.clone(), content);
+            fetched_scripts.insert(src.clone(), content);
         }
     }
 
+    // Build the fetched map for iframe src content
+    let iframe_srcs = extract_iframe_srcs(&html);
+    let mut fetched_iframes = HashMap::new();
+    for src in &iframe_srcs {
+        if let Some(content) = resolve_iframe_src(html_path, src) {
+            fetched_iframes.insert(src.clone(), content);
+        }
+    }
+
+    let resources = FetchedResources {
+        scripts: fetched_scripts,
+        iframes: fetched_iframes,
+    };
+
     let mut engine = Engine::new();
-    let js_errors = engine.load_html_with_scripts_lossy(&html, &fetched);
+    let js_errors = engine.load_html_with_resources_lossy(&html, &resources);
 
     // Crash tests don't include testharness.js — if we got here, the test passed
     let is_crash_test = !srcs.iter().any(|s| s.contains("testharness.js"));

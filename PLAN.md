@@ -13,7 +13,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 **Build quality:** Workspace lint configuration enforces `warnings = "deny"` and `clippy::all = "warn"`. Zero compiler warnings, zero clippy lints. `rustfmt.toml` configured (edition 2021, max_width 120).
 
-**WPT Phase 5 — MutationObserver COMPLETE.** Full MutationObserver implementation: constructor, observe()/disconnect()/takeRecords(), MutationRecord global, attribute/characterData/childList mutation hooks across 14 binding files, record delivery after each script execution. 9 test files unskipped (7 pass, 2 fail only on Range API subtests), ParentNode-replaceChildren fixed (25/29→29/29). **161/263 WPT tests passing.** Phase 4 also complete: event system enhancements (DOMHighResTimeStamp, UIEvent subclasses, handleEvent, window event target, standalone EventTarget, composedPath()). Phase 3 also complete (attribute NS refactor, live HTMLCollection, querySelector unskip). Phase 2 also complete — all 5 fixable tests at 100%. **Post-phase fixes:** validate-and-extract namespace validation (createElementNS), createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count + implementation methods on created docs, createDocument doctype adoption (identity preservation), lenient NameStartChar ranges, `>` rejection in names, TypeError for invalid doctype arg. **Event dispatch edge cases:** cross-document listener isolation (ListenerMap key `(usize, NodeId)`), document-to-window bubble propagation, document.cloneNode, createEvent/getElementById on created documents — 8 new tests passing. **window.event + window.onerror:** CURRENT_EVENT thread-local tracks event during dispatch, `window.event` getter, `window.onerror` handler, error catching in listener invocations (per spec: other listeners still fire when one throws) — 2 new tests passing. **Basic iframe support:** IFRAME_CONTENT_DOCS thread-local, contentDocument/contentWindow getters, frames[] on window, crash test detection in WPT harness — 7 new tests passing.
+**WPT Phase 5 — MutationObserver COMPLETE.** Full MutationObserver implementation: constructor, observe()/disconnect()/takeRecords(), MutationRecord global, attribute/characterData/childList mutation hooks across 14 binding files, record delivery after each script execution. 9 test files unskipped (7 pass, 2 fail only on Range API subtests), ParentNode-replaceChildren fixed (25/29→29/29). **161/263 WPT tests passing.** Phase 4 also complete: event system enhancements (DOMHighResTimeStamp, UIEvent subclasses, handleEvent, window event target, standalone EventTarget, composedPath()). Phase 3 also complete (attribute NS refactor, live HTMLCollection, querySelector unskip). Phase 2 also complete — all 5 fixable tests at 100%. **Post-phase fixes:** validate-and-extract namespace validation (createElementNS), createProcessingInstruction XML Name + `?>` validation, DOMException constructor, createDocument arg count + implementation methods on created docs, createDocument doctype adoption (identity preservation), lenient NameStartChar ranges, `>` rejection in names, TypeError for invalid doctype arg. **Event dispatch edge cases:** cross-document listener isolation (ListenerMap key `(usize, NodeId)`), document-to-window bubble propagation, document.cloneNode, createEvent/getElementById on created documents — 8 new tests passing. **window.event + window.onerror:** CURRENT_EVENT thread-local tracks event during dispatch, `window.event` getter, `window.onerror` handler, error catching in listener invocations (per spec: other listeners still fire when one throws) — 2 new tests passing. **Basic iframe support:** IFRAME_CONTENT_DOCS thread-local, contentDocument/contentWindow getters, frames[] on window, crash test detection in WPT harness — 7 new tests passing. **Iframe src loading:** `FetchedResources` struct (scripts + iframes maps) replaces bare `HashMap<String, String>` in Engine API. `IFRAME_SRC_CONTENT` thread-local stores pre-fetched iframe HTML. `ensure_iframe_content_doc()` uses `parse_html()` for pre-fetched content instead of empty document. `process_iframe_loads()` fires `onload` attribute handlers after script execution. WPT harness extracts and resolves iframe srcs from test files. Node-parentNode.html async iframe subtest now fully passing.
 
 **Wave 2 completed tasks (13 total):**
 
@@ -50,7 +50,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 | A11y serializer | Roles + values + CSS | headings, paragraphs, links, buttons, inputs (with value display), selects (with selected option), lists, images, nav, main, form; interactive refs (@e1); display:none skips element+descendants, visibility:hidden suppresses text but keeps structure |
 | Wire protocol | serde types | Command/Response/SnapMode/Select/Focus/NavigateRequest/EngineAction enums |
 | CLI | Fully wired | `new`, `goto` (live fetch + render), `click`/`type`/`select`/`focus`/`snap`/`back`/`forward`/`close` all routed through session manager, network client with cookie jar + URL resolution, navigation history, clear error messages |
-| Engine | Integration + scripts + styles | `load_html` (parse + execute scripts + compute styles), `snapshot` (a11y mode), `parse_and_collect_scripts`/`execute_scripts` for external script loading, window/console globals, 32 end-to-end integration tests |
+| Engine | Integration + scripts + styles + iframes | `load_html` (parse + execute scripts + compute styles), `snapshot` (a11y mode), `parse_and_collect_scripts`/`execute_scripts` for external script loading, `FetchedResources` struct for scripts + iframe content, `load_html_with_resources`/`load_html_with_resources_lossy` convenience methods, `process_iframe_loads` fires onload handlers on iframes with pre-fetched content, window/console globals, 32 end-to-end integration tests |
 
 ### What doesn't exist yet
 
@@ -471,7 +471,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Node-nodeValue.html | PASS | |
 | Node-normalize.html | FAIL | 3/4; CDATASection subtest (accepted partial) |
 | Node-parentElement.html | PASS | |
-| Node-parentNode-iframe.html | SKIP | requires iframe src loading |
+| Node-parentNode-iframe.html | SKIP | content file for iframe-based test |
 | Node-parentNode.html | PASS | |
 | Node-properties.html | SKIP | 722/726 pass; 4 fail (document.nextSibling/previousSibling/ownerDocument, hasChildNodes) |
 | Node-removeChild.html | PASS | 28/28 |
@@ -529,7 +529,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Category | Count | Tests |
 |----------|-------|-------|
 | MutationObserver (remaining) | 3 | MutationObserver-document (parser-time), MutationObserver-textContent (microtask), MutationObserver-cross-realm (iframe+Function) |
-| Iframes / cross-document | 10 | Node-parentNode-iframe, adoption.window.js, query-target-*, Element-getElementsByTagName-change-*, event-global-extra, etc. |
+| Iframes / cross-document | 10 | Node-parentNode-iframe (content file), adoption.window.js, query-target-*, Element-getElementsByTagName-change-* (XML iframe), event-global-extra, etc. Basic iframe src loading implemented; remaining need cross-realm, XML docs, requestAnimationFrame. |
 | Shadow DOM | 5 | Node-isConnected-shadow-dom, shadow-relatedTarget, remove-from-shadow-host-* |
 | Server-side substitution (.sub.) | 7 | EventListener-incumbent-global-*, Node-cloneNode-external-stylesheet, EventListener-addEventListener.sub |
 | window.event / window.onerror | 4 | event-global.html (Shadow DOM/XHR), event-global-extra (iframes), event-global-is-still-set-* (iframes) |
@@ -576,7 +576,7 @@ Architecture: `mutation_observer.rs` (~940 lines). `MutationObserverState` threa
 |---------|-------|--------------|
 | Shadow DOM | 5 | Large feature, only 5 direct skips |
 | XML documents | 9 | Niche, most tests also need other features |
-| Advanced iframes (src loading, cross-realm) | 10 | Need navigation + realm isolation |
+| Advanced iframes (cross-realm, XML docs) | 10 | Basic iframe src loading done; remaining need cross-realm isolation, XML iframe documents, requestAnimationFrame, HTTP redirects |
 | Server-side substitution (.sub.) | 7 | Most .sub. tests also need iframes/subframes |
 | AnimationEvent/TransitionEvent | 4 | Niche event types |
 | AbortController/AbortSignal | 2 | Full signal API |

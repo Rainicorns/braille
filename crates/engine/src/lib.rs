@@ -9,6 +9,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use boa_engine::JsValue;
+
 use crate::dom::tree::DomTree;
 use crate::dom::node::NodeData;
 use crate::dom::NodeId;
@@ -22,6 +24,33 @@ pub enum ScriptDescriptor {
     Inline(String),
     /// A src URL that needs to be fetched by the host.
     External(String),
+}
+
+/// Pre-fetched resources for external scripts and iframe content.
+pub struct FetchedResources {
+    /// Maps script src URL → fetched JavaScript content.
+    pub scripts: HashMap<String, String>,
+    /// Maps iframe src URL → fetched HTML content.
+    pub iframes: HashMap<String, String>,
+}
+
+impl Default for FetchedResources {
+    fn default() -> Self {
+        Self {
+            scripts: HashMap::new(),
+            iframes: HashMap::new(),
+        }
+    }
+}
+
+impl FetchedResources {
+    /// Create a FetchedResources with only scripts (no iframes).
+    pub fn scripts_only(scripts: HashMap<String, String>) -> Self {
+        Self {
+            scripts,
+            iframes: HashMap::new(),
+        }
+    }
 }
 
 pub struct Engine {
@@ -179,15 +208,18 @@ impl Engine {
 
     /// Execute scripts with externally-fetched content.
     /// `descriptors` is the list returned by parse_and_collect_scripts.
-    /// `fetched` maps src URLs to their fetched JavaScript content.
+    /// `fetched` contains pre-fetched scripts and iframe content.
     /// Executes all scripts in document order, substituting external content.
-    /// Skips external scripts whose URL is not found in `fetched`.
+    /// Skips external scripts whose URL is not found in `fetched.scripts`.
     pub fn execute_scripts(
         &mut self,
         descriptors: &[ScriptDescriptor],
-        fetched: &HashMap<String, String>,
+        fetched: &FetchedResources,
     ) {
         let mut runtime = JsRuntime::new(Rc::clone(&self.tree));
+
+        // Populate IFRAME_SRC_CONTENT thread-local with pre-fetched iframe content
+        Self::populate_iframe_src_content(&fetched.iframes);
 
         for descriptor in descriptors {
             match descriptor {
@@ -198,7 +230,7 @@ impl Engine {
                     }
                 }
                 ScriptDescriptor::External(url) => {
-                    if let Some(script_content) = fetched.get(url) {
+                    if let Some(script_content) = fetched.scripts.get(url) {
                         if !script_content.trim().is_empty() {
                             runtime.eval(script_content).unwrap();
                             runtime.notify_mutation_observers();
@@ -209,6 +241,9 @@ impl Engine {
             }
         }
 
+        // Fire onload handlers for iframes with pre-fetched content
+        Self::process_iframe_loads(&mut runtime, &self.tree);
+
         self.runtime = Some(runtime);
         self.focused_element = None;
 
@@ -216,13 +251,20 @@ impl Engine {
         crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
     }
 
-    /// Convenience: load HTML with external script support.
+    /// Convenience: load HTML with external script and iframe support.
+    /// Combines parse_and_collect_scripts + execute_scripts.
+    /// For pages with only inline scripts, pass `FetchedResources::default()`.
+    pub fn load_html_with_resources(&mut self, html: &str, fetched: &FetchedResources) {
+        let descriptors = self.parse_and_collect_scripts(html);
+        self.execute_scripts(&descriptors, fetched);
+    }
+
+    /// Convenience: load HTML with external script support (scripts only, no iframes).
     /// Combines parse_and_collect_scripts + execute_scripts.
     /// `fetched` maps src URLs to their fetched JavaScript content.
     /// For pages with only inline scripts, pass an empty HashMap.
     pub fn load_html_with_scripts(&mut self, html: &str, fetched: &HashMap<String, String>) {
-        let descriptors = self.parse_and_collect_scripts(html);
-        self.execute_scripts(&descriptors, fetched);
+        self.load_html_with_resources(html, &FetchedResources::scripts_only(fetched.clone()));
     }
 
     /// Execute scripts without panicking on JS errors.
@@ -231,10 +273,13 @@ impl Engine {
     pub fn execute_scripts_lossy(
         &mut self,
         descriptors: &[ScriptDescriptor],
-        fetched: &HashMap<String, String>,
+        fetched: &FetchedResources,
     ) -> Vec<String> {
         let mut runtime = JsRuntime::new(Rc::clone(&self.tree));
         let mut errors = Vec::new();
+
+        // Populate IFRAME_SRC_CONTENT thread-local with pre-fetched iframe content
+        Self::populate_iframe_src_content(&fetched.iframes);
 
         for descriptor in descriptors {
             let code = match descriptor {
@@ -243,7 +288,7 @@ impl Engine {
                     text.clone()
                 }
                 ScriptDescriptor::External(url) => {
-                    match fetched.get(url) {
+                    match fetched.scripts.get(url) {
                         Some(content) if !content.trim().is_empty() => content.clone(),
                         _ => continue,
                     }
@@ -272,21 +317,34 @@ impl Engine {
             }
         }
 
+        // Fire onload handlers for iframes with pre-fetched content
+        Self::process_iframe_loads(&mut runtime, &self.tree);
+
         self.runtime = Some(runtime);
         self.focused_element = None;
         crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
         errors
     }
 
-    /// Convenience: load HTML with external scripts, tolerating JS errors.
+    /// Convenience: load HTML with external scripts and iframe content, tolerating JS errors.
+    /// Returns any JS errors that occurred during script execution.
+    pub fn load_html_with_resources_lossy(
+        &mut self,
+        html: &str,
+        fetched: &FetchedResources,
+    ) -> Vec<String> {
+        let descriptors = self.parse_and_collect_scripts(html);
+        self.execute_scripts_lossy(&descriptors, fetched)
+    }
+
+    /// Convenience: load HTML with external scripts, tolerating JS errors (scripts only, no iframes).
     /// Returns any JS errors that occurred during script execution.
     pub fn load_html_with_scripts_lossy(
         &mut self,
         html: &str,
         fetched: &HashMap<String, String>,
     ) -> Vec<String> {
-        let descriptors = self.parse_and_collect_scripts(html);
-        self.execute_scripts_lossy(&descriptors, fetched)
+        self.load_html_with_resources_lossy(html, &FetchedResources::scripts_only(fetched.clone()))
     }
 
     /// Evaluate a JavaScript expression and return the result as a string.
@@ -307,6 +365,105 @@ impl Engine {
                 }
             }
             Err(e) => Err(format!("{:?}", e)),
+        }
+    }
+
+    /// Store pre-fetched iframe HTML content in the IFRAME_SRC_CONTENT thread-local.
+    fn populate_iframe_src_content(iframes: &HashMap<String, String>) {
+        crate::js::bindings::element::IFRAME_SRC_CONTENT.with(|cell| {
+            let mut opt = cell.borrow_mut();
+            let map = opt.get_or_insert_with(|| Rc::new(RefCell::new(HashMap::new())));
+            let mut m = map.borrow_mut();
+            for (url, content) in iframes {
+                m.insert(url.clone(), content.clone());
+            }
+        });
+    }
+
+    /// After scripts have executed, walk the DOM for `<iframe>` elements with a `src`
+    /// attribute. For each one whose content was pre-fetched, ensure the content doc
+    /// is populated and fire any `onload` attribute handler.
+    fn process_iframe_loads(runtime: &mut JsRuntime, tree: &Rc<RefCell<DomTree>>) {
+        // Collect iframe nodes that have a `src` attribute
+        let iframes: Vec<(NodeId, String, Option<String>)> = {
+            let t = tree.borrow();
+            let mut result = Vec::new();
+            Self::collect_iframes(&t, t.document(), &mut result);
+            result
+        };
+
+        if iframes.is_empty() {
+            return;
+        }
+
+        // Check which iframes have pre-fetched content
+        let has_content: Vec<bool> = crate::js::bindings::element::IFRAME_SRC_CONTENT.with(|cell| {
+            let rc = cell.borrow();
+            match rc.as_ref() {
+                Some(map_rc) => {
+                    let map = map_rc.borrow();
+                    iframes.iter().map(|(_, src, _)| map.contains_key(src)).collect()
+                }
+                None => vec![false; iframes.len()],
+            }
+        });
+
+        let tree_ptr = Rc::as_ptr(tree) as usize;
+
+        for (i, (node_id, _src, onload)) in iframes.iter().enumerate() {
+            if !has_content[i] {
+                continue;
+            }
+
+            // Ensure the content document is populated (this will use IFRAME_SRC_CONTENT)
+            let _ = crate::js::bindings::element::ensure_iframe_content_doc(
+                tree_ptr, *node_id, &mut runtime.context,
+            );
+
+            // Fire onload if present
+            if let Some(handler_code) = onload {
+                // Wrap handler in a function, get the iframe JS object, call with this=iframe
+                let func_code = format!("(function() {{ {} }})", handler_code);
+                if let Ok(func_val) = runtime.eval(&func_code) {
+                    if let Ok(func_obj) = func_val.as_object().ok_or(()).and_then(|o| {
+                        if o.is_callable() { Ok(o.clone()) } else { Err(()) }
+                    }) {
+                        // Get the iframe's JS object for `this`
+                        if let Ok(iframe_js) = crate::js::bindings::element::get_or_create_js_element(
+                            *node_id, tree.clone(), &mut runtime.context,
+                        ) {
+                            let _ = func_obj.call(
+                                &JsValue::from(iframe_js),
+                                &[],
+                                &mut runtime.context,
+                            );
+                        }
+                    }
+                }
+                runtime.notify_mutation_observers();
+            }
+        }
+    }
+
+    /// Recursively collect `<iframe>` elements with their src and onload attributes.
+    fn collect_iframes(
+        tree: &DomTree,
+        node_id: NodeId,
+        result: &mut Vec<(NodeId, String, Option<String>)>,
+    ) {
+        let node = tree.get_node(node_id);
+        if let NodeData::Element { tag_name, attributes, .. } = &node.data {
+            if tag_name.eq_ignore_ascii_case("iframe") {
+                if let Some(src_attr) = attributes.iter().find(|a| a.local_name == "src") {
+                    let src = src_attr.value.clone();
+                    let onload = attributes.iter().find(|a| a.local_name == "onload").map(|a| a.value.clone());
+                    result.push((node_id, src, onload));
+                }
+            }
+        }
+        let children: Vec<NodeId> = node.children.clone();
+        for child_id in children {
+            Self::collect_iframes(tree, child_id, result);
         }
     }
 }
@@ -561,7 +718,7 @@ mod tests {
         let mut engine = Engine::new();
         let descriptors = engine.parse_and_collect_scripts(html);
         let fetched = HashMap::new();
-        engine.execute_scripts(&descriptors, &fetched);
+        engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched.clone()));
 
         let snapshot = engine.snapshot(SnapMode::Accessibility);
         assert!(snapshot.contains("inline works"), "inline script should execute: {}", snapshot);
@@ -588,7 +745,7 @@ mod tests {
             ).to_string(),
         );
 
-        engine.execute_scripts(&descriptors, &fetched);
+        engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched.clone()));
         let snapshot = engine.snapshot(SnapMode::Accessibility);
         assert!(snapshot.contains("external works"), "external script should execute: {}", snapshot);
     }
@@ -609,7 +766,7 @@ mod tests {
         let mut engine = Engine::new();
         let descriptors = engine.parse_and_collect_scripts(html);
         let fetched = HashMap::new();
-        engine.execute_scripts(&descriptors, &fetched);
+        engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched.clone()));
 
         let snapshot = engine.snapshot(SnapMode::Accessibility);
         assert!(snapshot.contains("after missing"), "inline script after missing external should run: {}", snapshot);
@@ -709,7 +866,7 @@ mod tests {
             ).to_string(),
         );
 
-        engine.execute_scripts(&descriptors, &fetched);
+        engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched.clone()));
         let snapshot = engine.snapshot(SnapMode::Accessibility);
         assert!(snapshot.contains("EXTERNAL RAN"), "external content should run: {}", snapshot);
         assert!(!snapshot.contains("INLINE SHOULD NOT RUN"), "inline text should be ignored when src present: {}", snapshot);
