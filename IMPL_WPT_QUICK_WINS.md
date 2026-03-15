@@ -26,14 +26,9 @@ Just unskipped — test already passes. Script loader resolves ChildNode-remove.
 
 ---
 
-## Fix 4: svg-template-querySelector (LIKELY JUST UNSKIP)
+## Fix 4: svg-template-querySelector — DONE
 
-Tests querySelector on `template.content` (DocumentFragment) with HTML and SVG elements. Our querySelector works on DocumentFragment (query.rs:84-117 handles any JsElement). Template content is set up correctly (element.rs:542-572). SVG elements are created by the parser with SVG namespace. querySelector matching uses tag names — `svg` as a tag name should match.
-
-**Files:**
-- `crates/engine/tests/wpt_dom.rs` — remove skip for `svg-template-querySelector`
-
-**Verification:** `cargo test --package braille-engine --test wpt_dom -- "svg-template-querySelector"`
+Just unskipped — test already passes. template.content and querySelector on DocumentFragment both work correctly. Committed as part of this batch.
 
 ---
 

@@ -402,7 +402,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("ParentNode-querySelectors-exclusive", "JS error in assertion (opaque object throw)"),
         ("ParentNode-querySelector-scope", "2/4 pass; sibling combinator (+) not yet supported"),
         ("query-target-in-load-event", "requires iframes"),
-        ("svg-template-querySelector", "requires template.content"),
+        // svg-template-querySelector — unskipped, template.content now works
         ("querySelector-mixed-case", "requires SVG/MathML foreignObject namespace handling"),
         // EventTarget constructor — now implemented
         // ("EventTarget-constructible", "requires EventTarget constructor"),

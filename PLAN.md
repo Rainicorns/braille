@@ -56,7 +56,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 | Component | Gap |
 |-----------|-----|
-| WPT harness | **Phase 5 complete (MutationObserver + Tier 2 quick wins)** (161/263 passing). Phase 5: MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode. Remaining ~96 skipped need Shadow DOM/workers/Range/advanced iframes/NamedNodeMap. |
+| WPT harness | **Phase 5 complete + quick wins in progress** (162/263 passing). Phase 5: MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode. Quick wins: name-validation, toggleAttribute, CharacterData-remove, svg-template-querySelector. Remaining ~95 skipped need Shadow DOM/workers/Range/advanced iframes/NamedNodeMap. |
 | Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height |
 | WASM sandbox | Not started — engine runs in-process |
 
@@ -522,7 +522,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | remove-from-shadow-host-and-adopt-into-iframe.html | SKIP | requires Shadow DOM |
 | remove-unscopable.html | SKIP | requires Symbol.unscopables |
 | rootNode.html | FAIL | 0/1; Shadow DOM subtest (accepted partial) |
-| svg-template-querySelector.html | SKIP | requires template.content |
+| svg-template-querySelector.html | PASS | unskipped — template.content works |
 
 #### Skip reasons summary (96 skipped tests)
 
@@ -546,7 +546,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 
 ### WPT Phase 5 — Implementation Targets
 
-Prioritized by tests-unblocked and cascading dependencies. Started at 147, now at 155 passing.
+Prioritized by tests-unblocked and cascading dependencies. Started at 147, now at 162 passing.
 
 **Tier 1: MutationObserver (3 agents, parallel) — DONE (+8 pass, +2 fail)**
 
@@ -778,7 +778,7 @@ Must support: clicking links/buttons, filling form inputs, selecting dropdowns, 
   - Git submodule at `tests/wpt/` with sparse checkout: `resources`, `dom/nodes`, `dom/events`
   - 164 HTML test files in `dom/nodes/`, 78 in `dom/events/`
   - jsdom's `to-run.yaml` provides a curated roadmap of which tests are feasible for non-browser DOM implementations
-  - **Phase 5 COMPLETE (MutationObserver + Tier 2)** — 161/263 passing, remainder deferred (Shadow DOM/workers/Range/advanced iframes)
+  - **Phase 5 COMPLETE (MutationObserver + Tier 2) + quick wins** — 162/263 passing, remainder deferred (Shadow DOM/workers/Range/advanced iframes)
   - Future phases: `html/dom/`, `css/selectors/`
 - **html5lib-tests** — integrated as git submodule at `tests/html5lib-tests/`
   - **Tree-construction:** 1778 test cases from 56 `.dat` files, run via `cargo test --test html5lib_tree_construction`
