@@ -461,8 +461,14 @@ pub fn query_selector(tree: &DomTree, root: NodeId, selector: &str, scope_node_i
     );
     context.scope_element = scope_opaque;
 
-    // Walk descendants and find first match
-    find_first_match(tree, root, &selector_list, &mut context)
+    // Walk descendants only (not root itself) per spec
+    let root_node = tree.get_node(root);
+    for &child_id in &root_node.children {
+        if let Some(found) = find_first_match(tree, child_id, &selector_list, &mut context) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 /// Finds all elements matching the given CSS selector, starting from `root`.
@@ -495,8 +501,13 @@ pub fn query_selector_all(tree: &DomTree, root: NodeId, selector: &str, scope_no
     );
     context.scope_element = scope_opaque;
 
-    // Walk descendants and collect all matches
-    find_all_matches(tree, root, &selector_list, &mut context)
+    // Walk descendants only (not root itself) per spec
+    let root_node = tree.get_node(root);
+    let mut results = Vec::new();
+    for &child_id in &root_node.children {
+        collect_matches(tree, child_id, &selector_list, &mut context, &mut results);
+    }
+    results
 }
 
 /// Tests if a single element matches the given CSS selector string.
@@ -561,18 +572,6 @@ fn find_first_match(
     }
 
     None
-}
-
-/// Helper function to recursively find all matching elements.
-fn find_all_matches(
-    tree: &DomTree,
-    node_id: NodeId,
-    selector_list: &SelectorList<BrailleSelectorImpl>,
-    context: &mut MatchingContext<BrailleSelectorImpl>,
-) -> Vec<NodeId> {
-    let mut results = Vec::new();
-    collect_matches(tree, node_id, selector_list, context, &mut results);
-    results
 }
 
 /// Helper function to recursively collect all matching elements.

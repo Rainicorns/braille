@@ -1381,6 +1381,7 @@ pub fn is_valid_dom_name(name: &str) -> bool {
 /// Two cases:
 /// 1. ASCII alpha start → subsequent chars must not be: \0, \t, \n, \x0C, \r, space, /, >
 /// 2. :, _, or >= U+0080 start → subsequent chars only: A-Za-z0-9, -, ., :, _, >= U+0080
+///
 /// Everything else (empty, digit start, other control chars) is invalid.
 pub fn is_valid_element_name(name: &str) -> bool {
     let mut chars = name.chars();
@@ -1402,13 +1403,13 @@ pub fn is_valid_element_name(name: &str) -> bool {
 /// Invalid chars: empty, \0, ASCII whitespace (\t, \n, \x0C, \r, space), /, >, =
 pub fn is_valid_attribute_name(name: &str) -> bool {
     !name.is_empty()
-        && !name.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '/' | '>' | '='))
+        && !name.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>', '='])
 }
 
 /// Validates whether a string is a valid doctype name.
 /// Invalid chars: empty allowed, \0, ASCII whitespace (\t, \n, \x0C, \r, space), >
 pub fn is_valid_doctype_name(name: &str) -> bool {
-    !name.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '>'))
+    !name.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '>'])
 }
 
 /// Validates whether a string is a valid XML Name per the XML spec.

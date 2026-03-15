@@ -65,6 +65,11 @@ impl JsRuntime {
             *cell.borrow_mut() = Some(Rc::new(RefCell::new(HashMap::new())));
         });
 
+        // Initialize the iframe onload handlers map
+        super::bindings::element::IFRAME_ONLOAD_HANDLERS.with(|cell| {
+            *cell.borrow_mut() = Some(Rc::new(RefCell::new(HashMap::new())));
+        });
+
         // Store the creation time in the thread-local so event.rs can compute DOMHighResTimeStamp
         RUNTIME_CREATION_TIME.with(|cell| {
             *cell.borrow_mut() = Some(creation_time);
@@ -85,13 +90,8 @@ impl JsRuntime {
         bindings::register_document(Rc::clone(&tree), &mut context);
         bindings::window::register_window(&mut context, Rc::clone(&console_buffer), Rc::clone(&tree));
 
-        // Register Event, CustomEvent, and UIEvent subclass classes
+        // Register the unified Event class (all event subtypes use JsEvent with EventKind)
         context.register_global_class::<bindings::event::JsEvent>().unwrap();
-        context.register_global_class::<bindings::event::JsCustomEvent>().unwrap();
-        context.register_global_class::<bindings::event::JsMouseEvent>().unwrap();
-        context.register_global_class::<bindings::event::JsKeyboardEvent>().unwrap();
-        context.register_global_class::<bindings::event::JsWheelEvent>().unwrap();
-        context.register_global_class::<bindings::event::JsFocusEvent>().unwrap();
 
         // Wrap Event/CustomEvent/UIEvent subclass constructors to add isTrusted as own property on each instance.
         // Must happen BEFORE register_event_constants so constants go on the wrapper constructors.
@@ -189,7 +189,7 @@ impl JsRuntime {
     /// This is needed because Boa's `Class::data_constructor` returns the Rust struct,
     /// not the JsObject, so there's no hook to add own properties within the trait.
     fn wrap_event_constructors(context: &mut Context) {
-        use bindings::event::{JsEvent, JsCustomEvent, JsMouseEvent, JsKeyboardEvent, JsWheelEvent, JsFocusEvent, attach_is_trusted_own_property};
+        use bindings::event::{JsEvent, EventKind, attach_is_trusted_own_property};
 
         let global = context.global_object();
 
@@ -204,7 +204,8 @@ impl JsRuntime {
             .expect("Event.prototype should exist");
 
         // Build replacement Event constructor
-        let event_proto_for_closure = event_proto.as_object().expect("Event.prototype object").clone();
+        let event_proto_obj = event_proto.as_object().expect("Event.prototype object").clone();
+        let event_proto_for_closure = event_proto_obj.clone();
         let event_ctor = unsafe {
             NativeFunction::from_closure(move |_this, args, ctx| {
                 if _this.is_undefined() {
@@ -249,6 +250,7 @@ impl JsRuntime {
                     dispatching: false,
                     time_stamp: bindings::event::dom_high_res_time_stamp(),
                     initialized: true,
+                    kind: EventKind::Standard,
                 };
                 let js_obj = JsEvent::from_data(event, ctx)?;
                 js_obj.set_prototype(Some(event_proto_for_closure.clone()));
@@ -281,16 +283,42 @@ impl JsRuntime {
             .expect("failed to register Event wrapper");
 
         // --- CustomEvent ---
-        let orig_custom_ctor = global
-            .get(js_string!("CustomEvent"), context)
-            .expect("CustomEvent constructor should exist");
-        let custom_proto = orig_custom_ctor
-            .as_object()
-            .expect("CustomEvent should be object")
-            .get(js_string!("prototype"), context)
-            .expect("CustomEvent.prototype should exist");
+        // Build CustomEvent.prototype inheriting from Event.prototype
+        let event_proto_for_custom = event_proto_obj.clone();
+        let custom_proto = ObjectInitializer::new(context).build();
+        custom_proto.set_prototype(Some(event_proto_for_custom));
 
-        let custom_proto_for_closure = custom_proto.as_object().expect("CustomEvent.prototype object").clone();
+        // Add detail getter to CustomEvent.prototype
+        let detail_getter = NativeFunction::from_fn_ptr(JsEvent::get_detail);
+        let realm = context.realm().clone();
+        custom_proto.define_property_or_throw(
+            js_string!("detail"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .get(detail_getter.to_js_function(&realm))
+                .set(JsValue::undefined())
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define CustomEvent.prototype.detail");
+
+        // Add initCustomEvent method to CustomEvent.prototype
+        let init_custom_event_fn = NativeFunction::from_fn_ptr(JsEvent::init_custom_event);
+        custom_proto.define_property_or_throw(
+            js_string!("initCustomEvent"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(FunctionObjectBuilder::new(context.realm(), init_custom_event_fn)
+                    .name(js_string!("initCustomEvent"))
+                    .length(4)
+                    .build())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        ).expect("failed to define CustomEvent.prototype.initCustomEvent");
+
+        let custom_proto_for_closure = custom_proto.clone();
         let custom_ctor = unsafe {
             NativeFunction::from_closure(move |_this, args, ctx| {
                 if _this.is_undefined() {
@@ -324,22 +352,22 @@ impl JsRuntime {
                     }
                 }
 
-                let event = JsCustomEvent {
+                let event = JsEvent {
                     event_type,
                     bubbles,
                     cancelable,
                     default_prevented: false,
                     propagation_stopped: false,
                     immediate_propagation_stopped: false,
-                    detail,
                     target: None,
                     current_target: None,
                     phase: 0,
                     dispatching: false,
                     time_stamp: bindings::event::dom_high_res_time_stamp(),
                     initialized: true,
+                    kind: EventKind::Custom { detail },
                 };
-                let js_obj = JsCustomEvent::from_data(event, ctx)?;
+                let js_obj = JsEvent::from_data(event, ctx)?;
                 js_obj.set_prototype(Some(custom_proto_for_closure.clone()));
                 attach_is_trusted_own_property(&js_obj, ctx)?;
                 Ok(JsValue::from(js_obj))
@@ -368,19 +396,14 @@ impl JsRuntime {
             .expect("failed to register CustomEvent wrapper");
 
         // --- UIEvent subclasses: MouseEvent, KeyboardEvent, WheelEvent, FocusEvent ---
-        // Each gets the same treatment: wrap the constructor to attach isTrusted own property.
+        // All use unified JsEvent with EventKind variants. Prototypes inherit Event.prototype.
         macro_rules! wrap_ui_event_subclass {
-            ($struct_type:ident, $name:expr) => {{
-                let orig_ctor = global
-                    .get(js_string!($name), context)
-                    .expect(concat!($name, " constructor should exist"));
-                let proto = orig_ctor
-                    .as_object()
-                    .expect(concat!($name, " should be object"))
-                    .get(js_string!("prototype"), context)
-                    .expect(concat!($name, ".prototype should exist"));
+            ($kind:expr, $name:expr) => {{
+                // Build SubclassEvent.prototype inheriting from Event.prototype
+                let proto = ObjectInitializer::new(context).build();
+                proto.set_prototype(Some(event_proto_obj.clone()));
 
-                let proto_for_closure = proto.as_object().expect(concat!($name, ".prototype object")).clone();
+                let proto_for_closure = proto.clone();
                 let ctor_name: &'static str = $name;
                 let ctor = unsafe {
                     NativeFunction::from_closure(move |_this, args, ctx| {
@@ -408,18 +431,22 @@ impl JsRuntime {
                             }
                         }
 
-                        let event = $struct_type {
+                        let event = JsEvent {
                             event_type,
                             bubbles,
                             cancelable,
                             default_prevented: false,
                             propagation_stopped: false,
                             immediate_propagation_stopped: false,
+                            target: None,
+                            current_target: None,
                             phase: 0,
                             dispatching: false,
                             time_stamp: bindings::event::dom_high_res_time_stamp(),
+                            initialized: true,
+                            kind: $kind,
                         };
-                        let js_obj = $struct_type::from_data(event, ctx)?;
+                        let js_obj = JsEvent::from_data(event, ctx)?;
                         js_obj.set_prototype(Some(proto_for_closure.clone()));
                         attach_is_trusted_own_property(&js_obj, ctx)?;
                         Ok(JsValue::from(js_obj))
@@ -449,10 +476,10 @@ impl JsRuntime {
             }};
         }
 
-        wrap_ui_event_subclass!(JsMouseEvent, "MouseEvent");
-        wrap_ui_event_subclass!(JsKeyboardEvent, "KeyboardEvent");
-        wrap_ui_event_subclass!(JsWheelEvent, "WheelEvent");
-        wrap_ui_event_subclass!(JsFocusEvent, "FocusEvent");
+        wrap_ui_event_subclass!(EventKind::Mouse, "MouseEvent");
+        wrap_ui_event_subclass!(EventKind::Keyboard, "KeyboardEvent");
+        wrap_ui_event_subclass!(EventKind::Wheel, "WheelEvent");
+        wrap_ui_event_subclass!(EventKind::Focus, "FocusEvent");
     }
 
     /// Register the full DOM type hierarchy:

@@ -245,39 +245,21 @@ impl JsEventTarget {
             .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an object").into()))?
             .clone();
 
-        // Determine event type — check JsEvent or JsCustomEvent
-        let is_custom_event;
-        let event_type;
-        {
-            if let Some(evt) = event_obj.downcast_ref::<super::event::JsEvent>() {
-                is_custom_event = false;
-                event_type = evt.event_type.clone();
-
-                if evt.dispatching {
-                    return Err(JsError::from_opaque(
-                        js_string!("InvalidStateError: The event is already being dispatched.").into(),
-                    ));
-                }
-            } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
-                is_custom_event = true;
-                event_type = evt.event_type.clone();
-
-                if evt.dispatching {
-                    return Err(JsError::from_opaque(
-                        js_string!("InvalidStateError: The event is already being dispatched.").into(),
-                    ));
-                }
-            } else {
-                return Err(JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()));
+        // Read event type and check state
+        let event_type = {
+            let evt = event_obj
+                .downcast_ref::<super::event::JsEvent>()
+                .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()))?;
+            if evt.dispatching {
+                return Err(JsError::from_opaque(
+                    js_string!("InvalidStateError: The event is already being dispatched.").into(),
+                ));
             }
-        }
+            evt.event_type.clone()
+        };
 
         // Set dispatching flag and phase
-        if is_custom_event {
-            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
-            evt.dispatching = true;
-            evt.phase = 2; // AT_TARGET
-        } else {
+        {
             let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
             evt.dispatching = true;
             evt.phase = 2; // AT_TARGET
@@ -302,14 +284,7 @@ impl JsEventTarget {
         });
 
         // Reset event state
-        let default_prevented = if is_custom_event {
-            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
-            evt.phase = 0;
-            evt.dispatching = false;
-            evt.propagation_stopped = false;
-            evt.immediate_propagation_stopped = false;
-            evt.default_prevented
-        } else {
+        let default_prevented = {
             let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
             evt.phase = 0;
             evt.dispatching = false;
@@ -372,20 +347,8 @@ impl JsEventTarget {
 
             let is_passive = passive.unwrap_or(false);
             let call_result = if is_passive {
-                let saved_cancelable;
-                if let Some(evt) = event_obj.downcast_ref::<super::event::JsEvent>() {
-                    saved_cancelable = evt.cancelable;
-                } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
-                    saved_cancelable = evt.cancelable;
-                } else {
-                    saved_cancelable = false;
-                }
-
-                if let Some(mut evt) = event_obj.downcast_mut::<super::event::JsEvent>() {
-                    evt.cancelable = false;
-                } else if let Some(mut evt) = event_obj.downcast_mut::<super::event::JsCustomEvent>() {
-                    evt.cancelable = false;
-                }
+                let saved_cancelable = event_obj.downcast_ref::<super::event::JsEvent>().unwrap().cancelable;
+                event_obj.downcast_mut::<super::event::JsEvent>().unwrap().cancelable = false;
 
                 // Per spec: callable → call with this=currentTarget; object → look up handleEvent
                 let current_target = event_obj.get(js_string!("currentTarget"), ctx).unwrap_or(JsValue::undefined());
@@ -404,11 +367,7 @@ impl JsEventTarget {
                     }
                 };
 
-                if let Some(mut evt) = event_obj.downcast_mut::<super::event::JsEvent>() {
-                    evt.cancelable = saved_cancelable;
-                } else if let Some(mut evt) = event_obj.downcast_mut::<super::event::JsCustomEvent>() {
-                    evt.cancelable = saved_cancelable;
-                }
+                event_obj.downcast_mut::<super::event::JsEvent>().unwrap().cancelable = saved_cancelable;
 
                 result
             } else {
@@ -435,13 +394,7 @@ impl JsEventTarget {
                 super::element::report_listener_error(err, ctx);
             }
 
-            let imm_stopped = if let Some(evt) = event_obj.downcast_ref::<super::event::JsEvent>() {
-                evt.immediate_propagation_stopped
-            } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
-                evt.immediate_propagation_stopped
-            } else {
-                false
-            };
+            let imm_stopped = event_obj.downcast_ref::<super::event::JsEvent>().unwrap().immediate_propagation_stopped;
 
             if imm_stopped {
                 // Restore previous CURRENT_EVENT before returning
@@ -457,13 +410,7 @@ impl JsEventTarget {
             *cell.borrow_mut() = prev_event;
         });
 
-        let propagation_stopped = if let Some(evt) = event_obj.downcast_ref::<super::event::JsEvent>() {
-            evt.propagation_stopped
-        } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
-            evt.propagation_stopped
-        } else {
-            false
-        };
+        let propagation_stopped = event_obj.downcast_ref::<super::event::JsEvent>().unwrap().propagation_stopped;
         Ok(propagation_stopped)
     }
 

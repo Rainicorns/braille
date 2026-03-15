@@ -399,9 +399,9 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("ParentNode-querySelector-All.html", "requires iframes and requestAnimationFrame"),
         ("ParentNode-querySelector-All-content", "content file for iframe-based test"),
         ("ParentNode-querySelectors-namespaces", "requires SVG xlink namespace attributes"),
-        ("ParentNode-querySelectors-exclusive", "JS error in assertion (opaque object throw)"),
+        // ParentNode-querySelectors-exclusive — unskipped, querySelector now excludes root
         ("ParentNode-querySelector-scope", "2/4 pass; sibling combinator (+) not yet supported"),
-        ("query-target-in-load-event", "requires iframes"),
+        ("query-target-in-load-event", "requires window.parent, postMessage, :target pseudo-class"),
         // svg-template-querySelector — unskipped, template.content now works
         ("querySelector-mixed-case", "requires SVG/MathML foreignObject namespace handling"),
         // EventTarget constructor — now implemented
@@ -477,8 +477,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Document-getElementById", "6/18 pass; needs innerHTML/outerHTML, in-document id-cache semantics"),
         // DocumentFragment-getElementById — constructor implemented (unskip)
         // ("DocumentFragment-getElementById", "requires DocumentFragment constructor"),
-        // Node-properties — 722/726 pass; 4 fail (document.nextSibling/previousSibling/ownerDocument=undefined, hasChildNodes)
-        ("Node-properties", "4 subtests fail: document.nextSibling/previousSibling/ownerDocument return undefined not null, hasChildNodes"),
+        // Node-properties — unskipped, document.nextSibling/previousSibling/ownerDocument/hasChildNodes now defined
         // ParentNode-children — now implemented (W2-F)
         // ("ParentNode-children", "requires HTMLCollection"),
         // Element-children — now implemented (W2-F)
@@ -487,12 +486,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("name-validation", "all subtests pass"),
         // remove-unscopable (@@unscopables added, test requires onclick attribute handlers)
         ("remove-unscopable", "requires onclick attribute handlers"),
-        // Element-webkitMatchesSelector (alias implemented, test requires iframe src loading)
-        ("webkitMatchesSelector", "requires iframe src loading"),
+        // Element-webkitMatchesSelector — unskipped (dynamic iframe loading now supported)
         // KeyEvent-initKeyEvent (legacy)
         ("KeyEvent-initKeyEvent", "requires KeyEvent"),
-        // node-appendchild-crash
-        ("node-appendchild-crash", "requires window.onload IDL attribute"),
+        // node-appendchild-crash — now passing (window.onload implemented)
         // append-on-Document, prepend-on-Document — now enabled (DOMImplementation available)
         // rootNode — now implemented
         // insert-adjacent: now enabled (DOMImplementation available)
@@ -544,8 +541,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("passive-by-default", "requires passive event handling"),
         // no-focus-events-at-clicking-editable
         ("no-focus-events", "requires focus events"),
-        // keypress-dispatch-crash
-        ("keypress-dispatch-crash", "requires KeyboardEvent"),
+        // keypress-dispatch-crash — unskipped: unified JsEvent handles all event types
         // EventTarget-this-of-listener — this binding now implemented
         // ("EventTarget-this-of-listener", "requires this binding in listeners"),
         // Tests using new EventTarget() — now implemented
@@ -592,8 +588,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Node-parentElement — now implemented
         // Event-propagation — unskipped: cancelBubble getter implemented
         // ("Event-propagation.html", "requires Event.cancelBubble getter"),
-        // Event-stopPropagation-cancel-bubbling — dispatchEvent rejects non-Event arg
-        ("Event-stopPropagation-cancel-bubbling", "dispatchEvent rejects document.createEvent result as non-Event"),
+        // Event-stopPropagation-cancel-bubbling — unskipped: unified JsEvent handles createEvent results
         // Event-dispatch-throwing — window.onerror now implemented (unskip)
         // ("Event-dispatch-throwing", "requires window.onerror"),
         // Event-dispatch-omitted-capture — unskipped: window now participates in document dispatch
@@ -733,12 +728,61 @@ fn extract_iframe_srcs(html: &str) -> Vec<String> {
     srcs
 }
 
-/// Resolve an iframe src to filesystem content.
+/// Extract iframe src URLs set via JS property assignment in `<script>` bodies.
+/// Looks for patterns like `.src = "..."` or `.src = '...'`.
+fn extract_js_iframe_srcs(html: &str) -> Vec<String> {
+    let mut srcs = Vec::new();
+    let lower = html.to_ascii_lowercase();
+    // Find each <script>...</script> block
+    let mut pos = 0;
+    while let Some(start) = lower[pos..].find("<script") {
+        let abs_start = pos + start;
+        let open_end = match lower[abs_start..].find('>') {
+            Some(e) => abs_start + e + 1,
+            None => break,
+        };
+        let close = match lower[open_end..].find("</script") {
+            Some(e) => open_end + e,
+            None => break,
+        };
+        let body = &html[open_end..close];
+        // Search for .src = "..." or .src = '...'
+        let mut spos = 0;
+        while spos < body.len() {
+            // Look for .src followed by optional whitespace and =
+            if let Some(idx) = body[spos..].find(".src") {
+                let after_src = spos + idx + 4; // skip ".src"
+                // Skip whitespace
+                let rest = &body[after_src..];
+                let trimmed = rest.trim_start();
+                if trimmed.starts_with('=') {
+                    let after_eq = trimmed[1..].trim_start();
+                    let quote = after_eq.chars().next().unwrap_or(' ');
+                    if quote == '"' || quote == '\'' {
+                        if let Some(end_quote) = after_eq[1..].find(quote) {
+                            let src_val = &after_eq[1..1 + end_quote];
+                            srcs.push(src_val.to_string());
+                        }
+                    }
+                }
+                spos = after_src;
+            } else {
+                break;
+            }
+        }
+        pos = close;
+    }
+    srcs
+}
+
+/// Resolve an iframe src to filesystem content. Strips URL fragment before resolution.
 fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<String> {
-    let resolved_path = if src.starts_with('/') {
-        wpt_root().join(src.trim_start_matches('/'))
+    // Strip URL fragment (#...) before resolving to filesystem path
+    let src_no_fragment = src.split('#').next().unwrap_or(src);
+    let resolved_path = if src_no_fragment.starts_with('/') {
+        wpt_root().join(src_no_fragment.trim_start_matches('/'))
     } else {
-        html_path.parent().unwrap().join(src)
+        html_path.parent().unwrap().join(src_no_fragment)
     };
     std::fs::read_to_string(&resolved_path).ok()
 }
@@ -766,12 +810,16 @@ fn run_wpt_test(
         }
     }
 
-    // Build the fetched map for iframe src content
-    let iframe_srcs = extract_iframe_srcs(&html);
+    // Build the fetched map for iframe src content (HTML attributes + JS property assignments)
+    let mut iframe_srcs = extract_iframe_srcs(&html);
+    iframe_srcs.extend(extract_js_iframe_srcs(&html));
     let mut fetched_iframes = HashMap::new();
     for src in &iframe_srcs {
+        // Strip fragment for filesystem lookup, but store with fragment-stripped key
+        // so the engine can find it after stripping fragments too
+        let src_no_fragment = src.split('#').next().unwrap_or(src);
         if let Some(content) = resolve_iframe_src(html_path, src) {
-            fetched_iframes.insert(src.clone(), content);
+            fetched_iframes.insert(src_no_fragment.to_string(), content);
         }
     }
 

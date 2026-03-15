@@ -141,7 +141,17 @@ thread_local! {
 thread_local! {
     /// Maps iframe src URL -> pre-fetched HTML content.
     /// Populated by Engine::populate_iframe_src_content() before script execution.
+    #[allow(clippy::type_complexity)]
     pub(crate) static IFRAME_SRC_CONTENT: RefCell<Option<Rc<RefCell<HashMap<String, String>>>>> = const { RefCell::new(None) };
+}
+
+// ---------------------------------------------------------------------------
+// Iframe onload handler storage (JS-property-set handlers, not HTML attributes)
+// ---------------------------------------------------------------------------
+thread_local! {
+    /// Maps (tree_ptr, iframe_node_id) -> JS function set via `iframe.onload = func`.
+    #[allow(clippy::type_complexity)]
+    pub(crate) static IFRAME_ONLOAD_HANDLERS: RefCell<Option<Rc<RefCell<HashMap<(usize, NodeId), JsObject>>>>> = const { RefCell::new(None) };
 }
 
 /// Lazily creates (or retrieves) the content document for an `<iframe>` element.
@@ -173,11 +183,13 @@ pub(crate) fn ensure_iframe_content_doc(
         let node = t.get_node(node_id);
         if let NodeData::Element { attributes, .. } = &node.data {
             let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone())?;
+            // Strip URL fragment (#...) before lookup
+            let src_no_fragment = src.split('#').next().unwrap_or(&src).to_string();
             IFRAME_SRC_CONTENT.with(|src_cell| {
                 let src_rc = src_cell.borrow();
                 let map_rc = src_rc.as_ref()?;
                 let map = map_rc.borrow();
-                map.get(&src).cloned()
+                map.get(&src_no_fragment).cloned()
             })
         } else {
             None
@@ -656,6 +668,96 @@ pub(crate) fn get_or_create_js_element(
                 js_string!("contentWindow"),
                 PropertyDescriptor::builder()
                     .get(content_window_getter.to_js_function(&realm2))
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx,
+            )?;
+
+            // src getter/setter — reflects the `src` DOM attribute
+            let tree_for_src_get = tree.clone();
+            let nid_for_src_get = node_id;
+            let src_getter = unsafe {
+                NativeFunction::from_closure(move |_this, _args, _ctx2| {
+                    let t = tree_for_src_get.borrow();
+                    match t.get_attribute(nid_for_src_get, "src") {
+                        Some(val) => Ok(JsValue::from(js_string!(val))),
+                        None => Ok(JsValue::from(js_string!(""))),
+                    }
+                })
+            };
+            let tree_for_src_set = tree.clone();
+            let nid_for_src_set = node_id;
+            let src_setter = unsafe {
+                NativeFunction::from_closure(move |_this, args, ctx2| {
+                    let value = args
+                        .first()
+                        .map(|v| v.to_string(ctx2))
+                        .transpose()?
+                        .map(|s| s.to_std_string_escaped())
+                        .unwrap_or_default();
+                    super::mutation_observer::set_attribute_with_observer(
+                        &tree_for_src_set, nid_for_src_set, "src", &value,
+                    );
+                    Ok(JsValue::undefined())
+                })
+            };
+            let realm3 = ctx.realm().clone();
+            js_obj.define_property_or_throw(
+                js_string!("src"),
+                PropertyDescriptor::builder()
+                    .get(src_getter.to_js_function(&realm3))
+                    .set(src_setter.to_js_function(&realm3))
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx,
+            )?;
+
+            // onload getter/setter — stores JS function in IFRAME_ONLOAD_HANDLERS
+            let tree_for_onload_get = tree.clone();
+            let nid_for_onload_get = node_id;
+            let onload_getter = unsafe {
+                NativeFunction::from_closure(move |_this, _args, _ctx2| {
+                    let tp = Rc::as_ptr(&tree_for_onload_get) as usize;
+                    let handler = IFRAME_ONLOAD_HANDLERS.with(|cell| {
+                        let rc = cell.borrow();
+                        let map_rc = rc.as_ref()?;
+                        let map = map_rc.borrow();
+                        map.get(&(tp, nid_for_onload_get)).cloned()
+                    });
+                    match handler {
+                        Some(func) => Ok(JsValue::from(func)),
+                        None => Ok(JsValue::null()),
+                    }
+                })
+            };
+            let tree_for_onload_set = tree.clone();
+            let nid_for_onload_set = node_id;
+            let onload_setter = unsafe {
+                NativeFunction::from_closure(move |_this, args, _ctx2| {
+                    let tp = Rc::as_ptr(&tree_for_onload_set) as usize;
+                    let val = args.first().cloned().unwrap_or(JsValue::null());
+                    IFRAME_ONLOAD_HANDLERS.with(|cell| {
+                        let rc = cell.borrow();
+                        if let Some(map_rc) = rc.as_ref() {
+                            let mut map = map_rc.borrow_mut();
+                            if let Some(obj) = val.as_object() {
+                                map.insert((tp, nid_for_onload_set), obj.clone());
+                            } else {
+                                map.remove(&(tp, nid_for_onload_set));
+                            }
+                        }
+                    });
+                    Ok(JsValue::undefined())
+                })
+            };
+            let realm4 = ctx.realm().clone();
+            js_obj.define_property_or_throw(
+                js_string!("onload"),
+                PropertyDescriptor::builder()
+                    .get(onload_getter.to_js_function(&realm4))
+                    .set(onload_setter.to_js_function(&realm4))
                     .configurable(true)
                     .enumerable(true)
                     .build(),
@@ -1406,25 +1508,11 @@ impl JsElement {
             .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an object").into()))?
             .clone();
 
-        // Read event_type and bubbles from the event's native data (JsEvent or JsCustomEvent)
-        let is_custom_event;
-        let (event_type, bubbles) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
-            is_custom_event = false;
-            // Check initialized flag
-            if !evt.initialized {
-                return Err(JsError::from_opaque(
-                    js_string!("InvalidStateError: The event is not initialized.").into(),
-                ));
-            }
-            // Check dispatching flag
-            if evt.dispatching {
-                return Err(JsError::from_opaque(
-                    js_string!("InvalidStateError: The event is already being dispatched.").into(),
-                ));
-            }
-            (evt.event_type.clone(), evt.bubbles)
-        } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
-            is_custom_event = true;
+        // Read event_type and bubbles from the event's native data
+        let (event_type, bubbles) = {
+            let evt = event_obj
+                .downcast_ref::<JsEvent>()
+                .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()))?;
             if !evt.initialized {
                 return Err(JsError::from_opaque(
                     js_string!("InvalidStateError: The event is not initialized.").into(),
@@ -1436,18 +1524,12 @@ impl JsElement {
                 ));
             }
             (evt.event_type.clone(), evt.bubbles)
-        } else {
-            return Err(JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()));
         };
 
         // Check cancelBubble (propagation_stopped) — if already set, dispatch is a no-op
-        let already_stopped = if is_custom_event {
-            event_obj.downcast_ref::<super::event::JsCustomEvent>().unwrap().propagation_stopped
-        } else {
-            event_obj.downcast_ref::<JsEvent>().unwrap().propagation_stopped
-        };
+        let already_stopped = event_obj.downcast_ref::<JsEvent>().unwrap().propagation_stopped;
         if already_stopped {
-            return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+            return Self::finish_dispatch_generic(&event_obj, ctx);
         }
 
         // 1. Build propagation path: [root, ..., grandparent, parent, target]
@@ -1485,11 +1567,7 @@ impl JsElement {
         };
 
         // 2. Set event.target and dispatching flag
-        if is_custom_event {
-            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
-            evt.target = Some(target_node_id);
-            evt.dispatching = true;
-        } else {
+        {
             let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
             evt.target = Some(target_node_id);
             evt.dispatching = true;
@@ -1504,17 +1582,11 @@ impl JsElement {
             get_or_create_js_element(node_id, tree.clone(), ctx)
         };
 
-        // Helper macro-like closure: set phase/current_target on either event type
-        let set_phase = |event_obj: &JsObject, node_id: Option<NodeId>, phase: u8, is_custom: bool| {
-            if is_custom {
-                let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
-                evt.current_target = node_id;
-                evt.phase = phase;
-            } else {
-                let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
-                evt.current_target = node_id;
-                evt.phase = phase;
-            }
+        // Helper closure: set phase/current_target on the event
+        let set_phase = |event_obj: &JsObject, node_id: Option<NodeId>, phase: u8| {
+            let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+            evt.current_target = node_id;
+            evt.phase = phase;
         };
 
         // 3. Capture phase (phase = 1): Walk from window (if included) -> root down to (but NOT including) the target
@@ -1522,15 +1594,7 @@ impl JsElement {
         // Window capture listeners first (if applicable)
         if include_window {
             // Set phase on native event data
-            if is_custom_event {
-                let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
-                evt.current_target = Some(WINDOW_LISTENER_ID);
-                evt.phase = 1;
-            } else {
-                let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
-                evt.current_target = Some(WINDOW_LISTENER_ID);
-                evt.phase = 1;
-            }
+            set_phase(&event_obj, Some(WINDOW_LISTENER_ID), 1);
             let window_val: JsValue = WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
                 cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
             }).unwrap_or(JsValue::undefined());
@@ -1540,14 +1604,14 @@ impl JsElement {
                 (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, true, false, ctx,
             )?;
             if should_stop {
-                return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+                return Self::finish_dispatch_generic(&event_obj, ctx);
             }
         }
 
         let target_index = propagation_path.len() - 1;
         for &node_id in &propagation_path[..target_index] {
 
-            set_phase(&event_obj, Some(node_id), 1, is_custom_event);
+            set_phase(&event_obj, Some(node_id), 1);
             let current_target_js = make_js_element(node_id, ctx)?;
             Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
 
@@ -1555,12 +1619,12 @@ impl JsElement {
                 (tree_scope, node_id), &event_type, &event_obj, &event_val, true, false, ctx,
             )?;
             if should_stop {
-                return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+                return Self::finish_dispatch_generic(&event_obj, ctx);
             }
         }
 
         // 4. At-target phase (phase = 2): capture listeners first, then non-capture
-        set_phase(&event_obj, Some(target_node_id), 2, is_custom_event);
+        set_phase(&event_obj, Some(target_node_id), 2);
         Self::set_event_prop(&event_obj, "currentTarget", this.clone(), ctx)?;
 
         // First: capture listeners at target
@@ -1568,16 +1632,16 @@ impl JsElement {
             (tree_scope, target_node_id), &event_type, &event_obj, &event_val, true, false, ctx,
         )?;
         if should_stop {
-            return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+            return Self::finish_dispatch_generic(&event_obj, ctx);
         }
 
         // Second: non-capture listeners at target
-        set_phase(&event_obj, Some(target_node_id), 2, is_custom_event);
+        set_phase(&event_obj, Some(target_node_id), 2);
         let should_stop = Self::invoke_listeners_for_node(
             (tree_scope, target_node_id), &event_type, &event_obj, &event_val, false, false, ctx,
         )?;
         if should_stop {
-            return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+            return Self::finish_dispatch_generic(&event_obj, ctx);
         }
 
         // 5. Bubble phase (phase = 3): Only if event.bubbles. Walk from parent up to root, then window.
@@ -1585,7 +1649,7 @@ impl JsElement {
             for i in (0..target_index).rev() {
                 let node_id = propagation_path[i];
 
-                set_phase(&event_obj, Some(node_id), 3, is_custom_event);
+                set_phase(&event_obj, Some(node_id), 3);
                 let current_target_js = make_js_element(node_id, ctx)?;
                 Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
 
@@ -1593,21 +1657,13 @@ impl JsElement {
                     (tree_scope, node_id), &event_type, &event_obj, &event_val, false, false, ctx,
                 )?;
                 if should_stop {
-                    return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+                    return Self::finish_dispatch_generic(&event_obj, ctx);
                 }
             }
 
             // Window bubble listeners last (if applicable)
             if include_window {
-                if is_custom_event {
-                    let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
-                    evt.current_target = Some(WINDOW_LISTENER_ID);
-                    evt.phase = 3;
-                } else {
-                    let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
-                    evt.current_target = Some(WINDOW_LISTENER_ID);
-                    evt.phase = 3;
-                }
+                set_phase(&event_obj, Some(WINDOW_LISTENER_ID), 3);
                 let window_val: JsValue = WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
                     cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
                 }).unwrap_or(JsValue::undefined());
@@ -1617,12 +1673,12 @@ impl JsElement {
                     (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, false, false, ctx,
                 )?;
                 if should_stop {
-                    return Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx);
+                    return Self::finish_dispatch_generic(&event_obj, ctx);
                 }
             }
         }
 
-        Self::finish_dispatch_generic(&event_obj, is_custom_event, ctx)
+        Self::finish_dispatch_generic(&event_obj, ctx)
     }
 
     /// Delegates to the standalone `invoke_listeners_for_node` function.
@@ -1654,16 +1710,8 @@ impl JsElement {
     }
 
     /// Reset event phase, currentTarget, propagation flags, dispatching after dispatch.
-    fn finish_dispatch_generic(event_obj: &JsObject, is_custom: bool, ctx: &mut Context) -> JsResult<JsValue> {
-        let default_prevented = if is_custom {
-            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
-            evt.phase = 0;
-            evt.current_target = None;
-            evt.propagation_stopped = false;
-            evt.immediate_propagation_stopped = false;
-            evt.dispatching = false;
-            evt.default_prevented
-        } else {
+    fn finish_dispatch_generic(event_obj: &JsObject, ctx: &mut Context) -> JsResult<JsValue> {
+        let default_prevented = {
             let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
             evt.phase = 0;
             evt.current_target = None;
@@ -1773,12 +1821,9 @@ pub(crate) fn invoke_listeners_for_node(
             report_listener_error(err, ctx);
         }
 
-        let (imm_stopped, prop_stopped) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
+        let (imm_stopped, prop_stopped) = {
+            let evt = event_obj.downcast_ref::<JsEvent>().unwrap();
             (evt.immediate_propagation_stopped, evt.propagation_stopped)
-        } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
-            (evt.immediate_propagation_stopped, evt.propagation_stopped)
-        } else {
-            (false, false)
         };
 
         if imm_stopped {
@@ -1797,13 +1842,7 @@ pub(crate) fn invoke_listeners_for_node(
         *cell.borrow_mut() = prev_event;
     });
 
-    let propagation_stopped = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
-        evt.propagation_stopped
-    } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
-        evt.propagation_stopped
-    } else {
-        false
-    };
+    let propagation_stopped = event_obj.downcast_ref::<JsEvent>().unwrap().propagation_stopped;
     Ok(propagation_stopped)
 }
 

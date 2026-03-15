@@ -24,6 +24,9 @@ thread_local! {
     /// Thread-local storing the window JsObject so dispatch_event in element.rs
     /// can include window in the event propagation path.
     pub(crate) static WINDOW_OBJECT: RefCell<Option<JsObject>> = const { RefCell::new(None) };
+
+    /// Thread-local storing the `window.onload` handler function.
+    pub(crate) static WINDOW_ONLOAD_HANDLER: RefCell<Option<JsObject>> = const { RefCell::new(None) };
 }
 
 fn console_format_args(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
@@ -467,23 +470,12 @@ pub(crate) fn register_window(
             None => return Ok(JsValue::from(true)),
         };
 
-        let is_custom_event;
-        let event_type;
-        if let Some(evt) = event_obj.downcast_ref::<super::event::JsEvent>() {
-            is_custom_event = false;
-            event_type = evt.event_type.clone();
-        } else if let Some(evt) = event_obj.downcast_ref::<super::event::JsCustomEvent>() {
-            is_custom_event = true;
-            event_type = evt.event_type.clone();
-        } else {
-            return Ok(JsValue::from(true));
-        }
+        let event_type = match event_obj.downcast_ref::<super::event::JsEvent>() {
+            Some(evt) => evt.event_type.clone(),
+            None => return Ok(JsValue::from(true)),
+        };
 
-        if is_custom_event {
-            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
-            evt.dispatching = true;
-            evt.phase = 2;
-        } else {
+        {
             let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
             evt.dispatching = true;
             evt.phase = 2;
@@ -513,14 +505,7 @@ pub(crate) fn register_window(
             (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, false, true, ctx,
         )?;
 
-        let default_prevented = if is_custom_event {
-            let mut evt = event_obj.downcast_mut::<super::event::JsCustomEvent>().unwrap();
-            evt.phase = 0;
-            evt.dispatching = false;
-            evt.propagation_stopped = false;
-            evt.immediate_propagation_stopped = false;
-            evt.default_prevented
-        } else {
+        let default_prevented = {
             let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
             evt.phase = 0;
             evt.dispatching = false;
@@ -571,6 +556,43 @@ pub(crate) fn register_window(
             context,
         )
         .expect("failed to define window.event");
+
+    // window.onload getter/setter — stores handler in WINDOW_ONLOAD_HANDLER thread-local
+    let onload_getter = unsafe {
+        NativeFunction::from_closure(|_this, _args, _ctx| {
+            let handler = WINDOW_ONLOAD_HANDLER.with(|cell| cell.borrow().clone());
+            match handler {
+                Some(obj) => Ok(JsValue::from(obj)),
+                None => Ok(JsValue::null()),
+            }
+        })
+    };
+    let onload_setter = unsafe {
+        NativeFunction::from_closure(|_this, args, _ctx| {
+            let val = args.first().cloned().unwrap_or(JsValue::null());
+            WINDOW_ONLOAD_HANDLER.with(|cell| {
+                if let Some(obj) = val.as_object().filter(|o| o.is_callable()) {
+                    *cell.borrow_mut() = Some(obj.clone());
+                } else {
+                    *cell.borrow_mut() = None;
+                }
+            });
+            Ok(JsValue::undefined())
+        })
+    };
+
+    window
+        .define_property_or_throw(
+            js_string!("onload"),
+            PropertyDescriptor::builder()
+                .get(onload_getter.to_js_function(&realm))
+                .set(onload_setter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define window.onload");
 
     // frames getter -- returns array-like object of iframe contentWindow objects
     let tree_for_frames = Rc::clone(&tree);

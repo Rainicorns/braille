@@ -19,7 +19,7 @@ thread_local! {
 }
 
 // Thread-local storing the JsRuntime creation time for DOMHighResTimeStamp computation.
-// Set by JsRuntime::new(), read by get_time_stamp() on JsEvent/JsCustomEvent.
+// Set by JsRuntime::new(), read by get_time_stamp() on JsEvent.
 thread_local! {
     pub(crate) static RUNTIME_CREATION_TIME: RefCell<Option<Instant>> = const { RefCell::new(None) };
 }
@@ -75,7 +75,21 @@ pub(crate) fn attach_is_trusted_own_property(event_obj: &JsObject, ctx: &mut Con
 }
 
 // ---------------------------------------------------------------------------
-// JsEvent — the Class-based wrapper for DOM Event
+// EventKind — discriminant for event subclass type
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Trace, Finalize)]
+pub(crate) enum EventKind {
+    Standard,
+    Custom { detail: JsValue },
+    Mouse,
+    Keyboard,
+    Wheel,
+    Focus,
+}
+
+// ---------------------------------------------------------------------------
+// JsEvent — the unified Class-based wrapper for all DOM Event types
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Trace, Finalize, JsData)]
@@ -98,10 +112,12 @@ pub(crate) struct JsEvent {
     /// Whether the event has been initialized (via constructor or initEvent).
     /// Events created via createEvent() are uninitialized until initEvent() is called.
     pub(crate) initialized: bool,
+    /// Event subclass kind — determines what extra properties are available
+    pub(crate) kind: EventKind,
 }
 
 impl JsEvent {
-    // -- New getters for WPT --
+    // -- Getters --
 
     fn get_is_trusted(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
         Ok(JsValue::from(false))
@@ -210,7 +226,53 @@ impl JsEvent {
         Ok(JsValue::undefined())
     }
 
-    // -- Getters --
+    pub(crate) fn get_detail(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.detail getter: not an object").into()))?;
+        let evt = obj
+            .downcast_ref::<JsEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.detail getter: not an Event").into()))?;
+        match &evt.kind {
+            EventKind::Custom { detail } => Ok(detail.clone()),
+            _ => Ok(JsValue::null()),
+        }
+    }
+
+    pub(crate) fn init_custom_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let obj = this
+            .as_object()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initCustomEvent: not an object").into()))?;
+        let mut evt = obj
+            .downcast_mut::<JsEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initCustomEvent: not an Event").into()))?;
+        if evt.dispatching {
+            return Ok(JsValue::undefined());
+        }
+        let event_type = args
+            .first()
+            .ok_or_else(|| {
+                JsError::from_native(
+                    boa_engine::JsNativeError::typ().with_message(
+                        "Failed to execute 'initCustomEvent' on 'CustomEvent': 1 argument required, but only 0 present.",
+                    ),
+                )
+            })?
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let bubbles = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
+        let cancelable = args.get(2).map(|v| v.to_boolean()).unwrap_or(false);
+        let detail = args.get(3).cloned().unwrap_or(JsValue::null());
+        evt.event_type = event_type;
+        evt.bubbles = bubbles;
+        evt.cancelable = cancelable;
+        evt.kind = EventKind::Custom { detail };
+        evt.default_prevented = false;
+        evt.propagation_stopped = false;
+        evt.immediate_propagation_stopped = false;
+        evt.initialized = true;
+        Ok(JsValue::undefined())
+    }
 
     fn get_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
         let obj = this
@@ -312,7 +374,7 @@ impl JsEvent {
 }
 
 /// Helper: extract `bubbles` and `cancelable` booleans from the options object argument.
-fn parse_event_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, bool)> {
+pub(crate) fn parse_event_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, bool)> {
     let mut bubbles = false;
     let mut cancelable = false;
 
@@ -333,7 +395,7 @@ fn parse_event_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, b
 }
 
 /// Helper: extract the event type string from the first argument.
-fn parse_event_type(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
+pub(crate) fn parse_event_type(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
     let event_type = args
         .first()
         .ok_or_else(|| {
@@ -426,6 +488,7 @@ impl Class for JsEvent {
             dispatching: false,
             time_stamp: dom_high_res_time_stamp(),
             initialized: true,
+            kind: EventKind::Standard,
         })
     }
 
@@ -567,703 +630,6 @@ impl Class for JsEvent {
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// JsCustomEvent — extends Event with a `detail` property
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Trace, Finalize, JsData)]
-pub(crate) struct JsCustomEvent {
-    #[unsafe_ignore_trace]
-    pub(crate) event_type: String,
-    pub(crate) bubbles: bool,
-    pub(crate) cancelable: bool,
-    pub(crate) default_prevented: bool,
-    pub(crate) propagation_stopped: bool,
-    pub(crate) immediate_propagation_stopped: bool,
-    pub(crate) detail: JsValue,
-    #[unsafe_ignore_trace]
-    pub(crate) target: Option<NodeId>,
-    #[unsafe_ignore_trace]
-    pub(crate) current_target: Option<NodeId>,
-    pub(crate) phase: u8,
-    pub(crate) dispatching: bool,
-    /// DOMHighResTimeStamp captured at construction time
-    pub(crate) time_stamp: f64,
-    /// Whether the event has been initialized (via constructor or initEvent).
-    pub(crate) initialized: bool,
-}
-
-impl JsCustomEvent {
-    // -- Getters --
-
-    fn get_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.type getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.type getter: `this` is not a CustomEvent").into()))?;
-        Ok(JsValue::from(js_string!(evt.event_type.clone())))
-    }
-
-    fn get_bubbles(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.bubbles getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.bubbles getter: `this` is not a CustomEvent").into()))?;
-        Ok(JsValue::from(evt.bubbles))
-    }
-
-    fn get_cancelable(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelable getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelable getter: `this` is not a CustomEvent").into()))?;
-        Ok(JsValue::from(evt.cancelable))
-    }
-
-    fn get_default_prevented(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.defaultPrevented getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.defaultPrevented getter: `this` is not a CustomEvent").into()))?;
-        Ok(JsValue::from(evt.default_prevented))
-    }
-
-    fn get_target(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        Ok(JsValue::null())
-    }
-
-    fn get_current_target(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        Ok(JsValue::null())
-    }
-
-    fn get_event_phase(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.eventPhase getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.eventPhase getter: `this` is not a CustomEvent").into()))?;
-        Ok(JsValue::from(evt.phase as i32))
-    }
-
-    fn get_detail(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.detail getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.detail getter: `this` is not a CustomEvent").into()))?;
-        Ok(evt.detail.clone())
-    }
-
-    // -- WPT getters --
-
-    fn get_time_stamp(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.timeStamp getter: not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.timeStamp getter: not a CustomEvent").into()))?;
-        Ok(JsValue::from(evt.time_stamp))
-    }
-
-    fn get_composed(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        Ok(JsValue::from(false))
-    }
-
-    fn get_src_element(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        Ok(JsValue::null())
-    }
-
-    fn get_cancel_bubble(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this.as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelBubble getter: not an object").into()))?;
-        let evt = obj.downcast_ref::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelBubble getter: not a CustomEvent").into()))?;
-        Ok(JsValue::from(evt.propagation_stopped))
-    }
-
-    fn set_cancel_bubble(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let value = args.first().map(|v| v.to_boolean()).unwrap_or(false);
-        if value {
-            let obj = this.as_object()
-                .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelBubble setter: not an object").into()))?;
-            let mut evt = obj.downcast_mut::<JsCustomEvent>()
-                .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.cancelBubble setter: not a CustomEvent").into()))?;
-            evt.propagation_stopped = true;
-        }
-        Ok(JsValue::undefined())
-    }
-
-    fn get_return_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this.as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.returnValue getter: not an object").into()))?;
-        let evt = obj.downcast_ref::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.returnValue getter: not a CustomEvent").into()))?;
-        Ok(JsValue::from(!evt.default_prevented))
-    }
-
-    fn set_return_value(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let value = args.first().map(|v| v.to_boolean()).unwrap_or(true);
-        if !value {
-            let obj = this.as_object()
-                .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.returnValue setter: not an object").into()))?;
-            let mut evt = obj.downcast_mut::<JsCustomEvent>()
-                .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.returnValue setter: not a CustomEvent").into()))?;
-            if evt.cancelable {
-                evt.default_prevented = true;
-            }
-        }
-        Ok(JsValue::undefined())
-    }
-
-    fn init_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this.as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initEvent: not an object").into()))?;
-        let mut evt = obj.downcast_mut::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initEvent: not a CustomEvent").into()))?;
-        if evt.dispatching {
-            return Ok(JsValue::undefined());
-        }
-        let event_type = args.first()
-            .map(|v| v.to_string(ctx)).transpose()?
-            .map(|s| s.to_std_string_escaped()).unwrap_or_default();
-        let bubbles = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
-        let cancelable = args.get(2).map(|v| v.to_boolean()).unwrap_or(false);
-        evt.event_type = event_type;
-        evt.bubbles = bubbles;
-        evt.cancelable = cancelable;
-        evt.default_prevented = false;
-        evt.propagation_stopped = false;
-        evt.immediate_propagation_stopped = false;
-        evt.initialized = true;
-        Ok(JsValue::undefined())
-    }
-
-    fn init_custom_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this.as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initCustomEvent: not an object").into()))?;
-        let mut evt = obj.downcast_mut::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.initCustomEvent: not a CustomEvent").into()))?;
-        if evt.dispatching {
-            return Ok(JsValue::undefined());
-        }
-        let event_type = args.first()
-            .ok_or_else(|| {
-                JsError::from_native(
-                    boa_engine::JsNativeError::typ()
-                        .with_message("Failed to execute 'initCustomEvent' on 'CustomEvent': 1 argument required, but only 0 present.")
-                )
-            })?
-            .to_string(ctx)?.to_std_string_escaped();
-        let bubbles = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
-        let cancelable = args.get(2).map(|v| v.to_boolean()).unwrap_or(false);
-        let detail = args.get(3).cloned().unwrap_or(JsValue::null());
-        evt.event_type = event_type;
-        evt.bubbles = bubbles;
-        evt.cancelable = cancelable;
-        evt.detail = detail;
-        evt.default_prevented = false;
-        evt.propagation_stopped = false;
-        evt.immediate_propagation_stopped = false;
-        evt.initialized = true;
-        Ok(JsValue::undefined())
-    }
-
-    // -- Methods --
-
-    fn prevent_default(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.preventDefault: `this` is not an object").into()))?;
-        let mut evt = obj
-            .downcast_mut::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.preventDefault: `this` is not a CustomEvent").into()))?;
-        if evt.cancelable {
-            evt.default_prevented = true;
-        }
-        Ok(JsValue::undefined())
-    }
-
-    fn stop_propagation(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.stopPropagation: `this` is not an object").into()))?;
-        let mut evt = obj
-            .downcast_mut::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.stopPropagation: `this` is not a CustomEvent").into()))?;
-        evt.propagation_stopped = true;
-        Ok(JsValue::undefined())
-    }
-
-    fn stop_immediate_propagation(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.stopImmediatePropagation: `this` is not an object").into()))?;
-        let mut evt = obj
-            .downcast_mut::<JsCustomEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.stopImmediatePropagation: `this` is not a CustomEvent").into()))?;
-        evt.propagation_stopped = true;
-        evt.immediate_propagation_stopped = true;
-        Ok(JsValue::undefined())
-    }
-}
-
-impl Class for JsCustomEvent {
-    const NAME: &'static str = "CustomEvent";
-    const LENGTH: usize = 1;
-
-    fn data_constructor(
-        _new_target: &JsValue,
-        args: &[JsValue],
-        ctx: &mut Context,
-    ) -> JsResult<Self> {
-        let event_type = parse_event_type(args, ctx)?;
-        let (bubbles, cancelable) = parse_event_options(args, ctx)?;
-
-        // Also extract `detail` from options
-        let detail = if let Some(opts_val) = args.get(1) {
-            if let Some(opts_obj) = opts_val.as_object() {
-                let d = opts_obj.get(js_string!("detail"), ctx)?;
-                if d.is_undefined() {
-                    JsValue::null()
-                } else {
-                    d
-                }
-            } else {
-                JsValue::null()
-            }
-        } else {
-            JsValue::null()
-        };
-
-        Ok(JsCustomEvent {
-            event_type,
-            bubbles,
-            cancelable,
-            default_prevented: false,
-            propagation_stopped: false,
-            immediate_propagation_stopped: false,
-            detail,
-            target: None,
-            current_target: None,
-            phase: 0,
-            dispatching: false,
-            time_stamp: dom_high_res_time_stamp(),
-            initialized: true,
-        })
-    }
-
-    fn init(class: &mut ClassBuilder) -> JsResult<()> {
-        let realm = class.context().realm().clone();
-
-        // Read-only getters
-        let type_getter = NativeFunction::from_fn_ptr(Self::get_type);
-        class.accessor(
-            js_string!("type"),
-            Some(type_getter.to_js_function(&realm)),
-            None,
-            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
-        );
-
-        let bubbles_getter = NativeFunction::from_fn_ptr(Self::get_bubbles);
-        class.accessor(
-            js_string!("bubbles"),
-            Some(bubbles_getter.to_js_function(&realm)),
-            None,
-            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
-        );
-
-        let cancelable_getter = NativeFunction::from_fn_ptr(Self::get_cancelable);
-        class.accessor(
-            js_string!("cancelable"),
-            Some(cancelable_getter.to_js_function(&realm)),
-            None,
-            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
-        );
-
-        let default_prevented_getter = NativeFunction::from_fn_ptr(Self::get_default_prevented);
-        class.accessor(
-            js_string!("defaultPrevented"),
-            Some(default_prevented_getter.to_js_function(&realm)),
-            None,
-            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
-        );
-
-        let target_getter = NativeFunction::from_fn_ptr(Self::get_target);
-        class.accessor(
-            js_string!("target"),
-            Some(target_getter.to_js_function(&realm)),
-            None,
-            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
-        );
-
-        let current_target_getter = NativeFunction::from_fn_ptr(Self::get_current_target);
-        class.accessor(
-            js_string!("currentTarget"),
-            Some(current_target_getter.to_js_function(&realm)),
-            None,
-            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
-        );
-
-        let event_phase_getter = NativeFunction::from_fn_ptr(Self::get_event_phase);
-        class.accessor(
-            js_string!("eventPhase"),
-            Some(event_phase_getter.to_js_function(&realm)),
-            None,
-            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
-        );
-
-        let detail_getter = NativeFunction::from_fn_ptr(Self::get_detail);
-        class.accessor(
-            js_string!("detail"),
-            Some(detail_getter.to_js_function(&realm)),
-            None,
-            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
-        );
-
-        // Methods
-        class.method(
-            js_string!("preventDefault"),
-            0,
-            NativeFunction::from_fn_ptr(Self::prevent_default),
-        );
-
-        class.method(
-            js_string!("stopPropagation"),
-            0,
-            NativeFunction::from_fn_ptr(Self::stop_propagation),
-        );
-
-        class.method(
-            js_string!("stopImmediatePropagation"),
-            0,
-            NativeFunction::from_fn_ptr(Self::stop_immediate_propagation),
-        );
-
-        class.method(
-            js_string!("initEvent"),
-            3,
-            NativeFunction::from_fn_ptr(Self::init_event),
-        );
-
-        class.method(
-            js_string!("initCustomEvent"),
-            4,
-            NativeFunction::from_fn_ptr(Self::init_custom_event),
-        );
-
-        // isTrusted is NOT on the prototype — it's added as an own property on each instance
-        // (see attach_is_trusted_own_property and the constructor wrappers in runtime.rs)
-
-        // timeStamp
-        let time_stamp_getter = NativeFunction::from_fn_ptr(Self::get_time_stamp);
-        class.accessor(js_string!("timeStamp"), Some(time_stamp_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-        // composed
-        let composed_getter = NativeFunction::from_fn_ptr(Self::get_composed);
-        class.accessor(js_string!("composed"), Some(composed_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-        // srcElement
-        let src_element_getter = NativeFunction::from_fn_ptr(Self::get_src_element);
-        class.accessor(js_string!("srcElement"), Some(src_element_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-        // cancelBubble
-        let cancel_bubble_getter = NativeFunction::from_fn_ptr(Self::get_cancel_bubble);
-        let cancel_bubble_setter = NativeFunction::from_fn_ptr(Self::set_cancel_bubble);
-        class.accessor(js_string!("cancelBubble"), Some(cancel_bubble_getter.to_js_function(&realm)), Some(cancel_bubble_setter.to_js_function(&realm)), Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-        // returnValue
-        let return_value_getter = NativeFunction::from_fn_ptr(Self::get_return_value);
-        let return_value_setter = NativeFunction::from_fn_ptr(Self::set_return_value);
-        class.accessor(js_string!("returnValue"), Some(return_value_getter.to_js_function(&realm)), Some(return_value_setter.to_js_function(&realm)), Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// UIEvent subclass constructors: MouseEvent, KeyboardEvent, WheelEvent, FocusEvent
-//
-// These are minimal constructors that produce Event objects with correct
-// timeStamp. The WPT tests only check that the constructors exist and that
-// timeStamp is a proper DOMHighResTimeStamp — no event-specific properties
-// (clientX, key, deltaY, relatedTarget, etc.) are tested.
-// ---------------------------------------------------------------------------
-
-/// Helper: build a Class impl for a UIEvent subclass. Each subclass stores a JsEvent internally,
-/// reuses Event's getters, and has its own NAME for the constructor.
-macro_rules! ui_event_subclass {
-    ($struct_name:ident, $js_name:expr) => {
-        #[derive(Debug, Trace, Finalize, JsData)]
-        pub(crate) struct $struct_name {
-            #[unsafe_ignore_trace]
-            pub(crate) event_type: String,
-            pub(crate) bubbles: bool,
-            pub(crate) cancelable: bool,
-            pub(crate) default_prevented: bool,
-            pub(crate) propagation_stopped: bool,
-            pub(crate) immediate_propagation_stopped: bool,
-            pub(crate) phase: u8,
-            pub(crate) dispatching: bool,
-            /// DOMHighResTimeStamp captured at construction time
-            pub(crate) time_stamp: f64,
-        }
-
-        impl $struct_name {
-            fn get_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".type getter: not an object")).into()))?;
-                let evt = obj.downcast_ref::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".type getter: wrong type")).into()))?;
-                Ok(JsValue::from(js_string!(evt.event_type.clone())))
-            }
-
-            fn get_bubbles(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".bubbles getter: not an object")).into()))?;
-                let evt = obj.downcast_ref::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".bubbles getter: wrong type")).into()))?;
-                Ok(JsValue::from(evt.bubbles))
-            }
-
-            fn get_cancelable(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".cancelable getter: not an object")).into()))?;
-                let evt = obj.downcast_ref::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".cancelable getter: wrong type")).into()))?;
-                Ok(JsValue::from(evt.cancelable))
-            }
-
-            fn get_default_prevented(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".defaultPrevented getter: not an object")).into()))?;
-                let evt = obj.downcast_ref::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".defaultPrevented getter: wrong type")).into()))?;
-                Ok(JsValue::from(evt.default_prevented))
-            }
-
-            fn get_target(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                Ok(JsValue::null())
-            }
-
-            fn get_current_target(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                Ok(JsValue::null())
-            }
-
-            fn get_event_phase(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".eventPhase getter: not an object")).into()))?;
-                let evt = obj.downcast_ref::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".eventPhase getter: wrong type")).into()))?;
-                Ok(JsValue::from(evt.phase as i32))
-            }
-
-            fn get_time_stamp(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".timeStamp getter: not an object")).into()))?;
-                let evt = obj.downcast_ref::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".timeStamp getter: wrong type")).into()))?;
-                Ok(JsValue::from(evt.time_stamp))
-            }
-
-            fn get_composed(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                Ok(JsValue::from(false))
-            }
-
-            fn get_src_element(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                Ok(JsValue::null())
-            }
-
-            fn get_cancel_bubble(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".cancelBubble getter: not an object")).into()))?;
-                let evt = obj.downcast_ref::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".cancelBubble getter: wrong type")).into()))?;
-                Ok(JsValue::from(evt.propagation_stopped))
-            }
-
-            fn set_cancel_bubble(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let value = args.first().map(|v| v.to_boolean()).unwrap_or(false);
-                if value {
-                    let obj = this.as_object()
-                        .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".cancelBubble setter: not an object")).into()))?;
-                    let mut evt = obj.downcast_mut::<$struct_name>()
-                        .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".cancelBubble setter: wrong type")).into()))?;
-                    evt.propagation_stopped = true;
-                }
-                Ok(JsValue::undefined())
-            }
-
-            fn get_return_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".returnValue getter: not an object")).into()))?;
-                let evt = obj.downcast_ref::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".returnValue getter: wrong type")).into()))?;
-                Ok(JsValue::from(!evt.default_prevented))
-            }
-
-            fn set_return_value(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let value = args.first().map(|v| v.to_boolean()).unwrap_or(true);
-                if !value {
-                    let obj = this.as_object()
-                        .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".returnValue setter: not an object")).into()))?;
-                    let mut evt = obj.downcast_mut::<$struct_name>()
-                        .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".returnValue setter: wrong type")).into()))?;
-                    if evt.cancelable {
-                        evt.default_prevented = true;
-                    }
-                }
-                Ok(JsValue::undefined())
-            }
-
-            fn prevent_default(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".preventDefault: not an object")).into()))?;
-                let mut evt = obj.downcast_mut::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".preventDefault: wrong type")).into()))?;
-                if evt.cancelable {
-                    evt.default_prevented = true;
-                }
-                Ok(JsValue::undefined())
-            }
-
-            fn stop_propagation(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".stopPropagation: not an object")).into()))?;
-                let mut evt = obj.downcast_mut::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".stopPropagation: wrong type")).into()))?;
-                evt.propagation_stopped = true;
-                Ok(JsValue::undefined())
-            }
-
-            fn stop_immediate_propagation(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".stopImmediatePropagation: not an object")).into()))?;
-                let mut evt = obj.downcast_mut::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".stopImmediatePropagation: wrong type")).into()))?;
-                evt.propagation_stopped = true;
-                evt.immediate_propagation_stopped = true;
-                Ok(JsValue::undefined())
-            }
-
-            fn init_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-                let obj = this.as_object()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".initEvent: not an object")).into()))?;
-                let mut evt = obj.downcast_mut::<$struct_name>()
-                    .ok_or_else(|| JsError::from_opaque(js_string!(concat!($js_name, ".initEvent: wrong type")).into()))?;
-                if evt.dispatching {
-                    return Ok(JsValue::undefined());
-                }
-                let event_type = args.first()
-                    .ok_or_else(|| JsError::from_native(
-                        boa_engine::JsNativeError::typ()
-                            .with_message(concat!("Failed to execute 'initEvent' on '", $js_name, "': 1 argument required, but only 0 present."))
-                    ))?
-                    .to_string(ctx)?.to_std_string_escaped();
-                let bubbles = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
-                let cancelable = args.get(2).map(|v| v.to_boolean()).unwrap_or(false);
-                evt.event_type = event_type;
-                evt.bubbles = bubbles;
-                evt.cancelable = cancelable;
-                evt.default_prevented = false;
-                evt.propagation_stopped = false;
-                evt.immediate_propagation_stopped = false;
-                Ok(JsValue::undefined())
-            }
-        }
-
-        impl Class for $struct_name {
-            const NAME: &'static str = $js_name;
-            const LENGTH: usize = 1;
-
-            fn data_constructor(
-                _new_target: &JsValue,
-                args: &[JsValue],
-                ctx: &mut Context,
-            ) -> JsResult<Self> {
-                let event_type = parse_event_type(args, ctx)?;
-                let (bubbles, cancelable) = parse_event_options(args, ctx)?;
-
-                Ok($struct_name {
-                    event_type,
-                    bubbles,
-                    cancelable,
-                    default_prevented: false,
-                    propagation_stopped: false,
-                    immediate_propagation_stopped: false,
-                    phase: 0,
-                    dispatching: false,
-                    time_stamp: dom_high_res_time_stamp(),
-                })
-            }
-
-            fn init(class: &mut ClassBuilder) -> JsResult<()> {
-                let realm = class.context().realm().clone();
-
-                let type_getter = NativeFunction::from_fn_ptr(Self::get_type);
-                class.accessor(js_string!("type"), Some(type_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let bubbles_getter = NativeFunction::from_fn_ptr(Self::get_bubbles);
-                class.accessor(js_string!("bubbles"), Some(bubbles_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let cancelable_getter = NativeFunction::from_fn_ptr(Self::get_cancelable);
-                class.accessor(js_string!("cancelable"), Some(cancelable_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let default_prevented_getter = NativeFunction::from_fn_ptr(Self::get_default_prevented);
-                class.accessor(js_string!("defaultPrevented"), Some(default_prevented_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let target_getter = NativeFunction::from_fn_ptr(Self::get_target);
-                class.accessor(js_string!("target"), Some(target_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let current_target_getter = NativeFunction::from_fn_ptr(Self::get_current_target);
-                class.accessor(js_string!("currentTarget"), Some(current_target_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let event_phase_getter = NativeFunction::from_fn_ptr(Self::get_event_phase);
-                class.accessor(js_string!("eventPhase"), Some(event_phase_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let time_stamp_getter = NativeFunction::from_fn_ptr(Self::get_time_stamp);
-                class.accessor(js_string!("timeStamp"), Some(time_stamp_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let composed_getter = NativeFunction::from_fn_ptr(Self::get_composed);
-                class.accessor(js_string!("composed"), Some(composed_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let src_element_getter = NativeFunction::from_fn_ptr(Self::get_src_element);
-                class.accessor(js_string!("srcElement"), Some(src_element_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let cancel_bubble_getter = NativeFunction::from_fn_ptr(Self::get_cancel_bubble);
-                let cancel_bubble_setter = NativeFunction::from_fn_ptr(Self::set_cancel_bubble);
-                class.accessor(js_string!("cancelBubble"), Some(cancel_bubble_getter.to_js_function(&realm)), Some(cancel_bubble_setter.to_js_function(&realm)), Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                let return_value_getter = NativeFunction::from_fn_ptr(Self::get_return_value);
-                let return_value_setter = NativeFunction::from_fn_ptr(Self::set_return_value);
-                class.accessor(js_string!("returnValue"), Some(return_value_getter.to_js_function(&realm)), Some(return_value_setter.to_js_function(&realm)), Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
-
-                class.method(js_string!("preventDefault"), 0, NativeFunction::from_fn_ptr(Self::prevent_default));
-                class.method(js_string!("stopPropagation"), 0, NativeFunction::from_fn_ptr(Self::stop_propagation));
-                class.method(js_string!("stopImmediatePropagation"), 0, NativeFunction::from_fn_ptr(Self::stop_immediate_propagation));
-                class.method(js_string!("initEvent"), 3, NativeFunction::from_fn_ptr(Self::init_event));
-
-                Ok(())
-            }
-        }
-    };
-}
-
-ui_event_subclass!(JsMouseEvent, "MouseEvent");
-ui_event_subclass!(JsKeyboardEvent, "KeyboardEvent");
-ui_event_subclass!(JsWheelEvent, "WheelEvent");
-ui_event_subclass!(JsFocusEvent, "FocusEvent");
 
 // ---------------------------------------------------------------------------
 // Tests

@@ -332,7 +332,7 @@ fn set_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
         let prefix_part = &qualified_name[..colon_pos];
         let local_part = &qualified_name[colon_pos + 1..];
         let invalid_prefix = prefix_part.is_empty()
-            || prefix_part.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '/' | '>'));
+            || prefix_part.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']);
         if invalid_prefix || !crate::dom::is_valid_attribute_name(local_part) {
             let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
             return Err(JsError::from_opaque(exc.into()));

@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use boa_engine::JsValue;
+use boa_engine::{JsValue, JsObject};
 
 use crate::dom::tree::DomTree;
 use crate::dom::node::NodeData;
@@ -27,6 +27,7 @@ pub enum ScriptDescriptor {
 }
 
 /// Pre-fetched resources for external scripts and iframe content.
+#[derive(Default)]
 pub struct FetchedResources {
     /// Maps script src URL → fetched JavaScript content.
     pub scripts: HashMap<String, String>,
@@ -34,14 +35,7 @@ pub struct FetchedResources {
     pub iframes: HashMap<String, String>,
 }
 
-impl Default for FetchedResources {
-    fn default() -> Self {
-        Self {
-            scripts: HashMap::new(),
-            iframes: HashMap::new(),
-        }
-    }
-}
+// Note: derive(Default) used instead of manual impl
 
 impl FetchedResources {
     /// Create a FetchedResources with only scripts (no iframes).
@@ -244,6 +238,9 @@ impl Engine {
         // Fire onload handlers for iframes with pre-fetched content
         Self::process_iframe_loads(&mut runtime, &self.tree);
 
+        // Fire window.onload handler
+        Self::fire_window_load(&mut runtime);
+
         self.runtime = Some(runtime);
         self.focused_element = None;
 
@@ -320,6 +317,9 @@ impl Engine {
         // Fire onload handlers for iframes with pre-fetched content
         Self::process_iframe_loads(&mut runtime, &self.tree);
 
+        // Fire window.onload handler
+        Self::fire_window_load(&mut runtime);
+
         self.runtime = Some(runtime);
         self.focused_element = None;
         crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
@@ -368,6 +368,34 @@ impl Engine {
         }
     }
 
+    /// Fire `window.onload` handler after all scripts and iframe loads have completed.
+    fn fire_window_load(runtime: &mut JsRuntime) {
+        let handler = crate::js::bindings::window::WINDOW_ONLOAD_HANDLER.with(|cell| cell.borrow().clone());
+        if let Some(handler_fn) = handler {
+            if handler_fn.is_callable() {
+                let window_val = crate::js::bindings::window::WINDOW_OBJECT.with(|cell| {
+                    cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
+                }).unwrap_or(JsValue::undefined());
+
+                // Create a simple Event-like object with type "load"
+                let event_obj = boa_engine::object::ObjectInitializer::new(&mut runtime.context).build();
+                let _ = event_obj.set(
+                    boa_engine::js_string!("type"),
+                    JsValue::from(boa_engine::js_string!("load")),
+                    false,
+                    &mut runtime.context,
+                );
+
+                let _ = handler_fn.call(
+                    &window_val,
+                    &[JsValue::from(event_obj)],
+                    &mut runtime.context,
+                );
+                runtime.notify_mutation_observers();
+            }
+        }
+    }
+
     /// Store pre-fetched iframe HTML content in the IFRAME_SRC_CONTENT thread-local.
     fn populate_iframe_src_content(iframes: &HashMap<String, String>) {
         crate::js::bindings::element::IFRAME_SRC_CONTENT.with(|cell| {
@@ -382,13 +410,14 @@ impl Engine {
 
     /// After scripts have executed, walk the DOM for `<iframe>` elements with a `src`
     /// attribute. For each one whose content was pre-fetched, ensure the content doc
-    /// is populated and fire any `onload` attribute handler.
+    /// is populated and fire any `onload` handler (attribute or JS-property).
     fn process_iframe_loads(runtime: &mut JsRuntime, tree: &Rc<RefCell<DomTree>>) {
         // Collect iframe nodes that have a `src` attribute
-        let iframes: Vec<(NodeId, String, Option<String>)> = {
+        // Tuple: (node_id, src, onload_attr_code, onload_js_handler)
+        let iframes: Vec<(NodeId, String, Option<String>, Option<JsObject>)> = {
             let t = tree.borrow();
             let mut result = Vec::new();
-            Self::collect_iframes(&t, t.document(), &mut result);
+            Self::collect_iframes(&t, t.document(), tree, &mut result);
             result
         };
 
@@ -396,13 +425,16 @@ impl Engine {
             return;
         }
 
-        // Check which iframes have pre-fetched content
+        // Check which iframes have pre-fetched content (strip fragment before lookup)
         let has_content: Vec<bool> = crate::js::bindings::element::IFRAME_SRC_CONTENT.with(|cell| {
             let rc = cell.borrow();
             match rc.as_ref() {
                 Some(map_rc) => {
                     let map = map_rc.borrow();
-                    iframes.iter().map(|(_, src, _)| map.contains_key(src)).collect()
+                    iframes.iter().map(|(_, src, _, _)| {
+                        let src_no_fragment = src.split('#').next().unwrap_or(src);
+                        map.contains_key(src_no_fragment)
+                    }).collect()
                 }
                 None => vec![false; iframes.len()],
             }
@@ -410,7 +442,7 @@ impl Engine {
 
         let tree_ptr = Rc::as_ptr(tree) as usize;
 
-        for (i, (node_id, _src, onload)) in iframes.iter().enumerate() {
+        for (i, (node_id, _src, onload_attr, onload_js)) in iframes.iter().enumerate() {
             if !has_content[i] {
                 continue;
             }
@@ -420,21 +452,36 @@ impl Engine {
                 tree_ptr, *node_id, &mut runtime.context,
             );
 
-            // Fire onload if present
-            if let Some(handler_code) = onload {
-                // Wrap handler in a function, get the iframe JS object, call with this=iframe
-                let func_code = format!("(function() {{ {} }})", handler_code);
+            // Get the iframe's JS object for `this` and event.target
+            let iframe_js = crate::js::bindings::element::get_or_create_js_element(
+                *node_id, tree.clone(), &mut runtime.context,
+            ).ok();
+
+            // Create a simple event object with `target` property
+            let event_obj = if let Some(ref ijs) = iframe_js {
+                let evt = boa_engine::object::ObjectInitializer::new(&mut runtime.context).build();
+                let _ = evt.set(
+                    boa_engine::js_string!("target"),
+                    JsValue::from(ijs.clone()),
+                    false,
+                    &mut runtime.context,
+                );
+                JsValue::from(evt)
+            } else {
+                JsValue::undefined()
+            };
+
+            // Fire onload attribute handler if present
+            if let Some(handler_code) = onload_attr {
+                let func_code = format!("(function(e) {{ {} }})", handler_code);
                 if let Ok(func_val) = runtime.eval(&func_code) {
                     if let Ok(func_obj) = func_val.as_object().ok_or(()).and_then(|o| {
                         if o.is_callable() { Ok(o.clone()) } else { Err(()) }
                     }) {
-                        // Get the iframe's JS object for `this`
-                        if let Ok(iframe_js) = crate::js::bindings::element::get_or_create_js_element(
-                            *node_id, tree.clone(), &mut runtime.context,
-                        ) {
+                        if let Some(ref ijs) = iframe_js {
                             let _ = func_obj.call(
-                                &JsValue::from(iframe_js),
-                                &[],
+                                &JsValue::from(ijs.clone()),
+                                std::slice::from_ref(&event_obj),
                                 &mut runtime.context,
                             );
                         }
@@ -442,28 +489,52 @@ impl Engine {
                 }
                 runtime.notify_mutation_observers();
             }
+
+            // Fire JS-property onload handler if present
+            if let Some(handler_obj) = onload_js {
+                if handler_obj.is_callable() {
+                    if let Some(ref ijs) = iframe_js {
+                        let _ = handler_obj.call(
+                            &JsValue::from(ijs.clone()),
+                            std::slice::from_ref(&event_obj),
+                            &mut runtime.context,
+                        );
+                    }
+                }
+                runtime.notify_mutation_observers();
+            }
         }
     }
 
-    /// Recursively collect `<iframe>` elements with their src and onload attributes.
+    /// Recursively collect `<iframe>` elements with their src and onload attributes/handlers.
+    /// Tuple: (node_id, src, onload_attr_code, onload_js_handler)
     fn collect_iframes(
         tree: &DomTree,
         node_id: NodeId,
-        result: &mut Vec<(NodeId, String, Option<String>)>,
+        tree_rc: &Rc<RefCell<DomTree>>,
+        result: &mut Vec<(NodeId, String, Option<String>, Option<JsObject>)>,
     ) {
         let node = tree.get_node(node_id);
         if let NodeData::Element { tag_name, attributes, .. } = &node.data {
             if tag_name.eq_ignore_ascii_case("iframe") {
                 if let Some(src_attr) = attributes.iter().find(|a| a.local_name == "src") {
                     let src = src_attr.value.clone();
-                    let onload = attributes.iter().find(|a| a.local_name == "onload").map(|a| a.value.clone());
-                    result.push((node_id, src, onload));
+                    let onload_attr = attributes.iter().find(|a| a.local_name == "onload").map(|a| a.value.clone());
+                    // Check for JS-property onload handler
+                    let tree_ptr = Rc::as_ptr(tree_rc) as usize;
+                    let onload_js = crate::js::bindings::element::IFRAME_ONLOAD_HANDLERS.with(|cell| {
+                        let rc = cell.borrow();
+                        let map_rc = rc.as_ref()?;
+                        let map = map_rc.borrow();
+                        map.get(&(tree_ptr, node_id)).cloned()
+                    });
+                    result.push((node_id, src, onload_attr, onload_js));
                 }
             }
         }
         let children: Vec<NodeId> = node.children.clone();
         for child_id in children {
-            Self::collect_iframes(tree, child_id, result);
+            Self::collect_iframes(tree, child_id, tree_rc, result);
         }
     }
 }

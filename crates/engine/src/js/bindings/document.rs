@@ -17,7 +17,7 @@ use crate::dom::is_valid_xml_name;
 use crate::dom::NodeData;
 
 use super::element::{JsElement, get_or_create_js_element, NODE_CACHE, DOM_PROTOTYPES};
-use super::event::{JsEvent, JsCustomEvent};
+use super::event::{JsEvent, EventKind};
 use super::event_target::{ListenerEntry, EVENT_LISTENERS};
 use super::class_list::register_class_list_class;
 use super::style::register_style_class;
@@ -42,7 +42,7 @@ fn validate_and_extract(
         let prefix_part = &qualified_name[..colon_pos];
         let local_part = &qualified_name[colon_pos + 1..];
         let invalid_prefix = prefix_part.is_empty()
-            || prefix_part.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '/' | '>'));
+            || prefix_part.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']);
         if invalid_prefix || !crate::dom::is_valid_element_name(local_part) {
             let exc = super::create_dom_exception(
                 ctx,
@@ -566,7 +566,7 @@ fn document_create_attribute_ns(
         let prefix_part = &qualified_name[..colon_pos];
         let local_part = &qualified_name[colon_pos + 1..];
         let invalid_prefix = prefix_part.is_empty()
-            || prefix_part.contains(|c: char| matches!(c, '\0' | '\t' | '\n' | '\x0C' | '\r' | ' ' | '/' | '>'));
+            || prefix_part.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']);
         if invalid_prefix || !crate::dom::is_valid_attribute_name(local_part) {
             let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
             return Err(JsError::from_opaque(exc.into()));
@@ -652,44 +652,42 @@ fn document_create_event(
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    if event_interface.eq_ignore_ascii_case("customevent") {
-        let event = JsCustomEvent {
-            event_type: String::new(),
-            bubbles: false,
-            cancelable: false,
-            default_prevented: false,
-            propagation_stopped: false,
-            immediate_propagation_stopped: false,
-            detail: JsValue::null(),
-            target: None,
-            current_target: None,
-            phase: 0,
-            dispatching: false,
-            time_stamp: super::event::dom_high_res_time_stamp(),
-            initialized: false,
-        };
-        let js_obj = JsCustomEvent::from_data(event, ctx)?;
-        super::event::attach_is_trusted_own_property(&js_obj, ctx)?;
-        Ok(js_obj.into())
+    let kind = if event_interface.eq_ignore_ascii_case("customevent") {
+        EventKind::Custom { detail: JsValue::null() }
     } else {
-        let event = JsEvent {
-            event_type: String::new(),
-            bubbles: false,
-            cancelable: false,
-            default_prevented: false,
-            propagation_stopped: false,
-            immediate_propagation_stopped: false,
-            target: None,
-            current_target: None,
-            phase: 0,
-            dispatching: false,
-            time_stamp: super::event::dom_high_res_time_stamp(),
-            initialized: false,
-        };
-        let js_obj = JsEvent::from_data(event, ctx)?;
-        super::event::attach_is_trusted_own_property(&js_obj, ctx)?;
-        Ok(js_obj.into())
+        EventKind::Standard
+    };
+    let event = JsEvent {
+        event_type: String::new(),
+        bubbles: false,
+        cancelable: false,
+        default_prevented: false,
+        propagation_stopped: false,
+        immediate_propagation_stopped: false,
+        target: None,
+        current_target: None,
+        phase: 0,
+        dispatching: false,
+        time_stamp: super::event::dom_high_res_time_stamp(),
+        initialized: false,
+        kind,
+    };
+    let js_obj = JsEvent::from_data(event, ctx)?;
+    // Set correct prototype for CustomEvent instances
+    if event_interface.eq_ignore_ascii_case("customevent") {
+        let global = ctx.global_object();
+        if let Ok(custom_ctor) = global.get(js_string!("CustomEvent"), ctx) {
+            if let Some(custom_obj) = custom_ctor.as_object() {
+                if let Ok(proto) = custom_obj.get(js_string!("prototype"), ctx) {
+                    if let Some(proto_obj) = proto.as_object() {
+                        js_obj.set_prototype(Some(proto_obj.clone()));
+                    }
+                }
+            }
+        }
     }
+    super::event::attach_is_trusted_own_property(&js_obj, ctx)?;
+    Ok(js_obj.into())
 }
 
 /// Parse the third argument to addEventListener/removeEventListener.
@@ -877,24 +875,10 @@ fn document_dispatch_event(
         .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an object").into()))?
         .clone();
 
-    let is_custom_event;
-    let (event_type, bubbles) = if let Some(evt) = event_obj.downcast_ref::<JsEvent>() {
-        is_custom_event = false;
-        // Check initialized flag
-        if !evt.initialized {
-            return Err(JsError::from_opaque(
-                js_string!("InvalidStateError: The event is not initialized.").into(),
-            ));
-        }
-        // Check dispatching flag
-        if evt.dispatching {
-            return Err(JsError::from_opaque(
-                js_string!("InvalidStateError: The event is already being dispatched.").into(),
-            ));
-        }
-        (evt.event_type.clone(), evt.bubbles)
-    } else if let Some(evt) = event_obj.downcast_ref::<JsCustomEvent>() {
-        is_custom_event = true;
+    let (event_type, bubbles) = {
+        let evt = event_obj
+            .downcast_ref::<JsEvent>()
+            .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()))?;
         if !evt.initialized {
             return Err(JsError::from_opaque(
                 js_string!("InvalidStateError: The event is not initialized.").into(),
@@ -906,16 +890,10 @@ fn document_dispatch_event(
             ));
         }
         (evt.event_type.clone(), evt.bubbles)
-    } else {
-        return Err(JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()));
     };
 
     // Set event.target and dispatching flag
-    if is_custom_event {
-        let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
-        evt.target = Some(target_node_id);
-        evt.dispatching = true;
-    } else {
+    {
         let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
         evt.target = Some(target_node_id);
         evt.dispatching = true;
@@ -956,11 +934,7 @@ fn document_dispatch_event(
 
     // Capture phase on window (if global document)
     if is_global_doc && !stopped {
-        if is_custom_event {
-            let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
-            evt.current_target = Some(WINDOW_LISTENER_ID);
-            evt.phase = 1; // CAPTURING_PHASE
-        } else {
+        {
             let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
             evt.current_target = Some(WINDOW_LISTENER_ID);
             evt.phase = 1; // CAPTURING_PHASE
@@ -995,11 +969,7 @@ fn document_dispatch_event(
 
     // At-target phase (document is both root and target)
     if !stopped {
-        if is_custom_event {
-            let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
-            evt.current_target = Some(target_node_id);
-            evt.phase = 2; // AT_TARGET
-        } else {
+        {
             let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
             evt.current_target = Some(target_node_id);
             evt.phase = 2; // AT_TARGET
@@ -1027,11 +997,7 @@ fn document_dispatch_event(
 
     // Bubble phase on window (if global document AND bubbles)
     if is_global_doc && bubbles && !stopped {
-        if is_custom_event {
-            let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
-            evt.current_target = Some(WINDOW_LISTENER_ID);
-            evt.phase = 3; // BUBBLING_PHASE
-        } else {
+        {
             let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
             evt.current_target = Some(WINDOW_LISTENER_ID);
             evt.phase = 3; // BUBBLING_PHASE
@@ -1065,15 +1031,7 @@ fn document_dispatch_event(
     }
 
     // Reset event state
-    let default_prevented = if is_custom_event {
-        let mut evt = event_obj.downcast_mut::<JsCustomEvent>().unwrap();
-        evt.phase = 0;
-        evt.current_target = None;
-        evt.propagation_stopped = false;
-        evt.immediate_propagation_stopped = false;
-        evt.dispatching = false;
-        evt.default_prevented
-    } else {
+    let default_prevented = {
         let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
         evt.phase = 0;
         evt.current_target = None;
@@ -1253,6 +1211,24 @@ pub(crate) fn add_document_properties_to_element(
         js_string!("body"),
         PropertyDescriptor::builder()
             .get(body_getter.to_js_function(&realm))
+            .configurable(true)
+            .enumerable(false)
+            .build(),
+        ctx,
+    )?;
+
+    // defaultView getter — returns the window global object
+    let dv_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx2| {
+            let global = ctx2.global_object();
+            let window = global.get(js_string!("window"), ctx2)?;
+            Ok(window)
+        })
+    };
+    js_obj.define_property_or_throw(
+        js_string!("defaultView"),
+        PropertyDescriptor::builder()
+            .get(dv_getter.to_js_function(&realm))
             .configurable(true)
             .enumerable(false)
             .build(),
@@ -2165,6 +2141,18 @@ fn document_get_parent_element(_this: &JsValue, _args: &[JsValue], _ctx: &mut Co
     Ok(JsValue::null())
 }
 
+/// Native method for document.hasChildNodes()
+fn document_has_child_nodes(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("hasChildNodes: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("hasChildNodes: `this` is not document").into()))?;
+    let tree = doc.tree.borrow();
+    Ok(JsValue::from(!tree.children(tree.document()).is_empty()))
+}
+
 /// Native implementation of document.contains(other)
 /// Returns true if other is a descendant of the document (inclusive).
 fn document_contains(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
@@ -2547,6 +2535,26 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
         )
         .expect("failed to define document.documentElement");
 
+    // document.defaultView (getter only) — returns window
+    let dv_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx2| {
+            let global = ctx2.global_object();
+            let window = global.get(js_string!("window"), ctx2)?;
+            Ok(window)
+        })
+    };
+    document
+        .define_property_or_throw(
+            js_string!("defaultView"),
+            PropertyDescriptor::builder()
+                .get(dv_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define document.defaultView");
+
     // document.title (getter and setter)
     let title_getter = NativeFunction::from_fn_ptr(document_get_title);
     let title_setter = NativeFunction::from_fn_ptr(document_set_title);
@@ -2755,6 +2763,63 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
             context,
         )
         .expect("failed to define document.lastChild");
+
+    // document.ownerDocument (getter returns null per spec)
+    let owner_doc_getter = NativeFunction::from_fn_ptr(document_get_parent_node); // reuse null-returning fn
+    document
+        .define_property_or_throw(
+            js_string!("ownerDocument"),
+            PropertyDescriptor::builder()
+                .get(owner_doc_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define document.ownerDocument");
+
+    // document.nextSibling (getter returns null — document has no parent)
+    let next_sib_getter = NativeFunction::from_fn_ptr(document_get_parent_node);
+    document
+        .define_property_or_throw(
+            js_string!("nextSibling"),
+            PropertyDescriptor::builder()
+                .get(next_sib_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define document.nextSibling");
+
+    // document.previousSibling (getter returns null — document has no parent)
+    let prev_sib_getter = NativeFunction::from_fn_ptr(document_get_parent_node);
+    document
+        .define_property_or_throw(
+            js_string!("previousSibling"),
+            PropertyDescriptor::builder()
+                .get(prev_sib_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define document.previousSibling");
+
+    // document.hasChildNodes()
+    let has_child_nodes_fn = NativeFunction::from_fn_ptr(document_has_child_nodes);
+    document
+        .define_property_or_throw(
+            js_string!("hasChildNodes"),
+            PropertyDescriptor::builder()
+                .value(has_child_nodes_fn.to_js_function(&realm))
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define document.hasChildNodes");
 
     // document.URL (always "about:blank" — no real URL context in the engine)
     document
