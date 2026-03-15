@@ -354,8 +354,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // CharacterData-appendChild requires HierarchyRequestError (DOMException)
         // CharacterData-appendChild — now have HierarchyRequestError (W2 un-skip)
         // ("CharacterData-appendChild", "requires HierarchyRequestError DOMException"),
-        // CharacterData-remove requires ChildNode-remove.js helper
-        ("CharacterData-remove", "requires ChildNode-remove.js helper"),
+        // CharacterData-remove — ChildNode-remove.js helper now resolved by script loader (unskip)
+        // ("CharacterData-remove", "requires ChildNode-remove.js helper"),
         // CharacterData-surrogates requires UTF-16 internal storage (Rust String is UTF-8)
         ("CharacterData-surrogates", "requires UTF-16 internal string storage for lone surrogates"),
         // Pre-insertion validation (requires DOMException hierarchy)
