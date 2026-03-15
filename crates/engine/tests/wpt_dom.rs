@@ -487,8 +487,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("name-validation", "all subtests pass"),
         // remove-unscopable (needs @@unscopables)
         ("remove-unscopable", "requires Symbol.unscopables"),
-        // Element-webkitMatchesSelector (alias test)
-        ("webkitMatchesSelector", "requires webkitMatchesSelector alias"),
+        // Element-webkitMatchesSelector (alias implemented, test requires iframe src loading)
+        ("webkitMatchesSelector", "requires iframe src loading"),
         // KeyEvent-initKeyEvent (legacy)
         ("KeyEvent-initKeyEvent", "requires KeyEvent"),
         // node-appendchild-crash

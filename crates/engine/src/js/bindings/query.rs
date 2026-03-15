@@ -543,6 +543,11 @@ pub(crate) fn register_query(class: &mut ClassBuilder) -> JsResult<()> {
         1,
         NativeFunction::from_fn_ptr(element_closest),
     );
+    class.method(
+        js_string!("webkitMatchesSelector"),
+        1,
+        NativeFunction::from_fn_ptr(element_matches),
+    );
     Ok(())
 }
 

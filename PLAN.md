@@ -431,7 +431,7 @@ Known subtest counts where recorded: Element-classlist 1420/1420, Element-closes
 | Element-setAttribute.html | PASS | 2/2 |
 | Element-siblingElement-null.html | PASS | |
 | Element-tagName.html | PASS | 6/6 |
-| Element-webkitMatchesSelector.html | SKIP | requires webkitMatchesSelector alias |
+| Element-webkitMatchesSelector.html | SKIP | alias implemented, requires iframe src loading |
 | MutationObserver-attributes.html | PASS | |
 | MutationObserver-callback-arguments.html | PASS | 1/1 |
 | MutationObserver-characterData.html | FAIL | 15/16; 1 Range subtest (no Range API) |

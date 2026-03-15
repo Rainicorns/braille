@@ -32,18 +32,9 @@ Just unskipped — test already passes. template.content and querySelector on Do
 
 ---
 
-## Fix 5 (partial): webkitMatchesSelector alias
+## Fix 5 (partial): webkitMatchesSelector alias — DONE
 
-Add `webkitMatchesSelector` as an alias for `matches()`. Won't make the WPT test pass (test requires iframe src loading) but adds spec coverage.
-
-**File:** `crates/engine/src/js/bindings/query.rs` — in `register_query`, add:
-```
-class.method(js_string!("webkitMatchesSelector"), 1, NativeFunction::from_fn_ptr(element_matches));
-```
-
-Update skip reason in wpt_dom.rs to reflect true blocker (iframe loading, not missing alias).
-
-**Verification:** `cargo build --package braille-engine`
+Added `webkitMatchesSelector` as alias for `element_matches` in `query.rs:register_query()`. Updated skip reason in wpt_dom.rs from "requires webkitMatchesSelector alias" to "requires iframe src loading".
 
 ---
 
