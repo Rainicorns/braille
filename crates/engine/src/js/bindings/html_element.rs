@@ -223,9 +223,19 @@ fn blur(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsVa
     Ok(JsValue::undefined())
 }
 
-/// element.click() — dispatches a synthetic 'click' Event with bubbles=true, cancelable=true.
+/// element.click() — dispatches a synthetic 'click' MouseEvent with bubbles=true, cancelable=true.
+/// Per spec: if the element is disabled, the click() method does nothing.
 fn click(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    // Create a click Event: new Event('click', { bubbles: true, cancelable: true })
+    // Check if element is disabled — if so, skip the click per spec
+    if let Some(obj) = this.as_object() {
+        if let Some(el) = obj.downcast_ref::<JsElement>() {
+            let tree = el.tree.borrow();
+            if super::activation::is_disabled(&tree, el.node_id) {
+                return Ok(JsValue::undefined());
+            }
+        }
+    }
+
     let event = JsEvent {
         event_type: "click".to_string(),
         bubbles: true,
@@ -239,7 +249,7 @@ fn click(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
         dispatching: false,
         time_stamp: super::event::dom_high_res_time_stamp(),
         initialized: true,
-        kind: super::event::EventKind::Standard,
+        kind: super::event::EventKind::mouse_default(),
     };
 
     let event_obj = JsEvent::from_data(event, ctx)?;

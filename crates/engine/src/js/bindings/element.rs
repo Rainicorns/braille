@@ -714,19 +714,13 @@ pub(crate) fn get_or_create_js_element(
                 ctx,
             )?;
 
-            // onload getter/setter — stores JS function in IFRAME_ONLOAD_HANDLERS
+            // onload getter/setter — uses unified on_event system
             let tree_for_onload_get = tree.clone();
             let nid_for_onload_get = node_id;
             let onload_getter = unsafe {
                 NativeFunction::from_closure(move |_this, _args, _ctx2| {
                     let tp = Rc::as_ptr(&tree_for_onload_get) as usize;
-                    let handler = IFRAME_ONLOAD_HANDLERS.with(|cell| {
-                        let rc = cell.borrow();
-                        let map_rc = rc.as_ref()?;
-                        let map = map_rc.borrow();
-                        map.get(&(tp, nid_for_onload_get)).cloned()
-                    });
-                    match handler {
+                    match super::on_event::get_on_event_handler(tp, nid_for_onload_get, "load") {
                         Some(func) => Ok(JsValue::from(func)),
                         None => Ok(JsValue::null()),
                     }
@@ -738,17 +732,11 @@ pub(crate) fn get_or_create_js_element(
                 NativeFunction::from_closure(move |_this, args, _ctx2| {
                     let tp = Rc::as_ptr(&tree_for_onload_set) as usize;
                     let val = args.first().cloned().unwrap_or(JsValue::null());
-                    IFRAME_ONLOAD_HANDLERS.with(|cell| {
-                        let rc = cell.borrow();
-                        if let Some(map_rc) = rc.as_ref() {
-                            let mut map = map_rc.borrow_mut();
-                            if let Some(obj) = val.as_object() {
-                                map.insert((tp, nid_for_onload_set), obj.clone());
-                            } else {
-                                map.remove(&(tp, nid_for_onload_set));
-                            }
-                        }
-                    });
+                    if let Some(obj) = val.as_object().filter(|o| o.is_callable()) {
+                        super::on_event::set_on_event_handler(tp, nid_for_onload_set, "load", Some(obj.clone()));
+                    } else {
+                        super::on_event::set_on_event_handler(tp, nid_for_onload_set, "load", None);
+                    }
                     Ok(JsValue::undefined())
                 })
             };
@@ -1508,8 +1496,8 @@ impl JsElement {
             .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an object").into()))?
             .clone();
 
-        // Read event_type and bubbles from the event's native data
-        let (event_type, bubbles) = {
+        // Read event_type, bubbles, and whether this is a Mouse click from the event's native data
+        let (event_type, bubbles, is_click_mouse) = {
             let evt = event_obj
                 .downcast_ref::<JsEvent>()
                 .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()))?;
@@ -1523,7 +1511,8 @@ impl JsElement {
                     js_string!("InvalidStateError: The event is already being dispatched.").into(),
                 ));
             }
-            (evt.event_type.clone(), evt.bubbles)
+            let is_click = evt.event_type == "click" && evt.kind.is_mouse();
+            (evt.event_type.clone(), evt.bubbles, is_click)
         };
 
         // Check cancelBubble (propagation_stopped) — if already set, dispatch is a no-op
@@ -1543,6 +1532,21 @@ impl JsElement {
             }
             path.reverse();
             path
+        };
+
+        // Activation behavior: find activation target and run pre-activation
+        let (activation_target, saved_activation) = if is_click_mouse {
+            let tree_ref = tree.borrow();
+            let at = super::activation::find_activation_target(&tree_ref, &propagation_path);
+            drop(tree_ref);
+            if let Some(at_id) = at {
+                let saved = super::activation::run_legacy_pre_activation(&mut tree.borrow_mut(), at_id);
+                (Some(at_id), Some(saved))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
         };
 
         // Check if window should be in the propagation path.
@@ -1590,95 +1594,134 @@ impl JsElement {
         };
 
         // 3. Capture phase (phase = 1): Walk from window (if included) -> root down to (but NOT including) the target
+        let mut dispatch_stopped = false;
 
         // Window capture listeners first (if applicable)
-        if include_window {
+        if include_window && !dispatch_stopped {
             // Set phase on native event data
             set_phase(&event_obj, Some(WINDOW_LISTENER_ID), 1);
             let window_val: JsValue = WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
                 cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
             }).unwrap_or(JsValue::undefined());
-            Self::set_event_prop(&event_obj, "currentTarget", window_val, ctx)?;
+            Self::set_event_prop(&event_obj, "currentTarget", window_val.clone(), ctx)?;
 
             let should_stop = invoke_listeners_for_node(
                 (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, true, false, ctx,
             )?;
+
+            // Invoke on* handler for window (capture doesn't apply to on*, but we check at bubble/at-target)
             if should_stop {
-                return Self::finish_dispatch_generic(&event_obj, ctx);
+                dispatch_stopped = true;
             }
         }
 
         let target_index = propagation_path.len() - 1;
-        for &node_id in &propagation_path[..target_index] {
+        if !dispatch_stopped {
+            for &node_id in &propagation_path[..target_index] {
+                set_phase(&event_obj, Some(node_id), 1);
+                let current_target_js = make_js_element(node_id, ctx)?;
+                Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
 
-            set_phase(&event_obj, Some(node_id), 1);
-            let current_target_js = make_js_element(node_id, ctx)?;
-            Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
-
-            let should_stop = Self::invoke_listeners_for_node(
-                (tree_scope, node_id), &event_type, &event_obj, &event_val, true, false, ctx,
-            )?;
-            if should_stop {
-                return Self::finish_dispatch_generic(&event_obj, ctx);
+                let should_stop = Self::invoke_listeners_for_node(
+                    (tree_scope, node_id), &event_type, &event_obj, &event_val, true, false, ctx,
+                )?;
+                if should_stop {
+                    dispatch_stopped = true;
+                    break;
+                }
             }
         }
 
         // 4. At-target phase (phase = 2): capture listeners first, then non-capture
-        set_phase(&event_obj, Some(target_node_id), 2);
-        Self::set_event_prop(&event_obj, "currentTarget", this.clone(), ctx)?;
+        if !dispatch_stopped {
+            set_phase(&event_obj, Some(target_node_id), 2);
+            Self::set_event_prop(&event_obj, "currentTarget", this.clone(), ctx)?;
 
-        // First: capture listeners at target
-        let should_stop = Self::invoke_listeners_for_node(
-            (tree_scope, target_node_id), &event_type, &event_obj, &event_val, true, false, ctx,
-        )?;
-        if should_stop {
-            return Self::finish_dispatch_generic(&event_obj, ctx);
+            // First: capture listeners at target
+            let should_stop = Self::invoke_listeners_for_node(
+                (tree_scope, target_node_id), &event_type, &event_obj, &event_val, true, false, ctx,
+            )?;
+            if should_stop {
+                dispatch_stopped = true;
+            }
         }
 
-        // Second: non-capture listeners at target
-        set_phase(&event_obj, Some(target_node_id), 2);
-        let should_stop = Self::invoke_listeners_for_node(
-            (tree_scope, target_node_id), &event_type, &event_obj, &event_val, false, false, ctx,
-        )?;
-        if should_stop {
-            return Self::finish_dispatch_generic(&event_obj, ctx);
+        if !dispatch_stopped {
+            // Second: non-capture listeners at target
+            set_phase(&event_obj, Some(target_node_id), 2);
+            let should_stop = Self::invoke_listeners_for_node(
+                (tree_scope, target_node_id), &event_type, &event_obj, &event_val, false, false, ctx,
+            )?;
+
+            // Invoke on* handler at target
+            super::on_event::invoke_on_event_handler(
+                tree_scope, target_node_id, &event_type, this, &event_val, ctx,
+            );
+
+            if should_stop {
+                dispatch_stopped = true;
+            }
         }
 
         // 5. Bubble phase (phase = 3): Only if event.bubbles. Walk from parent up to root, then window.
-        if bubbles {
+        if bubbles && !dispatch_stopped {
             for i in (0..target_index).rev() {
                 let node_id = propagation_path[i];
 
                 set_phase(&event_obj, Some(node_id), 3);
                 let current_target_js = make_js_element(node_id, ctx)?;
-                Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
+                Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js.clone()), ctx)?;
 
                 let should_stop = Self::invoke_listeners_for_node(
                     (tree_scope, node_id), &event_type, &event_obj, &event_val, false, false, ctx,
                 )?;
+
+                // Invoke on* handler during bubble
+                super::on_event::invoke_on_event_handler(
+                    tree_scope, node_id, &event_type, &JsValue::from(current_target_js), &event_val, ctx,
+                );
+
                 if should_stop {
-                    return Self::finish_dispatch_generic(&event_obj, ctx);
+                    dispatch_stopped = true;
+                    break;
                 }
             }
 
             // Window bubble listeners last (if applicable)
-            if include_window {
+            if include_window && !dispatch_stopped {
                 set_phase(&event_obj, Some(WINDOW_LISTENER_ID), 3);
                 let window_val: JsValue = WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
                     cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
                 }).unwrap_or(JsValue::undefined());
-                Self::set_event_prop(&event_obj, "currentTarget", window_val, ctx)?;
+                Self::set_event_prop(&event_obj, "currentTarget", window_val.clone(), ctx)?;
 
                 let should_stop = invoke_listeners_for_node(
                     (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, false, false, ctx,
                 )?;
-                if should_stop {
-                    return Self::finish_dispatch_generic(&event_obj, ctx);
-                }
+
+                // Invoke on* handler for window during bubble
+                super::on_event::invoke_on_event_handler(
+                    usize::MAX, WINDOW_LISTENER_ID, &event_type, &window_val, &event_val, ctx,
+                );
+
+                let _ = should_stop;
             }
         }
 
-        Self::finish_dispatch_generic(&event_obj, ctx)
+        // 6. Finish dispatch — reset event state
+        let result = Self::finish_dispatch_generic(&event_obj, ctx)?;
+
+        // 7. Activation behavior (post-dispatch)
+        if let (Some(at_id), Some(saved)) = (activation_target, saved_activation) {
+            let default_prevented = event_obj.downcast_ref::<JsEvent>().unwrap().default_prevented;
+            if default_prevented {
+                super::activation::restore_activation(&mut tree.borrow_mut(), at_id, saved);
+            } else {
+                super::activation::run_post_activation(&tree, at_id, ctx);
+            }
+        }
+
+        Ok(result)
     }
 
     /// Delegates to the standalone `invoke_listeners_for_node` function.

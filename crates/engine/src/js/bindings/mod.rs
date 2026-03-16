@@ -20,6 +20,8 @@ pub(crate) mod character_data;
 pub(crate) mod collections;
 pub(crate) mod dom_parser;
 pub(crate) mod mutation_observer;
+pub(crate) mod on_event;
+pub(crate) mod activation;
 
 pub(crate) use document::register_document;
 

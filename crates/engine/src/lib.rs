@@ -370,7 +370,10 @@ impl Engine {
 
     /// Fire `window.onload` handler after all scripts and iframe loads have completed.
     fn fire_window_load(runtime: &mut JsRuntime) {
-        let handler = crate::js::bindings::window::WINDOW_ONLOAD_HANDLER.with(|cell| cell.borrow().clone());
+        use crate::js::bindings::on_event::get_on_event_handler;
+        use crate::js::bindings::window::WINDOW_LISTENER_ID;
+
+        let handler = get_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, "load");
         if let Some(handler_fn) = handler {
             if handler_fn.is_callable() {
                 let window_val = crate::js::bindings::window::WINDOW_OBJECT.with(|cell| {
@@ -520,14 +523,11 @@ impl Engine {
                 if let Some(src_attr) = attributes.iter().find(|a| a.local_name == "src") {
                     let src = src_attr.value.clone();
                     let onload_attr = attributes.iter().find(|a| a.local_name == "onload").map(|a| a.value.clone());
-                    // Check for JS-property onload handler
+                    // Check for JS-property onload handler (via unified on_event system)
                     let tree_ptr = Rc::as_ptr(tree_rc) as usize;
-                    let onload_js = crate::js::bindings::element::IFRAME_ONLOAD_HANDLERS.with(|cell| {
-                        let rc = cell.borrow();
-                        let map_rc = rc.as_ref()?;
-                        let map = map_rc.borrow();
-                        map.get(&(tree_ptr, node_id)).cloned()
-                    });
+                    let onload_js = crate::js::bindings::on_event::get_on_event_handler(
+                        tree_ptr, node_id, "load",
+                    );
                     result.push((node_id, src, onload_attr, onload_js));
                 }
             }

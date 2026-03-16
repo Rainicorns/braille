@@ -420,8 +420,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("event-global-is-still-set-when-reporting-exception-onerror", "requires cross-realm Function via contentWindow"),
         // relatedTarget
         ("relatedTarget", "requires relatedTarget"),
-        // legacy-pre-activation
-        ("legacy-pre-activation", "requires pre-activation behavior"),
+        // legacy-pre-activation — now supported (activation behavior)
+        // ("legacy-pre-activation", "requires pre-activation behavior"),
         // scrolling
         ("scrolling", "requires scroll APIs"),
         // touch events
@@ -498,15 +498,16 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Event-timestamp-high-resolution", "requires performance.now() and MouseEvent/KeyboardEvent"),
         // ("Event-timestamp-safe-resolution", "requires MouseEvent constructor"),
         ("Event-timestamp-high-resolution.https", "requires GamepadEvent constructor"),
-        // Event-dispatch-click (needs click() behavior)
-        ("Event-dispatch-click", "requires click() activation"),
-        ("Event-dispatch-detached-click", "requires click() activation"),
+        // Event-dispatch-click — now supported (click() activation behavior)
+        // ("Event-dispatch-click", "requires click() activation"),
+        // ("Event-dispatch-detached-click", "requires click() activation"),
         // Event-dispatch-other-document — now supported (cross-document listener isolation)
         // ("Event-dispatch-other-document", "requires multi-document"),
         // Event-dispatch-throwing-multiple-globals
         ("Event-dispatch-throwing-multiple-globals", "requires multi-globals"),
-        // Event-dispatch-single-activation-behavior
-        ("Event-dispatch-single-activation-behavior", "requires activation behavior"),
+        // Event-dispatch-single-activation-behavior — activation works but inline event handlers
+        // (onsubmit="activated(this)") can't resolve global functions; needs attribute handler scope fix
+        ("Event-dispatch-single-activation-behavior", "requires inline event handler global scope"),
         // Event-dispatch-target-moved/removed — propagation path is snapshot, arena nodes survive (unskip)
         // ("Event-dispatch-target-moved", "requires live dispatch mutation"),
         // ("Event-dispatch-target-removed", "requires live dispatch mutation"),
@@ -519,10 +520,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("mouse-event", "requires MouseEvent"),
         // handler-count (needs getEventListeners or similar)
         ("handler-count", "requires handler counting"),
-        // label default action
-        ("label-default-action", "requires label activation"),
-        // preventDefault during activation behavior
-        ("preventDefault-during-activation", "requires activation behavior"),
+        // label default action — now supported (activation behavior)
+        // ("label-default-action", "requires label activation"),
+        // preventDefault during activation behavior — uses promise_test (not supported)
+        ("preventDefault-during-activation", "requires promise_test"),
         // Window composed path — unskipped: composedPath now implemented
         // ("window-composed-path", "requires composedPath with window"),
         // webkit animation/transition events
@@ -553,8 +554,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("AddEventListenerOptions-once.any", "requires EventTarget constructor"),
         // ("AddEventListenerOptions-passive.any", "requires EventTarget constructor"),
         // ("EventListenerOptions-capture", "requires truthy-value capture handling and options parsing for null callback in Element dispatch"),
-        // Event-dispatch-on-disabled-elements
-        ("Event-dispatch-on-disabled-elements", "requires disabled element behavior"),
+        // Event-dispatch-on-disabled-elements — 4/9 pass, 5 need promise_test (CSS animations, real clicks)
+        ("Event-dispatch-on-disabled-elements", "requires promise_test (CSS animations, real clicks)"),
         // EventListener-invoke-legacy — requires TransitionEvent/AnimationEvent constructors (keep skipped)
         ("EventListener-invoke-legacy", "requires TransitionEvent/AnimationEvent constructors"),
         // Event-dispatch-bubbles-true/false — now supported (cross-document listener isolation + window check)

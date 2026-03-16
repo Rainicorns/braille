@@ -557,42 +557,15 @@ pub(crate) fn register_window(
         )
         .expect("failed to define window.event");
 
-    // window.onload getter/setter — stores handler in WINDOW_ONLOAD_HANDLER thread-local
-    let onload_getter = unsafe {
-        NativeFunction::from_closure(|_this, _args, _ctx| {
-            let handler = WINDOW_ONLOAD_HANDLER.with(|cell| cell.borrow().clone());
-            match handler {
-                Some(obj) => Ok(JsValue::from(obj)),
-                None => Ok(JsValue::null()),
-            }
-        })
-    };
-    let onload_setter = unsafe {
-        NativeFunction::from_closure(|_this, args, _ctx| {
-            let val = args.first().cloned().unwrap_or(JsValue::null());
-            WINDOW_ONLOAD_HANDLER.with(|cell| {
-                if let Some(obj) = val.as_object().filter(|o| o.is_callable()) {
-                    *cell.borrow_mut() = Some(obj.clone());
-                } else {
-                    *cell.borrow_mut() = None;
-                }
-            });
-            Ok(JsValue::undefined())
-        })
-    };
-
-    window
-        .define_property_or_throw(
-            js_string!("onload"),
-            PropertyDescriptor::builder()
-                .get(onload_getter.to_js_function(&realm))
-                .set(onload_setter.to_js_function(&realm))
-                .configurable(true)
-                .enumerable(true)
-                .build(),
-            context,
-        )
-        .expect("failed to define window.onload");
+    // Register unified on* event handler accessors on window
+    super::on_event::register_window_on_event_accessors(
+        &window,
+        &["load", "error", "click", "change", "input", "submit", "reset",
+          "mousedown", "mouseup", "mouseover", "mouseout", "mousemove",
+          "keydown", "keyup", "keypress", "focus", "blur", "resize", "scroll",
+          "hashchange", "popstate", "unload", "beforeunload"],
+        context,
+    );
 
     // frames getter -- returns array-like object of iframe contentWindow objects
     let tree_for_frames = Rc::clone(&tree);

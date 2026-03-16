@@ -82,10 +82,43 @@ pub(crate) fn attach_is_trusted_own_property(event_obj: &JsObject, ctx: &mut Con
 pub(crate) enum EventKind {
     Standard,
     Custom { detail: JsValue },
-    Mouse,
+    Mouse {
+        button: i16,
+        buttons: u16,
+        client_x: f64,
+        client_y: f64,
+        screen_x: f64,
+        screen_y: f64,
+        alt_key: bool,
+        ctrl_key: bool,
+        meta_key: bool,
+        shift_key: bool,
+    },
     Keyboard,
     Wheel,
     Focus,
+}
+
+impl EventKind {
+    /// Create a default Mouse variant with all fields zeroed/false.
+    pub(crate) fn mouse_default() -> Self {
+        EventKind::Mouse {
+            button: 0,
+            buttons: 0,
+            client_x: 0.0,
+            client_y: 0.0,
+            screen_x: 0.0,
+            screen_y: 0.0,
+            alt_key: false,
+            ctrl_key: false,
+            meta_key: false,
+            shift_key: false,
+        }
+    }
+
+    pub(crate) fn is_mouse(&self) -> bool {
+        matches!(self, EventKind::Mouse { .. })
+    }
 }
 
 // ---------------------------------------------------------------------------
