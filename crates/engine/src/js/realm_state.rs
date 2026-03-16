@@ -5,20 +5,21 @@
 //! Accessor functions clone the `Rc` (or value) out immediately, releasing the
 //! `host_defined()` borrow so callers never hold it across further Boa calls.
 
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
-use boa_engine::{Context, JsObject, JsValue};
 use boa_engine::realm::Realm;
+use boa_engine::{js_string, property::PropertyDescriptor, Context, JsObject, JsValue};
 use boa_gc::{Finalize, Trace};
 
 use crate::dom::{DomTree, NodeId};
 
+use super::bindings;
 use super::bindings::element::{DomPrototypes, NodeCache};
 use super::bindings::event_target::ListenerMap;
+use super::runtime;
 
 // ---------------------------------------------------------------------------
 // Type aliases (match existing crate conventions)
@@ -160,7 +161,10 @@ macro_rules! rc_accessor {
         #[allow(clippy::type_complexity)]
         pub(crate) fn $name(ctx: &Context) -> $ty {
             let hd = ctx.realm().host_defined();
-            hd.get::<RealmState>().expect("RealmState not initialized").$field.clone()
+            hd.get::<RealmState>()
+                .expect("RealmState not initialized")
+                .$field
+                .clone()
         }
     };
 }
@@ -169,7 +173,12 @@ macro_rules! option_accessor {
     ($getter:ident, $setter:ident, $field:ident, $ty:ty) => {
         pub(crate) fn $getter(ctx: &Context) -> Option<$ty> {
             let hd = ctx.realm().host_defined();
-            let val = hd.get::<RealmState>().expect("RealmState not initialized").$field.borrow().clone();
+            let val = hd
+                .get::<RealmState>()
+                .expect("RealmState not initialized")
+                .$field
+                .borrow()
+                .clone();
             val
         }
         pub(crate) fn $setter(ctx: &Context, v: $ty) {
@@ -185,21 +194,51 @@ macro_rules! option_accessor {
 rc_accessor!(node_cache, node_cache, Rc<RefCell<NodeCache>>);
 rc_accessor!(event_listeners, event_listeners, Rc<RefCell<ListenerMap>>);
 rc_accessor!(on_event_handlers, on_event_handlers, Rc<RefCell<OnEventMap>>);
-rc_accessor!(iframe_content_docs, iframe_content_docs, Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>);
-rc_accessor!(iframe_src_content, iframe_src_content, Rc<RefCell<HashMap<String, String>>>);
-rc_accessor!(mutation_observer_state, mutation_observer_state, Rc<RefCell<MutationObserverState>>);
-rc_accessor!(child_nodes_cache, child_nodes_cache, Rc<RefCell<HashMap<CollectionCacheKey, JsObject>>>);
-rc_accessor!(children_cache, children_cache, Rc<RefCell<HashMap<CollectionCacheKey, JsObject>>>);
+rc_accessor!(
+    iframe_content_docs,
+    iframe_content_docs,
+    Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>
+);
+rc_accessor!(
+    iframe_src_content,
+    iframe_src_content,
+    Rc<RefCell<HashMap<String, String>>>
+);
+rc_accessor!(
+    mutation_observer_state,
+    mutation_observer_state,
+    Rc<RefCell<MutationObserverState>>
+);
+rc_accessor!(
+    child_nodes_cache,
+    child_nodes_cache,
+    Rc<RefCell<HashMap<CollectionCacheKey, JsObject>>>
+);
+rc_accessor!(
+    children_cache,
+    children_cache,
+    Rc<RefCell<HashMap<CollectionCacheKey, JsObject>>>
+);
 rc_accessor!(dom_tree, dom_tree, Rc<RefCell<DomTree>>);
 
 // -- Prototype/factory cache accessors (clone Option<T> out) --
 
 option_accessor!(nodelist_proto, set_nodelist_proto, nodelist_proto, JsObject);
-option_accessor!(htmlcollection_proto, set_htmlcollection_proto, htmlcollection_proto, JsObject);
+option_accessor!(
+    htmlcollection_proto,
+    set_htmlcollection_proto,
+    htmlcollection_proto,
+    JsObject
+);
 option_accessor!(nl_proxy_factory, set_nl_proxy_factory, nl_proxy_factory, JsObject);
 option_accessor!(hc_proxy_factory, set_hc_proxy_factory, hc_proxy_factory, JsObject);
 option_accessor!(domimpl_proto, set_domimpl_proto, domimpl_proto, JsObject);
-option_accessor!(mutation_record_proto, set_mutation_record_proto, mutation_record_proto, JsObject);
+option_accessor!(
+    mutation_record_proto,
+    set_mutation_record_proto,
+    mutation_record_proto,
+    JsObject
+);
 option_accessor!(is_trusted_getter, set_is_trusted_getter, is_trusted_getter, JsObject);
 option_accessor!(window_object, set_window_object, window_object, JsObject);
 
@@ -207,7 +246,12 @@ option_accessor!(window_object, set_window_object, window_object, JsObject);
 
 pub(crate) fn dom_prototypes(ctx: &Context) -> Option<DomPrototypes> {
     let hd = ctx.realm().host_defined();
-    let val = hd.get::<RealmState>().expect("RealmState not initialized").dom_prototypes.borrow().clone();
+    let val = hd
+        .get::<RealmState>()
+        .expect("RealmState not initialized")
+        .dom_prototypes
+        .borrow()
+        .clone();
     val
 }
 
@@ -221,7 +265,12 @@ pub(crate) fn set_dom_prototypes(ctx: &Context, protos: DomPrototypes) {
 
 pub(crate) fn current_event(ctx: &Context) -> Option<JsObject> {
     let hd = ctx.realm().host_defined();
-    let val = hd.get::<RealmState>().expect("RealmState not initialized").current_event.borrow().clone();
+    let val = hd
+        .get::<RealmState>()
+        .expect("RealmState not initialized")
+        .current_event
+        .borrow()
+        .clone();
     val
 }
 
@@ -233,7 +282,12 @@ pub(crate) fn set_current_event(ctx: &Context, event: Option<JsObject>) {
 
 pub(crate) fn dispatch_target(ctx: &Context) -> Option<JsValue> {
     let hd = ctx.realm().host_defined();
-    let val = hd.get::<RealmState>().expect("RealmState not initialized").dispatch_target.borrow().clone();
+    let val = hd
+        .get::<RealmState>()
+        .expect("RealmState not initialized")
+        .dispatch_target
+        .borrow()
+        .clone();
     val
 }
 
@@ -245,7 +299,9 @@ pub(crate) fn set_dispatch_target(ctx: &Context, target: Option<JsValue>) {
 
 pub(crate) fn creation_time(ctx: &Context) -> Instant {
     let hd = ctx.realm().host_defined();
-    hd.get::<RealmState>().expect("RealmState not initialized").creation_time
+    hd.get::<RealmState>()
+        .expect("RealmState not initialized")
+        .creation_time
 }
 
 // ---------------------------------------------------------------------------
@@ -261,4 +317,145 @@ where
     let result = f(ctx);
     ctx.enter_realm(old_realm);
     result
+}
+
+// ---------------------------------------------------------------------------
+// register_realm_globals — full initialization sequence for a realm
+// ---------------------------------------------------------------------------
+
+/// Initialize all global constructors, prototypes, and bindings for a realm.
+///
+/// This is the single entry point for realm setup — called from `JsRuntime::new()`
+/// for the main document realm, and will be called from Phase 5 for iframe realms.
+pub(crate) fn register_realm_globals(
+    context: &mut Context,
+    tree: Rc<RefCell<DomTree>>,
+    console_buffer: Rc<RefCell<Vec<String>>>,
+) {
+    // 1. Insert RealmState into host_defined
+    context
+        .realm()
+        .host_defined_mut()
+        .insert(RealmState::new(Rc::clone(&tree)));
+
+    // 2. DOMImplementation, DOMParser, DOMException — must be before register_document/register_window
+    bindings::document::register_domimplementation(context);
+    bindings::dom_parser::register_dom_parser(context);
+    bindings::register_dom_exception(context);
+
+    // 3. Register document + window globals
+    bindings::register_document(Rc::clone(&tree), context);
+    bindings::window::register_window(context, Rc::clone(&console_buffer), Rc::clone(&tree));
+
+    // 4. Event class + wrapped constructors + event constants
+    context.register_global_class::<bindings::event::JsEvent>().unwrap();
+    runtime::wrap_event_constructors(context);
+    bindings::event::register_event_constants(context);
+
+    // 5. performance.now() global
+    runtime::register_performance_global(context);
+
+    // 6. CSSStyleDeclaration class
+    context
+        .register_global_class::<bindings::computed_style::JsComputedStyle>()
+        .unwrap();
+
+    // 7. DOM type hierarchy (Node, CharacterData, Text, Comment, HTML element types, etc.)
+    runtime::register_dom_type_hierarchy(context);
+
+    // 8. NodeList and HTMLCollection globals
+    bindings::collections::register_collections(context);
+
+    // 9. location global stub
+    runtime::register_location_global(context);
+
+    // 10. EventTarget class (standalone constructor: new EventTarget())
+    context
+        .register_global_class::<bindings::event_target::JsEventTarget>()
+        .unwrap();
+
+    // 11. MutationObserver + MutationRecord globals
+    bindings::mutation_observer::register_mutation_observer_global(context);
+    bindings::mutation_observer::register_mutation_record_global(context);
+
+    // 12. composedPath on Event.prototype and CustomEvent.prototype
+    runtime::register_composed_path(context);
+
+    // 13. Copy globals to window (EventTarget, constructors, event methods)
+    copy_globals_to_window(context);
+}
+
+/// Copy EventTarget, event constructors, and event listener methods onto the window object.
+///
+/// After all globals are registered on the realm's global object, this function
+/// mirrors them onto the `window` object so that `window.MouseEvent`, `window.EventTarget`,
+/// `window.addEventListener`, etc. all work.
+fn copy_globals_to_window(context: &mut Context) {
+    let global = context.global_object();
+    let window_val = global
+        .get(js_string!("window"), context)
+        .expect("window global should exist");
+    let window_obj = match window_val.as_object() {
+        Some(obj) => obj.clone(),
+        None => return,
+    };
+
+    // Copy EventTarget constructor to window
+    let et_val = global
+        .get(js_string!("EventTarget"), context)
+        .expect("EventTarget should be registered");
+    let _ = window_obj.define_property_or_throw(
+        js_string!("EventTarget"),
+        PropertyDescriptor::builder()
+            .value(et_val)
+            .writable(true)
+            .configurable(true)
+            .enumerable(false)
+            .build(),
+        context,
+    );
+
+    // Copy event/UI subclass constructors and MutationObserver to window
+    for ctor_name in &[
+        "MouseEvent",
+        "KeyboardEvent",
+        "WheelEvent",
+        "FocusEvent",
+        "Event",
+        "CustomEvent",
+        "MutationObserver",
+        "MutationRecord",
+    ] {
+        let ctor_val = global
+            .get(js_string!(*ctor_name), context)
+            .expect("event constructor should be registered");
+        let _ = window_obj.define_property_or_throw(
+            js_string!(*ctor_name),
+            PropertyDescriptor::builder()
+                .value(ctor_val)
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        );
+    }
+
+    // Copy addEventListener, removeEventListener, dispatchEvent from window to global
+    for method_name in &["addEventListener", "removeEventListener", "dispatchEvent"] {
+        if let Ok(method_val) = window_obj.get(js_string!(*method_name), context) {
+            if !method_val.is_undefined() {
+                let _ = global.define_property_or_throw(
+                    js_string!(*method_name),
+                    PropertyDescriptor::builder()
+                        .value(method_val)
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(false)
+                        .build(),
+                    context,
+                );
+            }
+        }
+    }
 }
