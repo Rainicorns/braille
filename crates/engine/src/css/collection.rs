@@ -4,17 +4,17 @@ use crate::dom::tree::DomTree;
 /// Origin of a CSS style rule - determines specificity in the cascade
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StyleOrigin {
-    UserAgent,  // Browser defaults
-    Author,     // Page's CSS
-    Inline,     // style="" attribute
+    UserAgent, // Browser defaults
+    Author,    // Page's CSS
+    Inline,    // style="" attribute
 }
 
 /// A CSS rule collected from the DOM
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollectedRule {
     pub origin: StyleOrigin,
-    pub selector_text: String,  // Raw selector string, empty for inline
-    pub declarations: Vec<(String, String, bool)>,  // (property, value, important)
+    pub selector_text: String,                     // Raw selector string, empty for inline
+    pub declarations: Vec<(String, String, bool)>, // (property, value, important)
     pub source_order: usize,
 }
 
@@ -334,7 +334,10 @@ mod tests {
         assert!(h1_rule.is_some());
         if let Some(rule) = h1_rule {
             assert!(rule.declarations.iter().any(|(p, v, _)| p == "font-size" && v == "2em"));
-            assert!(rule.declarations.iter().any(|(p, v, _)| p == "font-weight" && v == "bold"));
+            assert!(rule
+                .declarations
+                .iter()
+                .any(|(p, v, _)| p == "font-weight" && v == "bold"));
         }
     }
 
@@ -391,7 +394,10 @@ mod tests {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs(
             "div",
-            vec![crate::dom::node::DomAttribute::new("style", "color: blue; font-size: 14px")]
+            vec![crate::dom::node::DomAttribute::new(
+                "style",
+                "color: blue; font-size: 14px",
+            )],
         );
         tree.append_child(tree.document(), div);
 
@@ -414,7 +420,10 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].selector_text, "h1");
         assert_eq!(rules[0].declarations.len(), 1);
-        assert_eq!(rules[0].declarations[0], ("color".to_string(), "red".to_string(), false));
+        assert_eq!(
+            rules[0].declarations[0],
+            ("color".to_string(), "red".to_string(), false)
+        );
     }
 
     #[test]
@@ -424,9 +433,15 @@ mod tests {
 
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].declarations.len(), 3);
-        assert!(rules[0].declarations.contains(&("color".to_string(), "red".to_string(), false)));
-        assert!(rules[0].declarations.contains(&("font-size".to_string(), "2em".to_string(), false)));
-        assert!(rules[0].declarations.contains(&("font-weight".to_string(), "bold".to_string(), false)));
+        assert!(rules[0]
+            .declarations
+            .contains(&("color".to_string(), "red".to_string(), false)));
+        assert!(rules[0]
+            .declarations
+            .contains(&("font-size".to_string(), "2em".to_string(), false)));
+        assert!(rules[0]
+            .declarations
+            .contains(&("font-weight".to_string(), "bold".to_string(), false)));
     }
 
     #[test]

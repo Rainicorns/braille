@@ -11,17 +11,17 @@ use boa_engine::{
 };
 use boa_gc::{Finalize, Trace};
 
-use crate::dom::DomTree;
 use crate::dom::is_valid_xml_name;
+use crate::dom::DomTree;
 
 use crate::dom::NodeData;
 
-use super::element::{JsElement, get_or_create_js_element};
-use super::event::{JsEvent, EventKind};
-use super::event_target::ListenerEntry;
 use super::class_list::register_class_list_class;
-use super::style::register_style_class;
+use super::element::{get_or_create_js_element, JsElement};
+use super::event::{EventKind, JsEvent};
+use super::event_target::ListenerEntry;
 use super::query;
+use super::style::register_style_class;
 use crate::js::realm_state;
 
 // ---------------------------------------------------------------------------
@@ -42,33 +42,28 @@ fn validate_and_extract(
     if let Some(colon_pos) = qualified_name.find(':') {
         let prefix_part = &qualified_name[..colon_pos];
         let local_part = &qualified_name[colon_pos + 1..];
-        let invalid_prefix = prefix_part.is_empty()
-            || prefix_part.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']);
+        let invalid_prefix =
+            prefix_part.is_empty() || prefix_part.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']);
         if invalid_prefix || !crate::dom::is_valid_element_name(local_part) {
-            let exc = super::create_dom_exception(
-                ctx,
-                "InvalidCharacterError",
-                "String contains an invalid character",
-                5,
-            )?;
+            let exc =
+                super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
             return Err(JsError::from_opaque(exc.into()));
         }
     } else {
         // No colon — validate the whole name as an element name
         if !qualified_name.is_empty() && !crate::dom::is_valid_element_name(qualified_name) {
-            let exc = super::create_dom_exception(
-                ctx,
-                "InvalidCharacterError",
-                "String contains an invalid character",
-                5,
-            )?;
+            let exc =
+                super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
             return Err(JsError::from_opaque(exc.into()));
         }
     }
 
     // Step 2: Extract prefix and localName
     let (prefix, local_name) = if let Some(colon_pos) = qualified_name.find(':') {
-        (qualified_name[..colon_pos].to_string(), qualified_name[colon_pos + 1..].to_string())
+        (
+            qualified_name[..colon_pos].to_string(),
+            qualified_name[colon_pos + 1..].to_string(),
+        )
     } else {
         (String::new(), qualified_name.to_string())
     };
@@ -78,12 +73,7 @@ fn validate_and_extract(
     // Step 3: Namespace validation
     // 3a: prefix present but namespace is empty
     if !prefix.is_empty() && ns.is_empty() {
-        let exc = super::create_dom_exception(
-            ctx,
-            "NamespaceError",
-            "Namespace error",
-            14,
-        )?;
+        let exc = super::create_dom_exception(ctx, "NamespaceError", "Namespace error", 14)?;
         return Err(JsError::from_opaque(exc.into()));
     }
 
@@ -94,15 +84,17 @@ fn validate_and_extract(
     }
 
     // 3c: prefix or qualifiedName is "xmlns" but namespace is not the XMLNS namespace
-    if (prefix == "xmlns" || qualified_name == "xmlns")
-        && ns != "http://www.w3.org/2000/xmlns/"
-    {
+    if (prefix == "xmlns" || qualified_name == "xmlns") && ns != "http://www.w3.org/2000/xmlns/" {
         let exc = super::create_dom_exception(ctx, "NamespaceError", "Namespace error", 14)?;
         return Err(JsError::from_opaque(exc.into()));
     }
 
     // 3d: namespace is XMLNS but neither prefix nor qualifiedName is "xmlns"
-    if ns == "http://www.w3.org/2000/xmlns/" && !qualified_name.is_empty() && prefix != "xmlns" && qualified_name != "xmlns" {
+    if ns == "http://www.w3.org/2000/xmlns/"
+        && !qualified_name.is_empty()
+        && prefix != "xmlns"
+        && qualified_name != "xmlns"
+    {
         let exc = super::create_dom_exception(ctx, "NamespaceError", "Namespace error", 14)?;
         return Err(JsError::from_opaque(exc.into()));
     }
@@ -120,9 +112,7 @@ pub(crate) fn register_domimplementation(ctx: &mut Context) {
 
     let ctor = unsafe {
         NativeFunction::from_closure(|_this, _args, _ctx| {
-            Err(JsError::from_opaque(JsValue::from(js_string!(
-                "Illegal constructor"
-            ))))
+            Err(JsError::from_opaque(JsValue::from(js_string!("Illegal constructor"))))
         })
     };
     let ctor_obj: JsObject = boa_engine::object::FunctionObjectBuilder::new(ctx.realm(), ctor)
@@ -169,11 +159,7 @@ pub(crate) fn register_domimplementation(ctx: &mut Context) {
 }
 
 /// DOMImplementation.hasFeature() — per spec, always returns true.
-fn domimpl_has_feature(
-    _this: &JsValue,
-    _args: &[JsValue],
-    _ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn domimpl_has_feature(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     Ok(JsValue::from(true))
 }
 
@@ -188,11 +174,7 @@ pub(crate) struct JsDocument {
 }
 
 /// Native implementation of document.createElement(tagName)
-fn document_create_element(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_create_element(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("createElement: `this` is not an object").into()))?;
@@ -223,11 +205,7 @@ fn document_create_element(
 }
 
 /// Native implementation of document.getElementById(id)
-fn document_get_element_by_id(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_get_element_by_id(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("getElementById: `this` is not an object").into()))?;
@@ -346,11 +324,7 @@ fn document_set_title(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> Js
 }
 
 /// Native implementation of document.createTextNode(text)
-fn document_create_text_node(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_create_text_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("createTextNode: `this` is not an object").into()))?;
@@ -395,11 +369,7 @@ fn document_get_document_element(this: &JsValue, _args: &[JsValue], ctx: &mut Co
 }
 
 /// Native implementation of document.createComment(data)
-fn document_create_comment(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_create_comment(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("createComment: `this` is not an object").into()))?;
@@ -422,17 +392,13 @@ fn document_create_comment(
 }
 
 /// Native implementation of document.createProcessingInstruction(target, data)
-fn document_create_processing_instruction(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("createProcessingInstruction: `this` is not an object").into()))?;
-    let doc = obj
-        .downcast_ref::<JsDocument>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("createProcessingInstruction: `this` is not document").into()))?;
+fn document_create_processing_instruction(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this.as_object().ok_or_else(|| {
+        JsError::from_opaque(js_string!("createProcessingInstruction: `this` is not an object").into())
+    })?;
+    let doc = obj.downcast_ref::<JsDocument>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("createProcessingInstruction: `this` is not document").into())
+    })?;
     let tree = doc.tree.clone();
 
     let target = args
@@ -451,12 +417,14 @@ fn document_create_processing_instruction(
 
     if !is_valid_xml_name(&target) {
         return Err(JsError::from_opaque(
-            super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?.into(),
+            super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?
+                .into(),
         ));
     }
     if data.contains("?>") {
         return Err(JsError::from_opaque(
-            super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?.into(),
+            super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?
+                .into(),
         ));
     }
 
@@ -467,11 +435,7 @@ fn document_create_processing_instruction(
 }
 
 /// Native implementation of document.createDocumentFragment()
-fn document_create_document_fragment(
-    this: &JsValue,
-    _args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_create_document_fragment(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("createDocumentFragment: `this` is not an object").into()))?;
@@ -487,11 +451,7 @@ fn document_create_document_fragment(
 }
 
 /// Native implementation of document.createAttribute(localName)
-fn document_create_attribute(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_create_attribute(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("createAttribute: `this` is not an object").into()))?;
@@ -527,11 +487,7 @@ fn document_create_attribute(
 }
 
 /// Native implementation of document.createAttributeNS(namespace, qualifiedName)
-fn document_create_attribute_ns(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_create_attribute_ns(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("createAttributeNS: `this` is not an object").into()))?;
@@ -542,9 +498,7 @@ fn document_create_attribute_ns(
 
     // First arg: namespace URI (can be null)
     let namespace = match args.first() {
-        Some(v) if !v.is_null() && !v.is_undefined() => {
-            v.to_string(ctx)?.to_std_string_escaped()
-        }
+        Some(v) if !v.is_null() && !v.is_undefined() => v.to_string(ctx)?.to_std_string_escaped(),
         _ => String::new(),
     };
 
@@ -560,10 +514,11 @@ fn document_create_attribute_ns(
     if let Some(colon_pos) = qualified_name.find(':') {
         let prefix_part = &qualified_name[..colon_pos];
         let local_part = &qualified_name[colon_pos + 1..];
-        let invalid_prefix = prefix_part.is_empty()
-            || prefix_part.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']);
+        let invalid_prefix =
+            prefix_part.is_empty() || prefix_part.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']);
         if invalid_prefix || !crate::dom::is_valid_attribute_name(local_part) {
-            let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+            let exc =
+                super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
             return Err(JsError::from_opaque(exc.into()));
         }
     } else if !crate::dom::is_valid_attribute_name(&qualified_name) {
@@ -573,7 +528,10 @@ fn document_create_attribute_ns(
 
     // Parse prefix and local name from qualified name
     let (prefix, local_name) = if let Some(colon_pos) = qualified_name.find(':') {
-        (qualified_name[..colon_pos].to_string(), qualified_name[colon_pos + 1..].to_string())
+        (
+            qualified_name[..colon_pos].to_string(),
+            qualified_name[colon_pos + 1..].to_string(),
+        )
     } else {
         (String::new(), qualified_name)
     };
@@ -585,11 +543,7 @@ fn document_create_attribute_ns(
 }
 
 /// Native implementation of document.createElementNS(namespaceURI, qualifiedName)
-fn document_create_element_ns(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_create_element_ns(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("createElementNS: `this` is not an object").into()))?;
@@ -600,9 +554,7 @@ fn document_create_element_ns(
 
     // First arg: namespace URI (can be null)
     let namespace = match args.first() {
-        Some(v) if !v.is_null() && !v.is_undefined() => {
-            v.to_string(ctx)?.to_std_string_escaped()
-        }
+        Some(v) if !v.is_null() && !v.is_undefined() => v.to_string(ctx)?.to_std_string_escaped(),
         _ => String::new(),
     };
 
@@ -619,11 +571,7 @@ fn document_create_element_ns(
 
     let ns_ref = if ns.is_empty() { "" } else { &ns };
 
-    let node_id = tree.borrow_mut().create_element_ns(
-        &qualified_name,
-        Vec::new(),
-        ns_ref,
-    );
+    let node_id = tree.borrow_mut().create_element_ns(&qualified_name, Vec::new(), ns_ref);
 
     let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
     Ok(js_obj.into())
@@ -631,11 +579,7 @@ fn document_create_element_ns(
 
 /// Native implementation of document.createEvent(type)
 /// Legacy event creation — returns an uninitialized Event
-fn document_create_event(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_create_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let _obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("createEvent: `this` is not an object").into()))?;
@@ -648,7 +592,9 @@ fn document_create_event(
         .unwrap_or_default();
 
     let kind = if event_interface.eq_ignore_ascii_case("customevent") {
-        EventKind::Custom { detail: JsValue::null() }
+        EventKind::Custom {
+            detail: JsValue::null(),
+        }
     } else {
         EventKind::Standard
     };
@@ -711,11 +657,7 @@ fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool
 }
 
 /// Native implementation of document.addEventListener(type, callback, options?)
-fn document_add_event_listener(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_add_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: `this` is not an object").into()))?;
@@ -753,11 +695,9 @@ fn document_add_event_listener(
         let mut map = listeners.borrow_mut();
         let entries = map.entry(listener_key).or_default();
 
-        let duplicate = entries.iter().any(|entry| {
-            entry.event_type == event_type
-                && entry.capture == capture
-                && entry.callback == callback
-        });
+        let duplicate = entries
+            .iter()
+            .any(|entry| entry.event_type == event_type && entry.capture == capture && entry.callback == callback);
 
         if !duplicate {
             entries.push(ListenerEntry {
@@ -774,11 +714,7 @@ fn document_add_event_listener(
 }
 
 /// Native implementation of document.removeEventListener(type, callback, options?)
-fn document_remove_event_listener(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_remove_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: `this` is not an object").into()))?;
@@ -816,9 +752,7 @@ fn document_remove_event_listener(
         let mut map = listeners.borrow_mut();
         if let Some(entries) = map.get_mut(&listener_key) {
             entries.retain(|entry| {
-                !(entry.event_type == event_type
-                    && entry.capture == capture
-                    && entry.callback == callback)
+                !(entry.event_type == event_type && entry.capture == capture && entry.callback == callback)
             });
             if entries.is_empty() {
                 map.remove(&listener_key);
@@ -831,11 +765,7 @@ fn document_remove_event_listener(
 
 /// Native implementation of document.dispatchEvent(event)
 /// Delegates to the same dispatch algorithm used by elements.
-fn document_dispatch_event(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_dispatch_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not an object").into()))?;
@@ -848,19 +778,17 @@ fn document_dispatch_event(
     let event_val = args
         .first()
         .ok_or_else(|| {
-            JsError::from_native(
-                boa_engine::JsNativeError::typ()
-                    .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present.")
-            )
+            JsError::from_native(boa_engine::JsNativeError::typ().with_message(
+                "Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present.",
+            ))
         })?
         .clone();
 
     // null/undefined arg -> TypeError
     if event_val.is_null() || event_val.is_undefined() {
-        return Err(JsError::from_native(
-            boa_engine::JsNativeError::typ()
-                .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
-        ));
+        return Err(JsError::from_native(boa_engine::JsNativeError::typ().with_message(
+            "Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.",
+        )));
     }
 
     let event_obj = event_val
@@ -1038,11 +966,7 @@ fn document_dispatch_event(
 }
 
 /// document.cloneNode(deep) — clone the document into a new tree
-fn document_clone_node(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_clone_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("cloneNode: `this` is not an object").into()))?;
@@ -1051,10 +975,7 @@ fn document_clone_node(
         .ok_or_else(|| JsError::from_opaque(js_string!("cloneNode: `this` is not document").into()))?;
     let tree = doc.tree.clone();
 
-    let deep = args
-        .first()
-        .map(|v| v.to_boolean())
-        .unwrap_or(false);
+    let deep = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
     let is_html = tree.borrow().is_html_document();
     let new_tree = Rc::new(RefCell::new(if is_html {
@@ -1250,7 +1171,12 @@ pub(crate) fn add_document_properties_to_element(
             Ok(js_el.into())
         })
     };
-    js_obj.set(js_string!("createElement"), create_element.to_js_function(&realm), false, ctx)?;
+    js_obj.set(
+        js_string!("createElement"),
+        create_element.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
 
     // createComment method
     let tree_for_cc = new_tree.clone();
@@ -1267,7 +1193,12 @@ pub(crate) fn add_document_properties_to_element(
             Ok(js_el.into())
         })
     };
-    js_obj.set(js_string!("createComment"), create_comment.to_js_function(&realm), false, ctx)?;
+    js_obj.set(
+        js_string!("createComment"),
+        create_comment.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
 
     // createTextNode method
     let tree_for_ct = new_tree.clone();
@@ -1284,7 +1215,12 @@ pub(crate) fn add_document_properties_to_element(
             Ok(js_el.into())
         })
     };
-    js_obj.set(js_string!("createTextNode"), create_text_node.to_js_function(&realm), false, ctx)?;
+    js_obj.set(
+        js_string!("createTextNode"),
+        create_text_node.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
 
     // createDocumentFragment method
     let tree_for_cdf = new_tree.clone();
@@ -1295,26 +1231,51 @@ pub(crate) fn add_document_properties_to_element(
             Ok(js_el.into())
         })
     };
-    js_obj.set(js_string!("createDocumentFragment"), create_doc_frag.to_js_function(&realm), false, ctx)?;
+    js_obj.set(
+        js_string!("createDocumentFragment"),
+        create_doc_frag.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
 
     // createProcessingInstruction method
     let tree_for_cpi = new_tree.clone();
     let create_pi = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
-            let target = args.first().map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
-            let data = args.get(1).map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
+            let target = args
+                .first()
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+            let data = args
+                .get(1)
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
             let node_id = tree_for_cpi.borrow_mut().create_processing_instruction(&target, &data);
             let js_el = get_or_create_js_element(node_id, tree_for_cpi.clone(), ctx2)?;
             Ok(js_el.into())
         })
     };
-    js_obj.set(js_string!("createProcessingInstruction"), create_pi.to_js_function(&realm), false, ctx)?;
+    js_obj.set(
+        js_string!("createProcessingInstruction"),
+        create_pi.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
 
     // createAttribute method
     let tree_for_ca = new_tree.clone();
     let create_attr_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
-            let local_name = args.first().map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_else(|| "undefined".to_string());
+            let local_name = args
+                .first()
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_else(|| "undefined".to_string());
             if local_name.is_empty() {
                 return Err(JsError::from_opaque(
                     js_string!("InvalidCharacterError: The string contains invalid characters.").into(),
@@ -1330,7 +1291,12 @@ pub(crate) fn add_document_properties_to_element(
             Ok(js_el.into())
         })
     };
-    js_obj.set(js_string!("createAttribute"), create_attr_fn.to_js_function(&realm), false, ctx)?;
+    js_obj.set(
+        js_string!("createAttribute"),
+        create_attr_fn.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
 
     // createAttributeNS method
     let tree_for_cans = new_tree.clone();
@@ -1340,18 +1306,33 @@ pub(crate) fn add_document_properties_to_element(
                 Some(v) if !v.is_null() && !v.is_undefined() => v.to_string(ctx2)?.to_std_string_escaped(),
                 _ => String::new(),
             };
-            let qualified_name = args.get(1).map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_else(|| "undefined".to_string());
+            let qualified_name = args
+                .get(1)
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_else(|| "undefined".to_string());
             let (prefix, local_name) = if let Some(colon_pos) = qualified_name.find(':') {
-                (qualified_name[..colon_pos].to_string(), qualified_name[colon_pos + 1..].to_string())
+                (
+                    qualified_name[..colon_pos].to_string(),
+                    qualified_name[colon_pos + 1..].to_string(),
+                )
             } else {
                 (String::new(), qualified_name)
             };
-            let node_id = tree_for_cans.borrow_mut().create_attr(&local_name, &namespace, &prefix, "");
+            let node_id = tree_for_cans
+                .borrow_mut()
+                .create_attr(&local_name, &namespace, &prefix, "");
             let js_el = get_or_create_js_element(node_id, tree_for_cans.clone(), ctx2)?;
             Ok(js_el.into())
         })
     };
-    js_obj.set(js_string!("createAttributeNS"), create_attr_ns_fn.to_js_function(&realm), false, ctx)?;
+    js_obj.set(
+        js_string!("createAttributeNS"),
+        create_attr_ns_fn.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
 
     // head getter
     let tree_for_head = new_tree.clone();
@@ -1383,13 +1364,33 @@ pub(crate) fn add_document_properties_to_element(
     let tree_for_impl = new_tree.clone();
     let impl_create_dt = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
-            let name = args.first().map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
+            let name = args
+                .first()
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
             if !crate::dom::is_valid_doctype_name(&name) {
-                let exc = super::create_dom_exception(ctx2, "InvalidCharacterError", "String contains an invalid character", 5)?;
+                let exc = super::create_dom_exception(
+                    ctx2,
+                    "InvalidCharacterError",
+                    "String contains an invalid character",
+                    5,
+                )?;
                 return Err(JsError::from_opaque(exc.into()));
             }
-            let public_id = args.get(1).map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
-            let system_id = args.get(2).map(|v| v.to_string(ctx2)).transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
+            let public_id = args
+                .get(1)
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+            let system_id = args
+                .get(2)
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
             let node_id = tree_for_impl.borrow_mut().create_doctype(&name, &public_id, &system_id);
             let js_el = get_or_create_js_element(node_id, tree_for_impl.clone(), ctx2)?;
             Ok(js_el.into())
@@ -1428,11 +1429,14 @@ pub(crate) fn add_document_properties_to_element(
     let tree_for_import = new_tree.clone();
     let import_node_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
-            let node_val = args.first()
+            let node_val = args
+                .first()
                 .ok_or_else(|| JsError::from_opaque(js_string!("importNode: missing argument").into()))?;
-            let node_obj = node_val.as_object()
+            let node_obj = node_val
+                .as_object()
                 .ok_or_else(|| JsError::from_opaque(js_string!("importNode: argument is not an object").into()))?;
-            let node_el = node_obj.downcast_ref::<JsElement>()
+            let node_el = node_obj
+                .downcast_ref::<JsElement>()
                 .ok_or_else(|| JsError::from_opaque(js_string!("importNode: argument is not a Node").into()))?;
 
             let source_tree = node_el.tree.clone();
@@ -1451,27 +1455,34 @@ pub(crate) fn add_document_properties_to_element(
             let deep = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
 
             let new_id = if deep {
-                tree_for_import.borrow_mut().import_subtree(&source_tree.borrow(), source_id)
+                tree_for_import
+                    .borrow_mut()
+                    .import_subtree(&source_tree.borrow(), source_id)
             } else {
                 let src = source_tree.borrow();
                 let src_node = src.get_node(source_id);
                 let mut t = tree_for_import.borrow_mut();
                 match &src_node.data {
-                    NodeData::Element { tag_name, attributes, namespace } => {
-                        t.create_element_ns(tag_name, attributes.clone(), namespace)
-                    }
+                    NodeData::Element {
+                        tag_name,
+                        attributes,
+                        namespace,
+                    } => t.create_element_ns(tag_name, attributes.clone(), namespace),
                     NodeData::Text { content } => t.create_text(content),
                     NodeData::Comment { content } => t.create_comment(content),
-                    NodeData::Doctype { name, public_id, system_id } => {
-                        t.create_doctype(name, public_id, system_id)
-                    }
+                    NodeData::Doctype {
+                        name,
+                        public_id,
+                        system_id,
+                    } => t.create_doctype(name, public_id, system_id),
                     NodeData::DocumentFragment => t.create_document_fragment(),
-                    NodeData::ProcessingInstruction { target, data } => {
-                        t.create_processing_instruction(target, data)
-                    }
-                    NodeData::Attr { local_name, namespace, prefix, value } => {
-                        t.create_attr(local_name, namespace, prefix, value)
-                    }
+                    NodeData::ProcessingInstruction { target, data } => t.create_processing_instruction(target, data),
+                    NodeData::Attr {
+                        local_name,
+                        namespace,
+                        prefix,
+                        value,
+                    } => t.create_attr(local_name, namespace, prefix, value),
                     NodeData::Document => unreachable!("Document check above"),
                 }
             };
@@ -1480,17 +1491,25 @@ pub(crate) fn add_document_properties_to_element(
             Ok(js_el.into())
         })
     };
-    js_obj.set(js_string!("importNode"), import_node_fn.to_js_function(&realm), false, ctx)?;
+    js_obj.set(
+        js_string!("importNode"),
+        import_node_fn.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
 
     // adoptNode method
     let tree_for_adopt = new_tree.clone();
     let adopt_node_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
-            let node_val = args.first()
+            let node_val = args
+                .first()
                 .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: missing argument").into()))?;
-            let node_obj = node_val.as_object()
+            let node_obj = node_val
+                .as_object()
                 .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: argument is not an object").into()))?;
-            let node_el = node_obj.downcast_ref::<JsElement>()
+            let node_el = node_obj
+                .downcast_ref::<JsElement>()
                 .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: argument is not a Node").into()))?;
 
             let source_tree = node_el.tree.clone();
@@ -1513,13 +1532,10 @@ pub(crate) fn add_document_properties_to_element(
             } else {
                 // Different tree: use adopt_node_with_mapping to move node and all descendants
                 drop(node_el);
-                let (adopted_id, mapping) = super::mutation::adopt_node_with_mapping(
-                    &source_tree, source_id, &tree_for_adopt,
-                );
+                let (adopted_id, mapping) =
+                    super::mutation::adopt_node_with_mapping(&source_tree, source_id, &tree_for_adopt);
                 // Update all cached JS objects (root + descendants) to point to new tree/nodes
-                super::mutation::update_node_cache_for_adoption_mapping(
-                    &source_tree, &tree_for_adopt, &mapping, ctx2,
-                );
+                super::mutation::update_node_cache_for_adoption_mapping(&source_tree, &tree_for_adopt, &mapping, ctx2);
                 // Also update the root node_obj directly (in case it wasn't cached yet)
                 let mut el_mut = node_obj.downcast_mut::<JsElement>().unwrap();
                 el_mut.node_id = adopted_id;
@@ -1529,7 +1545,12 @@ pub(crate) fn add_document_properties_to_element(
             }
         })
     };
-    js_obj.set(js_string!("adoptNode"), adopt_node_fn.to_js_function(&realm), false, ctx)?;
+    js_obj.set(
+        js_string!("adoptNode"),
+        adopt_node_fn.to_js_function(&realm),
+        false,
+        ctx,
+    )?;
 
     // location = null (documents not associated with a browsing context)
     js_obj.define_property_or_throw(
@@ -1665,22 +1686,13 @@ pub(crate) fn add_document_properties_to_element(
             }
         })
     };
-    js_obj.set(
-        js_string!("getElementById"),
-        gid_fn.to_js_function(&realm),
-        false,
-        ctx,
-    )?;
+    js_obj.set(js_string!("getElementById"), gid_fn.to_js_function(&realm), false, ctx)?;
 
     Ok(())
 }
 
 /// Native implementation of document.implementation.createDocumentType(name, publicId, systemId)
-fn domimpl_create_document_type(
-    _this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn domimpl_create_document_type(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -1717,11 +1729,7 @@ fn domimpl_create_document_type(
 
 /// Native implementation of document.implementation.createHTMLDocument(title?)
 /// Creates a new Document with basic structure: doctype, html, head, title, body
-fn domimpl_create_html_document(
-    _this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn domimpl_create_html_document(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let title_text = args
         .first()
         .and_then(|v| {
@@ -1779,11 +1787,7 @@ fn domimpl_create_html_document(
 }
 
 /// Native implementation of document.implementation.createDocument(namespace, qualifiedName, doctype)
-fn domimpl_create_document(
-    _this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn domimpl_create_document(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     if args.len() < 2 {
         return Err(JsNativeError::typ()
             .with_message("Failed to execute 'createDocument' on 'DOMImplementation': 2 arguments required")
@@ -1814,8 +1818,7 @@ fn domimpl_create_document(
         .unwrap_or_default();
 
     // Validate and extract per DOM spec (must happen before creating the tree)
-    let (validated_ns, _prefix, _local_name) =
-        validate_and_extract(&namespace, &qualified_name, ctx)?;
+    let (validated_ns, _prefix, _local_name) = validate_and_extract(&namespace, &qualified_name, ctx)?;
 
     // Handle the optional doctype argument (3rd arg)
     // Per spec, must be null, undefined, or a DocumentType node — anything else is TypeError.
@@ -1824,12 +1827,12 @@ fn domimpl_create_document(
         None => None,
         Some(v) if v.is_null() || v.is_undefined() => None,
         Some(v) => {
-            let obj = v.as_object().ok_or_else(|| {
-                JsNativeError::typ().with_message("Value provided is not a DocumentType")
-            })?;
-            let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-                JsNativeError::typ().with_message("Value provided is not a DocumentType")
-            })?;
+            let obj = v
+                .as_object()
+                .ok_or_else(|| JsNativeError::typ().with_message("Value provided is not a DocumentType"))?;
+            let el = obj
+                .downcast_ref::<JsElement>()
+                .ok_or_else(|| JsNativeError::typ().with_message("Value provided is not a DocumentType"))?;
             let is_doctype = matches!(el.tree.borrow().get_node(el.node_id).data, NodeData::Doctype { .. });
             if is_doctype {
                 Some((el.tree.clone(), el.node_id, obj.clone()))
@@ -1853,8 +1856,7 @@ fn domimpl_create_document(
             src_id
         } else {
             // Cross-tree adoption: move the node and update caches
-            let (adopted_id, mapping) =
-                super::mutation::adopt_node_with_mapping(src_tree, src_id, &new_tree);
+            let (adopted_id, mapping) = super::mutation::adopt_node_with_mapping(src_tree, src_id, &new_tree);
             super::mutation::update_node_cache_for_adoption_mapping(src_tree, &new_tree, &mapping, ctx);
             // Update the doctype JS object directly to point to the new tree/node
             let mut el_mut = doctype_obj.downcast_mut::<JsElement>().unwrap();
@@ -1915,11 +1917,7 @@ fn domimpl_create_document(
 }
 
 /// Native implementation of document.importNode(node, deep)
-fn document_import_node(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_import_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("importNode: `this` is not an object").into()))?;
@@ -1954,28 +1952,35 @@ fn document_import_node(
     let deep = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
 
     let new_id = if deep {
-        target_tree.borrow_mut().import_subtree(&source_tree.borrow(), source_id)
+        target_tree
+            .borrow_mut()
+            .import_subtree(&source_tree.borrow(), source_id)
     } else {
         // Shallow import: clone just the node, no children
         let src = source_tree.borrow();
         let src_node = src.get_node(source_id);
         let mut t = target_tree.borrow_mut();
         match &src_node.data {
-            NodeData::Element { tag_name, attributes, namespace } => {
-                t.create_element_ns(tag_name, attributes.clone(), namespace)
-            }
+            NodeData::Element {
+                tag_name,
+                attributes,
+                namespace,
+            } => t.create_element_ns(tag_name, attributes.clone(), namespace),
             NodeData::Text { content } => t.create_text(content),
             NodeData::Comment { content } => t.create_comment(content),
-            NodeData::Doctype { name, public_id, system_id } => {
-                t.create_doctype(name, public_id, system_id)
-            }
+            NodeData::Doctype {
+                name,
+                public_id,
+                system_id,
+            } => t.create_doctype(name, public_id, system_id),
             NodeData::DocumentFragment => t.create_document_fragment(),
-            NodeData::ProcessingInstruction { target, data } => {
-                t.create_processing_instruction(target, data)
-            }
-            NodeData::Attr { local_name, namespace, prefix, value } => {
-                t.create_attr(local_name, namespace, prefix, value)
-            }
+            NodeData::ProcessingInstruction { target, data } => t.create_processing_instruction(target, data),
+            NodeData::Attr {
+                local_name,
+                namespace,
+                prefix,
+                value,
+            } => t.create_attr(local_name, namespace, prefix, value),
             NodeData::Document => unreachable!("Document check above"),
         }
     };
@@ -1985,11 +1990,7 @@ fn document_import_node(
 }
 
 /// Native implementation of document.adoptNode(node)
-fn document_adopt_node(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn document_adopt_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: `this` is not an object").into()))?;
@@ -2029,13 +2030,9 @@ fn document_adopt_node(
     } else {
         // Different tree: use adopt_node_with_mapping to move node and all descendants
         drop(node_el);
-        let (adopted_id, mapping) = super::mutation::adopt_node_with_mapping(
-            &source_tree, source_id, &target_tree,
-        );
+        let (adopted_id, mapping) = super::mutation::adopt_node_with_mapping(&source_tree, source_id, &target_tree);
         // Update all cached JS objects (root + descendants) to point to new tree/nodes
-        super::mutation::update_node_cache_for_adoption_mapping(
-            &source_tree, &target_tree, &mapping, ctx,
-        );
+        super::mutation::update_node_cache_for_adoption_mapping(&source_tree, &target_tree, &mapping, ctx);
         // Also update the root node_obj directly (in case it wasn't cached yet)
         let mut el_mut = node_obj.downcast_mut::<JsElement>().unwrap();
         el_mut.node_id = adopted_id;
@@ -2627,12 +2624,8 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
         .expect("failed to define document.nodeType");
 
     // document.textContent (getter returns null, setter is no-op)
-    let text_content_getter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
-        Ok(JsValue::null())
-    });
-    let text_content_setter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
-        Ok(JsValue::undefined())
-    });
+    let text_content_getter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::null()));
+    let text_content_setter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::undefined()));
     document
         .define_property_or_throw(
             js_string!("textContent"),
@@ -2647,12 +2640,8 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
         .expect("failed to define document.textContent");
 
     // document.nodeValue (getter returns null, setter is no-op)
-    let node_value_getter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
-        Ok(JsValue::null())
-    });
-    let node_value_setter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
-        Ok(JsValue::undefined())
-    });
+    let node_value_getter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::null()));
+    let node_value_setter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::undefined()));
     document
         .define_property_or_throw(
             js_string!("nodeValue"),
@@ -2952,9 +2941,7 @@ pub(crate) fn create_blank_xml_document(ctx: &mut Context) -> JsResult<JsValue> 
     let create_element_ns_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
             let namespace = match args.first() {
-                Some(v) if !v.is_null() && !v.is_undefined() => {
-                    v.to_string(ctx2)?.to_std_string_escaped()
-                }
+                Some(v) if !v.is_null() && !v.is_undefined() => v.to_string(ctx2)?.to_std_string_escaped(),
                 _ => String::new(),
             };
             let qualified_name = args
@@ -2963,14 +2950,15 @@ pub(crate) fn create_blank_xml_document(ctx: &mut Context) -> JsResult<JsValue> 
                 .transpose()?
                 .map(|s| s.to_std_string_escaped())
                 .unwrap_or_else(|| "undefined".to_string());
-            let (validated_ns, _prefix, _local_name) =
-                validate_and_extract(&namespace, &qualified_name, ctx2)?;
-            let ns = if validated_ns.is_empty() { "" } else { validated_ns.as_str() };
-            let node_id = tree_for_cens.borrow_mut().create_element_ns(
-                &qualified_name,
-                Vec::new(),
-                ns,
-            );
+            let (validated_ns, _prefix, _local_name) = validate_and_extract(&namespace, &qualified_name, ctx2)?;
+            let ns = if validated_ns.is_empty() {
+                ""
+            } else {
+                validated_ns.as_str()
+            };
+            let node_id = tree_for_cens
+                .borrow_mut()
+                .create_element_ns(&qualified_name, Vec::new(), ns);
             let js_el = get_or_create_js_element(node_id, tree_for_cens.clone(), ctx2)?;
             Ok(js_el.into())
         })

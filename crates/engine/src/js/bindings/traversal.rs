@@ -1,17 +1,14 @@
 use std::rc::Rc;
 
 use boa_engine::{
-    class::ClassBuilder,
-    js_string,
-    native_function::NativeFunction,
-    property::Attribute,
-    Context, JsError, JsResult, JsValue,
+    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute, Context, JsError, JsResult,
+    JsValue,
 };
 
 use crate::js::realm_state;
 
-use super::element::{JsElement, get_or_create_js_element};
 use super::collections;
+use super::element::{get_or_create_js_element, JsElement};
 
 /// Registers all traversal properties on the Element class.
 pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
@@ -97,11 +94,7 @@ pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
     );
 
     // getRootNode() method
-    class.method(
-        js_string!("getRootNode"),
-        0,
-        NativeFunction::from_fn_ptr(get_root_node),
-    );
+    class.method(js_string!("getRootNode"), 0, NativeFunction::from_fn_ptr(get_root_node));
 
     // firstElementChild getter
     let first_element_child_getter = NativeFunction::from_fn_ptr(get_first_element_child);
@@ -456,9 +449,9 @@ fn get_next_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("nextElementSibling getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nextElementSibling getter: `this` is not an Element").into()))?;
+    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("nextElementSibling getter: `this` is not an Element").into())
+    })?;
     let tree = el.tree.borrow();
     match tree.next_sibling_element(el.node_id) {
         Some(sibling_id) => {
@@ -473,12 +466,12 @@ fn get_next_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context
 
 /// Native getter for element.previousElementSibling
 fn get_previous_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("previousElementSibling getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("previousElementSibling getter: `this` is not an Element").into()))?;
+    let obj = this.as_object().ok_or_else(|| {
+        JsError::from_opaque(js_string!("previousElementSibling getter: `this` is not an object").into())
+    })?;
+    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("previousElementSibling getter: `this` is not an Element").into())
+    })?;
     let tree = el.tree.borrow();
     match tree.prev_sibling_element(el.node_id) {
         Some(sibling_id) => {
@@ -615,10 +608,22 @@ mod tests {
         let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         eprintln!("WPT Iterator test: {}", s);
 
-        assert!(s.contains("\"keysIsArray\":false"), "keys() should not be Array, got: {}", s);
-        assert!(s.contains("\"keysCorrect\":true"), "keys() values should be correct, got: {}", s);
+        assert!(
+            s.contains("\"keysIsArray\":false"),
+            "keys() should not be Array, got: {}",
+            s
+        );
+        assert!(
+            s.contains("\"keysCorrect\":true"),
+            "keys() values should be correct, got: {}",
+            s
+        );
         assert!(s.contains("\"forEachOk\":true"), "forEach should work, got: {}", s);
-        assert!(s.contains("\"symbolIterEq\":true"), "Symbol.iterator identity, got: {}", s);
+        assert!(
+            s.contains("\"symbolIterEq\":true"),
+            "Symbol.iterator identity, got: {}",
+            s
+        );
         assert!(s.contains("\"keysEq\":true"), "keys identity, got: {}", s);
     }
 
@@ -687,8 +692,16 @@ mod tests {
         let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         eprintln!("NodeList debug: {}", s);
 
-        assert!(s.contains("typeof_keys=function"), "keys should be function, got: {}", s);
-        assert!(s.contains("typeof_forEach=function"), "forEach should be function, got: {}", s);
+        assert!(
+            s.contains("typeof_keys=function"),
+            "keys should be function, got: {}",
+            s
+        );
+        assert!(
+            s.contains("typeof_forEach=function"),
+            "forEach should be function, got: {}",
+            s
+        );
         assert!(s.contains("keys_callable=true"), "keys should be callable, got: {}", s);
         assert!(s.contains("spread_length=3"), "spread should have 3 items, got: {}", s);
         assert!(s.contains("forEach_count=3"), "forEach should run 3 times, got: {}", s);

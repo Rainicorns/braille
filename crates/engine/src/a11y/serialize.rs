@@ -7,9 +7,7 @@ const SKIP_ELEMENTS: &[&str] = &["head", "script", "style", "meta", "link", "nos
 
 /// Elements that are transparent containers: they don't produce a role line,
 /// and their children appear at the same indentation level.
-const TRANSPARENT_ELEMENTS: &[&str] = &[
-    "div", "span", "section", "article", "header", "footer", "html", "body",
-];
+const TRANSPARENT_ELEMENTS: &[&str] = &["div", "span", "section", "article", "header", "footer", "html", "body"];
 
 /// Elements that receive interactive `@eN` references.
 const INTERACTIVE_ELEMENTS: &[&str] = &["a", "button", "input", "textarea", "select"];
@@ -21,7 +19,15 @@ pub fn serialize_a11y(tree: &DomTree, focused: Option<NodeId>) -> (String, HashM
     let mut output = String::new();
     let mut ref_counter: usize = 0;
     let mut ref_map = HashMap::new();
-    walk(tree, tree.document(), 0, &mut ref_counter, &mut output, &mut ref_map, focused);
+    walk(
+        tree,
+        tree.document(),
+        0,
+        &mut ref_counter,
+        &mut output,
+        &mut ref_map,
+        focused,
+    );
     // Trim trailing newline for cleaner output
     while output.ends_with('\n') {
         output.pop();
@@ -52,11 +58,12 @@ fn walk(
             // Text and Comment nodes are never rendered on their own;
             // text content is collected by the parent element's role line.
         }
-        NodeData::Doctype { .. } | NodeData::DocumentFragment | NodeData::ProcessingInstruction { .. } | NodeData::Attr { .. } => {}
+        NodeData::Doctype { .. }
+        | NodeData::DocumentFragment
+        | NodeData::ProcessingInstruction { .. }
+        | NodeData::Attr { .. } => {}
         NodeData::Element {
-            tag_name,
-            attributes,
-            ..
+            tag_name, attributes, ..
         } => {
             let tag = tag_name.to_ascii_lowercase();
 
@@ -85,7 +92,9 @@ fn walk(
             let role = element_role(&tag, attributes);
 
             // Check if visibility is hidden — structure preserved but text suppressed.
-            let is_visibility_hidden = node.computed_style.as_ref()
+            let is_visibility_hidden = node
+                .computed_style
+                .as_ref()
                 .and_then(|cs| cs.get("visibility"))
                 .map(|v| v == "hidden")
                 .unwrap_or(false);
@@ -218,12 +227,10 @@ fn get_interactive_value(
     attributes: &[crate::dom::node::DomAttribute],
 ) -> Option<String> {
     match tag {
-        "input" => {
-            attributes
-                .iter()
-                .find(|a| a.local_name == "value")
-                .map(|a| a.value.clone())
-        }
+        "input" => attributes
+            .iter()
+            .find(|a| a.local_name == "value")
+            .map(|a| a.value.clone()),
         "select" => {
             let node = tree.get_node(node_id);
             let mut first_option_text: Option<String> = None;
@@ -297,10 +304,7 @@ mod tests {
 
     /// Helper: set an attribute on an element node.
     fn set_attr(tree: &mut DomTree, node_id: NodeId, key: &str, value: &str) {
-        if let NodeData::Element {
-            ref mut attributes, ..
-        } = tree.get_node_mut(node_id).data
-        {
+        if let NodeData::Element { ref mut attributes, .. } = tree.get_node_mut(node_id).data {
             attributes.push(crate::dom::node::DomAttribute::new(key, value));
         }
     }
@@ -717,8 +721,16 @@ form
         // Serialize with input2 focused
         let (output, _ref_map) = serialize_a11y(&tree, Some(input2));
 
-        assert!(output.contains("input[type=text] @e1\n"), "first input should not be focused: {}", output);
-        assert!(output.contains("input[type=text] @e2 [focused]"), "second input should be focused: {}", output);
+        assert!(
+            output.contains("input[type=text] @e1\n"),
+            "first input should not be focused: {}",
+            output
+        );
+        assert!(
+            output.contains("input[type=text] @e2 [focused]"),
+            "second input should be focused: {}",
+            output
+        );
     }
 
     #[test]
@@ -741,7 +753,11 @@ form
         let (output, _ref_map) = serialize_a11y(&tree, Some(div));
 
         // div is transparent, so no output expected
-        assert_eq!(output, "", "transparent elements don't produce output even when focused: {}", output);
+        assert_eq!(
+            output, "",
+            "transparent elements don't produce output even when focused: {}",
+            output
+        );
     }
 
     #[test]
@@ -758,7 +774,11 @@ form
 
         let (output, _ref_map) = serialize_a11y(&tree, None);
 
-        assert!(!output.contains("[focused]"), "should not contain focused marker when None: {}", output);
+        assert!(
+            !output.contains("[focused]"),
+            "should not contain focused marker when None: {}",
+            output
+        );
         assert_eq!(output, "input[type=text] @e1");
     }
 
@@ -795,7 +815,10 @@ form
 
         let (result, _) = serialize_a11y(&tree, None);
         assert_eq!(result, "input[type=text] @e1");
-        assert!(!result.contains("value="), "should not contain value= when no value attribute");
+        assert!(
+            !result.contains("value="),
+            "should not contain value= when no value attribute"
+        );
     }
 
     #[test]
@@ -827,8 +850,11 @@ form
 
         let (result, _) = serialize_a11y(&tree, None);
         // The select line should show value="Banana" (the selected option)
-        assert!(result.contains("select @e1 value=\"Banana\""),
-            "expected selected option text, got: {}", result);
+        assert!(
+            result.contains("select @e1 value=\"Banana\""),
+            "expected selected option text, got: {}",
+            result
+        );
     }
 
     #[test]
@@ -853,8 +879,11 @@ form
         tree.append_child(opt2, opt2_text);
 
         let (result, _) = serialize_a11y(&tree, None);
-        assert!(result.contains("select @e1 value=\"Red\""),
-            "expected first option text when none selected, got: {}", result);
+        assert!(
+            result.contains("select @e1 value=\"Red\""),
+            "expected first option text when none selected, got: {}",
+            result
+        );
     }
 
     #[test]
@@ -1042,7 +1071,11 @@ form
 
         let (result, _) = serialize_a11y(&tree, None);
         assert!(result.contains("Visible"));
-        assert!(!result.contains("Hidden"), "display:none should hide descendants: {}", result);
+        assert!(
+            !result.contains("Hidden"),
+            "display:none should hide descendants: {}",
+            result
+        );
     }
 
     #[test]
@@ -1063,7 +1096,11 @@ form
 
         let (result, _) = serialize_a11y(&tree, None);
         // The paragraph role should still appear, but without text
-        assert!(result.contains("paragraph"), "structure should be preserved: {}", result);
+        assert!(
+            result.contains("paragraph"),
+            "structure should be preserved: {}",
+            result
+        );
         assert!(!result.contains("Hidden text"), "text should be hidden: {}", result);
     }
 
@@ -1084,7 +1121,11 @@ form
         tree.get_node_mut(btn).computed_style = Some(style);
 
         let (result, ref_map) = serialize_a11y(&tree, None);
-        assert!(!result.contains("button"), "hidden button should not appear: {}", result);
+        assert!(
+            !result.contains("button"),
+            "hidden button should not appear: {}",
+            result
+        );
         assert!(ref_map.is_empty(), "hidden elements should not get refs");
     }
 
@@ -1122,7 +1163,11 @@ form
         tree.get_node_mut(input).computed_style = Some(style);
 
         let (result, ref_map) = serialize_a11y(&tree, None);
-        assert!(result.contains("@e1"), "hidden-visibility input should still get ref: {}", result);
+        assert!(
+            result.contains("@e1"),
+            "hidden-visibility input should still get ref: {}",
+            result
+        );
         assert_eq!(ref_map.len(), 1);
     }
 
@@ -1155,9 +1200,12 @@ form
 
         let (result, ref_map) = serialize_a11y(&tree, None);
         assert!(!result.contains("Home"), "nav content should be hidden: {}", result);
-        assert!(!result.contains("link"), "link inside display:none should be hidden: {}", result);
+        assert!(
+            !result.contains("link"),
+            "link inside display:none should be hidden: {}",
+            result
+        );
         assert!(result.contains("Visible"), "visible content should appear: {}", result);
         assert!(ref_map.is_empty(), "no refs for hidden elements");
     }
-
 }

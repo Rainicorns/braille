@@ -1,13 +1,10 @@
 use boa_engine::{
-    class::ClassBuilder,
-    js_string,
-    native_function::NativeFunction,
-    property::Attribute,
-    Context, JsError, JsResult, JsValue,
+    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute, Context, JsError, JsResult,
+    JsValue,
 };
 
-use crate::dom::{DomTree, NodeData, NodeId};
 use super::element::JsElement;
+use crate::dom::{DomTree, NodeData, NodeId};
 
 // ---------------------------------------------------------------------------
 // value — getter/setter
@@ -405,7 +402,9 @@ mod tests {
         engine.load_html(r#"<html><body><textarea id="t"></textarea></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
         // Set textContent via JS so we know the content is there
-        runtime.eval(r#"document.getElementById("t").textContent = "initial text""#).unwrap();
+        runtime
+            .eval(r#"document.getElementById("t").textContent = "initial text""#)
+            .unwrap();
         let result = runtime.eval(r#"document.getElementById("t").value"#).unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "initial text");
@@ -416,7 +415,9 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><textarea id="t">old</textarea></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"document.getElementById("t").value = "updated""#).unwrap();
+        runtime
+            .eval(r#"document.getElementById("t").value = "updated""#)
+            .unwrap();
         let result = runtime.eval(r#"document.getElementById("t").value"#).unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "updated");
@@ -518,16 +519,22 @@ mod tests {
         assert_eq!(result.to_boolean(), true);
 
         // Verify attribute exists via hasAttribute
-        let result = runtime.eval(r#"document.getElementById("i").hasAttribute("disabled")"#).unwrap();
+        let result = runtime
+            .eval(r#"document.getElementById("i").hasAttribute("disabled")"#)
+            .unwrap();
         assert_eq!(result.to_boolean(), true);
 
         // Set disabled to false
-        runtime.eval(r#"document.getElementById("i").disabled = false"#).unwrap();
+        runtime
+            .eval(r#"document.getElementById("i").disabled = false"#)
+            .unwrap();
         let result = runtime.eval(r#"document.getElementById("i").disabled"#).unwrap();
         assert_eq!(result.to_boolean(), false);
 
         // Verify attribute removed
-        let result = runtime.eval(r#"document.getElementById("i").hasAttribute("disabled")"#).unwrap();
+        let result = runtime
+            .eval(r#"document.getElementById("i").hasAttribute("disabled")"#)
+            .unwrap();
         assert_eq!(result.to_boolean(), false);
     }
 
@@ -577,7 +584,9 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><input id="i" /></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"document.getElementById("i").placeholder = "Type here""#).unwrap();
+        runtime
+            .eval(r#"document.getElementById("i").placeholder = "Type here""#)
+            .unwrap();
         let result = runtime.eval(r#"document.getElementById("i").placeholder"#).unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "Type here");
@@ -610,7 +619,9 @@ mod tests {
         engine.load_html(r#"<html><body><input id="i" /></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
         runtime.eval(r#"document.getElementById("i").value = "hello""#).unwrap();
-        let result = runtime.eval(r#"document.getElementById("i").getAttribute("value")"#).unwrap();
+        let result = runtime
+            .eval(r#"document.getElementById("i").getAttribute("value")"#)
+            .unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "hello");
     }

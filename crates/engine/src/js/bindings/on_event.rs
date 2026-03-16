@@ -106,11 +106,7 @@ pub(crate) fn invoke_on_event_handler(
 /// Register on* accessor properties (getter/setter) on an element prototype.
 /// `event_names` is a list like &["click", "change", "input", "load", ...].
 /// Each creates an `onclick`, `onchange`, etc. accessor that reads/writes the per-realm on-event handler map.
-pub(crate) fn register_on_event_accessors(
-    proto: &JsObject,
-    event_names: &[&str],
-    ctx: &mut Context,
-) {
+pub(crate) fn register_on_event_accessors(proto: &JsObject, event_names: &[&str], ctx: &mut Context) {
     let realm = ctx.realm().clone();
 
     for &event_name in event_names {
@@ -172,11 +168,7 @@ pub(crate) fn register_on_event_accessors(
 
 /// Register on* accessor properties on the window object.
 /// Window handlers use (usize::MAX, WINDOW_LISTENER_ID) as key.
-pub(crate) fn register_window_on_event_accessors(
-    window: &JsObject,
-    event_names: &[&str],
-    ctx: &mut Context,
-) {
+pub(crate) fn register_window_on_event_accessors(window: &JsObject, event_names: &[&str], ctx: &mut Context) {
     let realm = ctx.realm().clone();
 
     for &event_name in event_names {
@@ -197,7 +189,13 @@ pub(crate) fn register_window_on_event_accessors(
             NativeFunction::from_closure(move |_this, args, ctx2| {
                 let val = args.first().cloned().unwrap_or(JsValue::null());
                 if let Some(func) = val.as_object().filter(|o| o.is_callable()) {
-                    set_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, &event_name_for_set, Some(func.clone()), ctx2);
+                    set_on_event_handler(
+                        usize::MAX,
+                        WINDOW_LISTENER_ID,
+                        &event_name_for_set,
+                        Some(func.clone()),
+                        ctx2,
+                    );
                 } else {
                     set_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, &event_name_for_set, None, ctx2);
                 }

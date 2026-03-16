@@ -1,13 +1,13 @@
-use clap::{Parser, Subcommand, ValueEnum};
-use braille_wire::{SnapMode, EngineAction};
 use braille_engine::{FetchedResources, ScriptDescriptor};
+use braille_wire::{EngineAction, SnapMode};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::collections::HashMap;
 
-mod session;
 pub mod network;
+mod session;
 
-use session::SessionManager;
 use network::NetworkClient;
+use session::SessionManager;
 
 #[derive(Parser)]
 #[command(name = "braille", about = "A text browser for LLM agents")]
@@ -28,23 +28,13 @@ enum TopLevel {
 #[derive(Subcommand)]
 enum SessionAction {
     /// Navigate to a URL
-    Goto {
-        url: String,
-    },
+    Goto { url: String },
     /// Click an element matching the selector
-    Click {
-        selector: String,
-    },
+    Click { selector: String },
     /// Type text into an element matching the selector
-    Type {
-        selector: String,
-        text: String,
-    },
+    Type { selector: String, text: String },
     /// Select an option in a <select> element
-    Select {
-        selector: String,
-        value: String,
-    },
+    Select { selector: String, value: String },
     /// Take a snapshot of the current page
     Snap {
         /// Output mode for the snapshot
@@ -116,7 +106,9 @@ fn fetch_and_load(net: &mut NetworkClient, session: &mut session::Session, url: 
     }
 
     // 3. Execute all scripts in document order
-    session.engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched));
+    session
+        .engine
+        .execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched));
 
     // 4. Record navigation in session history
     session.navigate(resp.url);
@@ -138,7 +130,8 @@ fn run(cli: Cli) -> String {
             let _sid = &args[0];
             let action_args = &args[1..];
             if action_args.is_empty() {
-                return "error: session command required (goto, click, type, select, snap, back, forward, close)".to_string();
+                return "error: session command required (goto, click, type, select, snap, back, forward, close)"
+                    .to_string();
             }
             let action = parse_session_action(action_args);
             match action {
@@ -172,9 +165,7 @@ fn run(cli: Cli) -> String {
                             }
                         }
                         EngineAction::Error(msg) => format!("error: {msg}"),
-                        EngineAction::None => {
-                            session.engine.snapshot(SnapMode::Accessibility)
-                        }
+                        EngineAction::None => session.engine.snapshot(SnapMode::Accessibility),
                     }
                 }
                 SessionAction::Type { selector, text } => {
@@ -265,8 +256,17 @@ mod tests {
     #[test]
     fn cmd_new() {
         let output = parse(&["braille", "new"]);
-        assert!(output.starts_with("sess_"), "new should return a session ID starting with 'sess_', got: {}", output);
-        assert_eq!(output.len(), 13, "session ID should be 13 chars (sess_ + 8 hex), got: {}", output);
+        assert!(
+            output.starts_with("sess_"),
+            "new should return a session ID starting with 'sess_', got: {}",
+            output
+        );
+        assert_eq!(
+            output.len(),
+            13,
+            "session ID should be 13 chars (sess_ + 8 hex), got: {}",
+            output
+        );
     }
 
     #[test]
@@ -274,28 +274,44 @@ mod tests {
         // goto now performs a real HTTP fetch + two-phase script loading via Session + NetworkClient.
         let output = parse(&["braille", "abc123", "goto", "https://example.com"]);
         assert!(!output.is_empty(), "goto should produce output");
-        assert!(!output.starts_with("error:"), "goto should not error for example.com, got: {}", output);
+        assert!(
+            !output.starts_with("error:"),
+            "goto should not error for example.com, got: {}",
+            output
+        );
     }
 
     #[test]
     fn cmd_click_no_page() {
         // Without a loaded page, click on a selector finds nothing.
         let output = parse(&["braille", "abc123", "click", "button.submit"]);
-        assert!(output.contains("error:"), "click without loaded page should return an error, got: {}", output);
+        assert!(
+            output.contains("error:"),
+            "click without loaded page should return an error, got: {}",
+            output
+        );
     }
 
     #[test]
     fn cmd_type_no_page() {
         // Without a loaded page, type into a selector finds nothing.
         let output = parse(&["braille", "abc123", "type", "input#email", "hello@test.com"]);
-        assert!(output.contains("error:"), "type without loaded page should return an error, got: {}", output);
+        assert!(
+            output.contains("error:"),
+            "type without loaded page should return an error, got: {}",
+            output
+        );
     }
 
     #[test]
     fn cmd_select_no_page() {
         // Without a loaded page, select finds nothing.
         let output = parse(&["braille", "abc123", "select", "#country", "us"]);
-        assert!(output.contains("error:"), "select without loaded page should return an error, got: {}", output);
+        assert!(
+            output.contains("error:"),
+            "select without loaded page should return an error, got: {}",
+            output
+        );
     }
 
     #[test]
@@ -322,15 +338,31 @@ mod tests {
     #[test]
     fn cmd_back_no_history() {
         let output = parse(&["braille", "s1", "back"]);
-        assert!(output.contains("error:"), "back with no history should return an error, got: {}", output);
-        assert!(output.contains("no previous page"), "back error should mention no previous page, got: {}", output);
+        assert!(
+            output.contains("error:"),
+            "back with no history should return an error, got: {}",
+            output
+        );
+        assert!(
+            output.contains("no previous page"),
+            "back error should mention no previous page, got: {}",
+            output
+        );
     }
 
     #[test]
     fn cmd_forward_no_history() {
         let output = parse(&["braille", "s1", "forward"]);
-        assert!(output.contains("error:"), "forward with no history should return an error, got: {}", output);
-        assert!(output.contains("no forward page"), "forward error should mention no forward page, got: {}", output);
+        assert!(
+            output.contains("error:"),
+            "forward with no history should return an error, got: {}",
+            output
+        );
+        assert!(
+            output.contains("no forward page"),
+            "forward error should mention no forward page, got: {}",
+            output
+        );
     }
 
     #[test]
@@ -345,14 +377,26 @@ mod tests {
         // This case is handled by the empty args check
         let cli = Cli::parse_from(&["braille", ""]);
         let output = run(cli);
-        assert!(output.contains("error:"), "empty session ID should produce an error, got: {}", output);
+        assert!(
+            output.contains("error:"),
+            "empty session ID should produce an error, got: {}",
+            output
+        );
     }
 
     #[test]
     fn cmd_missing_action() {
         let output = parse(&["braille", "abc123"]);
-        assert!(output.contains("error:"), "missing action should produce an error, got: {}", output);
-        assert!(output.contains("session command required"), "error should mention session command required, got: {}", output);
+        assert!(
+            output.contains("error:"),
+            "missing action should produce an error, got: {}",
+            output
+        );
+        assert!(
+            output.contains("session command required"),
+            "error should mention session command required, got: {}",
+            output
+        );
     }
 
     /// Integration test: create a SessionManager, create a session, navigate, and verify snapshot.
@@ -364,17 +408,27 @@ mod tests {
         let mut net = NetworkClient::new();
 
         let result = fetch_and_load(&mut net, session, "https://example.com");
-        assert!(result.is_ok(), "fetch_and_load should succeed for example.com: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "fetch_and_load should succeed for example.com: {:?}",
+            result
+        );
 
         let snapshot = result.unwrap();
         assert!(!snapshot.is_empty(), "snapshot should not be empty");
         // example.com has a heading
-        assert!(snapshot.contains("Example Domain") || snapshot.contains("example"),
-            "snapshot should contain content from example.com: {}", snapshot);
+        assert!(
+            snapshot.contains("Example Domain") || snapshot.contains("example"),
+            "snapshot should contain content from example.com: {}",
+            snapshot
+        );
 
         // Verify the session recorded the navigation
         let session = manager.get_session(&session_id).unwrap();
-        assert!(session.current_url().is_some(), "session should have a current URL after goto");
+        assert!(
+            session.current_url().is_some(),
+            "session should have a current URL after goto"
+        );
         assert!(session.history.len() == 1, "session should have 1 history entry");
     }
 }

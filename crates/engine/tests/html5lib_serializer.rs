@@ -122,12 +122,7 @@ fn load_test_file(path: &Path) -> Vec<TestCase> {
         .iter()
         .map(|t| {
             let description = t["description"].as_str().unwrap().to_string();
-            let tokens: Vec<Token> = t["input"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(parse_token)
-                .collect();
+            let tokens: Vec<Token> = t["input"].as_array().unwrap().iter().map(parse_token).collect();
             let expected: Vec<String> = t["expected"]
                 .as_array()
                 .unwrap()
@@ -210,12 +205,9 @@ fn serialize_attr(attr: &Attr) -> String {
     }
 
     // Check if value needs quoting
-    let needs_quoting = value.chars().any(|c| {
-        matches!(
-            c,
-            ' ' | '\t' | '\n' | '\r' | '\x0C' | '"' | '\'' | '=' | '>' | '`'
-        )
-    });
+    let needs_quoting = value
+        .chars()
+        .any(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0C' | '"' | '\'' | '=' | '>' | '`'));
 
     if !needs_quoting {
         // Unquoted, but still escape &
@@ -341,9 +333,9 @@ fn can_omit_start_tag(tag: &str, attrs: &[Attr], tokens: &[Token], i: usize) -> 
             // Omit <html> unless next is a comment or space character
             match next {
                 NextToken::Comment => false,
-                NextToken::Characters(text) => !text.starts_with(|c: char| {
-                    c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C'
-                }),
+                NextToken::Characters(text) => {
+                    !text.starts_with(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C')
+                }
                 _ => true,
             }
         }
@@ -358,9 +350,9 @@ fn can_omit_start_tag(tag: &str, attrs: &[Attr], tokens: &[Token], i: usize) -> 
             // Omit <body> unless next is space char or comment
             match next {
                 NextToken::Comment => false,
-                NextToken::Characters(text) => !text.starts_with(|c: char| {
-                    c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C'
-                }),
+                NextToken::Characters(text) => {
+                    !text.starts_with(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C')
+                }
                 _ => true,
             }
         }
@@ -416,9 +408,9 @@ fn can_omit_end_tag(tag: &str, tokens: &[Token], i: usize) -> bool {
             // Omit </html> unless next is a comment or space character
             match next {
                 NextToken::Comment => false,
-                NextToken::Characters(text) => !text.starts_with(|c: char| {
-                    c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C'
-                }),
+                NextToken::Characters(text) => {
+                    !text.starts_with(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C')
+                }
                 _ => true,
             }
         }
@@ -426,9 +418,9 @@ fn can_omit_end_tag(tag: &str, tokens: &[Token], i: usize) -> bool {
             // Omit </head> unless next is space char or comment
             match next {
                 NextToken::Comment => false,
-                NextToken::Characters(text) => !text.starts_with(|c: char| {
-                    c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C'
-                }),
+                NextToken::Characters(text) => {
+                    !text.starts_with(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C')
+                }
                 _ => true,
             }
         }
@@ -436,18 +428,15 @@ fn can_omit_end_tag(tag: &str, tokens: &[Token], i: usize) -> bool {
             // Omit </body> unless next is a comment or space character
             match next {
                 NextToken::Comment => false,
-                NextToken::Characters(text) => !text.starts_with(|c: char| {
-                    c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C'
-                }),
+                NextToken::Characters(text) => {
+                    !text.starts_with(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C')
+                }
                 _ => true,
             }
         }
         "li" => {
             // Omit </li> if followed by <li>, </anything> (parent end), or EOF
-            matches!(
-                next,
-                NextToken::StartTag("li") | NextToken::EndTag(_) | NextToken::Eof
-            )
+            matches!(next, NextToken::StartTag("li") | NextToken::EndTag(_) | NextToken::Eof)
         }
         "dt" => {
             // Omit </dt> if followed by <dt> or <dd>
@@ -457,10 +446,7 @@ fn can_omit_end_tag(tag: &str, tokens: &[Token], i: usize) -> bool {
             // Omit </dd> if followed by <dd>, <dt>, </anything> (parent end), or EOF
             matches!(
                 next,
-                NextToken::StartTag("dd")
-                    | NextToken::StartTag("dt")
-                    | NextToken::EndTag(_)
-                    | NextToken::Eof
+                NextToken::StartTag("dd") | NextToken::StartTag("dt") | NextToken::EndTag(_) | NextToken::Eof
             )
         }
         "p" => {
@@ -483,37 +469,28 @@ fn can_omit_end_tag(tag: &str, tokens: &[Token], i: usize) -> bool {
             // Omit </option> if followed by <option>, <optgroup>, </anything>, or EOF
             matches!(
                 next,
-                NextToken::StartTag("option")
-                    | NextToken::StartTag("optgroup")
-                    | NextToken::EndTag(_)
-                    | NextToken::Eof
+                NextToken::StartTag("option") | NextToken::StartTag("optgroup") | NextToken::EndTag(_) | NextToken::Eof
             )
         }
         "colgroup" => {
             // Omit </colgroup> unless followed by comment or space
             match next {
                 NextToken::Comment => false,
-                NextToken::Characters(text) => !text.starts_with(|c: char| {
-                    c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C'
-                }),
+                NextToken::Characters(text) => {
+                    !text.starts_with(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C')
+                }
                 _ => true,
             }
         }
         "thead" => {
             // Omit </thead> if followed by <tbody> or <tfoot>
-            matches!(
-                next,
-                NextToken::StartTag("tbody") | NextToken::StartTag("tfoot")
-            )
+            matches!(next, NextToken::StartTag("tbody") | NextToken::StartTag("tfoot"))
         }
         "tbody" => {
             // Omit </tbody> if followed by <tbody>, <tfoot>, </anything>, or EOF
             matches!(
                 next,
-                NextToken::StartTag("tbody")
-                    | NextToken::StartTag("tfoot")
-                    | NextToken::EndTag(_)
-                    | NextToken::Eof
+                NextToken::StartTag("tbody") | NextToken::StartTag("tfoot") | NextToken::EndTag(_) | NextToken::Eof
             )
         }
         "tfoot" => {
@@ -525,29 +502,20 @@ fn can_omit_end_tag(tag: &str, tokens: &[Token], i: usize) -> bool {
         }
         "tr" => {
             // Omit </tr> if followed by <tr>, </anything>, or EOF
-            matches!(
-                next,
-                NextToken::StartTag("tr") | NextToken::EndTag(_) | NextToken::Eof
-            )
+            matches!(next, NextToken::StartTag("tr") | NextToken::EndTag(_) | NextToken::Eof)
         }
         "td" => {
             // Omit </td> if followed by <td>, <th>, </anything>, or EOF
             matches!(
                 next,
-                NextToken::StartTag("td")
-                    | NextToken::StartTag("th")
-                    | NextToken::EndTag(_)
-                    | NextToken::Eof
+                NextToken::StartTag("td") | NextToken::StartTag("th") | NextToken::EndTag(_) | NextToken::Eof
             )
         }
         "th" => {
             // Omit </th> if followed by <th>, <td>, </anything>, or EOF
             matches!(
                 next,
-                NextToken::StartTag("th")
-                    | NextToken::StartTag("td")
-                    | NextToken::EndTag(_)
-                    | NextToken::Eof
+                NextToken::StartTag("th") | NextToken::StartTag("td") | NextToken::EndTag(_) | NextToken::Eof
             )
         }
         _ => false,
@@ -618,9 +586,7 @@ fn serialize_tokens(tokens: &[Token]) -> String {
                             // Empty public ID means use SYSTEM keyword
                             out.push_str(&format!("<!DOCTYPE {name} SYSTEM \"{sys_id}\">"));
                         } else {
-                            out.push_str(&format!(
-                                "<!DOCTYPE {name} PUBLIC \"{pub_id}\" \"{sys_id}\">"
-                            ));
+                            out.push_str(&format!("<!DOCTYPE {name} PUBLIC \"{pub_id}\" \"{sys_id}\">"));
                         }
                     }
                     (Some(pub_id), None) => {
@@ -671,12 +637,7 @@ fn main() {
     let mut test_files: Vec<_> = std::fs::read_dir(&test_dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "test")
-                .unwrap_or(false)
-        })
+        .filter(|e| e.path().extension().map(|ext| ext == "test").unwrap_or(false))
         .collect();
     test_files.sort_by_key(|e| e.file_name());
 
@@ -694,9 +655,7 @@ fn main() {
 
             let ignored = test.should_skip;
 
-            trials.push(
-                Trial::test(name, move || run_test(&test)).with_ignored_flag(ignored),
-            );
+            trials.push(Trial::test(name, move || run_test(&test)).with_ignored_flag(ignored));
         }
     }
 

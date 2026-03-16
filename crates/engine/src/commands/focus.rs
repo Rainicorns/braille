@@ -1,6 +1,6 @@
-use crate::Engine;
-use crate::dom::node::NodeData;
 use crate::dom::find::resolve_selector;
+use crate::dom::node::NodeData;
+use crate::Engine;
 
 impl Engine {
     /// Focus an element identified by selector.
@@ -14,7 +14,9 @@ impl Engine {
         // 2. Verify it's a focusable element
         let node = tree.get_node(node_id);
         let is_focusable = match &node.data {
-            NodeData::Element { tag_name, attributes, .. } => {
+            NodeData::Element {
+                tag_name, attributes, ..
+            } => {
                 let tag = tag_name.to_ascii_lowercase();
                 // Standard focusable elements
                 if matches!(tag.as_str(), "input" | "textarea" | "select" | "button" | "a") {
@@ -28,7 +30,10 @@ impl Engine {
         };
 
         if !is_focusable {
-            return Err(format!("element is not focusable (not an interactive element and no tabindex): {}", selector));
+            return Err(format!(
+                "element is not focusable (not an interactive element and no tabindex): {}",
+                selector
+            ));
         }
 
         // 3. Set focus
@@ -155,8 +160,16 @@ mod tests {
         let result = engine.handle_focus("#notfocusable");
         assert!(result.is_err(), "focus on non-focusable div should fail");
         let err = result.unwrap_err();
-        assert!(err.contains("not focusable"), "error should mention not focusable, got: {}", err);
-        assert!(err.contains("#notfocusable"), "error should include selector, got: {}", err);
+        assert!(
+            err.contains("not focusable"),
+            "error should mention not focusable, got: {}",
+            err
+        );
+        assert!(
+            err.contains("#notfocusable"),
+            "error should include selector, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -188,8 +201,16 @@ mod tests {
         let result = engine.handle_focus("#nonexistent");
         assert!(result.is_err(), "focus on nonexistent element should fail");
         let err = result.unwrap_err();
-        assert!(err.contains("focus target not found"), "error should say 'focus target not found', got: {}", err);
-        assert!(err.contains("#nonexistent"), "error should include selector, got: {}", err);
+        assert!(
+            err.contains("focus target not found"),
+            "error should say 'focus target not found', got: {}",
+            err
+        );
+        assert!(
+            err.contains("#nonexistent"),
+            "error should include selector, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -205,7 +226,11 @@ mod tests {
         engine.handle_focus("@e1").unwrap();
 
         let snapshot = engine.snapshot(SnapMode::Accessibility);
-        assert!(snapshot.contains("[focused]"), "snapshot should show focused marker: {}", snapshot);
+        assert!(
+            snapshot.contains("[focused]"),
+            "snapshot should show focused marker: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -223,13 +248,25 @@ mod tests {
         // Focus first input
         engine.handle_focus("@e1").unwrap();
         let snapshot1 = engine.snapshot(SnapMode::Accessibility);
-        assert!(snapshot1.contains("input[type=text] @e1 [focused]"), "first snapshot should show @e1 focused: {}", snapshot1);
+        assert!(
+            snapshot1.contains("input[type=text] @e1 [focused]"),
+            "first snapshot should show @e1 focused: {}",
+            snapshot1
+        );
 
         // Focus second input
         engine.handle_focus("@e2").unwrap();
         let snapshot2 = engine.snapshot(SnapMode::Accessibility);
-        assert!(snapshot2.contains("input[type=text] @e2 [focused]"), "second snapshot should show @e2 focused: {}", snapshot2);
-        assert!(!snapshot2.contains("input[type=text] @e1 [focused]"), "second snapshot should not show @e1 focused: {}", snapshot2);
+        assert!(
+            snapshot2.contains("input[type=text] @e2 [focused]"),
+            "second snapshot should show @e2 focused: {}",
+            snapshot2
+        );
+        assert!(
+            !snapshot2.contains("input[type=text] @e1 [focused]"),
+            "second snapshot should not show @e1 focused: {}",
+            snapshot2
+        );
     }
 
     #[test]
@@ -250,7 +287,11 @@ mod tests {
         assert!(engine.focused_element.is_none(), "focus should be cleared");
 
         let snapshot = engine.snapshot(SnapMode::Accessibility);
-        assert!(!snapshot.contains("[focused]"), "snapshot should not show focused marker after blur: {}", snapshot);
+        assert!(
+            !snapshot.contains("[focused]"),
+            "snapshot should not show focused marker after blur: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -274,10 +315,17 @@ mod tests {
 
         // Load new HTML
         engine.load_html(html2);
-        assert!(engine.focused_element.is_none(), "focus should be reset after loading new HTML");
+        assert!(
+            engine.focused_element.is_none(),
+            "focus should be reset after loading new HTML"
+        );
 
         let snapshot = engine.snapshot(SnapMode::Accessibility);
-        assert!(!snapshot.contains("[focused]"), "new page should not show focused marker: {}", snapshot);
+        assert!(
+            !snapshot.contains("[focused]"),
+            "new page should not show focused marker: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -303,6 +351,10 @@ mod tests {
         let result = engine.handle_focus("@text");
         assert!(result.is_err(), "focus on non-element node should fail");
         let err = result.unwrap_err();
-        assert!(err.contains("not focusable"), "error should mention not focusable, got: {}", err);
+        assert!(
+            err.contains("not focusable"),
+            "error should mention not focusable, got: {}",
+            err
+        );
     }
 }

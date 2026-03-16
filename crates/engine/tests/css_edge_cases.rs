@@ -34,14 +34,16 @@ fn load_and_snap(html: &str) -> String {
 
 #[test]
 fn specificity_class_beats_element() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         p { display: none; }
         .visible { display: block; }
       </style>
       <p class="visible">Class wins</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("Class wins"),
@@ -57,14 +59,16 @@ fn specificity_class_beats_element() {
 
 #[test]
 fn specificity_id_beats_class() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         .hidden { display: none; }
         #show { display: block; }
       </style>
       <p id="show" class="hidden">ID wins</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("ID wins"),
@@ -80,13 +84,15 @@ fn specificity_id_beats_class() {
 
 #[test]
 fn specificity_inline_beats_id() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         #hide { display: none; }
       </style>
       <p id="hide" style="display: block">Inline wins</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("Inline wins"),
@@ -102,14 +108,16 @@ fn specificity_inline_beats_id() {
 
 #[test]
 fn important_beats_inline() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         p { display: none !important; }
       </style>
       <p style="display: block">Should be hidden</p>
       <h1>Visible sentinel</h1>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Should be hidden"),
@@ -130,7 +138,8 @@ fn important_beats_inline() {
 
 #[test]
 fn inheritance_visibility_inherits() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         .parent-invisible { visibility: hidden; }
@@ -139,7 +148,8 @@ fn inheritance_visibility_inherits() {
         <p>Inherited hidden text</p>
       </div>
       <p>Visible text</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Inherited hidden text"),
@@ -170,7 +180,8 @@ fn inheritance_display_does_not_inherit() {
     // We can't directly observe this in the snapshot since both block and flex are visible.
     // Instead, verify that a SIBLING div with display:none doesn't affect a <p> inside it
     // via non-inheritance: a grandchild p inside a visible div should still appear.
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         .flex-parent { display: flex; }
@@ -178,7 +189,8 @@ fn inheritance_display_does_not_inherit() {
       <div class="flex-parent">
         <p>Child of flex parent</p>
       </div>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     // The p is visible (display doesn't inherit, so p keeps its UA display:block)
     assert!(
@@ -194,7 +206,8 @@ fn inheritance_display_does_not_inherit() {
 
 #[test]
 fn ua_stylesheet_hidden_elements_not_in_snapshot() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html>
       <head>
         <title>Test Page Title</title>
@@ -203,7 +216,8 @@ fn ua_stylesheet_hidden_elements_not_in_snapshot() {
       <body>
         <p>Visible content</p>
       </body>
-    </html>"##);
+    </html>"##,
+    );
 
     assert!(
         !snap.contains("Test Page Title"),
@@ -223,7 +237,8 @@ fn ua_stylesheet_hidden_elements_not_in_snapshot() {
 
 #[test]
 fn display_none_skips_descendants_in_snapshot() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.hidden { display: none; }</style>
       <div class="hidden">
@@ -232,7 +247,8 @@ fn display_none_skips_descendants_in_snapshot() {
         <button>hidden button</button>
       </div>
       <p>visible paragraph</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("hidden paragraph"),
@@ -262,23 +278,21 @@ fn display_none_skips_descendants_in_snapshot() {
 
 #[test]
 fn visibility_hidden_hides_text_in_snapshot() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.ghost { visibility: hidden; }</style>
       <p class="ghost">ghost text</p>
       <p>visible text</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("ghost text"),
         "visibility:hidden should hide text content: {}",
         snap
     );
-    assert!(
-        snap.contains("visible text"),
-        "visible text should appear: {}",
-        snap
-    );
+    assert!(snap.contains("visible text"), "visible text should appear: {}", snap);
     // The paragraph structure is preserved (empty paragraph line exists)
     assert!(
         snap.contains("paragraph"),
@@ -295,7 +309,8 @@ fn visibility_hidden_hides_text_in_snapshot() {
 
 #[test]
 fn script_adds_class_matching_display_none_rule() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.hidden { display: none; }</style>
       <p id="target">Will be hidden by script</p>
@@ -303,7 +318,8 @@ fn script_adds_class_matching_display_none_rule() {
       <script>
         document.getElementById("target").classList.add("hidden");
       </script>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Will be hidden by script"),
@@ -324,12 +340,14 @@ fn script_adds_class_matching_display_none_rule() {
 
 #[test]
 fn multiple_stylesheets_later_source_wins() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>p { display: none; }</style>
       <style>p { display: block; }</style>
       <p>Later sheet wins</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("Later sheet wins"),
@@ -340,13 +358,15 @@ fn multiple_stylesheets_later_source_wins() {
 
 #[test]
 fn multiple_stylesheets_later_source_wins_reverse() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>p { display: block; }</style>
       <style>p { display: none; }</style>
       <p>Should be hidden</p>
       <h1>Visible heading</h1>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Should be hidden"),
@@ -366,7 +386,8 @@ fn multiple_stylesheets_later_source_wins_reverse() {
 
 #[test]
 fn compound_selector_div_dot_foo() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>div.hide-me { display: none; }</style>
       <div class="hide-me">
@@ -378,7 +399,8 @@ fn compound_selector_div_dot_foo() {
       <div class="other">
         <p>Div with different class visible</p>
       </div>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Hidden by compound selector"),
@@ -405,14 +427,16 @@ fn compound_selector_div_dot_foo() {
 
 #[test]
 fn descendant_selector_matches_nested() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>div p { display: none; }</style>
       <div>
         <p>Hidden nested paragraph</p>
       </div>
       <p>Standalone paragraph visible</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Hidden nested paragraph"),
@@ -433,7 +457,8 @@ fn descendant_selector_matches_nested() {
 #[test]
 fn script_inline_style_overrides_stylesheet() {
     // Script sets display:none via inline style, overriding stylesheet display:block
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>p { display: block; }</style>
       <p id="target">Will be hidden by script</p>
@@ -441,7 +466,8 @@ fn script_inline_style_overrides_stylesheet() {
       <script>
         document.getElementById("target").style.setProperty("display", "none");
       </script>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Will be hidden by script"),
@@ -458,14 +484,16 @@ fn script_inline_style_overrides_stylesheet() {
 #[test]
 fn script_inline_style_shows_hidden_element() {
     // Stylesheet hides it, script overrides with inline display:block
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.start-hidden { display: none; }</style>
       <p id="target" class="start-hidden">Shown by script</p>
       <script>
         document.getElementById("target").style.setProperty("display", "block");
       </script>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("Shown by script"),
@@ -480,11 +508,13 @@ fn script_inline_style_shows_hidden_element() {
 
 #[test]
 fn inline_display_none_hides_from_snapshot() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <p style="display: none">Hidden paragraph</p>
       <p>Visible paragraph</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Hidden paragraph"),
@@ -504,7 +534,8 @@ fn inline_display_none_hides_from_snapshot() {
 
 #[test]
 fn specificity_element_class_beats_element_alone() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         p { display: none; }
@@ -513,7 +544,8 @@ fn specificity_element_class_beats_element_alone() {
       <p class="show">Class overrides to visible</p>
       <p>This p is hidden</p>
       <h1>Heading visible</h1>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("Class overrides to visible"),
@@ -539,12 +571,14 @@ fn specificity_element_class_beats_element_alone() {
 #[test]
 fn author_overrides_ua_defaults() {
     // UA says <h1> is display:block. Author says display:none.
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>h1 { display: none; }</style>
       <h1>Hidden heading</h1>
       <p>Visible paragraph</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Hidden heading"),
@@ -564,7 +598,8 @@ fn author_overrides_ua_defaults() {
 
 #[test]
 fn deep_inheritance_visibility_hidden() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.root-hidden { visibility: hidden; }</style>
       <div class="root-hidden">
@@ -575,7 +610,8 @@ fn deep_inheritance_visibility_hidden() {
         </section>
       </div>
       <p>Visible text</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Deep hidden text"),
@@ -595,7 +631,8 @@ fn deep_inheritance_visibility_hidden() {
 
 #[test]
 fn display_none_interactive_elements_no_refs() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.hidden { display: none; }</style>
       <a href="/visible">Visible Link</a>
@@ -605,7 +642,8 @@ fn display_none_interactive_elements_no_refs() {
         <input type="text">
       </div>
       <button>Visible Button</button>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     // Only visible interactive elements should have refs
     assert!(
@@ -619,11 +657,7 @@ fn display_none_interactive_elements_no_refs() {
         snap
     );
     // Hidden elements should not appear at all
-    assert!(
-        !snap.contains("Hidden Link"),
-        "hidden link should not appear: {}",
-        snap
-    );
+    assert!(!snap.contains("Hidden Link"), "hidden link should not appear: {}", snap);
     assert!(
         !snap.contains("Hidden Button"),
         "hidden button should not appear: {}",
@@ -643,12 +677,14 @@ fn display_none_interactive_elements_no_refs() {
 
 #[test]
 fn visibility_hidden_interactive_element_gets_ref() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.ghost { visibility: hidden; }</style>
       <button class="ghost">Ghost button</button>
       <button>Visible button</button>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     // visibility:hidden preserves structure, so the button should still get a ref
     // but its text should be hidden
@@ -676,14 +712,16 @@ fn visibility_hidden_interactive_element_gets_ref() {
 
 #[test]
 fn script_removes_class_to_show_element() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.hidden { display: none; }</style>
       <p id="target" class="hidden">Shown by removing class</p>
       <script>
         document.getElementById("target").classList.remove("hidden");
       </script>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("Shown by removing class"),
@@ -702,7 +740,8 @@ fn multiple_sheets_different_properties_merge() {
     // Second sheet wins (later source order, same specificity).
     // Also verify a second property from the first sheet still applies via snapshot:
     // We use visibility to indirectly observe.
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         p { display: none; }
@@ -711,7 +750,8 @@ fn multiple_sheets_different_properties_merge() {
         p { display: block; }
       </style>
       <p>Text from merged styles</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("Text from merged styles"),
@@ -726,13 +766,15 @@ fn multiple_sheets_different_properties_merge() {
 
 #[test]
 fn ua_heading_styles_in_snapshot() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <h1>Heading 1</h1>
       <h2>Heading 2</h2>
       <h3>Heading 3</h3>
       <p>Paragraph text</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("heading[1] \"Heading 1\""),
@@ -762,7 +804,8 @@ fn ua_heading_styles_in_snapshot() {
 
 #[test]
 fn snapshot_fully_integrates_css_cascade() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         .admin-only { display: none; }
@@ -776,7 +819,8 @@ fn snapshot_fully_integrates_css_cascade() {
       <p class="draft">Draft content</p>
       <p>Welcome, user!</p>
       <a href="/profile">Profile</a>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(snap.contains("Dashboard"), "h1 should appear: {}", snap);
     assert!(snap.contains("Welcome, user!"), "paragraph should appear: {}", snap);
@@ -806,7 +850,8 @@ fn snapshot_fully_integrates_css_cascade() {
 fn element_style_set_and_get_round_trip() {
     // Script sets an inline style, then reads it back and writes the result
     // into a paragraph that will be visible in the snapshot.
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <p id="target">Target</p>
       <p id="result"></p>
@@ -816,7 +861,8 @@ fn element_style_set_and_get_round_trip() {
         var val = el.style.getPropertyValue("color");
         document.getElementById("result").textContent = "inline=" + val;
       </script>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         snap.contains("inline=red"),
@@ -831,13 +877,15 @@ fn element_style_set_and_get_round_trip() {
 
 #[test]
 fn element_style_remove_property() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <p id="target" style="display: none">Should become visible</p>
       <script>
         document.getElementById("target").style.removeProperty("display");
       </script>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     // After removeProperty("display"), the inline display:none is removed.
     // The element should be visible (UA default display:block applies).
@@ -854,7 +902,8 @@ fn element_style_remove_property() {
 
 #[test]
 fn display_none_nested_container_hides_forms() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.hidden-section { display: none; }</style>
       <div class="hidden-section">
@@ -868,7 +917,8 @@ fn display_none_nested_container_hides_forms() {
         </form>
       </div>
       <p>Page content</p>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("hidden input"),
@@ -898,7 +948,8 @@ fn display_none_nested_container_hides_forms() {
 
 #[test]
 fn child_overrides_inherited_visibility_hidden() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         .invisible { visibility: hidden; }
@@ -908,7 +959,8 @@ fn child_overrides_inherited_visibility_hidden() {
         <p>Parent hidden text</p>
         <p class="force-visible">Child visible text</p>
       </div>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Parent hidden text"),
@@ -928,7 +980,8 @@ fn child_overrides_inherited_visibility_hidden() {
 
 #[test]
 fn script_created_element_matches_display_none_rule() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>.auto-hide { display: none; }</style>
       <div id="container"></div>
@@ -939,7 +992,8 @@ fn script_created_element_matches_display_none_rule() {
         p.setAttribute("class", "auto-hide");
         document.getElementById("container").appendChild(p);
       </script>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Script-created hidden"),
@@ -960,7 +1014,8 @@ fn script_created_element_matches_display_none_rule() {
 
 #[test]
 fn important_element_beats_normal_id() {
-    let snap = load_and_snap(r##"
+    let snap = load_and_snap(
+        r##"
     <html><body>
       <style>
         #showme { display: block; }
@@ -968,7 +1023,8 @@ fn important_element_beats_normal_id() {
       </style>
       <p id="showme">Should be hidden by !important</p>
       <h1>Visible heading</h1>
-    </body></html>"##);
+    </body></html>"##,
+    );
 
     assert!(
         !snap.contains("Should be hidden by !important"),

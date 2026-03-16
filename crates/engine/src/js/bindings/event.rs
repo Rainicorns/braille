@@ -29,8 +29,7 @@ pub(crate) fn attach_is_trusted_own_property(event_obj: &JsObject, ctx: &mut Con
         Some(g) => g,
         None => {
             let realm = ctx.realm().clone();
-            let fn_obj = NativeFunction::from_fn_ptr(JsEvent::get_is_trusted)
-                .to_js_function(&realm);
+            let fn_obj = NativeFunction::from_fn_ptr(JsEvent::get_is_trusted).to_js_function(&realm);
             let g: JsObject = fn_obj.into();
             realm_state::set_is_trusted_getter(ctx, g.clone());
             g
@@ -58,7 +57,9 @@ pub(crate) fn attach_is_trusted_own_property(event_obj: &JsObject, ctx: &mut Con
 #[derive(Debug, Trace, Finalize)]
 pub(crate) enum EventKind {
     Standard,
-    Custom { detail: JsValue },
+    Custom {
+        detail: JsValue,
+    },
     Mouse {
         button: i16,
         buttons: u16,
@@ -214,16 +215,15 @@ impl JsEvent {
             return Ok(JsValue::undefined());
         }
 
-        let event_type = args
-            .first()
-            .ok_or_else(|| {
-                JsError::from_native(
-                    boa_engine::JsNativeError::typ()
-                        .with_message("Failed to execute 'initEvent' on 'Event': 1 argument required, but only 0 present.")
-                )
-            })?
-            .to_string(ctx)?
-            .to_std_string_escaped();
+        let event_type =
+            args.first()
+                .ok_or_else(|| {
+                    JsError::from_native(boa_engine::JsNativeError::typ().with_message(
+                        "Failed to execute 'initEvent' on 'Event': 1 argument required, but only 0 present.",
+                    ))
+                })?
+                .to_string(ctx)?
+                .to_std_string_escaped();
         let bubbles = args.get(1).map(|v| v.to_boolean()).unwrap_or(false);
         let cancelable = args.get(2).map(|v| v.to_boolean()).unwrap_or(false);
         evt.event_type = event_type;
@@ -262,11 +262,9 @@ impl JsEvent {
         let event_type = args
             .first()
             .ok_or_else(|| {
-                JsError::from_native(
-                    boa_engine::JsNativeError::typ().with_message(
-                        "Failed to execute 'initCustomEvent' on 'CustomEvent': 1 argument required, but only 0 present.",
-                    ),
-                )
+                JsError::from_native(boa_engine::JsNativeError::typ().with_message(
+                    "Failed to execute 'initCustomEvent' on 'CustomEvent': 1 argument required, but only 0 present.",
+                ))
             })?
             .to_string(ctx)?
             .to_std_string_escaped();
@@ -305,22 +303,22 @@ impl JsEvent {
     }
 
     fn get_cancelable(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.cancelable getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.cancelable getter: `this` is not an Event").into()))?;
+        let obj = this.as_object().ok_or_else(|| {
+            JsError::from_opaque(js_string!("Event.cancelable getter: `this` is not an object").into())
+        })?;
+        let evt = obj.downcast_ref::<JsEvent>().ok_or_else(|| {
+            JsError::from_opaque(js_string!("Event.cancelable getter: `this` is not an Event").into())
+        })?;
         Ok(JsValue::from(evt.cancelable))
     }
 
     fn get_default_prevented(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.defaultPrevented getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.defaultPrevented getter: `this` is not an Event").into()))?;
+        let obj = this.as_object().ok_or_else(|| {
+            JsError::from_opaque(js_string!("Event.defaultPrevented getter: `this` is not an object").into())
+        })?;
+        let evt = obj.downcast_ref::<JsEvent>().ok_or_else(|| {
+            JsError::from_opaque(js_string!("Event.defaultPrevented getter: `this` is not an Event").into())
+        })?;
         Ok(JsValue::from(evt.default_prevented))
     }
 
@@ -335,12 +333,12 @@ impl JsEvent {
     }
 
     fn get_event_phase(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.eventPhase getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.eventPhase getter: `this` is not an Event").into()))?;
+        let obj = this.as_object().ok_or_else(|| {
+            JsError::from_opaque(js_string!("Event.eventPhase getter: `this` is not an object").into())
+        })?;
+        let evt = obj.downcast_ref::<JsEvent>().ok_or_else(|| {
+            JsError::from_opaque(js_string!("Event.eventPhase getter: `this` is not an Event").into())
+        })?;
         Ok(JsValue::from(evt.phase as i32))
     }
 
@@ -371,12 +369,12 @@ impl JsEvent {
     }
 
     fn stop_immediate_propagation(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.stopImmediatePropagation: `this` is not an object").into()))?;
-        let mut evt = obj
-            .downcast_mut::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.stopImmediatePropagation: `this` is not an Event").into()))?;
+        let obj = this.as_object().ok_or_else(|| {
+            JsError::from_opaque(js_string!("Event.stopImmediatePropagation: `this` is not an object").into())
+        })?;
+        let mut evt = obj.downcast_mut::<JsEvent>().ok_or_else(|| {
+            JsError::from_opaque(js_string!("Event.stopImmediatePropagation: `this` is not an Event").into())
+        })?;
         evt.propagation_stopped = true;
         evt.immediate_propagation_stopped = true;
         Ok(JsValue::undefined())
@@ -411,7 +409,7 @@ pub(crate) fn parse_event_type(args: &[JsValue], ctx: &mut Context) -> JsResult<
         .ok_or_else(|| {
             JsError::from_native(
                 boa_engine::JsNativeError::typ()
-                    .with_message("Failed to execute 'Event' constructor: 1 argument required, but only 0 present.")
+                    .with_message("Failed to execute 'Event' constructor: 1 argument required, but only 0 present."),
             )
         })?
         .to_string(ctx)?
@@ -477,11 +475,7 @@ impl Class for JsEvent {
     const NAME: &'static str = "Event";
     const LENGTH: usize = 1;
 
-    fn data_constructor(
-        _new_target: &JsValue,
-        args: &[JsValue],
-        ctx: &mut Context,
-    ) -> JsResult<Self> {
+    fn data_constructor(_new_target: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<Self> {
         let event_type = parse_event_type(args, ctx)?;
         let (bubbles, cancelable) = parse_event_options(args, ctx)?;
 
@@ -655,10 +649,7 @@ mod tests {
         engine.load_html("<html><body></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
         let result = runtime.eval("var e = new Event('click'); e.type").unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "click");
     }
 
@@ -668,9 +659,7 @@ mod tests {
         engine.load_html("<html><body></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
 
-        let bubbles = runtime
-            .eval("var e = new Event('click'); e.bubbles")
-            .unwrap();
+        let bubbles = runtime.eval("var e = new Event('click'); e.bubbles").unwrap();
         assert_eq!(bubbles.to_boolean(), false);
 
         let cancelable = runtime.eval("e.cancelable").unwrap();
@@ -729,9 +718,7 @@ mod tests {
         let runtime = engine.runtime.as_mut().unwrap();
 
         // stopPropagation should not throw and should succeed silently
-        runtime
-            .eval("var e = new Event('click'); e.stopPropagation()")
-            .unwrap();
+        runtime.eval("var e = new Event('click'); e.stopPropagation()").unwrap();
 
         // We can verify it worked by checking that the method exists and is callable.
         // The internal state is not directly accessible from JS, so we just verify no error.
@@ -771,9 +758,7 @@ mod tests {
         engine.load_html("<html><body></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
 
-        let result = runtime
-            .eval("var e = new CustomEvent('myevent'); e.detail")
-            .unwrap();
+        let result = runtime.eval("var e = new CustomEvent('myevent'); e.detail").unwrap();
         assert!(result.is_null());
     }
 
@@ -802,9 +787,7 @@ mod tests {
         engine.load_html("<html><body></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
 
-        let phase = runtime
-            .eval("var e = new Event('click'); e.eventPhase")
-            .unwrap();
+        let phase = runtime.eval("var e = new Event('click'); e.eventPhase").unwrap();
         assert_eq!(phase.to_number(&mut runtime.context).unwrap(), 0.0);
     }
 
@@ -814,9 +797,7 @@ mod tests {
         engine.load_html("<html><body></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
 
-        let target = runtime
-            .eval("var e = new Event('click'); e.target")
-            .unwrap();
+        let target = runtime.eval("var e = new Event('click'); e.target").unwrap();
         assert!(target.is_null());
 
         let current = runtime.eval("e.currentTarget").unwrap();
@@ -834,10 +815,7 @@ mod tests {
             .unwrap();
 
         let foo = runtime.eval("e.detail.foo").unwrap();
-        let s = foo
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = foo.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "bar");
     }
 
@@ -858,10 +836,7 @@ mod tests {
         assert_eq!(cancelable.to_boolean(), true);
 
         let detail = runtime.eval("e.detail").unwrap();
-        let s = detail
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = detail.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "hi");
     }
 

@@ -7,9 +7,16 @@ use super::selector_impl::{BrailleSelectorImpl, BrailleSelectorParser, CssString
 use crate::dom::node::{NodeData, NodeId};
 use crate::dom::tree::DomTree;
 use cssparser::{Parser as CssParser, ParserInput};
-use selectors::matching::{matches_selector, MatchingContext, MatchingMode, QuirksMode, NeedsSelectorFlags, MatchingForInvalidation, SelectorCaches};
-use selectors::parser::{SelectorList, ParseRelative};
-use selectors::{attr::CaseSensitivity, bloom::{CountingBloomFilter, BloomStorageU8}, Element, OpaqueElement};
+use selectors::matching::{
+    matches_selector, MatchingContext, MatchingForInvalidation, MatchingMode, NeedsSelectorFlags, QuirksMode,
+    SelectorCaches,
+};
+use selectors::parser::{ParseRelative, SelectorList};
+use selectors::{
+    attr::CaseSensitivity,
+    bloom::{BloomStorageU8, CountingBloomFilter},
+    Element, OpaqueElement,
+};
 
 /// A wrapper around a DomTree node that implements the selectors::Element trait.
 ///
@@ -78,7 +85,9 @@ impl<'a> DomElement<'a> {
             if let NodeData::Element { ref tag_name, .. } = child.data {
                 if tag_name == "option" && self.tree.has_attribute(child_id, "selected") {
                     // Check the option's value attribute; if not present, use text content
-                    let value = self.tree.get_attribute(child_id, "value")
+                    let value = self
+                        .tree
+                        .get_attribute(child_id, "value")
                         .unwrap_or_else(|| self.tree.get_text_content(child_id));
                     if !value.is_empty() {
                         return true;
@@ -221,18 +230,12 @@ impl<'a> Element for DomElement<'a> {
         operation.eval_str(&attr_value)
     }
 
-    fn match_non_ts_pseudo_class(
-        &self,
-        pseudo: &PseudoClass,
-        context: &mut MatchingContext<Self::Impl>,
-    ) -> bool {
+    fn match_non_ts_pseudo_class(&self, pseudo: &PseudoClass, context: &mut MatchingContext<Self::Impl>) -> bool {
         match pseudo {
-            PseudoClass::Scope => {
-                match context.scope_element {
-                    Some(scope) => self.opaque() == scope,
-                    None => self.tree.is_root_element(self.node_id),
-                }
-            }
+            PseudoClass::Scope => match context.scope_element {
+                Some(scope) => self.opaque() == scope,
+                None => self.tree.is_root_element(self.node_id),
+            },
             PseudoClass::Root => self.tree.is_root_element(self.node_id),
             PseudoClass::Empty => self.is_empty(),
             PseudoClass::Link => self.is_link(),
@@ -315,28 +318,16 @@ impl<'a> Element for DomElement<'a> {
                     false
                 }
             }
-            PseudoClass::Invalid => {
-                match self.tag_name() {
-                    Some("input") | Some("textarea") | Some("select") => {
-                        self.is_form_element_invalid()
-                    }
-                    Some("fieldset") | Some("form") => {
-                        self.has_invalid_descendant()
-                    }
-                    _ => false,
-                }
-            }
-            PseudoClass::Valid => {
-                match self.tag_name() {
-                    Some("input") | Some("textarea") | Some("select") => {
-                        !self.is_form_element_invalid()
-                    }
-                    Some("fieldset") | Some("form") => {
-                        !self.has_invalid_descendant()
-                    }
-                    _ => false,
-                }
-            }
+            PseudoClass::Invalid => match self.tag_name() {
+                Some("input") | Some("textarea") | Some("select") => self.is_form_element_invalid(),
+                Some("fieldset") | Some("form") => self.has_invalid_descendant(),
+                _ => false,
+            },
+            PseudoClass::Valid => match self.tag_name() {
+                Some("input") | Some("textarea") | Some("select") => !self.is_form_element_invalid(),
+                Some("fieldset") | Some("form") => !self.has_invalid_descendant(),
+                _ => false,
+            },
         }
     }
 
@@ -374,9 +365,7 @@ impl<'a> Element for DomElement<'a> {
 
         match case_sensitivity {
             CaseSensitivity::CaseSensitive => attr_value == id.0,
-            CaseSensitivity::AsciiCaseInsensitive => {
-                attr_value.eq_ignore_ascii_case(&id.0)
-            }
+            CaseSensitivity::AsciiCaseInsensitive => attr_value.eq_ignore_ascii_case(&id.0),
         }
     }
 
@@ -387,13 +376,9 @@ impl<'a> Element for DomElement<'a> {
         };
 
         // Split class attribute by whitespace and check if any match
-        class_attr.split_whitespace().any(|class| {
-            match case_sensitivity {
-                CaseSensitivity::CaseSensitive => class == name.0,
-                CaseSensitivity::AsciiCaseInsensitive => {
-                    class.eq_ignore_ascii_case(&name.0)
-                }
-            }
+        class_attr.split_whitespace().any(|class| match case_sensitivity {
+            CaseSensitivity::CaseSensitive => class == name.0,
+            CaseSensitivity::AsciiCaseInsensitive => class.eq_ignore_ascii_case(&name.0),
         })
     }
 
@@ -625,20 +610,12 @@ mod tests {
 
         let html = tree.create_element("html");
         let body = tree.create_element("body");
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "container"),
-        ]);
-        let p1 = tree.create_element_with_attrs("p", vec![
-            DomAttribute::new("id", "first"),
-        ]);
+        let div = tree.create_element_with_attrs("div", vec![DomAttribute::new("class", "container")]);
+        let p1 = tree.create_element_with_attrs("p", vec![DomAttribute::new("id", "first")]);
         let p1_text = tree.create_text("First paragraph");
-        let p2 = tree.create_element_with_attrs("p", vec![
-            DomAttribute::new("class", "highlight"),
-        ]);
+        let p2 = tree.create_element_with_attrs("p", vec![DomAttribute::new("class", "highlight")]);
         let p2_text = tree.create_text("Second paragraph");
-        let nested_div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "nested"),
-        ]);
+        let nested_div = tree.create_element_with_attrs("div", vec![DomAttribute::new("class", "nested")]);
         let span = tree.create_element("span");
         let span_text = tree.create_text("Nested span");
         let p3 = tree.create_element("p");
@@ -852,9 +829,7 @@ mod tests {
     #[test]
     fn test_is_link_method() {
         let mut tree = DomTree::new();
-        let link = tree.create_element_with_attrs("a", vec![
-            DomAttribute::new("href", "https://example.com"),
-        ]);
+        let link = tree.create_element_with_attrs("a", vec![DomAttribute::new("href", "https://example.com")]);
         let not_link = tree.create_element("a"); // <a> without href
         let div = tree.create_element("div");
 

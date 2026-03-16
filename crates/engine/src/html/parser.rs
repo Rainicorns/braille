@@ -2,15 +2,13 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use html5ever::interface::{
-    Attribute, ElementFlags, NodeOrText, QuirksMode, TreeSink,
-};
+use html5ever::interface::{Attribute, ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use html5ever::{parse_document, parse_fragment, ParseOpts, QualName};
-use markup5ever::{ns, Namespace, LocalName};
+use markup5ever::{ns, LocalName, Namespace};
 use tendril::{StrTendril, TendrilSink};
 
-use crate::dom::tree::DomTree;
 use crate::dom::node::{DomAttribute, NodeData, NodeId};
+use crate::dom::tree::DomTree;
 
 /// A TreeSink implementation that builds our DomTree from html5ever's parser events.
 ///
@@ -33,7 +31,11 @@ impl BrailleSink {
         // Index 0 is the Document root — no QualName for it.
         let names = RefCell::new(vec![None]);
         let mathml_integration_points = RefCell::new(vec![false]);
-        BrailleSink { tree, names, mathml_integration_points }
+        BrailleSink {
+            tree,
+            names,
+            mathml_integration_points,
+        }
     }
 
     /// Pad a parallel vec with `value` up to `len` (inclusive).
@@ -72,18 +74,11 @@ impl TreeSink for BrailleSink {
         // html5ever calls elem_name during tree building and does not hold
         // the reference across calls that would trigger a mutable borrow of
         // the names vec. We re-borrow on each call.
-        let ptr = names[*target]
-            .as_ref()
-            .expect("elem_name called on non-element node") as *const QualName;
+        let ptr = names[*target].as_ref().expect("elem_name called on non-element node") as *const QualName;
         unsafe { &*ptr }
     }
 
-    fn create_element(
-        &self,
-        name: QualName,
-        attrs: Vec<Attribute>,
-        flags: ElementFlags,
-    ) -> NodeId {
+    fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> NodeId {
         let tag_name = name.local.to_string();
         let attributes: Vec<DomAttribute> = attrs
             .into_iter()
@@ -197,7 +192,9 @@ impl TreeSink for BrailleSink {
                 let mut tree = self.tree.borrow_mut();
 
                 // Try to merge with the sibling immediately before `sibling`.
-                let parent = tree.get_node(*sibling).parent
+                let parent = tree
+                    .get_node(*sibling)
+                    .parent
                     .expect("append_before_sibling: sibling has no parent");
                 let children = &tree.get_node(parent).children;
                 let pos = children.iter().position(|&c| c == *sibling);
@@ -223,12 +220,7 @@ impl TreeSink for BrailleSink {
         }
     }
 
-    fn append_based_on_parent_node(
-        &self,
-        element: &NodeId,
-        prev_element: &NodeId,
-        child: NodeOrText<NodeId>,
-    ) {
+    fn append_based_on_parent_node(&self, element: &NodeId, prev_element: &NodeId, child: NodeOrText<NodeId>) {
         // If the element has a parent, insert before the element.
         // Otherwise, append to prev_element.
         let has_parent = self.tree.borrow().get_node(*element).parent.is_some();
@@ -239,12 +231,7 @@ impl TreeSink for BrailleSink {
         }
     }
 
-    fn append_doctype_to_document(
-        &self,
-        name: StrTendril,
-        public_id: StrTendril,
-        system_id: StrTendril,
-    ) {
+    fn append_doctype_to_document(&self, name: StrTendril, public_id: StrTendril, system_id: StrTendril) {
         let mut tree = self.tree.borrow_mut();
         let doctype_id = tree.create_doctype(&name, &public_id, &system_id);
 
@@ -277,10 +264,7 @@ impl TreeSink for BrailleSink {
     fn add_attrs_if_missing(&self, target: &NodeId, attrs: Vec<Attribute>) {
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_node_mut(*target);
-        if let NodeData::Element {
-            ref mut attributes, ..
-        } = node.data
-        {
+        if let NodeData::Element { ref mut attributes, .. } = node.data {
             let existing: Vec<String> = attributes.iter().map(|a| a.qualified_name()).collect();
             for attr in attrs {
                 let local_name = attr.name.local.to_string();
@@ -326,7 +310,6 @@ impl TreeSink for BrailleSink {
         let mip = self.mathml_integration_points.borrow();
         mip.get(*handle).copied().unwrap_or(false)
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -345,8 +328,10 @@ impl TreeSink for BrailleSink {
 fn polyfill_selectedcontent(tree: &mut DomTree) {
     // Collect all <select> elements.
     let selects: Vec<NodeId> = (0..tree.node_count())
-        .filter(|&id| matches!(&tree.get_node(id).data,
-            NodeData::Element { tag_name, .. } if tag_name == "select"))
+        .filter(|&id| {
+            matches!(&tree.get_node(id).data,
+            NodeData::Element { tag_name, .. } if tag_name == "select")
+        })
         .collect();
 
     for select_id in selects {
@@ -412,7 +397,12 @@ fn collect_options(
 ) {
     let children: Vec<NodeId> = tree.get_node(node_id).children.clone();
     for &child_id in &children {
-        if let NodeData::Element { ref tag_name, ref attributes, .. } = tree.get_node(child_id).data {
+        if let NodeData::Element {
+            ref tag_name,
+            ref attributes,
+            ..
+        } = tree.get_node(child_id).data
+        {
             if tag_name == "button" {
                 continue; // don't look inside <button> for options
             }
@@ -509,7 +499,13 @@ pub fn parse_html_fragment_scripting(
     };
     let context_name = QualName::new(None, ns, LocalName::from(context_tag));
     let sink = BrailleSink::new();
-    let parser = parse_fragment(sink, make_opts(scripting_enabled), context_name, Vec::new(), scripting_enabled);
+    let parser = parse_fragment(
+        sink,
+        make_opts(scripting_enabled),
+        context_name,
+        Vec::new(),
+        scripting_enabled,
+    );
     let tree = parser.one(html);
     // POLYFILL: selectedcontent cloning (see polyfill_selectedcontent docs).
     polyfill_selectedcontent(&mut tree.borrow_mut());
@@ -553,14 +549,11 @@ mod tests {
 
     #[test]
     fn parse_attributes() {
-        let tree_rc =
-            parse_html("<div id=\"app\"><span class=\"x\">text</span></div>");
+        let tree_rc = parse_html("<div id=\"app\"><span class=\"x\">text</span></div>");
         let tree = tree_rc.borrow();
 
         // Find <div id="app">
-        let div_id = tree
-            .get_element_by_id("app")
-            .expect("should find div#app");
+        let div_id = tree.get_element_by_id("app").expect("should find div#app");
         let div_node = tree.get_node(div_id);
         if let NodeData::Element {
             ref tag_name,
@@ -596,9 +589,7 @@ mod tests {
 
     #[test]
     fn parse_script_content() {
-        let tree_rc = parse_html(
-            "<html><head></head><body><script>var x = 1;</script></body></html>",
-        );
+        let tree_rc = parse_html("<html><head></head><body><script>var x = 1;</script></body></html>");
         let tree = tree_rc.borrow();
 
         let scripts = tree.get_elements_by_tag_name("script");

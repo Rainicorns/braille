@@ -118,7 +118,10 @@ mod tests {
         assert_eq!(format!("{}", CssValue::Length(1.5, LengthUnit::Em)), "1.5em");
         assert_eq!(format!("{}", CssValue::Length(50.0, LengthUnit::Percent)), "50%");
         assert_eq!(format!("{}", CssValue::Percentage(50.0)), "50%");
-        assert_eq!(format!("{}", CssValue::Color(CssColor::Named("blue".to_string()))), "blue");
+        assert_eq!(
+            format!("{}", CssValue::Color(CssColor::Named("blue".to_string()))),
+            "blue"
+        );
         assert_eq!(format!("{}", CssValue::Number(1.5)), "1.5");
         assert_eq!(format!("{}", CssValue::String("Arial".to_string())), "\"Arial\"");
         assert_eq!(format!("{}", CssValue::Auto), "auto");

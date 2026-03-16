@@ -140,10 +140,7 @@ impl SessionManager {
 pub fn generate_session_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let count = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     format!("sess_{:08x}", ((now as u64).wrapping_add(count) & 0xFFFFFFFF) as u32)
 }
 

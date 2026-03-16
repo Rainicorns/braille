@@ -25,7 +25,10 @@ pub(crate) enum SavedActivationState {
 /// Check if an element is disabled (has "disabled" attribute and is a form element).
 pub(crate) fn is_disabled(tree: &DomTree, node_id: NodeId) -> bool {
     let node = tree.get_node(node_id);
-    if let NodeData::Element { tag_name, attributes, .. } = &node.data {
+    if let NodeData::Element {
+        tag_name, attributes, ..
+    } = &node.data
+    {
         let tag = tag_name.to_lowercase();
         if matches!(tag.as_str(), "input" | "button" | "select" | "textarea") {
             return attributes.iter().any(|a| a.local_name == "disabled");
@@ -38,7 +41,9 @@ pub(crate) fn is_disabled(tree: &DomTree, node_id: NodeId) -> bool {
 pub(crate) fn has_activation_behavior(tree: &DomTree, node_id: NodeId) -> bool {
     let node = tree.get_node(node_id);
     match &node.data {
-        NodeData::Element { tag_name, attributes, .. } => {
+        NodeData::Element {
+            tag_name, attributes, ..
+        } => {
             let tag = tag_name.to_lowercase();
             match tag.as_str() {
                 "input" => {
@@ -47,7 +52,10 @@ pub(crate) fn has_activation_behavior(tree: &DomTree, node_id: NodeId) -> bool {
                         .find(|a| a.local_name == "type")
                         .map(|a| a.value.to_lowercase())
                         .unwrap_or_else(|| "text".to_string());
-                    matches!(input_type.as_str(), "checkbox" | "radio" | "submit" | "reset" | "button" | "image")
+                    matches!(
+                        input_type.as_str(),
+                        "checkbox" | "radio" | "submit" | "reset" | "button" | "image"
+                    )
                 }
                 "button" => true,
                 "a" => attributes.iter().any(|a| a.local_name == "href"),
@@ -91,7 +99,9 @@ pub(crate) fn find_activation_target(tree: &DomTree, propagation_path: &[NodeId]
 pub(crate) fn run_legacy_pre_activation(tree: &mut DomTree, node_id: NodeId) -> SavedActivationState {
     let node = tree.get_node(node_id);
     let (tag, input_type) = match &node.data {
-        NodeData::Element { tag_name, attributes, .. } => {
+        NodeData::Element {
+            tag_name, attributes, ..
+        } => {
             let tag = tag_name.to_lowercase();
             let t = attributes
                 .iter()
@@ -109,9 +119,7 @@ pub(crate) fn run_legacy_pre_activation(tree: &mut DomTree, node_id: NodeId) -> 
 
     match input_type.as_str() {
         "checkbox" => {
-            let was_checked = tree
-                .get_attribute(node_id, "checked")
-                .is_some();
+            let was_checked = tree.get_attribute(node_id, "checked").is_some();
             // Toggle
             if was_checked {
                 tree.remove_attribute(node_id, "checked");
@@ -121,14 +129,10 @@ pub(crate) fn run_legacy_pre_activation(tree: &mut DomTree, node_id: NodeId) -> 
             SavedActivationState::Checkbox { was_checked }
         }
         "radio" => {
-            let was_checked = tree
-                .get_attribute(node_id, "checked")
-                .is_some();
+            let was_checked = tree.get_attribute(node_id, "checked").is_some();
 
             // Find radio group name
-            let radio_name = tree
-                .get_attribute(node_id, "name")
-                .unwrap_or_default();
+            let radio_name = tree.get_attribute(node_id, "name").unwrap_or_default();
 
             // Find siblings in same radio group
             let siblings = find_radio_group_siblings(tree, node_id, &radio_name);
@@ -170,7 +174,11 @@ pub(crate) fn restore_activation(tree: &mut DomTree, node_id: NodeId, saved: Sav
                 tree.remove_attribute(node_id, "checked");
             }
         }
-        SavedActivationState::Radio { node_id: rid, was_checked, siblings } => {
+        SavedActivationState::Radio {
+            node_id: rid,
+            was_checked,
+            siblings,
+        } => {
             if was_checked {
                 tree.set_attribute(rid, "checked", "");
             } else {
@@ -189,16 +197,14 @@ pub(crate) fn restore_activation(tree: &mut DomTree, node_id: NodeId, saved: Sav
 }
 
 /// Run post-activation behavior after successful dispatch (not canceled).
-pub(crate) fn run_post_activation(
-    tree: &Rc<RefCell<DomTree>>,
-    node_id: NodeId,
-    ctx: &mut Context,
-) {
+pub(crate) fn run_post_activation(tree: &Rc<RefCell<DomTree>>, node_id: NodeId, ctx: &mut Context) {
     let (tag, input_type) = {
         let t = tree.borrow();
         let node = t.get_node(node_id);
         match &node.data {
-            NodeData::Element { tag_name, attributes, .. } => {
+            NodeData::Element {
+                tag_name, attributes, ..
+            } => {
                 let tag = tag_name.to_lowercase();
                 let it = attributes
                     .iter()
@@ -319,11 +325,7 @@ fn fire_simple_event(
         let dispatch_fn = target_obj.get(js_string!("dispatchEvent"), ctx);
         if let Ok(dispatch_val) = dispatch_fn {
             if let Some(dispatch_obj) = dispatch_val.as_object().filter(|o| o.is_callable()) {
-                let _ = dispatch_obj.call(
-                    &JsValue::from(target_obj),
-                    &[event_val],
-                    ctx,
-                );
+                let _ = dispatch_obj.call(&JsValue::from(target_obj), &[event_val], ctx);
             }
         }
     }
@@ -418,7 +420,10 @@ fn collect_radio_siblings(
             continue;
         }
         let child = tree.get_node(child_id);
-        if let NodeData::Element { tag_name, attributes, .. } = &child.data {
+        if let NodeData::Element {
+            tag_name, attributes, ..
+        } = &child.data
+        {
             if tag_name.eq_ignore_ascii_case("input") {
                 let is_radio = attributes
                     .iter()

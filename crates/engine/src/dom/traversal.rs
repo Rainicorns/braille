@@ -35,12 +35,7 @@ impl DomTree {
         results
     }
 
-    fn find_descendants_by_tag_recursive(
-        &self,
-        node_id: NodeId,
-        tag_lower: &str,
-        results: &mut Vec<NodeId>,
-    ) {
+    fn find_descendants_by_tag_recursive(&self, node_id: NodeId, tag_lower: &str, results: &mut Vec<NodeId>) {
         let node = self.get_node(node_id);
         for &child_id in &node.children {
             let child = self.get_node(child_id);

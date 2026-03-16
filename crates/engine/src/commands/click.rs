@@ -1,7 +1,7 @@
-use crate::Engine;
 use crate::dom::find::resolve_selector;
 use crate::dom::node::NodeData;
-use braille_wire::{EngineAction, NavigateRequest, HttpMethod};
+use crate::Engine;
+use braille_wire::{EngineAction, HttpMethod, NavigateRequest};
 
 impl Engine {
     /// Handle a click on an element identified by selector.
@@ -144,8 +144,16 @@ mod tests {
 
         match action {
             EngineAction::Error(msg) => {
-                assert!(msg.contains("element not found"), "Error message should contain 'element not found', got: {}", msg);
-                assert!(msg.contains("#nonexistent"), "Error message should contain selector, got: {}", msg);
+                assert!(
+                    msg.contains("element not found"),
+                    "Error message should contain 'element not found', got: {}",
+                    msg
+                );
+                assert!(
+                    msg.contains("#nonexistent"),
+                    "Error message should contain selector, got: {}",
+                    msg
+                );
             }
             _ => panic!("Expected Error action, got {:?}", action),
         }
@@ -300,7 +308,11 @@ mod tests {
 
         match action {
             EngineAction::Error(msg) => {
-                assert!(msg.contains("click target is not an element"), "Error should mention 'click target is not an element', got: {}", msg);
+                assert!(
+                    msg.contains("click target is not an element"),
+                    "Error should mention 'click target is not an element', got: {}",
+                    msg
+                );
                 assert!(msg.contains("@text"), "Error should contain selector, got: {}", msg);
             }
             _ => panic!("Expected Error action for non-element node, got {:?}", action),

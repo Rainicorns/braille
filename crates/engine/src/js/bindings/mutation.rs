@@ -1,14 +1,11 @@
 use boa_engine::{
-    class::ClassBuilder,
-    js_string,
-    native_function::NativeFunction,
-    Context, JsError, JsNativeError, JsResult, JsValue,
+    class::ClassBuilder, js_string, native_function::NativeFunction, Context, JsError, JsNativeError, JsResult, JsValue,
 };
 
 use boa_engine::JsObject;
 
+use super::element::{get_or_create_js_element, JsElement};
 use crate::dom::{DomTree, NodeData, NodeId};
-use super::element::{JsElement, get_or_create_js_element};
 use crate::js::realm_state;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -88,11 +85,7 @@ pub(crate) fn update_node_cache_for_adoption_mapping(
 /// Adopt a node from one DomTree into another by creating a clone in the
 /// destination tree and removing the original from its source parent.
 /// Returns the new NodeId in the destination tree.
-pub(crate) fn adopt_node(
-    src_tree: &Rc<RefCell<DomTree>>,
-    src_id: NodeId,
-    dst_tree: &Rc<RefCell<DomTree>>,
-) -> NodeId {
+pub(crate) fn adopt_node(src_tree: &Rc<RefCell<DomTree>>, src_id: NodeId, dst_tree: &Rc<RefCell<DomTree>>) -> NodeId {
     let mut mapping = Vec::new();
     let new_id = adopt_node_recursive(src_tree, src_id, dst_tree, &mut mapping);
 
@@ -139,7 +132,12 @@ fn adopt_node_recursive(
             drop(src);
             dst_tree.borrow_mut().create_comment(&t)
         }
-        NodeData::Element { tag_name, attributes, namespace, .. } => {
+        NodeData::Element {
+            tag_name,
+            attributes,
+            namespace,
+            ..
+        } => {
             let tag = tag_name.clone();
             let attrs = attributes.clone();
             let ns = namespace.clone();
@@ -152,7 +150,11 @@ fn adopt_node_recursive(
             }
             id
         }
-        NodeData::Doctype { name, public_id, system_id } => {
+        NodeData::Doctype {
+            name,
+            public_id,
+            system_id,
+        } => {
             let n = name.clone();
             let p = public_id.clone();
             let s = system_id.clone();
@@ -175,7 +177,12 @@ fn adopt_node_recursive(
             drop(src);
             dst_tree.borrow_mut().create_processing_instruction(&t, &d)
         }
-        NodeData::Attr { local_name, namespace, prefix, value } => {
+        NodeData::Attr {
+            local_name,
+            namespace,
+            prefix,
+            value,
+        } => {
             let ln = local_name.clone();
             let ns = namespace.clone();
             let pfx = prefix.clone();
@@ -236,9 +243,7 @@ pub(crate) fn validate_pre_insert(
     // Step 2: node must not be an inclusive ancestor of parent
     // If node is from a different tree, it can't be an ancestor of parent
     if node_tree.is_none() && is_inclusive_ancestor(tree, node_id, parent_id) {
-        return Err(hierarchy_request_error(
-            "The new child is an ancestor of the parent",
-        ));
+        return Err(hierarchy_request_error("The new child is an ancestor of the parent"));
     }
 
     // Step 3: if child is not null, its parent must be parent
@@ -266,17 +271,13 @@ pub(crate) fn validate_pre_insert(
         | NodeData::ProcessingInstruction { .. }
         | NodeData::Attr { .. } => {}
         NodeData::Document => {
-            return Err(hierarchy_request_error(
-                "Cannot insert a Document node",
-            ));
+            return Err(hierarchy_request_error("Cannot insert a Document node"));
         }
     }
 
     // Step 5: If node is Text and parent is Document, throw
     if matches!(node_data, NodeData::Text { .. }) && matches!(parent_data, NodeData::Document) {
-        return Err(hierarchy_request_error(
-            "Cannot insert Text as a child of Document",
-        ));
+        return Err(hierarchy_request_error("Cannot insert Text as a child of Document"));
     }
 
     // Step 5 (continued): If node is Doctype and parent is not Document, throw
@@ -340,23 +341,17 @@ fn validate_document_insert(
                     .iter()
                     .any(|&c| matches!(tree.get_node(c).data, NodeData::Element { .. }));
                 if has_existing_element {
-                    return Err(hierarchy_request_error(
-                        "Document already has an element child",
-                    ));
+                    return Err(hierarchy_request_error("Document already has an element child"));
                 }
 
                 // If child_ref is a doctype, or there's a doctype following child_ref, throw
                 if let Some(ref_id) = child_ref {
                     if matches!(tree.get_node(ref_id).data, NodeData::Doctype { .. }) {
-                        return Err(hierarchy_request_error(
-                            "Cannot insert element before doctype",
-                        ));
+                        return Err(hierarchy_request_error("Cannot insert element before doctype"));
                     }
                     // Check if there's a doctype FOLLOWING the reference child
                     if has_doctype_after(tree, parent_id, ref_id) {
-                        return Err(hierarchy_request_error(
-                            "Cannot insert element before a doctype",
-                        ));
+                        return Err(hierarchy_request_error("Cannot insert element before a doctype"));
                     }
                 }
             }
@@ -368,22 +363,16 @@ fn validate_document_insert(
                 .iter()
                 .any(|&c| matches!(tree.get_node(c).data, NodeData::Element { .. }));
             if has_existing_element {
-                return Err(hierarchy_request_error(
-                    "Document already has an element child",
-                ));
+                return Err(hierarchy_request_error("Document already has an element child"));
             }
 
             // If child_ref is a doctype, or there's a doctype following child_ref, throw
             if let Some(ref_id) = child_ref {
                 if matches!(tree.get_node(ref_id).data, NodeData::Doctype { .. }) {
-                    return Err(hierarchy_request_error(
-                        "Cannot insert element before doctype",
-                    ));
+                    return Err(hierarchy_request_error("Cannot insert element before doctype"));
                 }
                 if has_doctype_after(tree, parent_id, ref_id) {
-                    return Err(hierarchy_request_error(
-                        "Cannot insert element before a doctype",
-                    ));
+                    return Err(hierarchy_request_error("Cannot insert element before a doctype"));
                 }
             }
         }
@@ -394,18 +383,14 @@ fn validate_document_insert(
                 .iter()
                 .any(|&c| matches!(tree.get_node(c).data, NodeData::Doctype { .. }));
             if has_existing_doctype {
-                return Err(hierarchy_request_error(
-                    "Document already has a doctype child",
-                ));
+                return Err(hierarchy_request_error("Document already has a doctype child"));
             }
 
             // If child_ref is non-null and there's an element before child_ref, throw
             // If child_ref is null (appending), and there's already an element child, throw
             if let Some(ref_id) = child_ref {
                 if has_element_before(tree, parent_id, ref_id) {
-                    return Err(hierarchy_request_error(
-                        "Cannot insert doctype after an element",
-                    ));
+                    return Err(hierarchy_request_error("Cannot insert doctype after an element"));
                 }
             } else {
                 // Appending: if there's already an element child, throw
@@ -413,9 +398,7 @@ fn validate_document_insert(
                     .iter()
                     .any(|&c| matches!(tree.get_node(c).data, NodeData::Element { .. }));
                 if has_element {
-                    return Err(hierarchy_request_error(
-                        "Cannot insert doctype after an element",
-                    ));
+                    return Err(hierarchy_request_error("Cannot insert doctype after an element"));
                 }
             }
         }
@@ -449,17 +432,13 @@ fn validate_pre_replace(
     // Step 2: node must not be an inclusive ancestor of parent
     // If node is from a different tree, it can't be an ancestor of parent
     if node_tree.is_none() && is_inclusive_ancestor(tree, node_id, parent_id) {
-        return Err(hierarchy_request_error(
-            "The new child is an ancestor of the parent",
-        ));
+        return Err(hierarchy_request_error("The new child is an ancestor of the parent"));
     }
 
     // Step 3: old child's parent must be parent
     let old_child_parent = tree.get_node(old_child_id).parent;
     if old_child_parent != Some(parent_id) {
-        return Err(not_found_error(
-            "The node to be replaced is not a child of this node",
-        ));
+        return Err(not_found_error("The node to be replaced is not a child of this node"));
     }
 
     let nt = node_tree.unwrap_or(tree);
@@ -475,17 +454,13 @@ fn validate_pre_replace(
         | NodeData::ProcessingInstruction { .. }
         | NodeData::Attr { .. } => {}
         NodeData::Document => {
-            return Err(hierarchy_request_error(
-                "Cannot insert a Document node",
-            ));
+            return Err(hierarchy_request_error("Cannot insert a Document node"));
         }
     }
 
     // Step 5: If node is Text and parent is Document, throw
     if matches!(node_data, NodeData::Text { .. }) && matches!(parent_data, NodeData::Document) {
-        return Err(hierarchy_request_error(
-            "Cannot insert Text as a child of Document",
-        ));
+        return Err(hierarchy_request_error("Cannot insert Text as a child of Document"));
     }
 
     // If node is Doctype and parent is not Document, throw
@@ -541,59 +516,47 @@ fn validate_document_replace(
             if elem_count == 1 {
                 // Check if parent has an element child that is NOT old_child
                 let parent_children = &tree.get_node(parent_id).children;
-                let has_other_element = parent_children.iter().any(|&c| {
-                    c != old_child_id && matches!(tree.get_node(c).data, NodeData::Element { .. })
-                });
+                let has_other_element = parent_children
+                    .iter()
+                    .any(|&c| c != old_child_id && matches!(tree.get_node(c).data, NodeData::Element { .. }));
                 if has_other_element {
-                    return Err(hierarchy_request_error(
-                        "Document already has an element child",
-                    ));
+                    return Err(hierarchy_request_error("Document already has an element child"));
                 }
 
                 // Check if there's a doctype following old_child
                 if has_doctype_after(tree, parent_id, old_child_id) {
-                    return Err(hierarchy_request_error(
-                        "Cannot insert element before a doctype",
-                    ));
+                    return Err(hierarchy_request_error("Cannot insert element before a doctype"));
                 }
             }
         }
         NodeData::Element { .. } => {
             // Check if parent has an element child that is NOT old_child
             let parent_children = &tree.get_node(parent_id).children;
-            let has_other_element = parent_children.iter().any(|&c| {
-                c != old_child_id && matches!(tree.get_node(c).data, NodeData::Element { .. })
-            });
+            let has_other_element = parent_children
+                .iter()
+                .any(|&c| c != old_child_id && matches!(tree.get_node(c).data, NodeData::Element { .. }));
             if has_other_element {
-                return Err(hierarchy_request_error(
-                    "Document already has an element child",
-                ));
+                return Err(hierarchy_request_error("Document already has an element child"));
             }
 
             // Check if there's a doctype following old_child
             if has_doctype_after(tree, parent_id, old_child_id) {
-                return Err(hierarchy_request_error(
-                    "Cannot insert element before a doctype",
-                ));
+                return Err(hierarchy_request_error("Cannot insert element before a doctype"));
             }
         }
         NodeData::Doctype { .. } => {
             // Check if parent has a doctype child that is NOT old_child
             let parent_children = &tree.get_node(parent_id).children;
-            let has_other_doctype = parent_children.iter().any(|&c| {
-                c != old_child_id && matches!(tree.get_node(c).data, NodeData::Doctype { .. })
-            });
+            let has_other_doctype = parent_children
+                .iter()
+                .any(|&c| c != old_child_id && matches!(tree.get_node(c).data, NodeData::Doctype { .. }));
             if has_other_doctype {
-                return Err(hierarchy_request_error(
-                    "Document already has a doctype child",
-                ));
+                return Err(hierarchy_request_error("Document already has a doctype child"));
             }
 
             // Check if there's an element BEFORE old_child in parent's children
             if has_element_before(tree, parent_id, old_child_id) {
-                return Err(hierarchy_request_error(
-                    "Cannot insert doctype after an element",
-                ));
+                return Err(hierarchy_request_error("Cannot insert doctype after an element"));
             }
         }
         _ => {}
@@ -705,24 +668,31 @@ fn fire_insert_records(
     // Queue removal from old parent
     if let Some((old_pid, old_prev, old_next)) = removal_info {
         super::mutation_observer::queue_childlist_mutation(
-            ctx, tree, old_pid, vec![], vec![added_ids[0]], old_prev, old_next,
+            ctx,
+            tree,
+            old_pid,
+            vec![],
+            vec![added_ids[0]],
+            old_prev,
+            old_next,
         );
     }
 
     // Queue addition to new parent
     if !added_ids.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            ctx, tree, parent_id, added_ids.to_vec(), vec![], prev_sib, next_sib,
+            ctx,
+            tree,
+            parent_id,
+            added_ids.to_vec(),
+            vec![],
+            prev_sib,
+            next_sib,
         );
     }
 }
 
-pub(crate) fn do_insert(
-    tree: &Rc<RefCell<DomTree>>,
-    parent_id: NodeId,
-    node_id: NodeId,
-    child_ref: Option<NodeId>,
-) {
+pub(crate) fn do_insert(tree: &Rc<RefCell<DomTree>>, parent_id: NodeId, node_id: NodeId, child_ref: Option<NodeId>) {
     let is_fragment = matches!(tree.borrow().get_node(node_id).data, NodeData::DocumentFragment);
 
     if is_fragment {
@@ -745,12 +715,7 @@ pub(crate) fn do_insert(
     }
 }
 
-fn do_replace(
-    tree: &Rc<RefCell<DomTree>>,
-    parent_id: NodeId,
-    node_id: NodeId,
-    old_child_id: NodeId,
-) {
+fn do_replace(tree: &Rc<RefCell<DomTree>>, parent_id: NodeId, node_id: NodeId, old_child_id: NodeId) {
     let is_fragment = matches!(tree.borrow().get_node(node_id).data, NodeData::DocumentFragment);
 
     if node_id == old_child_id {
@@ -779,18 +744,42 @@ fn do_replace(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn register_mutation(class: &mut ClassBuilder) -> JsResult<()> {
-    class.method(js_string!("insertBefore"), 2, NativeFunction::from_fn_ptr(insert_before));
-    class.method(js_string!("replaceChild"), 2, NativeFunction::from_fn_ptr(replace_child));
+    class.method(
+        js_string!("insertBefore"),
+        2,
+        NativeFunction::from_fn_ptr(insert_before),
+    );
+    class.method(
+        js_string!("replaceChild"),
+        2,
+        NativeFunction::from_fn_ptr(replace_child),
+    );
     class.method(js_string!("removeChild"), 1, NativeFunction::from_fn_ptr(remove_child));
     class.method(js_string!("cloneNode"), 1, NativeFunction::from_fn_ptr(clone_node));
     class.method(js_string!("append"), 0, NativeFunction::from_fn_ptr(append));
     class.method(js_string!("prepend"), 0, NativeFunction::from_fn_ptr(prepend));
-    class.method(js_string!("replaceChildren"), 0, NativeFunction::from_fn_ptr(replace_children));
+    class.method(
+        js_string!("replaceChildren"),
+        0,
+        NativeFunction::from_fn_ptr(replace_children),
+    );
     class.method(js_string!("before"), 0, NativeFunction::from_fn_ptr(child_node_before));
     class.method(js_string!("after"), 0, NativeFunction::from_fn_ptr(child_node_after));
-    class.method(js_string!("replaceWith"), 0, NativeFunction::from_fn_ptr(child_node_replace_with));
-    class.method(js_string!("insertAdjacentElement"), 2, NativeFunction::from_fn_ptr(insert_adjacent_element));
-    class.method(js_string!("insertAdjacentText"), 2, NativeFunction::from_fn_ptr(insert_adjacent_text));
+    class.method(
+        js_string!("replaceWith"),
+        0,
+        NativeFunction::from_fn_ptr(child_node_replace_with),
+    );
+    class.method(
+        js_string!("insertAdjacentElement"),
+        2,
+        NativeFunction::from_fn_ptr(insert_adjacent_element),
+    );
+    class.method(
+        js_string!("insertAdjacentText"),
+        2,
+        NativeFunction::from_fn_ptr(insert_adjacent_text),
+    );
     class.method(js_string!("normalize"), 0, NativeFunction::from_fn_ptr(normalize));
     Ok(())
 }
@@ -810,7 +799,9 @@ fn insert_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
         .first()
         .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: 1 argument required"))?;
     if new_node_arg.is_null() || new_node_arg.is_undefined() {
-        return Err(JsNativeError::typ().with_message("insertBefore: argument 1 is not a Node").into());
+        return Err(JsNativeError::typ()
+            .with_message("insertBefore: argument 1 is not a Node")
+            .into());
     }
     let new_node_obj = new_node_arg
         .as_object()
@@ -845,7 +836,9 @@ fn insert_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
     };
 
     // Second argument: reference child (required per spec — missing throws TypeError)
-    let ref_arg = args.get(1).ok_or_else(|| JsNativeError::typ().with_message("insertBefore: 2 arguments required"))?;
+    let ref_arg = args
+        .get(1)
+        .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: 2 arguments required"))?;
 
     let ref_id = if ref_arg.is_null() || ref_arg.is_undefined() {
         None
@@ -894,7 +887,9 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
         .first()
         .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: 2 arguments required"))?;
     if new_child_arg.is_null() || new_child_arg.is_undefined() {
-        return Err(JsNativeError::typ().with_message("replaceChild: argument 1 is not a Node").into());
+        return Err(JsNativeError::typ()
+            .with_message("replaceChild: argument 1 is not a Node")
+            .into());
     }
     let new_child_obj = new_child_arg
         .as_object()
@@ -933,7 +928,9 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
         .get(1)
         .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: 2 arguments required"))?;
     if old_child_arg.is_null() || old_child_arg.is_undefined() {
-        return Err(JsNativeError::typ().with_message("replaceChild: argument 2 is not a Node").into());
+        return Err(JsNativeError::typ()
+            .with_message("replaceChild: argument 2 is not a Node")
+            .into());
     }
     let old_child_obj = old_child_arg
         .as_object()
@@ -943,9 +940,7 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
         .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: argument 2 is not a Node"))?;
     // If old child is from a different tree, it can't be a child of parent -> NotFoundError
     if !Rc::ptr_eq(&tree, &old_child.tree) {
-        return Err(not_found_error(
-            "The node to be replaced is not a child of this node",
-        ));
+        return Err(not_found_error("The node to be replaced is not a child of this node"));
     }
     let old_child_id = old_child.node_id;
 
@@ -992,13 +987,25 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
     // Queue removal of new_child from old parent (if moved)
     if let Some((old_pid, old_prev, old_next)) = removal_info {
         super::mutation_observer::queue_childlist_mutation(
-            ctx, &tree, old_pid, vec![], vec![new_child_id], old_prev, old_next,
+            ctx,
+            &tree,
+            old_pid,
+            vec![],
+            vec![new_child_id],
+            old_prev,
+            old_next,
         );
     }
 
     // Queue the replace record (both added and removed on the parent)
     super::mutation_observer::queue_childlist_mutation(
-        ctx, &tree, parent_id, added_ids, vec![old_child_id], prev_sib, next_sib,
+        ctx,
+        &tree,
+        parent_id,
+        added_ids,
+        vec![old_child_id],
+        prev_sib,
+        next_sib,
     );
 
     let js_obj = get_or_create_js_element(old_child_id, tree, ctx)?;
@@ -1019,7 +1026,9 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
         .first()
         .ok_or_else(|| JsNativeError::typ().with_message("removeChild: 1 argument required"))?;
     if child_arg.is_null() || child_arg.is_undefined() {
-        return Err(JsNativeError::typ().with_message("removeChild: argument 1 is not a Node").into());
+        return Err(JsNativeError::typ()
+            .with_message("removeChild: argument 1 is not a Node")
+            .into());
     }
     let child_obj = child_arg
         .as_object()
@@ -1030,9 +1039,7 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
 
     // If child is from a different tree, it can't be a child of parent -> NotFoundError
     if !Rc::ptr_eq(&tree, &child.tree) {
-        return Err(not_found_error(
-            "The node to be removed is not a child of this node",
-        ));
+        return Err(not_found_error("The node to be removed is not a child of this node"));
     }
     let child_id = child.node_id;
 
@@ -1040,9 +1047,7 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
         let t = tree.borrow();
         let parent_node = t.get_node(parent_id);
         if !parent_node.children.contains(&child_id) {
-            return Err(not_found_error(
-                "The node to be removed is not a child of this node",
-            ));
+            return Err(not_found_error("The node to be removed is not a child of this node"));
         }
         let parent_children = &parent_node.children;
         let pos = parent_children.iter().position(|&c| c == child_id);
@@ -1053,7 +1058,15 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
 
     tree.borrow_mut().remove_child(parent_id, child_id);
 
-    super::mutation_observer::queue_childlist_mutation(ctx, &tree, parent_id, vec![], vec![child_id], prev_sib, next_sib);
+    super::mutation_observer::queue_childlist_mutation(
+        ctx,
+        &tree,
+        parent_id,
+        vec![],
+        vec![child_id],
+        prev_sib,
+        next_sib,
+    );
 
     let js_obj = get_or_create_js_element(child_id, tree, ctx)?;
     Ok(js_obj.into())
@@ -1069,20 +1082,13 @@ fn clone_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
     let node_id = el.node_id;
     let tree = el.tree.clone();
 
-    let deep = args
-        .first()
-        .map(|v| v.to_boolean())
-        .unwrap_or(false);
+    let deep = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
     // Special case: cloning a Document node creates a new DomTree
     let is_document = matches!(tree.borrow().get_node(node_id).data, NodeData::Document);
     if is_document {
         let is_html = tree.borrow().is_html_document();
-        let new_tree = Rc::new(RefCell::new(if is_html {
-            DomTree::new()
-        } else {
-            DomTree::new_xml()
-        }));
+        let new_tree = Rc::new(RefCell::new(if is_html { DomTree::new() } else { DomTree::new_xml() }));
 
         if deep {
             // Clone all children of the source document into the new document
@@ -1111,9 +1117,18 @@ fn clone_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
 pub(crate) fn clone_node_cross_tree(src: &DomTree, src_id: NodeId, dst: &mut DomTree) -> NodeId {
     let src_node = src.get_node(src_id);
     let new_id = match &src_node.data {
-        NodeData::Element { tag_name, attributes, namespace } => {
+        NodeData::Element {
+            tag_name,
+            attributes,
+            namespace,
+        } => {
             let id = dst.create_element(tag_name);
-            if let NodeData::Element { attributes: ref mut dst_attrs, namespace: ref mut dst_ns, .. } = dst.get_node_mut(id).data {
+            if let NodeData::Element {
+                attributes: ref mut dst_attrs,
+                namespace: ref mut dst_ns,
+                ..
+            } = dst.get_node_mut(id).data
+            {
                 *dst_attrs = attributes.clone();
                 *dst_ns = namespace.clone();
             }
@@ -1121,7 +1136,11 @@ pub(crate) fn clone_node_cross_tree(src: &DomTree, src_id: NodeId, dst: &mut Dom
         }
         NodeData::Text { content } => dst.create_text(content),
         NodeData::Comment { content } => dst.create_comment(content),
-        NodeData::Doctype { name, public_id, system_id } => dst.create_doctype(name, public_id, system_id),
+        NodeData::Doctype {
+            name,
+            public_id,
+            system_id,
+        } => dst.create_doctype(name, public_id, system_id),
         NodeData::ProcessingInstruction { target, data } => dst.create_processing_instruction(target, data),
         NodeData::DocumentFragment => dst.create_document_fragment(),
         NodeData::Document => unreachable!("nested Document nodes not supported"),
@@ -1140,11 +1159,7 @@ pub(crate) fn clone_node_cross_tree(src: &DomTree, src_id: NodeId, dst: &mut Dom
 
 /// Convert variadic args (nodes or strings) into a Vec<NodeId>.
 /// String arguments become new Text nodes; JsElement arguments yield their node_id.
-fn convert_nodes_from_args(
-    args: &[JsValue],
-    tree: &Rc<RefCell<DomTree>>,
-    ctx: &mut Context,
-) -> JsResult<Vec<NodeId>> {
+fn convert_nodes_from_args(args: &[JsValue], tree: &Rc<RefCell<DomTree>>, ctx: &mut Context) -> JsResult<Vec<NodeId>> {
     let mut node_ids = Vec::new();
     for arg in args {
         if let Some(s) = arg.as_string() {
@@ -1205,7 +1220,8 @@ fn prepend(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVa
     let original_first_child = tree.borrow().first_child(parent_id);
     for nid in node_ids {
         validate_pre_insert(&tree.borrow(), parent_id, nid, original_first_child, None)?;
-        let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, original_first_child);
+        let (added_ids, removal_info, prev_sib, next_sib) =
+            capture_insert_state(&tree, parent_id, nid, original_first_child);
         do_insert(&tree, parent_id, nid, original_first_child);
         fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
@@ -1232,9 +1248,7 @@ fn replace_children(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     let removed_children: Vec<NodeId> = tree.borrow().get_node(parent_id).children.clone();
     tree.borrow_mut().clear_children(parent_id);
     if !removed_children.is_empty() {
-        super::mutation_observer::queue_childlist_mutation(
-            ctx, &tree, parent_id, vec![], removed_children, None, None,
-        );
+        super::mutation_observer::queue_childlist_mutation(ctx, &tree, parent_id, vec![], removed_children, None, None);
     }
     for nid in node_ids {
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, None);
@@ -1307,7 +1321,13 @@ fn child_node_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsR
     // Queue MutationObserver record for the batch insertion
     if !node_ids.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            ctx, &tree, parent_id, node_ids, vec![], mo_prev_sib, reference,
+            ctx,
+            &tree,
+            parent_id,
+            node_ids,
+            vec![],
+            mo_prev_sib,
+            reference,
         );
     }
 
@@ -1373,7 +1393,13 @@ fn child_node_after(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     // Queue MutationObserver record
     if !node_ids.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            ctx, &tree, parent_id, node_ids, vec![], mo_prev_sib, mo_next_sib,
+            ctx,
+            &tree,
+            parent_id,
+            node_ids,
+            vec![],
+            mo_prev_sib,
+            mo_next_sib,
         );
     }
 
@@ -1443,7 +1469,13 @@ fn child_node_replace_with(this: &JsValue, args: &[JsValue], ctx: &mut Context) 
 
     // Queue MutationObserver record: this_id removed, node_ids added
     super::mutation_observer::queue_childlist_mutation(
-        ctx, &tree, parent_id, node_ids, vec![this_id], mo_prev_sib, mo_next_sib,
+        ctx,
+        &tree,
+        parent_id,
+        node_ids,
+        vec![this_id],
+        mo_prev_sib,
+        mo_next_sib,
     );
 
     Ok(JsValue::undefined())
@@ -1458,7 +1490,10 @@ fn parse_adjacent_position(pos: &str) -> JsResult<&'static str> {
         "beforeend" => Ok("beforeend"),
         "afterend" => Ok("afterend"),
         _ => Err(JsNativeError::syntax()
-            .with_message(format!("The value provided ('{}') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.", pos))
+            .with_message(format!(
+                "The value provided ('{}') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.",
+                pos
+            ))
             .into()),
     }
 }
@@ -1482,7 +1517,9 @@ fn do_insert_adjacent(
             // If parent is a Document node, throw HierarchyRequestError
             if matches!(tree.borrow().get_node(parent_id).data, NodeData::Document) {
                 return Err(JsNativeError::typ()
-                    .with_message("HierarchyRequestError: Cannot insert before the document element's parent is a Document")
+                    .with_message(
+                        "HierarchyRequestError: Cannot insert before the document element's parent is a Document",
+                    )
                     .into());
             }
             tree.borrow_mut().insert_before(this_id, child_id);
@@ -1508,7 +1545,9 @@ fn do_insert_adjacent(
             // If parent is a Document node, throw HierarchyRequestError
             if matches!(tree.borrow().get_node(parent_id).data, NodeData::Document) {
                 return Err(JsNativeError::typ()
-                    .with_message("HierarchyRequestError: Cannot insert after the document element's parent is a Document")
+                    .with_message(
+                        "HierarchyRequestError: Cannot insert after the document element's parent is a Document",
+                    )
                     .into());
             }
             tree.borrow_mut().insert_after(this_id, child_id);
@@ -1664,7 +1703,8 @@ pub(crate) fn document_prepend(this: &JsValue, args: &[JsValue], ctx: &mut Conte
     let original_first_child = tree.borrow().first_child(doc_id);
     for nid in node_ids {
         validate_pre_insert(&tree.borrow(), doc_id, nid, original_first_child, None)?;
-        let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, original_first_child);
+        let (added_ids, removal_info, prev_sib, next_sib) =
+            capture_insert_state(&tree, doc_id, nid, original_first_child);
         do_insert(&tree, doc_id, nid, original_first_child);
         fire_insert_records(ctx, &tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }
@@ -1688,9 +1728,7 @@ pub(crate) fn document_replace_children(this: &JsValue, args: &[JsValue], ctx: &
     let removed_children: Vec<NodeId> = tree.borrow().get_node(doc_id).children.clone();
     tree.borrow_mut().clear_children(doc_id);
     if !removed_children.is_empty() {
-        super::mutation_observer::queue_childlist_mutation(
-            ctx, &tree, doc_id, vec![], removed_children, None, None,
-        );
+        super::mutation_observer::queue_childlist_mutation(ctx, &tree, doc_id, vec![], removed_children, None, None);
     }
     for nid in node_ids {
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, None);
@@ -1699,7 +1737,6 @@ pub(crate) fn document_replace_children(this: &JsValue, args: &[JsValue], ctx: &
     }
     Ok(JsValue::undefined())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1745,13 +1782,16 @@ mod tests {
     fn insert_before_inserts_before_reference_node() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"
+        rt.eval(
+            r#"
             var parent = document.getElementById("parent");
             var b = document.getElementById("b");
             var newNode = document.createElement("p");
             newNode.setAttribute("id", "new");
             parent.insertBefore(newNode, b);
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let t = tree.borrow();
         let parent_id = t.get_element_by_id("parent").unwrap();
         let children = &t.get_node(parent_id).children;
@@ -1767,12 +1807,15 @@ mod tests {
     fn insert_before_with_null_reference_appends() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"
+        rt.eval(
+            r#"
             var parent = document.getElementById("parent");
             var newNode = document.createElement("p");
             newNode.setAttribute("id", "new");
             parent.insertBefore(newNode, null);
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let t = tree.borrow();
         let parent_id = t.get_element_by_id("parent").unwrap();
         let children = &t.get_node(parent_id).children;
@@ -1785,12 +1828,15 @@ mod tests {
     fn insert_before_detaches_from_old_parent() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"
+        rt.eval(
+            r#"
             var parent = document.getElementById("parent");
             var a = document.getElementById("a");
             var c = document.getElementById("c");
             parent.insertBefore(a, c);
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let t = tree.borrow();
         let parent_id = t.get_element_by_id("parent").unwrap();
         let children = &t.get_node(parent_id).children;
@@ -1805,13 +1851,16 @@ mod tests {
     fn replace_child_swaps_nodes_correctly() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"
+        rt.eval(
+            r#"
             var parent = document.getElementById("parent");
             var b = document.getElementById("b");
             var newNode = document.createElement("p");
             newNode.setAttribute("id", "new");
             parent.replaceChild(newNode, b);
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let t = tree.borrow();
         let parent_id = t.get_element_by_id("parent").unwrap();
         let children = &t.get_node(parent_id).children;
@@ -1828,12 +1877,15 @@ mod tests {
     fn replace_child_detaches_new_child() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"
+        rt.eval(
+            r#"
             var parent = document.getElementById("parent");
             var a = document.getElementById("a");
             var b = document.getElementById("b");
             parent.replaceChild(a, b);
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let t = tree.borrow();
         let parent_id = t.get_element_by_id("parent").unwrap();
         let children = &t.get_node(parent_id).children;
@@ -1847,12 +1899,16 @@ mod tests {
     fn remove_child_removes_and_returns() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var parent = document.getElementById("parent");
             var b = document.getElementById("b");
             var removed = parent.removeChild(b);
             removed.getAttribute("id");
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let id_str = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(id_str, "b");
         let t = tree.borrow();
@@ -1866,11 +1922,15 @@ mod tests {
     fn remove_child_on_non_child_returns_error() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var body = document.body;
             var a = document.getElementById("a");
             try { body.removeChild(a); "no error"; } catch(e) { "error"; }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "error");
     }
@@ -1879,11 +1939,15 @@ mod tests {
     fn clone_node_shallow_copy() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var parent = document.getElementById("parent");
             var clone = parent.cloneNode(false);
             clone.hasChildNodes();
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         assert!(!result.to_boolean());
     }
 
@@ -1891,11 +1955,15 @@ mod tests {
     fn clone_node_deep_copy_with_children() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var parent = document.getElementById("parent");
             var clone = parent.cloneNode(true);
             clone.childNodes.length;
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let length = result.to_i32(&mut rt.context).unwrap();
         assert_eq!(length, 3);
     }
@@ -1904,11 +1972,15 @@ mod tests {
     fn clone_node_preserves_attributes() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var parent = document.getElementById("parent");
             var clone = parent.cloneNode(false);
             clone.getAttribute("id");
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "parent");
     }
@@ -1917,11 +1989,15 @@ mod tests {
     fn clone_node_has_no_parent() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var parent = document.getElementById("parent");
             var clone = parent.cloneNode(true);
             clone.parentNode === null;
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         assert!(result.to_boolean());
     }
 
@@ -1929,14 +2005,18 @@ mod tests {
     fn insert_before_returns_new_node() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var parent = document.getElementById("parent");
             var b = document.getElementById("b");
             var newNode = document.createElement("p");
             newNode.setAttribute("id", "new");
             var returned = parent.insertBefore(newNode, b);
             returned.getAttribute("id");
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "new");
     }
@@ -1945,13 +2025,17 @@ mod tests {
     fn replace_child_returns_old_child() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var parent = document.getElementById("parent");
             var b = document.getElementById("b");
             var newNode = document.createElement("p");
             var returned = parent.replaceChild(newNode, b);
             returned.getAttribute("id");
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "b");
     }
@@ -1960,7 +2044,9 @@ mod tests {
     fn doctype_into_element_throws() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var doc = document.implementation.createHTMLDocument("title");
             var doctype = doc.childNodes[0];
             var el = doc.createElement("a");
@@ -1972,7 +2058,9 @@ mod tests {
                 results.push("error: " + e.message);
             }
             results.join(" | ");
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert!(s.contains("error:"), "Expected error but got: {}", s);
     }
@@ -1981,16 +2069,24 @@ mod tests {
     fn text_node_append_child_throws_hierarchy_request_error() {
         let tree = make_mutation_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             var text = document.createTextNode("foo");
             var result = 'no error';
             try { text.appendChild(document.createElement("div")); } catch(e) {
                 result = 'error: ' + e.message;
             }
             result;
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let s = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
-        assert!(s.contains("HierarchyRequestError") || s.contains("error:"), "Expected error but got: {}", s);
+        assert!(
+            s.contains("HierarchyRequestError") || s.contains("error:"),
+            "Expected error but got: {}",
+            s
+        );
     }
 
     #[test]
@@ -2070,5 +2166,4 @@ window.__debug = debug_log.join("\n");
         eprintln!("{}", debug);
         assert!(!debug.contains("FAIL"), "Element-remove harness test:\n{}", debug);
     }
-
 }

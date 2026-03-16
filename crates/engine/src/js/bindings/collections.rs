@@ -269,10 +269,7 @@ pub(crate) fn register_collections(context: &mut Context) {
 
     realm_state::set_nl_proxy_factory(
         context,
-        nl_factory
-            .as_object()
-            .expect("NL factory should be an object")
-            .clone(),
+        nl_factory.as_object().expect("NL factory should be an object").clone(),
     );
 
     let hc_factory = context
@@ -375,19 +372,14 @@ pub(crate) fn register_collections(context: &mut Context) {
 
     realm_state::set_hc_proxy_factory(
         context,
-        hc_factory
-            .as_object()
-            .expect("HC factory should be an object")
-            .clone(),
+        hc_factory.as_object().expect("HC factory should be an object").clone(),
     );
 }
 
 fn make_illegal_constructor(context: &mut Context, name: &str) -> JsObject {
     let ctor = unsafe {
         NativeFunction::from_closure(|_this, _args, _ctx| {
-            Err(JsError::from_opaque(JsValue::from(js_string!(
-                "Illegal constructor"
-            ))))
+            Err(JsError::from_opaque(JsValue::from(js_string!("Illegal constructor"))))
         })
     };
     FunctionObjectBuilder::new(context.realm(), ctor)
@@ -426,11 +418,7 @@ pub(crate) fn create_live_nodelist(
     let tree_for_item = tree.clone();
     let item_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
 
             if index < 0 {
                 return Ok(JsValue::null());
@@ -475,11 +463,7 @@ pub(crate) fn create_live_nodelist(
     let tree_for_get = tree.clone();
     let get_child_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
 
             if index < 0 {
                 return Ok(JsValue::undefined());
@@ -500,8 +484,7 @@ pub(crate) fn create_live_nodelist(
     };
 
     // Call the pre-built factory function: factory(backing, getLength, getChild)
-    let factory = realm_state::nl_proxy_factory(context)
-        .expect("NodeList proxy factory not initialized");
+    let factory = realm_state::nl_proxy_factory(context).expect("NodeList proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);
@@ -572,11 +555,7 @@ pub(crate) fn create_static_nodelist(
     let node_ids_for_item = node_ids.clone();
     let item_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
 
             if index < 0 {
                 return Ok(JsValue::null());
@@ -584,8 +563,7 @@ pub(crate) fn create_static_nodelist(
 
             match node_ids_for_item.get(index as usize) {
                 Some(&node_id) => {
-                    let js_obj =
-                        get_or_create_js_element(node_id, tree_for_item.clone(), ctx)?;
+                    let js_obj = get_or_create_js_element(node_id, tree_for_item.clone(), ctx)?;
                     Ok(js_obj.into())
                 }
                 None => Ok(JsValue::null()),
@@ -635,11 +613,7 @@ pub(crate) fn create_live_htmlcollection(
     let tree_for_item = tree.clone();
     let item_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
 
             if index < 0 {
                 return Ok(JsValue::null());
@@ -685,10 +659,19 @@ pub(crate) fn create_live_htmlcollection(
 
             for &child_id in &element_children {
                 let node = tree_ref.get_node(child_id);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
 
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.as_str())
+                    {
                         if id_val == name {
                             let tree_clone = tree_for_named.clone();
                             drop(tree_ref);
@@ -697,7 +680,11 @@ pub(crate) fn create_live_htmlcollection(
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.as_str())
+                        {
                             if name_val == name {
                                 let tree_clone = tree_for_named.clone();
                                 drop(tree_ref);
@@ -738,11 +725,7 @@ pub(crate) fn create_live_htmlcollection(
     let tree_for_get = tree.clone();
     let get_child_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
 
             if index < 0 {
                 return Ok(JsValue::undefined());
@@ -778,10 +761,19 @@ pub(crate) fn create_live_htmlcollection(
 
             for &child_id in &element_children {
                 let node = tree_ref.get_node(child_id);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
 
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.as_str())
+                    {
                         if id_val == name {
                             let tree_clone = tree_for_named2.clone();
                             drop(tree_ref);
@@ -790,7 +782,11 @@ pub(crate) fn create_live_htmlcollection(
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.as_str())
+                        {
                             if name_val == name {
                                 let tree_clone = tree_for_named2.clone();
                                 drop(tree_ref);
@@ -815,16 +811,29 @@ pub(crate) fn create_live_htmlcollection(
 
             for &child_id in &element_children {
                 let node = tree_ref.get_node(child_id);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
 
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.clone()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.clone())
+                    {
                         if !id_val.is_empty() && !names.contains(&id_val) {
                             names.push(id_val);
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.clone()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.clone())
+                        {
                             if !name_val.is_empty() && !names.contains(&name_val) {
                                 names.push(name_val);
                             }
@@ -837,8 +846,7 @@ pub(crate) fn create_live_htmlcollection(
     };
 
     // Call the pre-built factory function: factory(backing, getLength, getChild, getNamed, getNamedKeys)
-    let factory = realm_state::hc_proxy_factory(context)
-        .expect("HTMLCollection proxy factory not initialized");
+    let factory = realm_state::hc_proxy_factory(context).expect("HTMLCollection proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);
@@ -919,10 +927,7 @@ pub(crate) fn create_live_htmlcollection_by_class(
 ) -> JsResult<JsObject> {
     // Per spec, split the argument on ASCII whitespace to get list of class names.
     // If empty or all whitespace, return empty collection.
-    let class_names: Vec<String> = class_arg
-        .split_ascii_whitespace()
-        .map(|s| s.to_string())
-        .collect();
+    let class_names: Vec<String> = class_arg.split_ascii_whitespace().map(|s| s.to_string()).collect();
 
     let backing = ObjectInitializer::new(context).build();
 
@@ -938,11 +943,7 @@ pub(crate) fn create_live_htmlcollection_by_class(
     let tree_for_item = tree.clone();
     let item_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
             if index < 0 {
                 return Ok(JsValue::null());
             }
@@ -985,9 +986,18 @@ pub(crate) fn create_live_htmlcollection_by_class(
             let matches = collect_descendants_by_class(&tree_ref, root_id, &class_names_named);
             for &nid in &matches {
                 let node = tree_ref.get_node(nid);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.as_str())
+                    {
                         if id_val == name {
                             let tc = tree_for_named.clone();
                             drop(tree_ref);
@@ -995,7 +1005,11 @@ pub(crate) fn create_live_htmlcollection_by_class(
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.as_str())
+                        {
                             if name_val == name {
                                 let tc = tree_for_named.clone();
                                 drop(tree_ref);
@@ -1035,11 +1049,7 @@ pub(crate) fn create_live_htmlcollection_by_class(
     let tree_for_get = tree.clone();
     let get_child_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
             if index < 0 {
                 return Ok(JsValue::undefined());
             }
@@ -1071,9 +1081,18 @@ pub(crate) fn create_live_htmlcollection_by_class(
             let matches = collect_descendants_by_class(&tree_ref, root_id, &class_names_named2);
             for &nid in &matches {
                 let node = tree_ref.get_node(nid);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.as_str())
+                    {
                         if id_val == name {
                             let tc = tree_for_named2.clone();
                             drop(tree_ref);
@@ -1081,7 +1100,11 @@ pub(crate) fn create_live_htmlcollection_by_class(
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.as_str())
+                        {
                             if name_val == name {
                                 let tc = tree_for_named2.clone();
                                 drop(tree_ref);
@@ -1105,15 +1128,28 @@ pub(crate) fn create_live_htmlcollection_by_class(
             let mut names = Vec::new();
             for &nid in &matches {
                 let node = tree_ref.get_node(nid);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.clone()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.clone())
+                    {
                         if !id_val.is_empty() && !names.contains(&id_val) {
                             names.push(id_val);
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.clone()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.clone())
+                        {
                             if !name_val.is_empty() && !names.contains(&name_val) {
                                 names.push(name_val);
                             }
@@ -1126,8 +1162,7 @@ pub(crate) fn create_live_htmlcollection_by_class(
     };
 
     // Call factory
-    let factory = realm_state::hc_proxy_factory(context)
-        .expect("HTMLCollection proxy factory not initialized");
+    let factory = realm_state::hc_proxy_factory(context).expect("HTMLCollection proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);
@@ -1235,11 +1270,7 @@ pub(crate) fn create_live_htmlcollection_by_tag(
     let tree_for_item = tree.clone();
     let item_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
             if index < 0 {
                 return Ok(JsValue::null());
             }
@@ -1281,9 +1312,18 @@ pub(crate) fn create_live_htmlcollection_by_tag(
             let matches = collect_descendants_by_tag(&tree_ref, root_id, &tag_named);
             for &nid in &matches {
                 let node = tree_ref.get_node(nid);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.as_str())
+                    {
                         if id_val == name {
                             let tc = tree_for_named.clone();
                             drop(tree_ref);
@@ -1291,7 +1331,11 @@ pub(crate) fn create_live_htmlcollection_by_tag(
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.as_str())
+                        {
                             if name_val == name {
                                 let tc = tree_for_named.clone();
                                 drop(tree_ref);
@@ -1331,11 +1375,7 @@ pub(crate) fn create_live_htmlcollection_by_tag(
     let tree_for_get = tree.clone();
     let get_child_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
             if index < 0 {
                 return Ok(JsValue::undefined());
             }
@@ -1367,9 +1407,18 @@ pub(crate) fn create_live_htmlcollection_by_tag(
             let matches = collect_descendants_by_tag(&tree_ref, root_id, &tag_named2);
             for &nid in &matches {
                 let node = tree_ref.get_node(nid);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.as_str())
+                    {
                         if id_val == name {
                             let tc = tree_for_named2.clone();
                             drop(tree_ref);
@@ -1377,7 +1426,11 @@ pub(crate) fn create_live_htmlcollection_by_tag(
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.as_str())
+                        {
                             if name_val == name {
                                 let tc = tree_for_named2.clone();
                                 drop(tree_ref);
@@ -1401,15 +1454,28 @@ pub(crate) fn create_live_htmlcollection_by_tag(
             let mut names = Vec::new();
             for &nid in &matches {
                 let node = tree_ref.get_node(nid);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.clone()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.clone())
+                    {
                         if !id_val.is_empty() && !names.contains(&id_val) {
                             names.push(id_val);
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.clone()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.clone())
+                        {
                             if !name_val.is_empty() && !names.contains(&name_val) {
                                 names.push(name_val);
                             }
@@ -1422,8 +1488,7 @@ pub(crate) fn create_live_htmlcollection_by_tag(
     };
 
     // Call factory
-    let factory = realm_state::hc_proxy_factory(context)
-        .expect("HTMLCollection proxy factory not initialized");
+    let factory = realm_state::hc_proxy_factory(context).expect("HTMLCollection proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);
@@ -1457,12 +1522,7 @@ pub(crate) fn create_live_htmlcollection_by_tag(
 /// Collect all descendant elements (not `root` itself) that match the given namespace and local name.
 /// `"*"` as namespace matches any namespace; `"*"` as local_name matches any local name.
 /// An empty string namespace matches elements with null/empty namespace.
-fn collect_descendants_by_tag_ns(
-    tree: &DomTree,
-    root: NodeId,
-    namespace: &str,
-    local_name: &str,
-) -> Vec<NodeId> {
+fn collect_descendants_by_tag_ns(tree: &DomTree, root: NodeId, namespace: &str, local_name: &str) -> Vec<NodeId> {
     let mut results = Vec::new();
     collect_descendants_by_tag_ns_recursive(tree, root, namespace, local_name, &mut results, true);
     results
@@ -1528,11 +1588,7 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
     let tree_for_item = tree.clone();
     let item_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
             if index < 0 {
                 return Ok(JsValue::null());
             }
@@ -1575,9 +1631,18 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
             let matches = collect_descendants_by_tag_ns(&tree_ref, root_id, &ns_named, &ln_named);
             for &nid in &matches {
                 let node = tree_ref.get_node(nid);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.as_str())
+                    {
                         if id_val == name {
                             let tc = tree_for_named.clone();
                             drop(tree_ref);
@@ -1585,7 +1650,11 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.as_str())
+                        {
                             if name_val == name {
                                 let tc = tree_for_named.clone();
                                 drop(tree_ref);
@@ -1627,11 +1696,7 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
     let tree_for_get = tree.clone();
     let get_child_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let index = args
-                .first()
-                .map(|v| v.to_number(ctx))
-                .transpose()?
-                .unwrap_or(0.0) as i64;
+            let index = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i64;
             if index < 0 {
                 return Ok(JsValue::undefined());
             }
@@ -1664,9 +1729,18 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
             let matches = collect_descendants_by_tag_ns(&tree_ref, root_id, &ns_named2, &ln_named2);
             for &nid in &matches {
                 let node = tree_ref.get_node(nid);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.as_str()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.as_str())
+                    {
                         if id_val == name {
                             let tc = tree_for_named2.clone();
                             drop(tree_ref);
@@ -1674,7 +1748,11 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.as_str()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.as_str())
+                        {
                             if name_val == name {
                                 let tc = tree_for_named2.clone();
                                 drop(tree_ref);
@@ -1699,15 +1777,28 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
             let mut names = Vec::new();
             for &nid in &matches {
                 let node = tree_ref.get_node(nid);
-                if let NodeData::Element { ref attributes, ref namespace, .. } = node.data {
+                if let NodeData::Element {
+                    ref attributes,
+                    ref namespace,
+                    ..
+                } = node.data
+                {
                     let is_html = namespace == "http://www.w3.org/1999/xhtml";
-                    if let Some(id_val) = attributes.iter().find(|a| a.local_name == "id").map(|a| a.value.clone()) {
+                    if let Some(id_val) = attributes
+                        .iter()
+                        .find(|a| a.local_name == "id")
+                        .map(|a| a.value.clone())
+                    {
                         if !id_val.is_empty() && !names.contains(&id_val) {
                             names.push(id_val);
                         }
                     }
                     if is_html {
-                        if let Some(name_val) = attributes.iter().find(|a| a.local_name == "name").map(|a| a.value.clone()) {
+                        if let Some(name_val) = attributes
+                            .iter()
+                            .find(|a| a.local_name == "name")
+                            .map(|a| a.value.clone())
+                        {
                             if !name_val.is_empty() && !names.contains(&name_val) {
                                 names.push(name_val);
                             }
@@ -1720,8 +1811,7 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
     };
 
     // Call factory
-    let factory = realm_state::hc_proxy_factory(context)
-        .expect("HTMLCollection proxy factory not initialized");
+    let factory = realm_state::hc_proxy_factory(context).expect("HTMLCollection proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);
@@ -1759,14 +1849,18 @@ mod tests {
     fn wpt_iterator_in_complex_scope() {
         let mut engine = Engine::new();
 
-        engine.load_html(r#"<!DOCTYPE html>
+        engine.load_html(
+            r#"<!DOCTYPE html>
 <meta charset=utf-8>
 <title>Debug</title>
 <div id="test"><span>1</span><span>2</span></div>
-"#);
+"#,
+        );
 
         // Run the full iterator test inside a try/catch (like the WPT harness does)
-        let result = engine.eval_js(r#"
+        let result = engine
+            .eval_js(
+                r#"
 (function() {
     var result = { status: 0, message: "" };
     try {
@@ -1827,7 +1921,9 @@ mod tests {
     }
     return JSON.stringify(result);
 })()
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         eprintln!("Result: {}", result);
         assert!(result.contains("\"status\":0"), "Test failed: {}", result);
@@ -1836,9 +1932,13 @@ mod tests {
     #[test]
     fn htmlcollection_children_named_props() {
         let mut engine = Engine::new();
-        engine.load_html(r#"<!DOCTYPE html>
-<div id="test"><img><img id=foo><img id=foo><img name="bar"></div>"#);
-        let result = engine.eval_js(r#"
+        engine.load_html(
+            r#"<!DOCTYPE html>
+<div id="test"><img><img id=foo><img id=foo><img name="bar"></div>"#,
+        );
+        let result = engine
+            .eval_js(
+                r#"
 (function() {
     var container = document.getElementById("test");
     var child = document.createElementNS("", "img");
@@ -1876,7 +1976,9 @@ mod tests {
 
     return errors.length === 0 ? "ok" : errors.join("; ");
 })()
-"#).unwrap();
+"#,
+            )
+            .unwrap();
         assert_eq!(result, "ok", "HTMLCollection test failed: {}", result);
     }
 }

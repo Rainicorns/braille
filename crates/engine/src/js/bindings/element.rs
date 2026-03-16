@@ -32,43 +32,80 @@ fn cross_tree_is_equal_node(tree_a: &DomTree, a: NodeId, tree_b: &DomTree, b: No
 
     match (&node_a.data, &node_b.data) {
         (
-            NodeData::Element { tag_name: t1, attributes: a1, namespace: ns1 },
-            NodeData::Element { tag_name: t2, attributes: a2, namespace: ns2 },
+            NodeData::Element {
+                tag_name: t1,
+                attributes: a1,
+                namespace: ns1,
+            },
+            NodeData::Element {
+                tag_name: t2,
+                attributes: a2,
+                namespace: ns2,
+            },
         ) => {
             if t1 != t2 || ns1 != ns2 || a1.len() != a2.len() {
                 return false;
             }
             for attr in a1 {
-                if !a2.iter().any(|a| a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value) {
+                if !a2
+                    .iter()
+                    .any(|a| a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value)
+                {
                     return false;
                 }
             }
         }
         (
-            NodeData::Doctype { name: n1, public_id: p1, system_id: s1 },
-            NodeData::Doctype { name: n2, public_id: p2, system_id: s2 },
+            NodeData::Doctype {
+                name: n1,
+                public_id: p1,
+                system_id: s1,
+            },
+            NodeData::Doctype {
+                name: n2,
+                public_id: p2,
+                system_id: s2,
+            },
         ) => {
             if n1 != n2 || p1 != p2 || s1 != s2 {
                 return false;
             }
         }
         (NodeData::Text { content: c1 }, NodeData::Text { content: c2 }) => {
-            if c1 != c2 { return false; }
+            if c1 != c2 {
+                return false;
+            }
         }
         (NodeData::Comment { content: c1 }, NodeData::Comment { content: c2 }) => {
-            if c1 != c2 { return false; }
+            if c1 != c2 {
+                return false;
+            }
         }
         (
             NodeData::ProcessingInstruction { target: t1, data: d1 },
             NodeData::ProcessingInstruction { target: t2, data: d2 },
         ) => {
-            if t1 != t2 || d1 != d2 { return false; }
+            if t1 != t2 || d1 != d2 {
+                return false;
+            }
         }
         (
-            NodeData::Attr { local_name: ln1, namespace: ns1, prefix: p1, value: v1 },
-            NodeData::Attr { local_name: ln2, namespace: ns2, prefix: p2, value: v2 },
+            NodeData::Attr {
+                local_name: ln1,
+                namespace: ns1,
+                prefix: p1,
+                value: v1,
+            },
+            NodeData::Attr {
+                local_name: ln2,
+                namespace: ns2,
+                prefix: p2,
+                value: v2,
+            },
         ) => {
-            if ln1 != ln2 || ns1 != ns2 || p1 != p2 || v1 != v2 { return false; }
+            if ln1 != ln2 || ns1 != ns2 || p1 != p2 || v1 != v2 {
+                return false;
+            }
         }
         (NodeData::Document, NodeData::Document) => {}
         (NodeData::DocumentFragment, NodeData::DocumentFragment) => {}
@@ -109,11 +146,7 @@ pub(crate) type NodeCache = HashMap<(usize, NodeId), JsObject>;
 
 /// Lazily creates (or retrieves) the content document for an `<iframe>` element.
 /// Returns the JsObject representing the iframe's content document.
-pub(crate) fn ensure_iframe_content_doc(
-    tree_ptr: usize,
-    node_id: NodeId,
-    ctx: &mut Context,
-) -> JsResult<JsObject> {
+pub(crate) fn ensure_iframe_content_doc(tree_ptr: usize, node_id: NodeId, ctx: &mut Context) -> JsResult<JsObject> {
     // Check if we already have a content doc for this iframe
     let existing = {
         let docs = realm_state::iframe_content_docs(ctx);
@@ -133,7 +166,10 @@ pub(crate) fn ensure_iframe_content_doc(
         let t = dom_tree.borrow();
         let node = t.get_node(node_id);
         if let NodeData::Element { attributes, .. } = &node.data {
-            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+            let src = attributes
+                .iter()
+                .find(|a| a.local_name == "src")
+                .map(|a| a.value.clone());
             match src {
                 Some(src_val) => {
                     let src_no_fragment = src_val.split('#').next().unwrap_or(&src_val).to_string();
@@ -243,12 +279,22 @@ pub(crate) fn get_or_create_js_element(
     enum NodeKind {
         Text,
         Comment,
-        ProcessingInstruction { target: String },
-        Attr { local_name: String, namespace: String, prefix: String },
+        ProcessingInstruction {
+            target: String,
+        },
+        Attr {
+            local_name: String,
+            namespace: String,
+            prefix: String,
+        },
         HtmlElement(String), // lowercase tag name
         NonHtmlElement,
         DocumentFragment,
-        Doctype { name: String, public_id: String, system_id: String },
+        Doctype {
+            name: String,
+            public_id: String,
+            system_id: String,
+        },
         Document,
     }
 
@@ -258,7 +304,9 @@ pub(crate) fn get_or_create_js_element(
         match &node.data {
             NodeData::Text { .. } => NodeKind::Text,
             NodeData::Comment { .. } => NodeKind::Comment,
-            NodeData::Element { tag_name, namespace, .. } => {
+            NodeData::Element {
+                tag_name, namespace, ..
+            } => {
                 if namespace == "http://www.w3.org/1999/xhtml" {
                     // Extract local name (after colon if present)
                     // Preserve original case — createElement and parser already lowercase,
@@ -274,13 +322,24 @@ pub(crate) fn get_or_create_js_element(
                 }
             }
             NodeData::DocumentFragment => NodeKind::DocumentFragment,
-            NodeData::Doctype { name, public_id, system_id } => NodeKind::Doctype {
+            NodeData::Doctype {
+                name,
+                public_id,
+                system_id,
+            } => NodeKind::Doctype {
                 name: name.clone(),
                 public_id: public_id.clone(),
                 system_id: system_id.clone(),
             },
-            NodeData::ProcessingInstruction { target, .. } => NodeKind::ProcessingInstruction { target: target.clone() },
-            NodeData::Attr { local_name, namespace, prefix, .. } => NodeKind::Attr {
+            NodeData::ProcessingInstruction { target, .. } => {
+                NodeKind::ProcessingInstruction { target: target.clone() }
+            }
+            NodeData::Attr {
+                local_name,
+                namespace,
+                prefix,
+                ..
+            } => NodeKind::Attr {
                 local_name: local_name.clone(),
                 namespace: namespace.clone(),
                 prefix: prefix.clone(),
@@ -364,7 +423,12 @@ pub(crate) fn get_or_create_js_element(
     }
 
     // Set own properties for Attr nodes (name, value, namespaceURI, prefix, localName, ownerElement, specified)
-    if let NodeKind::Attr { local_name, namespace, prefix } = &node_kind {
+    if let NodeKind::Attr {
+        local_name,
+        namespace,
+        prefix,
+    } = &node_kind
+    {
         // name = qualified name (prefix:localName or just localName)
         let qualified_name = if prefix.is_empty() {
             local_name.clone()
@@ -406,7 +470,9 @@ pub(crate) fn get_or_create_js_element(
                     .transpose()?
                     .map(|s| s.to_std_string_escaped())
                     .unwrap_or_default();
-                if let NodeData::Attr { ref mut value, .. } = tree_for_setter.borrow_mut().get_node_mut(nid_for_setter).data {
+                if let NodeData::Attr { ref mut value, .. } =
+                    tree_for_setter.borrow_mut().get_node_mut(nid_for_setter).data
+                {
                     *value = new_val;
                 }
                 Ok(JsValue::undefined())
@@ -496,7 +562,12 @@ pub(crate) fn get_or_create_js_element(
     }
 
     // Set own properties for Doctype nodes (name, publicId, systemId)
-    if let NodeKind::Doctype { name, public_id, system_id } = &node_kind {
+    if let NodeKind::Doctype {
+        name,
+        public_id,
+        system_id,
+    } = &node_kind
+    {
         js_obj.define_property_or_throw(
             js_string!("name"),
             PropertyDescriptor::builder()
@@ -641,7 +712,11 @@ pub(crate) fn get_or_create_js_element(
                         .map(|s| s.to_std_string_escaped())
                         .unwrap_or_default();
                     super::mutation_observer::set_attribute_with_observer(
-                        ctx2, &tree_for_src_set, nid_for_src_set, "src", &value,
+                        ctx2,
+                        &tree_for_src_set,
+                        nid_for_src_set,
+                        "src",
+                        &value,
                     );
                     Ok(JsValue::undefined())
                 })
@@ -704,13 +779,11 @@ pub(crate) fn get_or_create_js_element(
             let t = tree.borrow();
             let node = t.get_node(node_id);
             match &node.data {
-                NodeData::Element { attributes, .. } => {
-                    attributes
-                        .iter()
-                        .filter(|a| a.local_name.starts_with("on") && a.local_name.len() > 2)
-                        .map(|a| (a.local_name[2..].to_string(), a.value.clone()))
-                        .collect()
-                }
+                NodeData::Element { attributes, .. } => attributes
+                    .iter()
+                    .filter(|a| a.local_name.starts_with("on") && a.local_name.len() > 2)
+                    .map(|a| (a.local_name[2..].to_string(), a.value.clone()))
+                    .collect(),
                 _ => Vec::new(),
             }
         };
@@ -735,25 +808,128 @@ pub(crate) fn get_or_create_js_element(
 fn is_known_html_element(tag: &str) -> bool {
     matches!(
         tag,
-        "a" | "abbr" | "acronym" | "address" | "area" | "article" | "aside"
-        | "audio" | "b" | "base" | "bdi" | "bdo" | "bgsound" | "big"
-        | "blockquote" | "body" | "br" | "button" | "canvas" | "caption"
-        | "center" | "cite" | "code" | "col" | "colgroup" | "data"
-        | "datalist" | "dd" | "del" | "details" | "dfn" | "dialog" | "dir"
-        | "div" | "dl" | "dt" | "embed" | "em" | "fieldset" | "figcaption"
-        | "figure" | "font" | "footer" | "form" | "frame" | "frameset"
-        | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "head" | "header"
-        | "hgroup" | "hr" | "html" | "i" | "iframe" | "img" | "input"
-        | "ins" | "isindex" | "kbd" | "label" | "legend" | "li" | "link"
-        | "main" | "map" | "mark" | "marquee" | "meta" | "meter" | "nav"
-        | "nobr" | "noframes" | "noscript" | "object" | "ol" | "optgroup"
-        | "option" | "output" | "p" | "param" | "pre" | "progress" | "q"
-        | "rp" | "rt" | "ruby" | "s" | "samp" | "script" | "section"
-        | "select" | "small" | "source" | "spacer" | "span" | "strike"
-        | "style" | "sub" | "summary" | "sup" | "table" | "tbody" | "td"
-        | "template" | "textarea" | "tfoot" | "th" | "thead" | "time"
-        | "title" | "tr" | "track" | "tt" | "u" | "ul" | "var" | "video"
-        | "wbr"
+        "a" | "abbr"
+            | "acronym"
+            | "address"
+            | "area"
+            | "article"
+            | "aside"
+            | "audio"
+            | "b"
+            | "base"
+            | "bdi"
+            | "bdo"
+            | "bgsound"
+            | "big"
+            | "blockquote"
+            | "body"
+            | "br"
+            | "button"
+            | "canvas"
+            | "caption"
+            | "center"
+            | "cite"
+            | "code"
+            | "col"
+            | "colgroup"
+            | "data"
+            | "datalist"
+            | "dd"
+            | "del"
+            | "details"
+            | "dfn"
+            | "dialog"
+            | "dir"
+            | "div"
+            | "dl"
+            | "dt"
+            | "embed"
+            | "em"
+            | "fieldset"
+            | "figcaption"
+            | "figure"
+            | "font"
+            | "footer"
+            | "form"
+            | "frame"
+            | "frameset"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "head"
+            | "header"
+            | "hgroup"
+            | "hr"
+            | "html"
+            | "i"
+            | "iframe"
+            | "img"
+            | "input"
+            | "ins"
+            | "isindex"
+            | "kbd"
+            | "label"
+            | "legend"
+            | "li"
+            | "link"
+            | "main"
+            | "map"
+            | "mark"
+            | "marquee"
+            | "meta"
+            | "meter"
+            | "nav"
+            | "nobr"
+            | "noframes"
+            | "noscript"
+            | "object"
+            | "ol"
+            | "optgroup"
+            | "option"
+            | "output"
+            | "p"
+            | "param"
+            | "pre"
+            | "progress"
+            | "q"
+            | "rp"
+            | "rt"
+            | "ruby"
+            | "s"
+            | "samp"
+            | "script"
+            | "section"
+            | "select"
+            | "small"
+            | "source"
+            | "spacer"
+            | "span"
+            | "strike"
+            | "style"
+            | "sub"
+            | "summary"
+            | "sup"
+            | "table"
+            | "tbody"
+            | "td"
+            | "template"
+            | "textarea"
+            | "tfoot"
+            | "th"
+            | "thead"
+            | "time"
+            | "title"
+            | "tr"
+            | "track"
+            | "tt"
+            | "u"
+            | "ul"
+            | "var"
+            | "video"
+            | "wbr"
     )
 }
 
@@ -789,7 +965,9 @@ impl JsElement {
             .first()
             .ok_or_else(|| JsNativeError::typ().with_message("appendChild: 1 argument required"))?;
         if child_arg.is_null() || child_arg.is_undefined() {
-            return Err(JsNativeError::typ().with_message("appendChild: argument 1 is not a Node").into());
+            return Err(JsNativeError::typ()
+                .with_message("appendChild: argument 1 is not a Node")
+                .into());
         }
         let child_obj = child_arg
             .as_object()
@@ -847,7 +1025,10 @@ impl JsElement {
         let tree = el.tree.borrow();
         let node = tree.get_node(el.node_id);
         // Per DOM spec: Document and Doctype nodes return null for textContent
-        if matches!(node.data, crate::dom::NodeData::Document | crate::dom::NodeData::Doctype { .. }) {
+        if matches!(
+            node.data,
+            crate::dom::NodeData::Document | crate::dom::NodeData::Doctype { .. }
+        ) {
             return Ok(JsValue::null());
         }
         let text = tree.get_text_content(el.node_id);
@@ -871,7 +1052,10 @@ impl JsElement {
         {
             let tree = el.tree.borrow();
             let node = tree.get_node(el.node_id);
-            if matches!(node.data, crate::dom::NodeData::Document | crate::dom::NodeData::Doctype { .. }) {
+            if matches!(
+                node.data,
+                crate::dom::NodeData::Document | crate::dom::NodeData::Doctype { .. }
+            ) {
                 return Ok(JsValue::undefined());
             }
         }
@@ -889,12 +1073,19 @@ impl JsElement {
                 } else {
                     val.to_string(ctx)?.to_std_string_escaped()
                 };
-                if let crate::dom::NodeData::Attr { ref mut value, .. } = el.tree.borrow_mut().get_node_mut(el.node_id).data {
+                if let crate::dom::NodeData::Attr { ref mut value, .. } =
+                    el.tree.borrow_mut().get_node_mut(el.node_id).data
+                {
                     *value = data;
                 }
                 return Ok(JsValue::undefined());
             }
-            if matches!(node.data, crate::dom::NodeData::Text { .. } | crate::dom::NodeData::Comment { .. } | crate::dom::NodeData::ProcessingInstruction { .. }) {
+            if matches!(
+                node.data,
+                crate::dom::NodeData::Text { .. }
+                    | crate::dom::NodeData::Comment { .. }
+                    | crate::dom::NodeData::ProcessingInstruction { .. }
+            ) {
                 drop(tree);
                 // null converts to ""
                 let data = if val.is_null() {
@@ -942,7 +1133,13 @@ impl JsElement {
         let added_ids = added_id.map(|id| vec![id]).unwrap_or_default();
         if !removed_children.is_empty() || !added_ids.is_empty() {
             super::mutation_observer::queue_childlist_mutation(
-                ctx, &el.tree, el.node_id, added_ids, removed_children, None, None,
+                ctx,
+                &el.tree,
+                el.node_id,
+                added_ids,
+                removed_children,
+                None,
+                None,
             );
         }
 
@@ -992,12 +1189,7 @@ impl JsElement {
             for i in 0..20 {
                 let key = js_string!(i.to_string());
                 if i < classes.len() {
-                    cached_obj.set(
-                        key,
-                        JsValue::from(js_string!(classes[i].clone())),
-                        false,
-                        ctx,
-                    )?;
+                    cached_obj.set(key, JsValue::from(js_string!(classes[i].clone())), false, ctx)?;
                 } else {
                     // Set beyond-range indices to undefined to effectively clear them
                     cached_obj.set(key, JsValue::undefined(), false, ctx)?;
@@ -1061,9 +1253,7 @@ impl JsElement {
             .map(|s| s.to_std_string_escaped())
             .unwrap_or_default();
 
-        el.tree
-            .borrow_mut()
-            .set_attribute(el.node_id, "class", &value);
+        el.tree.borrow_mut().set_attribute(el.node_id, "class", &value);
         Ok(JsValue::undefined())
     }
 
@@ -1097,7 +1287,13 @@ impl JsElement {
         // Queue MutationObserver record
         if let Some((parent_id, prev_sib, next_sib)) = parent_info {
             super::mutation_observer::queue_childlist_mutation(
-                ctx, &tree, parent_id, vec![], vec![node_id], prev_sib, next_sib,
+                ctx,
+                &tree,
+                parent_id,
+                vec![],
+                vec![node_id],
+                prev_sib,
+                next_sib,
             );
         }
 
@@ -1156,12 +1352,17 @@ impl JsElement {
         let other_val = args
             .first()
             .ok_or_else(|| JsError::from_opaque(js_string!("compareDocumentPosition: missing argument").into()))?;
-        let (other_id, other_tree) = extract_node_id(other_val)
-            .ok_or_else(|| JsError::from_opaque(js_string!("compareDocumentPosition: argument is not a Node").into()))?;
+        let (other_id, other_tree) = extract_node_id(other_val).ok_or_else(|| {
+            JsError::from_opaque(js_string!("compareDocumentPosition: argument is not a Node").into())
+        })?;
 
         // If nodes are in different trees, they're disconnected
         if !Rc::ptr_eq(&tree, &other_tree) {
-            let dir = if (Rc::as_ptr(&other_tree) as usize) < (Rc::as_ptr(&tree) as usize) { 0x02u16 } else { 0x04u16 };
+            let dir = if (Rc::as_ptr(&other_tree) as usize) < (Rc::as_ptr(&tree) as usize) {
+                0x02u16
+            } else {
+                0x04u16
+            };
             return Ok(JsValue::from((0x01 | 0x20 | dir) as i32));
         }
 
@@ -1214,7 +1415,11 @@ impl JsElement {
             None
         } else {
             let s = prefix_arg.to_string(ctx)?.to_std_string_escaped();
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         };
 
         let tree_ref = tree.borrow();
@@ -1263,7 +1468,11 @@ impl JsElement {
             None
         } else {
             let s = ns_arg.to_string(ctx)?.to_std_string_escaped();
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         };
 
         // Get the default namespace (prefix = null)
@@ -1342,11 +1551,9 @@ impl JsElement {
             let entries = map.entry(listener_key).or_default();
 
             // Check for duplicates: same event_type + same callback object (by pointer) + same capture
-            let duplicate = entries.iter().any(|entry| {
-                entry.event_type == event_type
-                    && entry.capture == capture
-                    && entry.callback == callback
-            });
+            let duplicate = entries
+                .iter()
+                .any(|entry| entry.event_type == event_type && entry.capture == capture && entry.callback == callback);
 
             if !duplicate {
                 entries.push(ListenerEntry {
@@ -1404,9 +1611,7 @@ impl JsElement {
             let mut map = listeners.borrow_mut();
             if let Some(entries) = map.get_mut(&listener_key) {
                 entries.retain(|entry| {
-                    !(entry.event_type == event_type
-                        && entry.capture == capture
-                        && entry.callback == callback)
+                    !(entry.event_type == event_type && entry.capture == capture && entry.callback == callback)
                 });
                 // Clean up empty vec
                 if entries.is_empty() {
@@ -1440,19 +1645,17 @@ impl JsElement {
         let event_val = args
             .first()
             .ok_or_else(|| {
-                JsError::from_native(
-                    boa_engine::JsNativeError::typ()
-                        .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present.")
-                )
+                JsError::from_native(boa_engine::JsNativeError::typ().with_message(
+                    "Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present.",
+                ))
             })?
             .clone();
 
         // null/undefined arg -> TypeError
         if event_val.is_null() || event_val.is_undefined() {
-            return Err(JsError::from_native(
-                boa_engine::JsNativeError::typ()
-                    .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
-            ));
+            return Err(JsError::from_native(boa_engine::JsNativeError::typ().with_message(
+                "Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.",
+            )));
         }
 
         let event_obj = event_val
@@ -1568,7 +1771,13 @@ impl JsElement {
             Self::set_event_prop(&event_obj, "currentTarget", window_val.clone(), ctx)?;
 
             let should_stop = invoke_listeners_for_node(
-                (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, true, false, ctx,
+                (usize::MAX, WINDOW_LISTENER_ID),
+                &event_type,
+                &event_obj,
+                &event_val,
+                true,
+                false,
+                ctx,
             )?;
 
             // Invoke on* handler for window (capture doesn't apply to on*, but we check at bubble/at-target)
@@ -1585,7 +1794,13 @@ impl JsElement {
                 Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
 
                 let should_stop = Self::invoke_listeners_for_node(
-                    (tree_scope, node_id), &event_type, &event_obj, &event_val, true, false, ctx,
+                    (tree_scope, node_id),
+                    &event_type,
+                    &event_obj,
+                    &event_val,
+                    true,
+                    false,
+                    ctx,
                 )?;
                 if should_stop {
                     dispatch_stopped = true;
@@ -1601,7 +1816,13 @@ impl JsElement {
 
             // First: capture listeners at target
             let should_stop = Self::invoke_listeners_for_node(
-                (tree_scope, target_node_id), &event_type, &event_obj, &event_val, true, false, ctx,
+                (tree_scope, target_node_id),
+                &event_type,
+                &event_obj,
+                &event_val,
+                true,
+                false,
+                ctx,
             )?;
             if should_stop {
                 dispatch_stopped = true;
@@ -1612,12 +1833,24 @@ impl JsElement {
             // Second: non-capture listeners at target
             set_phase(&event_obj, Some(target_node_id), 2);
             let should_stop = Self::invoke_listeners_for_node(
-                (tree_scope, target_node_id), &event_type, &event_obj, &event_val, false, false, ctx,
+                (tree_scope, target_node_id),
+                &event_type,
+                &event_obj,
+                &event_val,
+                false,
+                false,
+                ctx,
             )?;
 
             // Invoke on* handler at target
             super::on_event::invoke_on_event_handler(
-                tree_scope, target_node_id, &event_type, this, &event_val, &event_obj, ctx,
+                tree_scope,
+                target_node_id,
+                &event_type,
+                this,
+                &event_val,
+                &event_obj,
+                ctx,
             );
 
             if should_stop {
@@ -1632,15 +1865,32 @@ impl JsElement {
 
                 set_phase(&event_obj, Some(node_id), 3);
                 let current_target_js = make_js_element(node_id, ctx)?;
-                Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js.clone()), ctx)?;
+                Self::set_event_prop(
+                    &event_obj,
+                    "currentTarget",
+                    JsValue::from(current_target_js.clone()),
+                    ctx,
+                )?;
 
                 let should_stop = Self::invoke_listeners_for_node(
-                    (tree_scope, node_id), &event_type, &event_obj, &event_val, false, false, ctx,
+                    (tree_scope, node_id),
+                    &event_type,
+                    &event_obj,
+                    &event_val,
+                    false,
+                    false,
+                    ctx,
                 )?;
 
                 // Invoke on* handler during bubble
                 super::on_event::invoke_on_event_handler(
-                    tree_scope, node_id, &event_type, &JsValue::from(current_target_js), &event_val, &event_obj, ctx,
+                    tree_scope,
+                    node_id,
+                    &event_type,
+                    &JsValue::from(current_target_js),
+                    &event_val,
+                    &event_obj,
+                    ctx,
                 );
 
                 if should_stop {
@@ -1658,12 +1908,24 @@ impl JsElement {
                 Self::set_event_prop(&event_obj, "currentTarget", window_val.clone(), ctx)?;
 
                 let should_stop = invoke_listeners_for_node(
-                    (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, false, false, ctx,
+                    (usize::MAX, WINDOW_LISTENER_ID),
+                    &event_type,
+                    &event_obj,
+                    &event_val,
+                    false,
+                    false,
+                    ctx,
                 )?;
 
                 // Invoke on* handler for window during bubble
                 super::on_event::invoke_on_event_handler(
-                    usize::MAX, WINDOW_LISTENER_ID, &event_type, &window_val, &event_val, &event_obj, ctx,
+                    usize::MAX,
+                    WINDOW_LISTENER_ID,
+                    &event_type,
+                    &window_val,
+                    &event_val,
+                    &event_obj,
+                    ctx,
                 );
 
                 let _ = should_stop;
@@ -1696,7 +1958,15 @@ impl JsElement {
         at_target: bool,
         ctx: &mut Context,
     ) -> JsResult<bool> {
-        invoke_listeners_for_node(listener_key, event_type, event_obj, event_val, capture_only, at_target, ctx)
+        invoke_listeners_for_node(
+            listener_key,
+            event_type,
+            event_obj,
+            event_val,
+            capture_only,
+            at_target,
+            ctx,
+        )
     }
 
     /// Set an own data property on the event object, overriding any prototype accessor.
@@ -1782,9 +2052,7 @@ pub(crate) fn invoke_listeners_for_node(
             let listeners = realm_state::event_listeners(ctx);
             let mut map = listeners.borrow_mut();
             if let Some(entries) = map.get_mut(&listener_key) {
-                entries.retain(|entry| {
-                    !(entry.event_type == event_type && entry.callback == *callback && entry.once)
-                });
+                entries.retain(|entry| !(entry.event_type == event_type && entry.callback == *callback && entry.once));
                 if entries.is_empty() {
                     map.remove(&listener_key);
                 }
@@ -1851,9 +2119,7 @@ pub(crate) fn report_listener_error(err: JsError, ctx: &mut Context) {
                 .map(|s| s.to_std_string_escaped())
                 .unwrap_or_else(|_| "unknown error".to_string())
         })
-        .or_else(|| {
-            err.as_native().map(|n| n.message().to_string())
-        })
+        .or_else(|| err.as_native().map(|n| n.message().to_string()))
         .unwrap_or_else(|| "unknown error".to_string());
 
     // Try to call window.onerror(message, filename, lineno, colno, error)
@@ -1871,10 +2137,10 @@ pub(crate) fn report_listener_error(err: JsError, ctx: &mut Context) {
             &JsValue::undefined(),
             &[
                 JsValue::from(js_string!(message)),
-                JsValue::from(js_string!("")),      // filename
-                JsValue::from(0),                     // lineno
-                JsValue::from(0),                     // colno
-                JsValue::undefined(),                 // error object
+                JsValue::from(js_string!("")), // filename
+                JsValue::from(0),              // lineno
+                JsValue::from(0),              // colno
+                JsValue::undefined(),          // error object
             ],
             ctx,
         );
@@ -1885,11 +2151,7 @@ impl Class for JsElement {
     const NAME: &'static str = "Element";
     const LENGTH: usize = 0;
 
-    fn data_constructor(
-        _new_target: &JsValue,
-        _args: &[JsValue],
-        _context: &mut Context,
-    ) -> JsResult<Self> {
+    fn data_constructor(_new_target: &JsValue, _args: &[JsValue], _context: &mut Context) -> JsResult<Self> {
         Err(JsError::from_opaque(
             js_string!("Element cannot be constructed directly from JS").into(),
         ))
@@ -1963,18 +2225,10 @@ impl Class for JsElement {
         super::character_data::register_character_data(class)?;
 
         // remove() method
-        class.method(
-            js_string!("remove"),
-            0,
-            NativeFunction::from_fn_ptr(Self::remove),
-        );
+        class.method(js_string!("remove"), 0, NativeFunction::from_fn_ptr(Self::remove));
 
         // contains() method
-        class.method(
-            js_string!("contains"),
-            1,
-            NativeFunction::from_fn_ptr(Self::contains),
-        );
+        class.method(js_string!("contains"), 1, NativeFunction::from_fn_ptr(Self::contains));
 
         // isEqualNode / isSameNode / compareDocumentPosition
         class.method(
@@ -2029,12 +2283,36 @@ impl Class for JsElement {
 
         // Symbol.unscopables — spec requires null-prototype object with these ChildNode/ParentNode methods
         let unscopables = ObjectInitializer::new(class.context())
-            .property(js_string!("before"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
-            .property(js_string!("after"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
-            .property(js_string!("replaceWith"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
-            .property(js_string!("remove"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
-            .property(js_string!("prepend"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
-            .property(js_string!("append"), JsValue::from(true), Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE)
+            .property(
+                js_string!("before"),
+                JsValue::from(true),
+                Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE,
+            )
+            .property(
+                js_string!("after"),
+                JsValue::from(true),
+                Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE,
+            )
+            .property(
+                js_string!("replaceWith"),
+                JsValue::from(true),
+                Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE,
+            )
+            .property(
+                js_string!("remove"),
+                JsValue::from(true),
+                Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE,
+            )
+            .property(
+                js_string!("prepend"),
+                JsValue::from(true),
+                Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE,
+            )
+            .property(
+                js_string!("append"),
+                JsValue::from(true),
+                Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE,
+            )
             .build();
         unscopables.set_prototype(None);
         class.property(
@@ -2085,8 +2363,8 @@ pub(crate) fn node_is_default_namespace(this: &JsValue, args: &[JsValue], ctx: &
 
 #[cfg(test)]
 mod tests {
-    use crate::Engine;
     use crate::js::realm_state;
+    use crate::Engine;
 
     /// Helper to count total listeners across all elements.
     fn listener_count(engine: &Engine) -> usize {
@@ -2155,7 +2433,9 @@ mod tests {
         engine.load_html("<html><body><div id='d'></div></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
         runtime
-            .eval("document.getElementById('d').addEventListener('click', function() {}, { capture: true, once: true })")
+            .eval(
+                "document.getElementById('d').addEventListener('click', function() {}, { capture: true, once: true })",
+            )
             .unwrap();
 
         {
@@ -2305,9 +2585,7 @@ mod tests {
     #[test]
     fn listeners_on_multiple_elements() {
         let mut engine = Engine::new();
-        engine.load_html(
-            "<html><body><div id='a'></div><div id='b'></div></body></html>",
-        );
+        engine.load_html("<html><body><div id='a'></div><div id='b'></div></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
         runtime
             .eval(
@@ -2415,12 +2693,16 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><button id='btn'>Click</button></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var result = '';
             var btn = document.getElementById('btn');
             btn.addEventListener('click', function(e) { result = 'fired:' + e.type; });
             btn.dispatchEvent(new Event('click'));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("result").unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "fired:click");
@@ -2431,12 +2713,16 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><div id='parent'><button id='btn'>Click</button></div></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var log = [];
             document.getElementById('parent').addEventListener('click', function() { log.push('parent'); });
             document.getElementById('btn').addEventListener('click', function() { log.push('btn'); });
             document.getElementById('btn').dispatchEvent(new Event('click', { bubbles: true }));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("log.join(',')").unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "btn,parent");
@@ -2447,12 +2733,16 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><div id='parent'><button id='btn'>Click</button></div></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var log = [];
             document.getElementById('parent').addEventListener('click', function() { log.push('parent'); });
             document.getElementById('btn').addEventListener('click', function() { log.push('btn'); });
             document.getElementById('btn').dispatchEvent(new Event('click', { bubbles: false }));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("log.join(',')").unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "btn");
@@ -2461,16 +2751,22 @@ mod tests {
     #[test]
     fn dispatch_event_capture_phase() {
         let mut engine = Engine::new();
-        engine.load_html("<html><body><div id='outer'><div id='inner'><button id='btn'>Click</button></div></div></body></html>");
+        engine.load_html(
+            "<html><body><div id='outer'><div id='inner'><button id='btn'>Click</button></div></div></body></html>",
+        );
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var log = [];
             document.getElementById('outer').addEventListener('click', function() { log.push('outer-capture'); }, true);
             document.getElementById('inner').addEventListener('click', function() { log.push('inner-capture'); }, true);
             document.getElementById('btn').addEventListener('click', function() { log.push('btn-target'); });
             document.getElementById('outer').addEventListener('click', function() { log.push('outer-bubble'); });
             document.getElementById('btn').dispatchEvent(new Event('click', { bubbles: true }));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("log.join(',')").unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "outer-capture,inner-capture,btn-target,outer-bubble");
@@ -2497,13 +2793,17 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><button id='btn'>Click</button></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var log = [];
             var btn = document.getElementById('btn');
             btn.addEventListener('click', function(e) { log.push('first'); e.stopImmediatePropagation(); });
             btn.addEventListener('click', function() { log.push('second'); });
             btn.dispatchEvent(new Event('click'));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("log.join(',')").unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "first");
@@ -2514,13 +2814,17 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><button id='btn'>Click</button></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var count = 0;
             var btn = document.getElementById('btn');
             btn.addEventListener('click', function() { count++; }, { once: true });
             btn.dispatchEvent(new Event('click'));
             btn.dispatchEvent(new Event('click'));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("count").unwrap();
         let n = result.to_number(&mut runtime.context).unwrap();
         assert_eq!(n, 1.0);
@@ -2531,11 +2835,15 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><button id='btn'>Click</button></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var btn = document.getElementById('btn');
             btn.addEventListener('click', function() {});
             var result = btn.dispatchEvent(new Event('click'));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("result").unwrap();
         assert_eq!(result.to_boolean(), true);
     }
@@ -2545,11 +2853,15 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><button id='btn'>Click</button></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var btn = document.getElementById('btn');
             btn.addEventListener('click', function(e) { e.preventDefault(); });
             var result = btn.dispatchEvent(new Event('click', { cancelable: true }));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("result").unwrap();
         assert_eq!(result.to_boolean(), false);
     }
@@ -2559,29 +2871,41 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><div id='parent'><button id='btn'>Click</button></div></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var info = [];
             document.getElementById('parent').addEventListener('click', function(e) {
                 info.push('target-tag:' + e.target.tagName);
                 info.push('currentTarget-tag:' + e.currentTarget.tagName);
             });
             document.getElementById('btn').dispatchEvent(new Event('click', { bubbles: true }));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("info.join(',')").unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         // tagName returns uppercase for HTML elements (per spec), but our impl may
         // return lowercase depending on the parser. Check case-insensitively.
         let s_lower = s.to_ascii_lowercase();
         assert!(s_lower.contains("target-tag:button"), "target should be button: {}", s);
-        assert!(s_lower.contains("currenttarget-tag:div"), "currentTarget should be div: {}", s);
+        assert!(
+            s_lower.contains("currenttarget-tag:div"),
+            "currentTarget should be div: {}",
+            s
+        );
     }
 
     #[test]
     fn dispatch_event_stop_propagation_in_capture_phase() {
         let mut engine = Engine::new();
-        engine.load_html("<html><body><div id='outer'><div id='inner'><button id='btn'>Click</button></div></div></body></html>");
+        engine.load_html(
+            "<html><body><div id='outer'><div id='inner'><button id='btn'>Click</button></div></div></body></html>",
+        );
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var log = [];
             document.getElementById('outer').addEventListener('click', function(e) {
                 log.push('outer-capture');
@@ -2590,7 +2914,9 @@ mod tests {
             document.getElementById('inner').addEventListener('click', function() { log.push('inner-capture'); }, true);
             document.getElementById('btn').addEventListener('click', function() { log.push('btn-target'); });
             document.getElementById('btn').dispatchEvent(new Event('click', { bubbles: true }));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("log.join(',')").unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "outer-capture");
@@ -2601,10 +2927,14 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><button id='btn'>Click</button></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var btn = document.getElementById('btn');
             var result = btn.dispatchEvent(new Event('click'));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("result").unwrap();
         assert_eq!(result.to_boolean(), true);
     }
@@ -2614,13 +2944,17 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><button id='btn'>Click</button></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var log = [];
             var btn = document.getElementById('btn');
             btn.addEventListener('click', function() { log.push('capture'); }, true);
             btn.addEventListener('click', function() { log.push('bubble'); }, false);
             btn.dispatchEvent(new Event('click'));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("log.join(',')").unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "capture,bubble");
@@ -2631,13 +2965,17 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><button id='btn'>Click</button></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var log = [];
             var btn = document.getElementById('btn');
             btn.addEventListener('click', function(e) { log.push('first'); e.stopPropagation(); });
             btn.addEventListener('click', function() { log.push('second'); });
             btn.dispatchEvent(new Event('click'));
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("log.join(',')").unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         // stopPropagation stops at the next node, but remaining listeners on this node still fire

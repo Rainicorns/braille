@@ -23,8 +23,8 @@ use crate::css::selector_impl::BrailleSelectorImpl;
 use crate::dom::node::NodeId;
 use crate::dom::tree::DomTree;
 use selectors::matching::{
-    matches_selector, MatchingContext, MatchingForInvalidation, MatchingMode, NeedsSelectorFlags,
-    QuirksMode, SelectorCaches,
+    matches_selector, MatchingContext, MatchingForInvalidation, MatchingMode, NeedsSelectorFlags, QuirksMode,
+    SelectorCaches,
 };
 use selectors::parser::SelectorList;
 
@@ -119,19 +119,14 @@ pub fn cascade_element(
             important: *important,
         };
 
-        candidates
-            .entry(property.clone())
-            .or_default()
-            .push(candidate);
+        candidates.entry(property.clone()).or_default().push(candidate);
     }
 
     // Resolve: for each property, pick the candidate with the highest CascadeKey
     let mut result = CascadedValues::new();
 
     for (property, property_candidates) in candidates {
-        let winner = property_candidates
-            .into_iter()
-            .max_by(|a, b| a.key.cmp(&b.key));
+        let winner = property_candidates.into_iter().max_by(|a, b| a.key.cmp(&b.key));
 
         if let Some(winner) = winner {
             result.insert(
@@ -183,7 +178,7 @@ fn collect_matching_rules(
                     (Origin::UserAgent, false) => 0, // Normal UA (lowest)
                     (Origin::Author, false) => 1,    // Normal author
                     (Origin::Author, true) => 3,     // Important author
-                    (Origin::UserAgent, true) => 5,   // Important UA (highest)
+                    (Origin::UserAgent, true) => 5,  // Important UA (highest)
                 };
 
                 let candidate = CascadeCandidate {
@@ -196,10 +191,7 @@ fn collect_matching_rules(
                     important: decl.important,
                 };
 
-                candidates
-                    .entry(decl.property.clone())
-                    .or_default()
-                    .push(candidate);
+                candidates.entry(decl.property.clone()).or_default().push(candidate);
             }
         }
     }
@@ -230,17 +222,12 @@ pub fn stylesheet_to_rules(sheet: &Stylesheet, start_order: usize) -> Vec<Cascad
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::css::parser::parse_stylesheet;
 
-
-    fn build_tree_with_element(
-        tag: &str,
-        attrs: Vec<(String, String)>,
-    ) -> (DomTree, NodeId) {
+    fn build_tree_with_element(tag: &str, attrs: Vec<(String, String)>) -> (DomTree, NodeId) {
         use crate::dom::node::DomAttribute;
         let mut tree = DomTree::new();
         let html = tree.create_element("html");
@@ -271,10 +258,7 @@ mod tests {
 
     #[test]
     fn higher_specificity_wins() {
-        let (tree, target) = build_tree_with_element(
-            "div",
-            vec![("class".to_string(), "foo".to_string())],
-        );
+        let (tree, target) = build_tree_with_element("div", vec![("class".to_string(), "foo".to_string())]);
         let rules = parse_author_rules("div { color: red; } div.foo { color: blue; }");
         let result = cascade_element(&tree, target, &[], &rules, &[]);
         assert_eq!(result["color"].value, "blue");
@@ -395,7 +379,11 @@ mod tests {
         let color_decl = rules[0].declarations.iter().find(|d| d.property == "color").unwrap();
         assert_eq!(color_decl.value, "red");
         assert!(color_decl.important);
-        let font_decl = rules[0].declarations.iter().find(|d| d.property == "font-size").unwrap();
+        let font_decl = rules[0]
+            .declarations
+            .iter()
+            .find(|d| d.property == "font-size")
+            .unwrap();
         assert_eq!(font_decl.value, "16px");
         assert!(!font_decl.important);
     }
@@ -421,10 +409,7 @@ mod tests {
 
     #[test]
     fn class_beats_type_selector() {
-        let (tree, target) = build_tree_with_element(
-            "p",
-            vec![("class".to_string(), "intro".to_string())],
-        );
+        let (tree, target) = build_tree_with_element("p", vec![("class".to_string(), "intro".to_string())]);
         let rules = parse_author_rules("p { color: red; } .intro { color: blue; }");
         let result = cascade_element(&tree, target, &[], &rules, &[]);
         assert_eq!(result["color"].value, "blue");

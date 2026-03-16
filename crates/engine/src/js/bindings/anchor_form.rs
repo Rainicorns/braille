@@ -9,7 +9,7 @@ use boa_engine::{
 
 use crate::dom::{NodeData, NodeId};
 
-use super::element::{JsElement, get_or_create_js_element};
+use super::element::{get_or_create_js_element, JsElement};
 
 // ---------------------------------------------------------------------------
 // Helper: kebab-case to camelCase
@@ -237,10 +237,7 @@ fn set_hidden(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
         .downcast_ref::<JsElement>()
         .ok_or_else(|| JsError::from_opaque(js_string!("hidden setter: `this` is not an Element").into()))?;
 
-    let value = args
-        .first()
-        .map(|v| v.to_boolean())
-        .unwrap_or(false);
+    let value = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
     if value {
         super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "hidden", "");
@@ -390,13 +387,8 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><a id="link" href="https://example.com">Link</a></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("link").href"#)
-            .unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let result = runtime.eval(r#"document.getElementById("link").href"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "https://example.com/");
     }
 
@@ -408,13 +400,8 @@ mod tests {
         runtime
             .eval(r#"document.getElementById("link").href = "https://new.com""#)
             .unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("link").href"#)
-            .unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let result = runtime.eval(r#"document.getElementById("link").href"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "https://new.com/");
     }
 
@@ -425,13 +412,8 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><form id="f" action="/submit"></form></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("f").action"#)
-            .unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let result = runtime.eval(r#"document.getElementById("f").action"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "/submit");
     }
 
@@ -440,16 +422,9 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><form id="f" action="/old"></form></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime
-            .eval(r#"document.getElementById("f").action = "/new""#)
-            .unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("f").action"#)
-            .unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        runtime.eval(r#"document.getElementById("f").action = "/new""#).unwrap();
+        let result = runtime.eval(r#"document.getElementById("f").action"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "/new");
     }
 
@@ -460,13 +435,8 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("f").method"#)
-            .unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let result = runtime.eval(r#"document.getElementById("f").method"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "get");
     }
 
@@ -475,16 +445,9 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime
-            .eval(r#"document.getElementById("f").method = "post""#)
-            .unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("f").method"#)
-            .unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        runtime.eval(r#"document.getElementById("f").method = "post""#).unwrap();
+        let result = runtime.eval(r#"document.getElementById("f").method"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "post");
     }
 
@@ -495,9 +458,7 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><form id="f"><input type="text"><select><option>A</option></select><textarea></textarea><button>Go</button><div>Not interactive</div></form></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("f").elements.length"#)
-            .unwrap();
+        let result = runtime.eval(r#"document.getElementById("f").elements.length"#).unwrap();
         let n = result.to_number(&mut runtime.context).unwrap();
         assert_eq!(n, 4.0);
     }
@@ -508,19 +469,18 @@ mod tests {
         engine.load_html(r#"<html><body><form id="f"><input type="text"><button>Go</button></form></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
         let result = runtime
-            .eval(r#"
+            .eval(
+                r#"
                 var elems = document.getElementById("f").elements;
                 var tags = [];
                 for (var i = 0; i < elems.length; i++) {
                     tags.push(elems[i].tagName);
                 }
                 tags.join(",");
-            "#)
+            "#,
+            )
             .unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         // tagName returns uppercase per spec
         assert_eq!(s, "INPUT,BUTTON");
     }
@@ -532,9 +492,7 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><div id="d" hidden></div></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("d").hidden"#)
-            .unwrap();
+        let result = runtime.eval(r#"document.getElementById("d").hidden"#).unwrap();
         assert_eq!(result.to_boolean(), true);
     }
 
@@ -543,9 +501,7 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><div id="d"></div></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("d").hidden"#)
-            .unwrap();
+        let result = runtime.eval(r#"document.getElementById("d").hidden"#).unwrap();
         assert_eq!(result.to_boolean(), false);
     }
 
@@ -554,12 +510,8 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><div id="d"></div></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime
-            .eval(r#"document.getElementById("d").hidden = true"#)
-            .unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("d").hidden"#)
-            .unwrap();
+        runtime.eval(r#"document.getElementById("d").hidden = true"#).unwrap();
+        let result = runtime.eval(r#"document.getElementById("d").hidden"#).unwrap();
         assert_eq!(result.to_boolean(), true);
     }
 
@@ -568,12 +520,8 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><div id="d" hidden></div></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime
-            .eval(r#"document.getElementById("d").hidden = false"#)
-            .unwrap();
-        let result = runtime
-            .eval(r#"document.getElementById("d").hidden"#)
-            .unwrap();
+        runtime.eval(r#"document.getElementById("d").hidden = false"#).unwrap();
+        let result = runtime.eval(r#"document.getElementById("d").hidden"#).unwrap();
         assert_eq!(result.to_boolean(), false);
     }
 
@@ -585,15 +533,14 @@ mod tests {
         engine.load_html(r#"<html><body><div id="d" data-name="Alice" data-age="30"></div></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
         let result = runtime
-            .eval(r#"
+            .eval(
+                r#"
                 var ds = document.getElementById("d").dataset;
                 ds.name + "," + ds.age;
-            "#)
+            "#,
+            )
             .unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "Alice,30");
     }
 
@@ -603,15 +550,14 @@ mod tests {
         engine.load_html(r#"<html><body><div id="d" data-user-id="5" data-first-name="Bob"></div></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
         let result = runtime
-            .eval(r#"
+            .eval(
+                r#"
                 var ds = document.getElementById("d").dataset;
                 ds.userId + "," + ds.firstName;
-            "#)
+            "#,
+            )
             .unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "5,Bob");
     }
 }

@@ -22,7 +22,10 @@ impl DomTree {
         let node = self.get_node_mut(node_id);
         if let NodeData::Element { ref mut attributes, .. } = node.data {
             // Try to find existing attribute and update it
-            if let Some(existing) = attributes.iter_mut().find(|a| a.qualified_name() == name || a.local_name == name) {
+            if let Some(existing) = attributes
+                .iter_mut()
+                .find(|a| a.qualified_name() == name || a.local_name == name)
+            {
                 existing.value = value.to_string();
             } else {
                 // Add new attribute
@@ -39,7 +42,10 @@ impl DomTree {
     pub fn remove_attribute(&mut self, node_id: NodeId, name: &str) -> bool {
         let node = self.get_node_mut(node_id);
         if let NodeData::Element { ref mut attributes, .. } = node.data {
-            if let Some(idx) = attributes.iter().position(|a| a.qualified_name() == name || a.local_name == name) {
+            if let Some(idx) = attributes
+                .iter()
+                .position(|a| a.qualified_name() == name || a.local_name == name)
+            {
                 attributes.remove(idx);
                 true
             } else {
@@ -54,7 +60,9 @@ impl DomTree {
     pub fn has_attribute(&self, node_id: NodeId, name: &str) -> bool {
         let node = self.get_node(node_id);
         if let NodeData::Element { ref attributes, .. } = node.data {
-            attributes.iter().any(|a| a.qualified_name() == name || a.local_name == name)
+            attributes
+                .iter()
+                .any(|a| a.qualified_name() == name || a.local_name == name)
         } else {
             panic!("has_attribute: node {} is not an Element", node_id);
         }
@@ -88,7 +96,10 @@ impl DomTree {
 
         let node = self.get_node_mut(node_id);
         if let NodeData::Element { ref mut attributes, .. } = node.data {
-            if let Some(existing) = attributes.iter_mut().find(|a| a.namespace == namespace && a.local_name == local_name) {
+            if let Some(existing) = attributes
+                .iter_mut()
+                .find(|a| a.namespace == namespace && a.local_name == local_name)
+            {
                 existing.value = value.to_string();
                 existing.prefix = prefix.to_string();
             } else {
@@ -120,7 +131,9 @@ impl DomTree {
     pub fn has_attribute_ns(&self, node_id: NodeId, namespace: &str, local_name: &str) -> bool {
         let node = self.get_node(node_id);
         if let NodeData::Element { ref attributes, .. } = node.data {
-            attributes.iter().any(|a| a.namespace == namespace && a.local_name == local_name)
+            attributes
+                .iter()
+                .any(|a| a.namespace == namespace && a.local_name == local_name)
         } else {
             panic!("has_attribute_ns: node {} is not an Element", node_id);
         }
@@ -144,10 +157,10 @@ mod tests {
     #[test]
     fn get_attribute_returns_some_for_existing_attr() {
         let mut tree = DomTree::new();
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "container"),
-            DomAttribute::new("id", "main"),
-        ]);
+        let div = tree.create_element_with_attrs(
+            "div",
+            vec![DomAttribute::new("class", "container"), DomAttribute::new("id", "main")],
+        );
 
         assert_eq!(tree.get_attribute(div, "class"), Some("container".to_string()));
         assert_eq!(tree.get_attribute(div, "id"), Some("main".to_string()));
@@ -156,9 +169,7 @@ mod tests {
     #[test]
     fn get_attribute_returns_none_for_missing_attr() {
         let mut tree = DomTree::new();
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "container"),
-        ]);
+        let div = tree.create_element_with_attrs("div", vec![DomAttribute::new("class", "container")]);
 
         assert_eq!(tree.get_attribute(div, "id"), None);
         assert_eq!(tree.get_attribute(div, "data-value"), None);
@@ -190,9 +201,7 @@ mod tests {
     #[test]
     fn set_attribute_updates_existing_attribute() {
         let mut tree = DomTree::new();
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "old-value"),
-        ]);
+        let div = tree.create_element_with_attrs("div", vec![DomAttribute::new("class", "old-value")]);
 
         assert_eq!(tree.get_attribute(div, "class"), Some("old-value".to_string()));
 
@@ -226,10 +235,10 @@ mod tests {
     #[test]
     fn remove_attribute_removes_existing_returns_true() {
         let mut tree = DomTree::new();
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "container"),
-            DomAttribute::new("id", "main"),
-        ]);
+        let div = tree.create_element_with_attrs(
+            "div",
+            vec![DomAttribute::new("class", "container"), DomAttribute::new("id", "main")],
+        );
 
         assert_eq!(tree.get_attribute(div, "class"), Some("container".to_string()));
 
@@ -243,9 +252,7 @@ mod tests {
     #[test]
     fn remove_attribute_returns_false_for_missing() {
         let mut tree = DomTree::new();
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "container"),
-        ]);
+        let div = tree.create_element_with_attrs("div", vec![DomAttribute::new("class", "container")]);
 
         let removed = tree.remove_attribute(div, "id");
 
@@ -272,10 +279,10 @@ mod tests {
     #[test]
     fn has_attribute_returns_true_for_existing() {
         let mut tree = DomTree::new();
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "container"),
-            DomAttribute::new("id", "main"),
-        ]);
+        let div = tree.create_element_with_attrs(
+            "div",
+            vec![DomAttribute::new("class", "container"), DomAttribute::new("id", "main")],
+        );
 
         assert!(tree.has_attribute(div, "class"));
         assert!(tree.has_attribute(div, "id"));
@@ -284,9 +291,7 @@ mod tests {
     #[test]
     fn has_attribute_returns_false_for_missing() {
         let mut tree = DomTree::new();
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "container"),
-        ]);
+        let div = tree.create_element_with_attrs("div", vec![DomAttribute::new("class", "container")]);
 
         assert!(!tree.has_attribute(div, "id"));
         assert!(!tree.has_attribute(div, "data-value"));

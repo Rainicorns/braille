@@ -4,7 +4,7 @@ use std::path::Path;
 
 use braille_engine::dom::node::{NodeData, NodeId};
 use braille_engine::dom::tree::DomTree;
-use braille_engine::html::{parse_html_scripting, parse_html_fragment_scripting};
+use braille_engine::html::{parse_html_fragment_scripting, parse_html_scripting};
 
 // ---------------------------------------------------------------------------
 // .dat file parser
@@ -144,14 +144,24 @@ fn serialize_node(tree: &DomTree, node_id: NodeId, depth: usize, out: &mut Strin
                 serialize_node(tree, child_id, depth, out);
             }
         }
-        NodeData::Doctype { name, public_id, system_id } => {
+        NodeData::Doctype {
+            name,
+            public_id,
+            system_id,
+        } => {
             if public_id.is_empty() && system_id.is_empty() {
                 out.push_str(&format!("| {indent}<!DOCTYPE {name}>\n"));
             } else {
-                out.push_str(&format!("| {indent}<!DOCTYPE {name} \"{public_id}\" \"{system_id}\">\n"));
+                out.push_str(&format!(
+                    "| {indent}<!DOCTYPE {name} \"{public_id}\" \"{system_id}\">\n"
+                ));
             }
         }
-        NodeData::Element { tag_name, attributes, namespace } => {
+        NodeData::Element {
+            tag_name,
+            attributes,
+            namespace,
+        } => {
             if namespace.is_empty() || namespace == "http://www.w3.org/1999/xhtml" {
                 out.push_str(&format!("| {indent}<{tag_name}>\n"));
             } else {
@@ -168,8 +178,16 @@ fn serialize_node(tree: &DomTree, node_id: NodeId, depth: usize, out: &mut Strin
             // html5lib tests expect sorted attributes.
             let mut sorted_attrs: Vec<_> = attributes.iter().collect();
             sorted_attrs.sort_by(|a, b| {
-                let key_a = if !a.prefix.is_empty() { format!("{} {}", a.prefix, a.local_name) } else { a.local_name.clone() };
-                let key_b = if !b.prefix.is_empty() { format!("{} {}", b.prefix, b.local_name) } else { b.local_name.clone() };
+                let key_a = if !a.prefix.is_empty() {
+                    format!("{} {}", a.prefix, a.local_name)
+                } else {
+                    a.local_name.clone()
+                };
+                let key_b = if !b.prefix.is_empty() {
+                    format!("{} {}", b.prefix, b.local_name)
+                } else {
+                    b.local_name.clone()
+                };
                 key_a.cmp(&key_b)
             });
 
@@ -281,7 +299,8 @@ fn run_test(test: &TestCase) -> Result<(), Failed> {
         Err(format!(
             "Input: {:?}\n\nExpected:\n{}\n\nActual:\n{}\n",
             test.data, expected, actual
-        ).into())
+        )
+        .into())
     }
 }
 
@@ -318,10 +337,7 @@ fn main() {
 
             let ignored = should_skip(&test).is_some();
 
-            trials.push(
-                Trial::test(name, move || run_test(&test))
-                    .with_ignored_flag(ignored),
-            );
+            trials.push(Trial::test(name, move || run_test(&test)).with_ignored_flag(ignored));
         }
     }
 

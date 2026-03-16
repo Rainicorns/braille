@@ -24,7 +24,10 @@ impl DomTree {
             computed_style: None,
             template_contents: None,
         };
-        DomTree { nodes: vec![root], is_html_document: true }
+        DomTree {
+            nodes: vec![root],
+            is_html_document: true,
+        }
     }
 
     /// Creates a new DomTree for an XML document (is_html_document = false).
@@ -37,7 +40,10 @@ impl DomTree {
             computed_style: None,
             template_contents: None,
         };
-        DomTree { nodes: vec![root], is_html_document: false }
+        DomTree {
+            nodes: vec![root],
+            is_html_document: false,
+        }
     }
 
     /// Returns true if this is an HTML document, false for XML documents.
@@ -266,11 +272,7 @@ impl DomTree {
     }
 
     /// Allocates a new Element node with attributes (unattached) and returns its NodeId.
-    pub fn create_element_with_attrs(
-        &mut self,
-        tag_name: &str,
-        attributes: Vec<DomAttribute>,
-    ) -> NodeId {
+    pub fn create_element_with_attrs(&mut self, tag_name: &str, attributes: Vec<DomAttribute>) -> NodeId {
         let id = self.nodes.len();
         self.nodes.push(Node {
             id,
@@ -306,12 +308,7 @@ impl DomTree {
     }
 
     /// Allocates a new Element node with namespace (unattached) and returns its NodeId.
-    pub fn create_element_ns(
-        &mut self,
-        tag_name: &str,
-        attributes: Vec<DomAttribute>,
-        namespace: &str,
-    ) -> NodeId {
+    pub fn create_element_ns(&mut self, tag_name: &str, attributes: Vec<DomAttribute>, namespace: &str) -> NodeId {
         let id = self.nodes.len();
         self.nodes.push(Node {
             id,
@@ -398,16 +395,10 @@ impl DomTree {
         }
     }
 
-
     /// Inserts new_child before reference_child in parent's children list.
     /// If new_child already has a parent, it is first detached.
     /// Panics if reference_child is not found in parent's children.
-    pub fn insert_child_before(
-        &mut self,
-        parent: NodeId,
-        new_child: NodeId,
-        reference_child: NodeId,
-    ) {
+    pub fn insert_child_before(&mut self, parent: NodeId, new_child: NodeId, reference_child: NodeId) {
         // Detach new_child from its current parent if any.
         if let Some(old_parent) = self.nodes[new_child].parent {
             self.nodes[old_parent].children.retain(|&c| c != new_child);
@@ -426,12 +417,7 @@ impl DomTree {
     /// Replaces old_child with new_child in parent's children list.
     /// If new_child already has a parent, it is first detached.
     /// Clears old_child's parent. Panics if old_child is not in parent's children.
-    pub fn replace_child(
-        &mut self,
-        parent: NodeId,
-        new_child: NodeId,
-        old_child: NodeId,
-    ) {
+    pub fn replace_child(&mut self, parent: NodeId, new_child: NodeId, old_child: NodeId) {
         // Detach new_child from its current parent if any.
         if let Some(old_parent) = self.nodes[new_child].parent {
             self.nodes[old_parent].children.retain(|&c| c != new_child);
@@ -487,9 +473,23 @@ impl DomTree {
     }
 
     fn is_void_element(tag: &str) -> bool {
-        matches!(tag.to_ascii_lowercase().as_str(),
-            "area"|"base"|"br"|"col"|"embed"|"hr"|"img"|"input"|
-            "link"|"meta"|"param"|"source"|"track"|"wbr")
+        matches!(
+            tag.to_ascii_lowercase().as_str(),
+            "area"
+                | "base"
+                | "br"
+                | "col"
+                | "embed"
+                | "hr"
+                | "img"
+                | "input"
+                | "link"
+                | "meta"
+                | "param"
+                | "source"
+                | "track"
+                | "wbr"
+        )
     }
 
     fn escape_html(text: &str) -> String {
@@ -520,7 +520,9 @@ impl DomTree {
             NodeData::Text { content } => Self::escape_html(content),
             NodeData::Comment { content } => format!("<!--{}-->", content),
             NodeData::Doctype { name, .. } => format!("<!DOCTYPE {}>", name),
-            NodeData::Element { tag_name, attributes, .. } => {
+            NodeData::Element {
+                tag_name, attributes, ..
+            } => {
                 let mut o = String::new();
                 o.push('<');
                 o.push_str(tag_name);
@@ -532,7 +534,9 @@ impl DomTree {
                     o.push('"');
                 }
                 o.push('>');
-                if Self::is_void_element(tag_name) { return o; }
+                if Self::is_void_element(tag_name) {
+                    return o;
+                }
                 for &c in &nd.children {
                     o.push_str(&self.serialize_node_html(c));
                 }
@@ -541,7 +545,15 @@ impl DomTree {
                 o.push('>');
                 o
             }
-            NodeData::ProcessingInstruction { target, data } => format!("<?{}{}?>", target, if data.is_empty() { String::new() } else { format!(" {}", data) }),
+            NodeData::ProcessingInstruction { target, data } => format!(
+                "<?{}{}?>",
+                target,
+                if data.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", data)
+                }
+            ),
             NodeData::Attr { .. } => String::new(), // Attr nodes are not serialized as children
             NodeData::Document | NodeData::DocumentFragment => self.serialize_children_html(nid),
         }
@@ -558,20 +570,25 @@ impl DomTree {
     pub fn import_subtree(&mut self, source: &DomTree, src_nid: NodeId) -> NodeId {
         let src_node = source.get_node(src_nid);
         let new_id = match &src_node.data {
-            NodeData::Element { tag_name, attributes, namespace } => {
-                self.create_element_ns(tag_name, attributes.clone(), namespace)
-            }
+            NodeData::Element {
+                tag_name,
+                attributes,
+                namespace,
+            } => self.create_element_ns(tag_name, attributes.clone(), namespace),
             NodeData::Text { content } => self.create_text(content),
             NodeData::Comment { content } => self.create_comment(content),
-            NodeData::ProcessingInstruction { target, data } => {
-                self.create_processing_instruction(target, data)
-            }
-            NodeData::Attr { local_name, namespace, prefix, value } => {
-                self.create_attr(local_name, namespace, prefix, value)
-            }
-            NodeData::Doctype { name, public_id, system_id } => {
-                self.create_doctype(name, public_id, system_id)
-            }
+            NodeData::ProcessingInstruction { target, data } => self.create_processing_instruction(target, data),
+            NodeData::Attr {
+                local_name,
+                namespace,
+                prefix,
+                value,
+            } => self.create_attr(local_name, namespace, prefix, value),
+            NodeData::Doctype {
+                name,
+                public_id,
+                system_id,
+            } => self.create_doctype(name, public_id, system_id),
             NodeData::Document => panic!("cannot import Document node"),
             NodeData::DocumentFragment => self.create_document_fragment(),
         };
@@ -667,7 +684,13 @@ impl DomTree {
 
     /// Replaces count UTF-16 code units starting at offset with data.
     /// Returns Err if offset > length.
-    pub fn character_data_replace(&mut self, id: NodeId, offset: usize, count: usize, data: &str) -> Result<(), &'static str> {
+    pub fn character_data_replace(
+        &mut self,
+        id: NodeId,
+        offset: usize,
+        count: usize,
+        data: &str,
+    ) -> Result<(), &'static str> {
         let content = match &self.nodes[id].data {
             NodeData::Text { content } => content.clone(),
             NodeData::Comment { content } => content.clone(),
@@ -748,8 +771,7 @@ impl DomTree {
             return Err("IndexSizeError");
         }
 
-        let byte_offset = Self::utf16_offset_to_byte_offset(&content, utf16_offset)
-            .ok_or("IndexSizeError")?;
+        let byte_offset = Self::utf16_offset_to_byte_offset(&content, utf16_offset).ok_or("IndexSizeError")?;
 
         // Split the data
         let kept = &content[..byte_offset];
@@ -842,9 +864,7 @@ impl DomTree {
     }
 
     pub fn insert_after(&mut self, sibling: NodeId, child: NodeId) {
-        let parent = self.nodes[sibling]
-            .parent
-            .expect("insert_after: sibling has no parent");
+        let parent = self.nodes[sibling].parent.expect("insert_after: sibling has no parent");
         if let Some(old_parent) = self.nodes[child].parent {
             self.nodes[old_parent].children.retain(|&c| c != child);
         }
@@ -893,8 +913,16 @@ impl DomTree {
         // Compare type-specific data
         match (&node_a.data, &node_b.data) {
             (
-                NodeData::Element { tag_name: t1, attributes: a1, namespace: ns1 },
-                NodeData::Element { tag_name: t2, attributes: a2, namespace: ns2 },
+                NodeData::Element {
+                    tag_name: t1,
+                    attributes: a1,
+                    namespace: ns1,
+                },
+                NodeData::Element {
+                    tag_name: t2,
+                    attributes: a2,
+                    namespace: ns2,
+                },
             ) => {
                 // Compare localName, namespace, and prefix (we store them in tag_name)
                 if t1 != t2 || ns1 != ns2 {
@@ -905,15 +933,25 @@ impl DomTree {
                     return false;
                 }
                 for attr in a1 {
-                    let found = a2.iter().any(|a| a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value);
+                    let found = a2.iter().any(|a| {
+                        a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value
+                    });
                     if !found {
                         return false;
                     }
                 }
             }
             (
-                NodeData::Doctype { name: n1, public_id: p1, system_id: s1 },
-                NodeData::Doctype { name: n2, public_id: p2, system_id: s2 },
+                NodeData::Doctype {
+                    name: n1,
+                    public_id: p1,
+                    system_id: s1,
+                },
+                NodeData::Doctype {
+                    name: n2,
+                    public_id: p2,
+                    system_id: s2,
+                },
             ) => {
                 if n1 != n2 || p1 != p2 || s1 != s2 {
                     return false;
@@ -938,8 +976,18 @@ impl DomTree {
                 }
             }
             (
-                NodeData::Attr { local_name: l1, namespace: n1, prefix: p1, value: v1 },
-                NodeData::Attr { local_name: l2, namespace: n2, prefix: p2, value: v2 },
+                NodeData::Attr {
+                    local_name: l1,
+                    namespace: n1,
+                    prefix: p1,
+                    value: v1,
+                },
+                NodeData::Attr {
+                    local_name: l2,
+                    namespace: n2,
+                    prefix: p2,
+                    value: v2,
+                },
             ) => {
                 if l1 != l2 || n1 != n2 || p1 != p2 || v1 != v2 {
                     return false;
@@ -1000,8 +1048,7 @@ impl DomTree {
                 // Merge with any following adjacent Text nodes
                 loop {
                     let children = self.nodes[node_id].children.clone();
-                    let next_idx = children.iter().position(|&c| c == child_id)
-                        .map(|pos| pos + 1);
+                    let next_idx = children.iter().position(|&c| c == child_id).map(|pos| pos + 1);
                     let next_id = next_idx.and_then(|idx| children.get(idx).copied());
 
                     match next_id {
@@ -1123,7 +1170,11 @@ impl DomTree {
         for i in 0..min_len {
             if chain_a[i] != chain_b[i] {
                 // Find which comes first among the children of the common parent
-                let common_parent = if i > 0 { chain_a[i - 1] } else { return a < b; };
+                let common_parent = if i > 0 {
+                    chain_a[i - 1]
+                } else {
+                    return a < b;
+                };
                 let parent_children = &self.nodes[common_parent].children;
                 let pos_a = parent_children.iter().position(|&c| c == chain_a[i]);
                 let pos_b = parent_children.iter().position(|&c| c == chain_b[i]);
@@ -1148,9 +1199,11 @@ impl DomTree {
     pub fn locate_namespace(&self, node_id: NodeId, prefix: Option<&str>) -> Option<String> {
         let node = self.get_node(node_id);
         match &node.data {
-            NodeData::Element { tag_name, namespace, attributes } => {
-                self.locate_namespace_for_element(node_id, tag_name, namespace, attributes, prefix)
-            }
+            NodeData::Element {
+                tag_name,
+                namespace,
+                attributes,
+            } => self.locate_namespace_for_element(node_id, tag_name, namespace, attributes, prefix),
             NodeData::Document => {
                 // Delegate to document element if it exists
                 for &child_id in &node.children {
@@ -1210,12 +1263,20 @@ impl DomTree {
             if let Some(pfx) = prefix {
                 // Looking for xmlns:pfx attribute
                 if attr.prefix == "xmlns" && attr.local_name == pfx {
-                    return if attr.value.is_empty() { None } else { Some(attr.value.clone()) };
+                    return if attr.value.is_empty() {
+                        None
+                    } else {
+                        Some(attr.value.clone())
+                    };
                 }
             } else {
                 // Looking for xmlns attribute (no prefix) for null/empty prefix lookup
                 if attr.prefix.is_empty() && attr.local_name == "xmlns" {
-                    return if attr.value.is_empty() { None } else { Some(attr.value.clone()) };
+                    return if attr.value.is_empty() {
+                        None
+                    } else {
+                        Some(attr.value.clone())
+                    };
                 }
             }
         }
@@ -1248,9 +1309,11 @@ impl DomTree {
     pub fn locate_prefix(&self, node_id: NodeId, namespace: &str) -> Option<String> {
         let node = self.get_node(node_id);
         match &node.data {
-            NodeData::Element { tag_name, namespace: elem_ns, attributes } => {
-                self.locate_prefix_for_element(node_id, tag_name, elem_ns, attributes, namespace)
-            }
+            NodeData::Element {
+                tag_name,
+                namespace: elem_ns,
+                attributes,
+            } => self.locate_prefix_for_element(node_id, tag_name, elem_ns, attributes, namespace),
             NodeData::Document => {
                 // Delegate to document element if it exists
                 for &child_id in &node.children {
@@ -1319,7 +1382,6 @@ impl DomTree {
         // Step 4: Not found
         None
     }
-
 }
 
 /// Check whether a character is an XML NameStartChar per the XML spec:
@@ -1402,8 +1464,7 @@ pub fn is_valid_element_name(name: &str) -> bool {
 /// Validates whether a string is a valid attribute name per the HTML spec.
 /// Invalid chars: empty, \0, ASCII whitespace (\t, \n, \x0C, \r, space), /, >, =
 pub fn is_valid_attribute_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>', '='])
+    !name.is_empty() && !name.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>', '='])
 }
 
 /// Validates whether a string is a valid doctype name.
@@ -1671,9 +1732,7 @@ mod tests {
     #[test]
     fn clone_node_shallow_no_children() {
         let mut tree = DomTree::new();
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("class", "container"),
-        ]);
+        let div = tree.create_element_with_attrs("div", vec![DomAttribute::new("class", "container")]);
         let span = tree.create_element("span");
         tree.append_child(div, span);
 
@@ -1683,7 +1742,9 @@ mod tests {
         assert!(tree.get_node(cloned).children.is_empty());
         assert!(tree.get_node(cloned).parent.is_none());
         match &tree.get_node(cloned).data {
-            NodeData::Element { tag_name, attributes, .. } => {
+            NodeData::Element {
+                tag_name, attributes, ..
+            } => {
                 assert_eq!(tag_name, "div");
                 assert_eq!(attributes, &vec![DomAttribute::new("class", "container")]);
             }
@@ -1718,16 +1779,21 @@ mod tests {
     #[test]
     fn clone_node_preserves_attributes() {
         let mut tree = DomTree::new();
-        let div = tree.create_element_with_attrs("div", vec![
-            DomAttribute::new("id", "main"),
-            DomAttribute::new("class", "container"),
-            DomAttribute::new("data-x", "42"),
-        ]);
+        let div = tree.create_element_with_attrs(
+            "div",
+            vec![
+                DomAttribute::new("id", "main"),
+                DomAttribute::new("class", "container"),
+                DomAttribute::new("data-x", "42"),
+            ],
+        );
 
         let cloned = tree.clone_node(div, false);
 
         match &tree.get_node(cloned).data {
-            NodeData::Element { tag_name, attributes, .. } => {
+            NodeData::Element {
+                tag_name, attributes, ..
+            } => {
                 assert_eq!(tag_name, "div");
                 assert_eq!(attributes.len(), 3);
                 assert!(attributes.contains(&DomAttribute::new("id", "main")));

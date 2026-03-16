@@ -4,10 +4,7 @@
 //! getElementsByTagName on Element and document objects.
 
 use boa_engine::{
-    class::ClassBuilder,
-    js_string,
-    native_function::NativeFunction,
-    Context, JsError, JsResult, JsValue,
+    class::ClassBuilder, js_string, native_function::NativeFunction, Context, JsError, JsResult, JsValue,
 };
 
 use crate::css::matching;
@@ -15,7 +12,7 @@ use crate::dom::node::NodeData;
 use crate::dom::{DomTree, NodeId};
 
 use super::collections;
-use super::element::{JsElement, get_or_create_js_element};
+use super::element::{get_or_create_js_element, JsElement};
 
 // ---------------------------------------------------------------------------
 // DocumentFragment.prototype.getElementById (NonElementParentNode mixin)
@@ -24,17 +21,13 @@ use super::element::{JsElement, get_or_create_js_element};
 /// Search descendants of a DocumentFragment (or any JsElement node) for the
 /// first Element with a matching `id` attribute. Returns null if not found.
 /// Per spec, empty-string id never matches.
-pub(crate) fn fragment_get_element_by_id(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+pub(crate) fn fragment_get_element_by_id(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("getElementById: this is not an object").into()))?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(js_string!("getElementById: this is not a node").into())
-    })?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getElementById: this is not a node").into()))?;
     let tree = el.tree.clone();
     let root_id = el.node_id;
 
@@ -81,19 +74,13 @@ fn find_by_id_in_subtree(tree: &DomTree, root: NodeId, id: &str) -> Option<NodeI
 // Element methods
 // ---------------------------------------------------------------------------
 
-fn element_query_selector(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn element_query_selector(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(js_string!("querySelector: `this` is not an object").into())
-        })?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(js_string!("querySelector: `this` is not an Element").into())
-    })?;
+        .ok_or_else(|| JsError::from_opaque(js_string!("querySelector: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("querySelector: `this` is not an Element").into()))?;
     let selector = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -116,23 +103,13 @@ fn element_query_selector(
     }
 }
 
-fn element_query_selector_all(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn element_query_selector_all(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("querySelectorAll: `this` is not an object").into(),
-            )
-        })?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("querySelectorAll: `this` is not an Element").into(),
-        )
-    })?;
+        .ok_or_else(|| JsError::from_opaque(js_string!("querySelectorAll: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("querySelectorAll: `this` is not an Element").into()))?;
     let selector = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -150,23 +127,13 @@ fn element_query_selector_all(
     Ok(nodelist.into())
 }
 
-fn element_get_elements_by_class_name(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn element_get_elements_by_class_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("getElementsByClassName: `this` is not an object").into(),
-            )
-        })?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("getElementsByClassName: `this` is not an Element").into(),
-        )
-    })?;
+        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByClassName: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByClassName: `this` is not an Element").into()))?;
     let class_name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -181,23 +148,13 @@ fn element_get_elements_by_class_name(
     Ok(collection.into())
 }
 
-fn element_get_elements_by_tag_name(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn element_get_elements_by_tag_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("getElementsByTagName: `this` is not an object").into(),
-            )
-        })?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("getElementsByTagName: `this` is not an Element").into(),
-        )
-    })?;
+        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByTagName: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByTagName: `this` is not an Element").into()))?;
     let tag_name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -218,23 +175,13 @@ fn element_get_elements_by_tag_name(
 
 use super::document::JsDocument;
 
-pub(crate) fn document_query_selector(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+pub(crate) fn document_query_selector(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("document.querySelector: `this` is not an object").into(),
-            )
-        })?;
-    let doc = obj.downcast_ref::<JsDocument>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("document.querySelector: `this` is not document").into(),
-        )
-    })?;
+        .ok_or_else(|| JsError::from_opaque(js_string!("document.querySelector: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("document.querySelector: `this` is not document").into()))?;
     let selector = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -257,23 +204,13 @@ pub(crate) fn document_query_selector(
     }
 }
 
-pub(crate) fn document_query_selector_all(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+pub(crate) fn document_query_selector_all(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("document.querySelectorAll: `this` is not an object").into(),
-            )
-        })?;
-    let doc = obj.downcast_ref::<JsDocument>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("document.querySelectorAll: `this` is not document").into(),
-        )
-    })?;
+        .ok_or_else(|| JsError::from_opaque(js_string!("document.querySelectorAll: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("document.querySelectorAll: `this` is not document").into()))?;
     let selector = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -296,17 +233,11 @@ pub(crate) fn document_get_elements_by_class_name(
     args: &[JsValue],
     ctx: &mut Context,
 ) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("document.getElementsByClassName: `this` is not an object").into(),
-            )
-        })?;
+    let obj = this.as_object().ok_or_else(|| {
+        JsError::from_opaque(js_string!("document.getElementsByClassName: `this` is not an object").into())
+    })?;
     let doc = obj.downcast_ref::<JsDocument>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("document.getElementsByClassName: `this` is not document").into(),
-        )
+        JsError::from_opaque(js_string!("document.getElementsByClassName: `this` is not document").into())
     })?;
     let class_name = args
         .first()
@@ -327,17 +258,11 @@ pub(crate) fn document_get_elements_by_tag_name(
     args: &[JsValue],
     ctx: &mut Context,
 ) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("document.getElementsByTagName: `this` is not an object").into(),
-            )
-        })?;
+    let obj = this.as_object().ok_or_else(|| {
+        JsError::from_opaque(js_string!("document.getElementsByTagName: `this` is not an object").into())
+    })?;
     let doc = obj.downcast_ref::<JsDocument>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("document.getElementsByTagName: `this` is not document").into(),
-        )
+        JsError::from_opaque(js_string!("document.getElementsByTagName: `this` is not document").into())
     })?;
     let tag_name = args
         .first()
@@ -358,24 +283,16 @@ pub(crate) fn document_get_elements_by_tag_name_ns(
     args: &[JsValue],
     ctx: &mut Context,
 ) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("document.getElementsByTagNameNS: `this` is not an object").into(),
-            )
-        })?;
+    let obj = this.as_object().ok_or_else(|| {
+        JsError::from_opaque(js_string!("document.getElementsByTagNameNS: `this` is not an object").into())
+    })?;
     let doc = obj.downcast_ref::<JsDocument>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("document.getElementsByTagNameNS: `this` is not document").into(),
-        )
+        JsError::from_opaque(js_string!("document.getElementsByTagNameNS: `this` is not document").into())
     })?;
 
     // First arg: namespace (null/undefined -> empty string)
     let namespace = match args.first() {
-        Some(v) if !v.is_null() && !v.is_undefined() => {
-            v.to_string(ctx)?.to_std_string_escaped()
-        }
+        Some(v) if !v.is_null() && !v.is_undefined() => v.to_string(ctx)?.to_std_string_escaped(),
         _ => String::new(),
     };
 
@@ -390,34 +307,21 @@ pub(crate) fn document_get_elements_by_tag_name_ns(
     let tree_rc = doc.tree.clone();
     let root = tree_rc.borrow().document();
 
-    let collection =
-        collections::create_live_htmlcollection_by_tag_name_ns(root, tree_rc, namespace, local_name, ctx)?;
+    let collection = collections::create_live_htmlcollection_by_tag_name_ns(root, tree_rc, namespace, local_name, ctx)?;
     Ok(collection.into())
 }
 
-fn element_get_elements_by_tag_name_ns(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn element_get_elements_by_tag_name_ns(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("getElementsByTagNameNS: `this` is not an object").into(),
-            )
-        })?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("getElementsByTagNameNS: `this` is not an Element").into(),
-        )
-    })?;
+        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByTagNameNS: `this` is not an object").into()))?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByTagNameNS: `this` is not an Element").into()))?;
 
     // First arg: namespace (null/undefined -> empty string)
     let namespace = match args.first() {
-        Some(v) if !v.is_null() && !v.is_undefined() => {
-            v.to_string(ctx)?.to_std_string_escaped()
-        }
+        Some(v) if !v.is_null() && !v.is_undefined() => v.to_string(ctx)?.to_std_string_escaped(),
         _ => String::new(),
     };
 
@@ -441,17 +345,13 @@ fn element_get_elements_by_tag_name_ns(
 // Element.matches() and Element.closest()
 // ---------------------------------------------------------------------------
 
-fn element_matches(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn element_matches(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("matches: `this` is not an object").into()))?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(js_string!("matches: `this` is not an Element").into())
-    })?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("matches: `this` is not an Element").into()))?;
     let selector = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -466,17 +366,13 @@ fn element_matches(
     Ok(JsValue::from(result))
 }
 
-fn element_closest(
-    this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> JsResult<JsValue> {
+fn element_closest(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("closest: `this` is not an object").into()))?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(js_string!("closest: `this` is not an Element").into())
-    })?;
+    let el = obj
+        .downcast_ref::<JsElement>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("closest: `this` is not an Element").into()))?;
     let selector = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -533,16 +429,8 @@ pub(crate) fn register_query(class: &mut ClassBuilder) -> JsResult<()> {
         2,
         NativeFunction::from_fn_ptr(element_get_elements_by_tag_name_ns),
     );
-    class.method(
-        js_string!("matches"),
-        1,
-        NativeFunction::from_fn_ptr(element_matches),
-    );
-    class.method(
-        js_string!("closest"),
-        1,
-        NativeFunction::from_fn_ptr(element_closest),
-    );
+    class.method(js_string!("matches"), 1, NativeFunction::from_fn_ptr(element_matches));
+    class.method(js_string!("closest"), 1, NativeFunction::from_fn_ptr(element_closest));
     class.method(
         js_string!("webkitMatchesSelector"),
         1,
@@ -553,8 +441,8 @@ pub(crate) fn register_query(class: &mut ClassBuilder) -> JsResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::dom::{DomTree, NodeData};
     use crate::dom::node::DomAttribute;
+    use crate::dom::{DomTree, NodeData};
     use crate::js::runtime::JsRuntime;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -611,11 +499,15 @@ mod tests {
     fn query_selector_by_tag() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var body = document.body;
             var p = body.querySelector("p");
             p.textContent
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let text = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(text, "First paragraph");
     }
@@ -624,11 +516,15 @@ mod tests {
     fn query_selector_by_class() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var body = document.body;
             var el = body.querySelector(".highlight");
             el.textContent
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let text = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(text, "Second paragraph");
     }
@@ -637,11 +533,15 @@ mod tests {
     fn query_selector_by_id() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var body = document.body;
             var el = body.querySelector("#first");
             el.textContent
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let text = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(text, "First paragraph");
     }
@@ -650,10 +550,14 @@ mod tests {
     fn query_selector_returns_null_for_no_match() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var body = document.body;
             body.querySelector(".nonexistent")
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         assert!(result.is_null());
     }
 
@@ -661,11 +565,15 @@ mod tests {
     fn query_selector_all_returns_array() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var body = document.body;
             var elems = body.querySelectorAll("p");
             elems.length
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let length = result.to_i32(&mut rt.context).unwrap();
         assert_eq!(length, 3);
     }
@@ -674,11 +582,15 @@ mod tests {
     fn query_selector_all_empty_for_no_match() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var body = document.body;
             var elems = body.querySelectorAll(".nonexistent");
             elems.length
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let length = result.to_i32(&mut rt.context).unwrap();
         assert_eq!(length, 0);
     }
@@ -687,19 +599,27 @@ mod tests {
     fn get_elements_by_class_name() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var body = document.body;
             var elems = body.getElementsByClassName("highlight");
             elems.length
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let length = result.to_i32(&mut rt.context).unwrap();
         assert_eq!(length, 1);
 
-        let result2 = rt.eval(r##"
+        let result2 = rt
+            .eval(
+                r##"
             var body = document.body;
             var elems = body.getElementsByClassName("highlight");
             elems[0].textContent
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let text = result2.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(text, "Second paragraph");
     }
@@ -708,11 +628,15 @@ mod tests {
     fn get_elements_by_tag_name() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var body = document.body;
             var elems = body.getElementsByTagName("div");
             elems.length
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let length = result.to_i32(&mut rt.context).unwrap();
         assert_eq!(length, 2);
     }
@@ -721,10 +645,14 @@ mod tests {
     fn document_query_selector_test() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var el = document.querySelector("#first");
             el.textContent
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let text = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(text, "First paragraph");
     }
@@ -733,10 +661,14 @@ mod tests {
     fn document_query_selector_all_test() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var elems = document.querySelectorAll("p");
             elems.length
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let length = result.to_i32(&mut rt.context).unwrap();
         assert_eq!(length, 3);
     }
@@ -745,10 +677,14 @@ mod tests {
     fn complex_selector_descendant() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var el = document.querySelector("div.container p");
             el.textContent
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let text = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(text, "First paragraph");
     }
@@ -757,10 +693,14 @@ mod tests {
     fn complex_selector_nested_span() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var el = document.querySelector(".nested span");
             el.textContent
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let text = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(text, "Nested span");
     }
@@ -769,10 +709,14 @@ mod tests {
     fn document_get_elements_by_class_name_test() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var elems = document.getElementsByClassName("container");
             elems.length
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let length = result.to_i32(&mut rt.context).unwrap();
         assert_eq!(length, 1);
     }
@@ -781,10 +725,14 @@ mod tests {
     fn document_get_elements_by_tag_name_test() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var elems = document.getElementsByTagName("p");
             elems.length
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let length = result.to_i32(&mut rt.context).unwrap();
         assert_eq!(length, 3);
     }
@@ -793,10 +741,14 @@ mod tests {
     fn get_elements_by_tag_name_case_insensitive() {
         let tree = make_query_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r##"
+        let result = rt
+            .eval(
+                r##"
             var elems = document.getElementsByTagName("P");
             elems.length
-        "##).unwrap();
+        "##,
+            )
+            .unwrap();
         let length = result.to_i32(&mut rt.context).unwrap();
         assert_eq!(length, 3);
     }

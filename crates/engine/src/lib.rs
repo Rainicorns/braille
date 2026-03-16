@@ -1,18 +1,18 @@
+pub mod a11y;
+pub mod commands;
+pub mod css;
 pub mod dom;
 pub mod html;
 pub mod js;
-pub mod a11y;
-pub mod css;
-pub mod commands;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use boa_engine::{JsValue, JsObject};
+use boa_engine::{JsObject, JsValue};
 
-use crate::dom::tree::DomTree;
 use crate::dom::node::NodeData;
+use crate::dom::tree::DomTree;
 use crate::dom::NodeId;
 use crate::js::JsRuntime;
 use braille_wire::SnapMode;
@@ -109,12 +109,8 @@ impl Engine {
                 self.ref_map = ref_map;
                 output
             }
-            SnapMode::Dom => {
-                "[DOM mode not yet implemented]".to_string()
-            }
-            SnapMode::Markdown => {
-                "[Markdown mode not yet implemented]".to_string()
-            }
+            SnapMode::Dom => "[DOM mode not yet implemented]".to_string(),
+            SnapMode::Markdown => "[Markdown mode not yet implemented]".to_string(),
         }
     }
 
@@ -164,17 +160,19 @@ impl Engine {
         descriptors
     }
 
-    fn walk_for_script_descriptors(
-        tree: &DomTree,
-        node_id: NodeId,
-        descriptors: &mut Vec<ScriptDescriptor>,
-    ) {
+    fn walk_for_script_descriptors(tree: &DomTree, node_id: NodeId, descriptors: &mut Vec<ScriptDescriptor>) {
         let node = tree.get_node(node_id);
-        if let NodeData::Element { tag_name, attributes, .. } = &node.data {
+        if let NodeData::Element {
+            tag_name, attributes, ..
+        } = &node.data
+        {
             if tag_name.eq_ignore_ascii_case("script") {
                 // Per HTML spec: if src attribute exists, it's an external script
                 // (inline text content is ignored when src is present)
-                let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+                let src = attributes
+                    .iter()
+                    .find(|a| a.local_name == "src")
+                    .map(|a| a.value.clone());
                 if let Some(url) = src {
                     descriptors.push(ScriptDescriptor::External(url));
                 } else {
@@ -205,11 +203,7 @@ impl Engine {
     /// `fetched` contains pre-fetched scripts and iframe content.
     /// Executes all scripts in document order, substituting external content.
     /// Skips external scripts whose URL is not found in `fetched.scripts`.
-    pub fn execute_scripts(
-        &mut self,
-        descriptors: &[ScriptDescriptor],
-        fetched: &FetchedResources,
-    ) {
+    pub fn execute_scripts(&mut self, descriptors: &[ScriptDescriptor], fetched: &FetchedResources) {
         let mut runtime = JsRuntime::new(Rc::clone(&self.tree));
 
         // Populate iframe_src_content in RealmState with pre-fetched iframe content
@@ -281,19 +275,17 @@ impl Engine {
         for descriptor in descriptors {
             let code = match descriptor {
                 ScriptDescriptor::Inline(text) => {
-                    if text.trim().is_empty() { continue; }
+                    if text.trim().is_empty() {
+                        continue;
+                    }
                     text.clone()
                 }
-                ScriptDescriptor::External(url) => {
-                    match fetched.scripts.get(url) {
-                        Some(content) if !content.trim().is_empty() => content.clone(),
-                        _ => continue,
-                    }
-                }
+                ScriptDescriptor::External(url) => match fetched.scripts.get(url) {
+                    Some(content) if !content.trim().is_empty() => content.clone(),
+                    _ => continue,
+                },
             };
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                runtime.eval(&code)
-            })) {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.eval(&code))) {
                 Ok(Ok(_)) => {
                     runtime.notify_mutation_observers();
                 }
@@ -328,22 +320,14 @@ impl Engine {
 
     /// Convenience: load HTML with external scripts and iframe content, tolerating JS errors.
     /// Returns any JS errors that occurred during script execution.
-    pub fn load_html_with_resources_lossy(
-        &mut self,
-        html: &str,
-        fetched: &FetchedResources,
-    ) -> Vec<String> {
+    pub fn load_html_with_resources_lossy(&mut self, html: &str, fetched: &FetchedResources) -> Vec<String> {
         let descriptors = self.parse_and_collect_scripts(html);
         self.execute_scripts_lossy(&descriptors, fetched)
     }
 
     /// Convenience: load HTML with external scripts, tolerating JS errors (scripts only, no iframes).
     /// Returns any JS errors that occurred during script execution.
-    pub fn load_html_with_scripts_lossy(
-        &mut self,
-        html: &str,
-        fetched: &HashMap<String, String>,
-    ) -> Vec<String> {
+    pub fn load_html_with_scripts_lossy(&mut self, html: &str, fetched: &HashMap<String, String>) -> Vec<String> {
         self.load_html_with_resources_lossy(html, &FetchedResources::scripts_only(fetched.clone()))
     }
 
@@ -389,11 +373,7 @@ impl Engine {
                     &mut runtime.context,
                 );
 
-                let _ = handler_fn.call(
-                    &window_val,
-                    &[JsValue::from(event_obj)],
-                    &mut runtime.context,
-                );
+                let _ = handler_fn.call(&window_val, &[JsValue::from(event_obj)], &mut runtime.context);
                 runtime.notify_mutation_observers();
             }
         }
@@ -429,10 +409,13 @@ impl Engine {
         let has_content: Vec<bool> = {
             let src_content = crate::js::realm_state::iframe_src_content(&runtime.context);
             let map = src_content.borrow();
-            iframes.iter().map(|(_, src, _, _)| {
-                let src_no_fragment = src.split('#').next().unwrap_or(src);
-                map.contains_key(src_no_fragment)
-            }).collect()
+            iframes
+                .iter()
+                .map(|(_, src, _, _)| {
+                    let src_no_fragment = src.split('#').next().unwrap_or(src);
+                    map.contains_key(src_no_fragment)
+                })
+                .collect()
         };
 
         let tree_ptr = Rc::as_ptr(tree) as usize;
@@ -443,14 +426,12 @@ impl Engine {
             }
 
             // Ensure the content document is populated (this will use IFRAME_SRC_CONTENT)
-            let _ = crate::js::bindings::element::ensure_iframe_content_doc(
-                tree_ptr, *node_id, &mut runtime.context,
-            );
+            let _ = crate::js::bindings::element::ensure_iframe_content_doc(tree_ptr, *node_id, &mut runtime.context);
 
             // Get the iframe's JS object for `this` and event.target
-            let iframe_js = crate::js::bindings::element::get_or_create_js_element(
-                *node_id, tree.clone(), &mut runtime.context,
-            ).ok();
+            let iframe_js =
+                crate::js::bindings::element::get_or_create_js_element(*node_id, tree.clone(), &mut runtime.context)
+                    .ok();
 
             // Create a simple event object with `target` property
             let event_obj = if let Some(ref ijs) = iframe_js {
@@ -470,9 +451,17 @@ impl Engine {
             if let Some(handler_code) = onload_attr {
                 let func_code = format!("(function(e) {{ {} }})", handler_code);
                 if let Ok(func_val) = runtime.eval(&func_code) {
-                    if let Ok(func_obj) = func_val.as_object().ok_or(()).and_then(|o| {
-                        if o.is_callable() { Ok(o.clone()) } else { Err(()) }
-                    }) {
+                    if let Ok(func_obj) =
+                        func_val.as_object().ok_or(()).and_then(
+                            |o| {
+                                if o.is_callable() {
+                                    Ok(o.clone())
+                                } else {
+                                    Err(())
+                                }
+                            },
+                        )
+                    {
                         if let Some(ref ijs) = iframe_js {
                             let _ = func_obj.call(
                                 &JsValue::from(ijs.clone()),
@@ -511,16 +500,20 @@ impl Engine {
         ctx: &boa_engine::Context,
     ) {
         let node = tree.get_node(node_id);
-        if let NodeData::Element { tag_name, attributes, .. } = &node.data {
+        if let NodeData::Element {
+            tag_name, attributes, ..
+        } = &node.data
+        {
             if tag_name.eq_ignore_ascii_case("iframe") {
                 if let Some(src_attr) = attributes.iter().find(|a| a.local_name == "src") {
                     let src = src_attr.value.clone();
-                    let onload_attr = attributes.iter().find(|a| a.local_name == "onload").map(|a| a.value.clone());
+                    let onload_attr = attributes
+                        .iter()
+                        .find(|a| a.local_name == "onload")
+                        .map(|a| a.value.clone());
                     // Check for JS-property onload handler (via unified on_event system)
                     let tree_ptr = Rc::as_ptr(tree_rc) as usize;
-                    let onload_js = crate::js::bindings::on_event::get_on_event_handler(
-                        tree_ptr, node_id, "load", ctx,
-                    );
+                    let onload_js = crate::js::bindings::on_event::get_on_event_handler(tree_ptr, node_id, "load", ctx);
                     result.push((node_id, src, onload_attr, onload_js));
                 }
             }
@@ -554,10 +547,26 @@ mod tests {
         engine.load_html(html);
         let snapshot = engine.snapshot(SnapMode::Accessibility);
 
-        assert!(snapshot.contains("heading"), "snapshot should contain heading: {}", snapshot);
-        assert!(snapshot.contains("Hello"), "snapshot should contain Hello: {}", snapshot);
-        assert!(snapshot.contains("paragraph"), "snapshot should contain paragraph: {}", snapshot);
-        assert!(snapshot.contains("Created by JavaScript"), "snapshot should contain JS-created text: {}", snapshot);
+        assert!(
+            snapshot.contains("heading"),
+            "snapshot should contain heading: {}",
+            snapshot
+        );
+        assert!(
+            snapshot.contains("Hello"),
+            "snapshot should contain Hello: {}",
+            snapshot
+        );
+        assert!(
+            snapshot.contains("paragraph"),
+            "snapshot should contain paragraph: {}",
+            snapshot
+        );
+        assert!(
+            snapshot.contains("Created by JavaScript"),
+            "snapshot should contain JS-created text: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -581,8 +590,16 @@ mod tests {
         engine.load_html(html);
         let snapshot = engine.snapshot(SnapMode::Accessibility);
 
-        assert!(snapshot.contains("First"), "snapshot should contain First: {}", snapshot);
-        assert!(snapshot.contains("Second"), "snapshot should contain Second: {}", snapshot);
+        assert!(
+            snapshot.contains("First"),
+            "snapshot should contain First: {}",
+            snapshot
+        );
+        assert!(
+            snapshot.contains("Second"),
+            "snapshot should contain Second: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -651,7 +668,11 @@ mod tests {
         engine.load_html(html);
         engine.snapshot(SnapMode::Accessibility);
 
-        assert_eq!(engine.resolve_ref("@e1"), None, "should return None when no interactive elements");
+        assert_eq!(
+            engine.resolve_ref("@e1"),
+            None,
+            "should return None when no interactive elements"
+        );
     }
 
     #[test]
@@ -785,7 +806,11 @@ mod tests {
         engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched.clone()));
 
         let snapshot = engine.snapshot(SnapMode::Accessibility);
-        assert!(snapshot.contains("inline works"), "inline script should execute: {}", snapshot);
+        assert!(
+            snapshot.contains("inline works"),
+            "inline script should execute: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -806,12 +831,17 @@ mod tests {
                 "let el = document.createElement(\"p\");",
                 "el.textContent = \"external works\";",
                 "document.getElementById(\"target\").appendChild(el);"
-            ).to_string(),
+            )
+            .to_string(),
         );
 
         engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched.clone()));
         let snapshot = engine.snapshot(SnapMode::Accessibility);
-        assert!(snapshot.contains("external works"), "external script should execute: {}", snapshot);
+        assert!(
+            snapshot.contains("external works"),
+            "external script should execute: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -833,7 +863,11 @@ mod tests {
         engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched.clone()));
 
         let snapshot = engine.snapshot(SnapMode::Accessibility);
-        assert!(snapshot.contains("after missing"), "inline script after missing external should run: {}", snapshot);
+        assert!(
+            snapshot.contains("after missing"),
+            "inline script after missing external should run: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -858,7 +892,11 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html_with_scripts(html, &fetched);
         let snapshot = engine.snapshot(SnapMode::Accessibility);
-        assert!(snapshot.contains("value is 42"), "external script should set global used by inline: {}", snapshot);
+        assert!(
+            snapshot.contains("value is 42"),
+            "external script should set global used by inline: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -927,13 +965,22 @@ mod tests {
                 "let el = document.createElement(\"p\");",
                 "el.textContent = \"EXTERNAL RAN\";",
                 "document.getElementById(\"target\").appendChild(el);"
-            ).to_string(),
+            )
+            .to_string(),
         );
 
         engine.execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched.clone()));
         let snapshot = engine.snapshot(SnapMode::Accessibility);
-        assert!(snapshot.contains("EXTERNAL RAN"), "external content should run: {}", snapshot);
-        assert!(!snapshot.contains("INLINE SHOULD NOT RUN"), "inline text should be ignored when src present: {}", snapshot);
+        assert!(
+            snapshot.contains("EXTERNAL RAN"),
+            "external content should run: {}",
+            snapshot
+        );
+        assert!(
+            !snapshot.contains("INLINE SHOULD NOT RUN"),
+            "inline text should be ignored when src present: {}",
+            snapshot
+        );
     }
 
     // ---- C-3C: compute_all_styles integration tests ----
@@ -955,7 +1002,10 @@ mod tests {
         let p_node = tree.get_node(p_id);
 
         // After load_html, computed_style should be populated
-        assert!(p_node.computed_style.is_some(), "computed_style should be set after load_html");
+        assert!(
+            p_node.computed_style.is_some(),
+            "computed_style should be set after load_html"
+        );
         let style = p_node.computed_style.as_ref().unwrap();
         assert!(style.contains_key("color"), "should have color property");
     }
@@ -974,7 +1024,11 @@ mod tests {
         let snapshot = engine.snapshot(SnapMode::Accessibility);
 
         assert!(snapshot.contains("Visible"), "visible text should appear: {}", snapshot);
-        assert!(!snapshot.contains("Hidden"), "display:none text should not appear: {}", snapshot);
+        assert!(
+            !snapshot.contains("Hidden"),
+            "display:none text should not appear: {}",
+            snapshot
+        );
     }
 
     #[test]
@@ -991,10 +1045,17 @@ mod tests {
         let snapshot = engine.snapshot(SnapMode::Accessibility);
 
         assert!(snapshot.contains("Visible"), "visible text should appear: {}", snapshot);
-        assert!(!snapshot.contains("Ghost"), "visibility:hidden text should not appear: {}", snapshot);
+        assert!(
+            !snapshot.contains("Ghost"),
+            "visibility:hidden text should not appear: {}",
+            snapshot
+        );
         // But the paragraph structure should still be there
         let lines: Vec<&str> = snapshot.lines().collect();
-        assert!(lines.len() >= 2, "should have multiple lines including hidden paragraph structure");
+        assert!(
+            lines.len() >= 2,
+            "should have multiple lines including hidden paragraph structure"
+        );
     }
 
     #[test]
@@ -1017,7 +1078,10 @@ mod tests {
         let ps = tree.get_elements_by_tag_name("p");
         assert!(!ps.is_empty(), "should have a <p> element from script");
         let p_node = tree.get_node(ps[0]);
-        assert!(p_node.computed_style.is_some(), "script-created element should get computed styles");
+        assert!(
+            p_node.computed_style.is_some(),
+            "script-created element should get computed styles"
+        );
     }
 
     #[test]
@@ -1038,6 +1102,9 @@ mod tests {
         let tree = engine.tree.borrow();
         let h1_id = tree.get_elements_by_tag_name("h1")[0];
         let h1_node = tree.get_node(h1_id);
-        assert!(h1_node.computed_style.is_some(), "load_html_with_scripts should compute styles");
+        assert!(
+            h1_node.computed_style.is_some(),
+            "load_html_with_scripts should compute styles"
+        );
     }
 }

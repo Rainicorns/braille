@@ -61,9 +61,9 @@ fn get_property_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> Js
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("style.getPropertyValue: `this` is not an object").into()))?;
-    let style = obj
-        .downcast_ref::<JsStyleDeclaration>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("style.getPropertyValue: `this` is not a StyleDeclaration").into()))?;
+    let style = obj.downcast_ref::<JsStyleDeclaration>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("style.getPropertyValue: `this` is not a StyleDeclaration").into())
+    })?;
 
     let name = args
         .first()
@@ -89,9 +89,9 @@ fn set_property(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("style.setProperty: `this` is not an object").into()))?;
-    let style = obj
-        .downcast_ref::<JsStyleDeclaration>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("style.setProperty: `this` is not a StyleDeclaration").into()))?;
+    let style = obj.downcast_ref::<JsStyleDeclaration>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("style.setProperty: `this` is not a StyleDeclaration").into())
+    })?;
 
     let name = args
         .first()
@@ -129,9 +129,9 @@ fn remove_property(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRes
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("style.removeProperty: `this` is not an object").into()))?;
-    let style = obj
-        .downcast_ref::<JsStyleDeclaration>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("style.removeProperty: `this` is not a StyleDeclaration").into()))?;
+    let style = obj.downcast_ref::<JsStyleDeclaration>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("style.removeProperty: `this` is not a StyleDeclaration").into())
+    })?;
 
     let name = args
         .first()
@@ -167,9 +167,9 @@ fn get_css_text(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResu
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("style.cssText getter: `this` is not an object").into()))?;
-    let style = obj
-        .downcast_ref::<JsStyleDeclaration>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("style.cssText getter: `this` is not a StyleDeclaration").into()))?;
+    let style = obj.downcast_ref::<JsStyleDeclaration>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("style.cssText getter: `this` is not a StyleDeclaration").into())
+    })?;
 
     let tree = style.tree.borrow();
     let style_attr = tree.get_attribute(style.node_id, "style").unwrap_or_default();
@@ -181,9 +181,9 @@ fn set_css_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("style.cssText setter: `this` is not an object").into()))?;
-    let style = obj
-        .downcast_ref::<JsStyleDeclaration>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("style.cssText setter: `this` is not a StyleDeclaration").into()))?;
+    let style = obj.downcast_ref::<JsStyleDeclaration>().ok_or_else(|| {
+        JsError::from_opaque(js_string!("style.cssText setter: `this` is not a StyleDeclaration").into())
+    })?;
 
     let value = args
         .first()
@@ -246,28 +246,42 @@ impl Class for JsStyleDeclaration {
     const NAME: &'static str = "CSSStyleDeclaration";
     const LENGTH: usize = 0;
 
-    fn data_constructor(
-        _new_target: &JsValue,
-        _args: &[JsValue],
-        _context: &mut Context,
-    ) -> JsResult<Self> {
+    fn data_constructor(_new_target: &JsValue, _args: &[JsValue], _context: &mut Context) -> JsResult<Self> {
         Err(JsError::from_opaque(
             js_string!("CSSStyleDeclaration cannot be constructed directly from JS").into(),
         ))
     }
 
     fn init(class: &mut ClassBuilder) -> JsResult<()> {
-        class.method(js_string!("getPropertyValue"), 1, NativeFunction::from_fn_ptr(get_property_value));
+        class.method(
+            js_string!("getPropertyValue"),
+            1,
+            NativeFunction::from_fn_ptr(get_property_value),
+        );
         class.method(js_string!("setProperty"), 2, NativeFunction::from_fn_ptr(set_property));
-        class.method(js_string!("removeProperty"), 1, NativeFunction::from_fn_ptr(remove_property));
+        class.method(
+            js_string!("removeProperty"),
+            1,
+            NativeFunction::from_fn_ptr(remove_property),
+        );
         class.method(js_string!("item"), 1, NativeFunction::from_fn_ptr(item));
 
         let realm = class.context().realm().clone();
         let css_text_getter = NativeFunction::from_fn_ptr(get_css_text);
         let css_text_setter = NativeFunction::from_fn_ptr(set_css_text);
-        class.accessor(js_string!("cssText"), Some(css_text_getter.to_js_function(&realm)), Some(css_text_setter.to_js_function(&realm)), Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
+        class.accessor(
+            js_string!("cssText"),
+            Some(css_text_getter.to_js_function(&realm)),
+            Some(css_text_setter.to_js_function(&realm)),
+            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+        );
         let length_getter = NativeFunction::from_fn_ptr(get_length);
-        class.accessor(js_string!("length"), Some(length_getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
+        class.accessor(
+            js_string!("length"),
+            Some(length_getter.to_js_function(&realm)),
+            None,
+            Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+        );
 
         Ok(())
     }
@@ -276,7 +290,12 @@ impl Class for JsStyleDeclaration {
 pub(crate) fn register_style(class: &mut ClassBuilder) -> JsResult<()> {
     let realm = class.context().realm().clone();
     let getter = NativeFunction::from_fn_ptr(get_style);
-    class.accessor(js_string!("style"), Some(getter.to_js_function(&realm)), None, Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE);
+    class.accessor(
+        js_string!("style"),
+        Some(getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
     Ok(())
 }
 
@@ -299,11 +318,11 @@ pub(crate) fn register_style_class(context: &mut Context) {
 
 #[cfg(test)]
 mod tests {
+    use crate::dom::NodeId;
     use crate::dom::{DomTree, NodeData};
     use crate::js::JsRuntime;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use crate::dom::NodeId;
 
     fn make_test_tree() -> Rc<RefCell<DomTree>> {
         let tree = Rc::new(RefCell::new(DomTree::new()));
@@ -327,7 +346,8 @@ mod tests {
     fn style_set_property_sets_inline_style_attribute() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red");"#).unwrap();
+        rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red");"#)
+            .unwrap();
         let t = tree.borrow();
         let div_id: NodeId = 3;
         assert_eq!(t.get_attribute(div_id, "style"), Some("color: red;".to_string()));
@@ -337,8 +357,11 @@ mod tests {
     fn style_get_property_value_reads_correct_value() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red");"#).unwrap();
-        let result = rt.eval(r#"var el2 = document.getElementById("app"); el2.style.getPropertyValue("color");"#).unwrap();
+        rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red");"#)
+            .unwrap();
+        let result = rt
+            .eval(r#"var el2 = document.getElementById("app"); el2.style.getPropertyValue("color");"#)
+            .unwrap();
         let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(value, "red");
     }
@@ -348,7 +371,9 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
         rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red"); el.style.setProperty("font-size", "16px");"#).unwrap();
-        let result = rt.eval(r#"var el2 = document.getElementById("app"); el2.style.removeProperty("color");"#).unwrap();
+        let result = rt
+            .eval(r#"var el2 = document.getElementById("app"); el2.style.removeProperty("color");"#)
+            .unwrap();
         let old_value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(old_value, "red");
         let t = tree.borrow();
@@ -360,7 +385,9 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
         rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red"); el.style.setProperty("font-size", "16px");"#).unwrap();
-        let result = rt.eval(r#"var el2 = document.getElementById("app"); el2.style.cssText;"#).unwrap();
+        let result = rt
+            .eval(r#"var el2 = document.getElementById("app"); el2.style.cssText;"#)
+            .unwrap();
         let css_text = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(css_text, "color: red; font-size: 16px;");
     }
@@ -371,17 +398,24 @@ mod tests {
         let mut rt = JsRuntime::new(Rc::clone(&tree));
         rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red"); el.style.cssText = "background: blue; margin: 10px;";"#).unwrap();
         let t = tree.borrow();
-        assert_eq!(t.get_attribute(3, "style"), Some("background: blue; margin: 10px;".to_string()));
+        assert_eq!(
+            t.get_attribute(3, "style"),
+            Some("background: blue; margin: 10px;".to_string())
+        );
     }
 
     #[test]
     fn style_length_returns_property_count() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let r0 = rt.eval(r#"var el = document.getElementById("app"); el.style.length;"#).unwrap();
+        let r0 = rt
+            .eval(r#"var el = document.getElementById("app"); el.style.length;"#)
+            .unwrap();
         assert_eq!(r0.as_number(), Some(0.0));
         rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red"); el.style.setProperty("font-size", "16px"); el.style.setProperty("margin", "10px");"#).unwrap();
-        let r3 = rt.eval(r#"var el2 = document.getElementById("app"); el2.style.length;"#).unwrap();
+        let r3 = rt
+            .eval(r#"var el2 = document.getElementById("app"); el2.style.length;"#)
+            .unwrap();
         assert_eq!(r3.as_number(), Some(3.0));
     }
 
@@ -390,11 +424,20 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
         rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red"); el.style.setProperty("font-size", "16px");"#).unwrap();
-        let r0 = rt.eval(r#"var el2 = document.getElementById("app"); el2.style.item(0);"#).unwrap();
+        let r0 = rt
+            .eval(r#"var el2 = document.getElementById("app"); el2.style.item(0);"#)
+            .unwrap();
         assert_eq!(r0.to_string(&mut rt.context).unwrap().to_std_string_escaped(), "color");
-        let r1 = rt.eval(r#"var el3 = document.getElementById("app"); el3.style.item(1);"#).unwrap();
-        assert_eq!(r1.to_string(&mut rt.context).unwrap().to_std_string_escaped(), "font-size");
-        let roob = rt.eval(r#"var el4 = document.getElementById("app"); el4.style.item(99);"#).unwrap();
+        let r1 = rt
+            .eval(r#"var el3 = document.getElementById("app"); el3.style.item(1);"#)
+            .unwrap();
+        assert_eq!(
+            r1.to_string(&mut rt.context).unwrap().to_std_string_escaped(),
+            "font-size"
+        );
+        let roob = rt
+            .eval(r#"var el4 = document.getElementById("app"); el4.style.item(99);"#)
+            .unwrap();
         assert_eq!(roob.to_string(&mut rt.context).unwrap().to_std_string_escaped(), "");
     }
 
@@ -404,7 +447,10 @@ mod tests {
         let mut rt = JsRuntime::new(Rc::clone(&tree));
         rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red"); el.style.setProperty("font-size", "16px"); el.style.setProperty("margin", "10px");"#).unwrap();
         let t = tree.borrow();
-        assert_eq!(t.get_attribute(3, "style"), Some("color: red; font-size: 16px; margin: 10px;".to_string()));
+        assert_eq!(
+            t.get_attribute(3, "style"),
+            Some("color: red; font-size: 16px; margin: 10px;".to_string())
+        );
     }
 
     #[test]
@@ -412,8 +458,13 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
         rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red"); el.style.setProperty("color", "blue");"#).unwrap();
-        let result = rt.eval(r#"var el2 = document.getElementById("app"); el2.style.getPropertyValue("color");"#).unwrap();
-        assert_eq!(result.to_string(&mut rt.context).unwrap().to_std_string_escaped(), "blue");
+        let result = rt
+            .eval(r#"var el2 = document.getElementById("app"); el2.style.getPropertyValue("color");"#)
+            .unwrap();
+        assert_eq!(
+            result.to_string(&mut rt.context).unwrap().to_std_string_escaped(),
+            "blue"
+        );
         let t = tree.borrow();
         assert_eq!(t.get_attribute(3, "style"), Some("color: blue;".to_string()));
     }
@@ -422,11 +473,17 @@ mod tests {
     fn style_on_element_with_no_style_attribute_returns_empty_values() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let rv = rt.eval(r#"var el = document.getElementById("app"); el.style.getPropertyValue("color");"#).unwrap();
+        let rv = rt
+            .eval(r#"var el = document.getElementById("app"); el.style.getPropertyValue("color");"#)
+            .unwrap();
         assert_eq!(rv.to_string(&mut rt.context).unwrap().to_std_string_escaped(), "");
-        let rc = rt.eval(r#"var el2 = document.getElementById("app"); el2.style.cssText;"#).unwrap();
+        let rc = rt
+            .eval(r#"var el2 = document.getElementById("app"); el2.style.cssText;"#)
+            .unwrap();
         assert_eq!(rc.to_string(&mut rt.context).unwrap().to_std_string_escaped(), "");
-        let rl = rt.eval(r#"var el3 = document.getElementById("app"); el3.style.length;"#).unwrap();
+        let rl = rt
+            .eval(r#"var el3 = document.getElementById("app"); el3.style.length;"#)
+            .unwrap();
         assert_eq!(rl.as_number(), Some(0.0));
     }
 
@@ -434,7 +491,9 @@ mod tests {
     fn style_remove_property_returns_empty_for_missing() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        let result = rt.eval(r#"var el = document.getElementById("app"); el.style.removeProperty("nonexistent");"#).unwrap();
+        let result = rt
+            .eval(r#"var el = document.getElementById("app"); el.style.removeProperty("nonexistent");"#)
+            .unwrap();
         assert_eq!(result.to_string(&mut rt.context).unwrap().to_std_string_escaped(), "");
     }
 
@@ -442,7 +501,10 @@ mod tests {
     fn style_css_text_setter_empty_clears_style() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"var el = document.getElementById("app"); el.style.setProperty("color", "red"); el.style.cssText = "";"#).unwrap();
+        rt.eval(
+            r#"var el = document.getElementById("app"); el.style.setProperty("color", "red"); el.style.cssText = "";"#,
+        )
+        .unwrap();
         let t = tree.borrow();
         assert_eq!(t.get_attribute(3, "style"), None);
     }
@@ -451,7 +513,8 @@ mod tests {
     fn style_workflow_integration() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"
+        rt.eval(
+            r#"
             var el = document.getElementById("app");
             if (el.style.length !== 0) throw new Error("Expected length 0");
             if (el.style.cssText !== "") throw new Error("Expected empty cssText");
@@ -470,6 +533,8 @@ mod tests {
             if (el.style.getPropertyValue("display") !== "flex") throw new Error("Expected display flex");
             el.style.cssText = "";
             if (el.style.length !== 0) throw new Error("Expected length 0");
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
     }
 }

@@ -70,10 +70,22 @@ fn react_like_reconciler_simulation() {
     assert!(snap.contains("Final Item"), "should see final render: {}", snap);
     // Old items should not be in the snapshot as list items
     // (Note: "Apple" substring exists inside "firstHadApple", so check for the listitem form)
-    assert!(!snap.contains("listitem \"Apple\""), "Apple listitem should be gone: {}", snap);
-    assert!(!snap.contains("listitem \"Grape\""), "Grape listitem should be gone: {}", snap);
+    assert!(
+        !snap.contains("listitem \"Apple\""),
+        "Apple listitem should be gone: {}",
+        snap
+    );
+    assert!(
+        !snap.contains("listitem \"Grape\""),
+        "Grape listitem should be gone: {}",
+        snap
+    );
     // Verify first render did contain Apple
-    assert!(snap.contains("firstHadApple=true"), "first render should have had Apple: {}", snap);
+    assert!(
+        snap.contains("firstHadApple=true"),
+        "first render should have had Apple: {}",
+        snap
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +147,11 @@ fn svelte_like_direct_dom_manipulation() {
     let snap = engine.snapshot(SnapMode::Accessibility);
 
     assert!(snap.contains("Count: 2"), "counter should show 2: {}", snap);
-    assert!(snap.contains("LOG=inc:1,inc:2,inc:3,dec:2"), "log should record events: {}", snap);
+    assert!(
+        snap.contains("LOG=inc:1,inc:2,inc:3,dec:2"),
+        "log should record events: {}",
+        snap
+    );
     assert!(snap.contains("+1"), "increment button: {}", snap);
     assert!(snap.contains("-1"), "decrement button: {}", snap);
 }
@@ -197,7 +213,11 @@ fn form_workflow_with_js_values() {
 
     // Verify form properties from paragraph output
     assert!(snap.contains("elems=7"), "form.elements count: {}", snap);
-    assert!(snap.contains("tags=INPUT,INPUT,INPUT,INPUT,SELECT,TEXTAREA,BUTTON"), "form element tags: {}", snap);
+    assert!(
+        snap.contains("tags=INPUT,INPUT,INPUT,INPUT,SELECT,TEXTAREA,BUTTON"),
+        "form element tags: {}",
+        snap
+    );
     assert!(snap.contains("action=/register"), "form action: {}", snap);
     assert!(snap.contains("method=post"), "form method: {}", snap);
 }
@@ -239,7 +259,11 @@ fn event_delegation_pattern() {
     engine.load_html(html);
     let snap = engine.snapshot(SnapMode::Accessibility);
 
-    assert!(snap.contains("clicked=Second,First,Third"), "delegated handler: {}", snap);
+    assert!(
+        snap.contains("clicked=Second,First,Third"),
+        "delegated handler: {}",
+        snap
+    );
     let snap_lower = snap.to_ascii_lowercase();
     assert!(snap_lower.contains("tags=li/ul"), "target/currentTarget tags: {}", snap);
 }
@@ -347,7 +371,11 @@ fn class_list_toggle_workflow() {
 
     assert!(snap.contains("afterAdd=card active highlighted"), "after add: {}", snap);
     assert!(snap.contains("toggleOff=false:card active"), "toggle off: {}", snap);
-    assert!(snap.contains("toggleOn=true:card active featured"), "toggle on: {}", snap);
+    assert!(
+        snap.contains("toggleOn=true:card active featured"),
+        "toggle on: {}",
+        snap
+    );
     assert!(snap.contains("afterRemove=card featured"), "after remove: {}", snap);
     assert!(snap.contains("hasCard=true"), "contains card: {}", snap);
     assert!(snap.contains("hasFeatured=true"), "contains featured: {}", snap);
@@ -612,7 +640,11 @@ fn event_listener_once_and_remove() {
     let snap = engine.snapshot(SnapMode::Accessibility);
 
     assert!(snap.contains("first=once,regular"), "first dispatch: {}", snap);
-    assert!(snap.contains("second=regular"), "second dispatch (once removed): {}", snap);
+    assert!(
+        snap.contains("second=regular"),
+        "second dispatch (once removed): {}",
+        snap
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -657,7 +689,11 @@ fn query_selector_complex_workflow() {
     assert!(snap.contains("first=card1"), "querySelector: {}", snap);
     assert!(snap.contains("all=3"), "querySelectorAll: {}", snap);
     assert!(snap.contains("firstTitle=Card One"), "descendant selector: {}", snap);
-    assert!(snap.contains("card2Body=Second card body"), "scoped querySelector: {}", snap);
+    assert!(
+        snap.contains("card2Body=Second card body"),
+        "scoped querySelector: {}",
+        snap
+    );
     assert!(snap.contains("titleCount=3"), "getElementsByClassName: {}", snap);
     assert!(snap.contains("h2Count=3"), "getElementsByTagName: {}", snap);
 }
@@ -724,10 +760,22 @@ fn dom_mutation_methods() {
     let snap = engine.snapshot(SnapMode::Accessibility);
 
     assert!(snap.contains("initial=First,Second,Third"), "initial: {}", snap);
-    assert!(snap.contains("insert=First,OneHalf,Second,Third"), "after insert: {}", snap);
+    assert!(
+        snap.contains("insert=First,OneHalf,Second,Third"),
+        "after insert: {}",
+        snap
+    );
     assert!(snap.contains("remove=OneHalf,Second,Third"), "after remove: {}", snap);
-    assert!(snap.contains("replace=OneHalf,Replacement,Third"), "after replace: {}", snap);
-    assert!(snap.contains("clone=OneHalf,Replacement,Third,Clone"), "after clone: {}", snap);
+    assert!(
+        snap.contains("replace=OneHalf,Replacement,Third"),
+        "after replace: {}",
+        snap
+    );
+    assert!(
+        snap.contains("clone=OneHalf,Replacement,Third,Clone"),
+        "after clone: {}",
+        snap
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -847,7 +895,11 @@ fn anchor_form_hidden_and_text_node() {
     let snap = engine.snapshot(SnapMode::Accessibility);
 
     assert!(snap.contains("href=https://example.com"), "initial href: {}", snap);
-    assert!(snap.contains("newHref=https://new.example.com"), "updated href: {}", snap);
+    assert!(
+        snap.contains("newHref=https://new.example.com"),
+        "updated href: {}",
+        snap
+    );
     assert!(snap.contains("action=/api"), "initial action: {}", snap);
     assert!(snap.contains("method=post"), "initial method: {}", snap);
     assert!(snap.contains("newAction=/new-api"), "updated action: {}", snap);
@@ -882,7 +934,11 @@ fn window_document_and_console() {
     engine.load_html(html);
     let snap = engine.snapshot(SnapMode::Accessibility);
 
-    assert!(snap.contains("Created via window.document"), "window.document works: {}", snap);
+    assert!(
+        snap.contains("Created via window.document"),
+        "window.document works: {}",
+        snap
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -973,7 +1029,11 @@ fn css_display_none_hides_from_a11y_tree() {
     assert!(snap.contains("Visible paragraph"), "visible paragraph: {}", snap);
     assert!(snap.contains("Also visible"), "also visible: {}", snap);
     assert!(!snap.contains("Hidden Heading"), "display:none: {}", snap);
-    assert!(!snap.contains("This should not appear"), "display:none content: {}", snap);
+    assert!(
+        !snap.contains("This should not appear"),
+        "display:none content: {}",
+        snap
+    );
     assert!(!snap.contains("Invisible Heading"), "visibility:hidden: {}", snap);
 }
 

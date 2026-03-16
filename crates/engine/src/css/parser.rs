@@ -12,7 +12,7 @@
 
 use crate::css::selector_impl::{BrailleSelectorImpl, BrailleSelectorParser};
 use cssparser::{CowRcStr, ParseError, Parser, ParserInput, ParserState};
-use selectors::parser::{SelectorList, ParseRelative};
+use selectors::parser::{ParseRelative, SelectorList};
 
 /// A parsed CSS stylesheet containing a list of rules.
 #[derive(Debug, Clone, PartialEq)]
@@ -30,8 +30,8 @@ pub struct Rule {
 /// A CSS property declaration with optional !important flag.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Declaration {
-    pub property: String,  // raw CSS property name
-    pub value: String,     // raw CSS value string
+    pub property: String, // raw CSS property name
+    pub value: String,    // raw CSS value string
     pub important: bool,
 }
 
@@ -157,8 +157,12 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for BrailleDeclarationParser {
 }
 
 impl<'i> cssparser::RuleBodyItemParser<'i, Declaration, ()> for BrailleDeclarationParser {
-    fn parse_qualified(&self) -> bool { false }
-    fn parse_declarations(&self) -> bool { true }
+    fn parse_qualified(&self) -> bool {
+        false
+    }
+    fn parse_declarations(&self) -> bool {
+        true
+    }
 }
 
 /// Implementation of cssparser's QualifiedRuleParser trait for Braille.
@@ -169,13 +173,9 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for BrailleRuleParser {
     type QualifiedRule = Rule;
     type Error = ();
 
-    fn parse_prelude<'t>(
-        &mut self,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Prelude, ParseError<'i, ()>> {
+    fn parse_prelude<'t>(&mut self, input: &mut Parser<'i, 't>) -> Result<Self::Prelude, ParseError<'i, ()>> {
         // Parse selector list using the selectors crate
-        SelectorList::parse(&BrailleSelectorParser, input, ParseRelative::No)
-            .map_err(|_| input.new_custom_error(()))
+        SelectorList::parse(&BrailleSelectorParser, input, ParseRelative::No).map_err(|_| input.new_custom_error(()))
     }
 
     fn parse_block<'t>(

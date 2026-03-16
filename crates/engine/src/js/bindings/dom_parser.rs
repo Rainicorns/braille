@@ -9,8 +9,8 @@ use boa_engine::{
     Context, JsError, JsObject, JsValue,
 };
 
-use crate::dom::DomTree;
 use crate::dom::node::{DomAttribute, NodeId};
+use crate::dom::DomTree;
 use crate::html::parser::parse_html;
 
 use super::document::add_document_properties_to_element;
@@ -33,11 +33,7 @@ fn parse_xml_into_tree(input: &str) -> Rc<RefCell<DomTree>> {
         match reader.read_resolved_event() {
             Ok((resolve, Event::Start(e))) => {
                 let ns_uri = match resolve {
-                    ResolveResult::Bound(ns) => {
-                        std::str::from_utf8(ns.as_ref())
-                            .unwrap_or("")
-                            .to_string()
-                    }
+                    ResolveResult::Bound(ns) => std::str::from_utf8(ns.as_ref()).unwrap_or("").to_string(),
                     ResolveResult::Unbound => String::new(),
                     ResolveResult::Unknown(prefix_bytes) => {
                         // Unknown prefix - treat as no namespace
@@ -45,19 +41,11 @@ fn parse_xml_into_tree(input: &str) -> Rc<RefCell<DomTree>> {
                         String::new()
                     }
                 };
-                let local_name = std::str::from_utf8(e.local_name().as_ref())
-                    .unwrap_or("")
-                    .to_string();
+                let local_name = std::str::from_utf8(e.local_name().as_ref()).unwrap_or("").to_string();
                 // Extract the full qualified name directly from the event bytes
                 // to avoid lifetime issues with prefix()
-                let full_name = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_string();
-                let tag_name = if full_name.contains(':') {
-                    full_name
-                } else {
-                    local_name
-                };
+                let full_name = std::str::from_utf8(e.name().as_ref()).unwrap_or("").to_string();
+                let tag_name = if full_name.contains(':') { full_name } else { local_name };
 
                 // Collect attributes
                 let attrs: Vec<DomAttribute> = e
@@ -80,9 +68,7 @@ fn parse_xml_into_tree(input: &str) -> Rc<RefCell<DomTree>> {
                     })
                     .collect();
 
-                let node_id = tree
-                    .borrow_mut()
-                    .create_element_ns(&tag_name, attrs, &ns_uri);
+                let node_id = tree.borrow_mut().create_element_ns(&tag_name, attrs, &ns_uri);
                 let parent = *stack.last().unwrap();
                 tree.borrow_mut().append_child(parent, node_id);
                 stack.push(node_id);
@@ -94,25 +80,13 @@ fn parse_xml_into_tree(input: &str) -> Rc<RefCell<DomTree>> {
             }
             Ok((resolve, Event::Empty(e))) => {
                 let ns_uri = match resolve {
-                    ResolveResult::Bound(ns) => {
-                        std::str::from_utf8(ns.as_ref())
-                            .unwrap_or("")
-                            .to_string()
-                    }
+                    ResolveResult::Bound(ns) => std::str::from_utf8(ns.as_ref()).unwrap_or("").to_string(),
                     ResolveResult::Unbound => String::new(),
                     ResolveResult::Unknown(_) => String::new(),
                 };
-                let local_name = std::str::from_utf8(e.local_name().as_ref())
-                    .unwrap_or("")
-                    .to_string();
-                let full_name = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_string();
-                let tag_name = if full_name.contains(':') {
-                    full_name
-                } else {
-                    local_name
-                };
+                let local_name = std::str::from_utf8(e.local_name().as_ref()).unwrap_or("").to_string();
+                let full_name = std::str::from_utf8(e.name().as_ref()).unwrap_or("").to_string();
+                let tag_name = if full_name.contains(':') { full_name } else { local_name };
 
                 let attrs: Vec<DomAttribute> = e
                     .attributes()
@@ -134,9 +108,7 @@ fn parse_xml_into_tree(input: &str) -> Rc<RefCell<DomTree>> {
                     })
                     .collect();
 
-                let node_id = tree
-                    .borrow_mut()
-                    .create_element_ns(&tag_name, attrs, &ns_uri);
+                let node_id = tree.borrow_mut().create_element_ns(&tag_name, attrs, &ns_uri);
                 let parent = *stack.last().unwrap();
                 tree.borrow_mut().append_child(parent, node_id);
             }
@@ -163,7 +135,7 @@ fn parse_xml_into_tree(input: &str) -> Rc<RefCell<DomTree>> {
                 }
             }
             Ok((_, Event::Eof)) => break,
-            Ok(_) => {} // skip Decl, DocType, PI for now
+            Ok(_) => {}      // skip Decl, DocType, PI for now
             Err(_) => break, // best-effort parsing, skip errors
         }
     }
@@ -206,12 +178,7 @@ pub(crate) fn register_dom_parser(ctx: &mut Context) {
                     let new_tree = parse_html(&input);
                     let doc_id = new_tree.borrow().document();
                     let js_obj = get_or_create_js_element(doc_id, new_tree.clone(), ctx2)?;
-                    add_document_properties_to_element(
-                        &js_obj,
-                        new_tree,
-                        "text/html".to_string(),
-                        ctx2,
-                    )?;
+                    add_document_properties_to_element(&js_obj, new_tree, "text/html".to_string(), ctx2)?;
                     // Set contentType
                     js_obj.define_property_or_throw(
                         js_string!("contentType"),
@@ -231,12 +198,7 @@ pub(crate) fn register_dom_parser(ctx: &mut Context) {
                     let content_type = mime_type.clone();
                     let doc_id = new_tree.borrow().document();
                     let js_obj = get_or_create_js_element(doc_id, new_tree.clone(), ctx2)?;
-                    add_document_properties_to_element(
-                        &js_obj,
-                        new_tree,
-                        content_type.clone(),
-                        ctx2,
-                    )?;
+                    add_document_properties_to_element(&js_obj, new_tree, content_type.clone(), ctx2)?;
                     // Set contentType
                     js_obj.define_property_or_throw(
                         js_string!("contentType"),
@@ -250,9 +212,7 @@ pub(crate) fn register_dom_parser(ctx: &mut Context) {
                     )?;
                     Ok(js_obj.into())
                 }
-                _ => Err(JsError::from_opaque(
-                    js_string!("TypeError: Invalid MIME type").into(),
-                )),
+                _ => Err(JsError::from_opaque(js_string!("TypeError: Invalid MIME type").into())),
             }
         })
     };

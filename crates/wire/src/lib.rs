@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Command {
@@ -57,7 +57,9 @@ mod tests {
 
     #[test]
     fn command_goto_roundtrip() {
-        let cmd = Command::Goto { url: "https://example.com".into() };
+        let cmd = Command::Goto {
+            url: "https://example.com".into(),
+        };
         let json = serde_json::to_string(&cmd).unwrap();
         let deserialized: Command = serde_json::from_str(&json).unwrap();
         assert_eq!(cmd, deserialized);

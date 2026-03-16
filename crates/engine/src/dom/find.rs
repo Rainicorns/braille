@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use super::node::NodeId;
 use super::tree::DomTree;
+use std::collections::HashMap;
 
 /// Looks up `@eN` style refs in a provided HashMap.
 /// The ref_str should start with "@".

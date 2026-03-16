@@ -104,16 +104,8 @@ pub(crate) struct JsMutationObserver {
 pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
     // Build MutationObserver.prototype with observe, disconnect, takeRecords
     let proto = ObjectInitializer::new(ctx)
-        .function(
-            NativeFunction::from_fn_ptr(observe_fn),
-            js_string!("observe"),
-            2,
-        )
-        .function(
-            NativeFunction::from_fn_ptr(disconnect_fn),
-            js_string!("disconnect"),
-            0,
-        )
+        .function(NativeFunction::from_fn_ptr(observe_fn), js_string!("observe"), 2)
+        .function(NativeFunction::from_fn_ptr(disconnect_fn), js_string!("disconnect"), 0)
         .function(
             NativeFunction::from_fn_ptr(take_records_fn),
             js_string!("takeRecords"),
@@ -126,16 +118,16 @@ pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
     let ctor = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
             // Validate callback (first arg must be callable)
-            let callback = args
-                .first()
-                .and_then(|v| v.as_object())
-                .filter(|o| o.is_callable())
-                .ok_or_else(|| {
-                    JsError::from_native(JsNativeError::typ().with_message(
-                        "Failed to construct 'MutationObserver': parameter 1 is not of type 'Function'",
-                    ))
-                })?
-                .clone();
+            let callback =
+                args.first()
+                    .and_then(|v| v.as_object())
+                    .filter(|o| o.is_callable())
+                    .ok_or_else(|| {
+                        JsError::from_native(JsNativeError::typ().with_message(
+                            "Failed to construct 'MutationObserver': parameter 1 is not of type 'Function'",
+                        ))
+                    })?
+                    .clone();
 
             // Create the observer entry (with a placeholder js_object)
             let placeholder = ObjectInitializer::new(ctx).build();
@@ -152,9 +144,7 @@ pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
             };
 
             // Create the JS object with native data
-            let obj =
-                ObjectInitializer::with_native_data(JsMutationObserver { observer_index }, ctx)
-                    .build();
+            let obj = ObjectInitializer::with_native_data(JsMutationObserver { observer_index }, ctx).build();
             obj.set_prototype(Some(proto_clone.clone()));
 
             // Store the JsObject back in the entry
@@ -188,12 +178,7 @@ pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
         .expect("define MutationObserver.prototype");
 
     proto
-        .set(
-            js_string!("constructor"),
-            JsValue::from(ctor_fn.clone()),
-            false,
-            ctx,
-        )
+        .set(js_string!("constructor"), JsValue::from(ctor_fn.clone()), false, ctx)
         .expect("set constructor on MutationObserver.prototype");
 
     ctx.register_global_property(
@@ -249,12 +234,12 @@ pub(crate) fn register_mutation_record_global(ctx: &mut Context) {
 // ---------------------------------------------------------------------------
 
 fn observe_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this.as_object().ok_or_else(|| {
-        JsError::from_opaque(js_string!("observe: this is not an object").into())
-    })?;
-    let mo = this_obj.downcast_ref::<JsMutationObserver>().ok_or_else(|| {
-        JsError::from_opaque(js_string!("observe: this is not a MutationObserver").into())
-    })?;
+    let this_obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("observe: this is not an object").into()))?;
+    let mo = this_obj
+        .downcast_ref::<JsMutationObserver>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("observe: this is not a MutationObserver").into()))?;
     let observer_index = mo.observer_index;
 
     // Get target node
@@ -268,9 +253,9 @@ fn observe_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
     let opts_val = args
         .get(1)
         .ok_or_else(|| JsError::from_native(JsNativeError::typ().with_message("observe: missing options")))?;
-    let opts_obj = opts_val.as_object().ok_or_else(|| {
-        JsError::from_native(JsNativeError::typ().with_message("observe: options must be an object"))
-    })?;
+    let opts_obj = opts_val
+        .as_object()
+        .ok_or_else(|| JsError::from_native(JsNativeError::typ().with_message("observe: options must be an object")))?;
 
     let child_list = opts_obj.get(js_string!("childList"), ctx)?.to_boolean();
 
@@ -392,12 +377,12 @@ fn observe_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
 // ---------------------------------------------------------------------------
 
 fn disconnect_fn(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this.as_object().ok_or_else(|| {
-        JsError::from_opaque(js_string!("disconnect: this is not an object").into())
-    })?;
-    let mo = this_obj.downcast_ref::<JsMutationObserver>().ok_or_else(|| {
-        JsError::from_opaque(js_string!("disconnect: not a MutationObserver").into())
-    })?;
+    let this_obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("disconnect: this is not an object").into()))?;
+    let mo = this_obj
+        .downcast_ref::<JsMutationObserver>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("disconnect: not a MutationObserver").into()))?;
     let observer_index = mo.observer_index;
 
     {
@@ -424,12 +409,12 @@ fn disconnect_fn(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResu
 // ---------------------------------------------------------------------------
 
 fn take_records_fn(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this.as_object().ok_or_else(|| {
-        JsError::from_opaque(js_string!("takeRecords: this is not an object").into())
-    })?;
-    let mo = this_obj.downcast_ref::<JsMutationObserver>().ok_or_else(|| {
-        JsError::from_opaque(js_string!("takeRecords: not a MutationObserver").into())
-    })?;
+    let this_obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("takeRecords: this is not an object").into()))?;
+    let mo = this_obj
+        .downcast_ref::<JsMutationObserver>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("takeRecords: not a MutationObserver").into()))?;
     let observer_index = mo.observer_index;
 
     let records = {
@@ -467,9 +452,7 @@ fn extract_node_info(val: &JsValue) -> JsResult<(NodeId, Rc<RefCell<DomTree>>)> 
         let doc_id = doc.tree.borrow().document();
         return Ok((doc_id, doc.tree.clone()));
     }
-    Err(JsError::from_native(
-        JsNativeError::typ().with_message("Not a Node"),
-    ))
+    Err(JsError::from_native(JsNativeError::typ().with_message("Not a Node")))
 }
 
 // ---------------------------------------------------------------------------
@@ -480,31 +463,15 @@ fn raw_record_to_js(record: &RawMutationRecord, ctx: &mut Context) -> JsResult<J
     let proto = realm_state::mutation_record_proto(ctx);
 
     let target = get_or_create_js_element(record.target_node_id, record.target_tree.clone(), ctx)?;
-    let added = create_static_nodelist(
-        record.added_node_ids.clone(),
-        record.target_tree.clone(),
-        ctx,
-    )?;
-    let removed = create_static_nodelist(
-        record.removed_node_ids.clone(),
-        record.target_tree.clone(),
-        ctx,
-    )?;
+    let added = create_static_nodelist(record.added_node_ids.clone(), record.target_tree.clone(), ctx)?;
+    let removed = create_static_nodelist(record.removed_node_ids.clone(), record.target_tree.clone(), ctx)?;
 
     let prev_sib = match record.previous_sibling_id {
-        Some(id) => JsValue::from(get_or_create_js_element(
-            id,
-            record.target_tree.clone(),
-            ctx,
-        )?),
+        Some(id) => JsValue::from(get_or_create_js_element(id, record.target_tree.clone(), ctx)?),
         None => JsValue::null(),
     };
     let next_sib = match record.next_sibling_id {
-        Some(id) => JsValue::from(get_or_create_js_element(
-            id,
-            record.target_tree.clone(),
-            ctx,
-        )?),
+        Some(id) => JsValue::from(get_or_create_js_element(id, record.target_tree.clone(), ctx)?),
         None => JsValue::null(),
     };
 
@@ -609,8 +576,7 @@ fn collect_interested_observers(
                     && filter(&reg.options)
                     && seen_observers.insert(reg.observer_index)
                 {
-                    let capture_old =
-                        reg.options.attribute_old_value || reg.options.character_data_old_value;
+                    let capture_old = reg.options.attribute_old_value || reg.options.character_data_old_value;
                     result.push((reg.observer_index, capture_old));
                 }
             }
@@ -639,18 +605,17 @@ fn queue_attributes_mutation(
     let state_rc = realm_state::mutation_observer_state(ctx);
     let mut state = state_rc.borrow_mut();
 
-    let interested =
-        collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
-            if !opts.attributes {
+    let interested = collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
+        if !opts.attributes {
+            return false;
+        }
+        if let Some(ref filter) = opts.attribute_filter {
+            if !filter.iter().any(|f| f == attr_name) {
                 return false;
             }
-            if let Some(ref filter) = opts.attribute_filter {
-                if !filter.iter().any(|f| f == attr_name) {
-                    return false;
-                }
-            }
-            true
-        });
+        }
+        true
+    });
 
     for (obs_idx, capture_old) in interested {
         let record = RawMutationRecord {
@@ -680,10 +645,7 @@ fn queue_character_data_mutation(
     let state_rc = realm_state::mutation_observer_state(ctx);
     let mut state = state_rc.borrow_mut();
 
-    let interested =
-        collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
-            opts.character_data
-        });
+    let interested = collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| opts.character_data);
 
     for (obs_idx, capture_old) in interested {
         let record = RawMutationRecord {
@@ -717,10 +679,7 @@ pub(crate) fn queue_childlist_mutation(
     let state_rc = realm_state::mutation_observer_state(ctx);
     let mut state = state_rc.borrow_mut();
 
-    let interested =
-        collect_interested_observers(&state, tree, parent_id, tree_ptr, |opts| {
-            opts.child_list
-        });
+    let interested = collect_interested_observers(&state, tree, parent_id, tree_ptr, |opts| opts.child_list);
 
     for (obs_idx, _) in interested {
         let record = RawMutationRecord {
@@ -755,12 +714,7 @@ pub(crate) fn set_attribute_with_observer(
     queue_attributes_mutation(ctx, tree, node_id, name, None, old_value);
 }
 
-pub(crate) fn remove_attribute_with_observer(
-    ctx: &Context,
-    tree: &Rc<RefCell<DomTree>>,
-    node_id: NodeId,
-    name: &str,
-) {
+pub(crate) fn remove_attribute_with_observer(ctx: &Context, tree: &Rc<RefCell<DomTree>>, node_id: NodeId, name: &str) {
     let old_value = tree.borrow().get_attribute(node_id, name).map(|s| s.to_string());
     tree.borrow_mut().remove_attribute(node_id, name);
     // Only queue if attribute actually existed
@@ -819,8 +773,7 @@ pub(crate) fn remove_attribute_ns_with_observer(
             None
         }
     };
-    tree.borrow_mut()
-        .remove_attribute_ns(node_id, namespace, local_name);
+    tree.borrow_mut().remove_attribute_ns(node_id, namespace, local_name);
     if old_value.is_some() {
         queue_attributes_mutation(ctx, tree, node_id, local_name, Some(namespace), old_value);
     }
@@ -891,9 +844,7 @@ pub(crate) fn character_data_replace_with_observer(
     data: &str,
 ) -> Result<(), &'static str> {
     let old_value = tree.borrow().character_data_get(node_id);
-    let result = tree
-        .borrow_mut()
-        .character_data_replace(node_id, offset, count, data);
+    let result = tree.borrow_mut().character_data_replace(node_id, offset, count, data);
     if result.is_ok() {
         queue_character_data_mutation(ctx, tree, node_id, old_value);
     }

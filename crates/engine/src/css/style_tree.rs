@@ -10,13 +10,10 @@
 
 use std::collections::HashMap;
 
-use crate::css::cascade::{
-    cascade_element, stylesheet_to_rules, CascadeDeclaration, CascadeRule, CascadedValues,
-};
+use crate::css::cascade::{cascade_element, stylesheet_to_rules, CascadeDeclaration, CascadeRule, CascadedValues};
 use crate::css::collection::{collect_inline_styles, ua_stylesheet};
 use crate::css::computed::{
-    ComputedColor, ComputedStyle, Display, FontStyle, Overflow, Position, TextAlign,
-    TextDecoration, Visibility,
+    ComputedColor, ComputedStyle, Display, FontStyle, Overflow, Position, TextAlign, TextDecoration, Visibility,
 };
 use crate::css::parser::parse_stylesheet;
 use crate::css::selector_impl::BrailleSelectorParser;
@@ -86,9 +83,7 @@ fn build_author_rules(tree: &DomTree) -> Vec<CascadeRule> {
 }
 
 /// Parse a CSS selector text string into a `SelectorList`.
-fn parse_selector_text(
-    selector_text: &str,
-) -> Option<SelectorList<crate::css::selector_impl::BrailleSelectorImpl>> {
+fn parse_selector_text(selector_text: &str) -> Option<SelectorList<crate::css::selector_impl::BrailleSelectorImpl>> {
     let mut input = ParserInput::new(selector_text);
     let mut parser = cssparser::Parser::new(&mut input);
     SelectorList::parse(&BrailleSelectorParser, &mut parser, ParseRelative::No).ok()
@@ -108,10 +103,7 @@ fn build_inline_map(tree: &DomTree) -> HashMap<NodeId, Vec<(String, String, bool
     let collected = collect_inline_styles(tree);
     let mut map = HashMap::new();
     for (node_id, decls) in collected {
-        let tuples: Vec<(String, String, bool)> = decls
-            .into_iter()
-            .map(|(prop, val)| (prop, val, false))
-            .collect();
+        let tuples: Vec<(String, String, bool)> = decls.into_iter().map(|(prop, val)| (prop, val, false)).collect();
         map.insert(node_id, tuples);
     }
     map
@@ -214,16 +206,28 @@ fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
     let mut map = HashMap::new();
 
     map.insert("display".to_string(), format_display(style.display).to_string());
-    map.insert("visibility".to_string(), format_visibility(style.visibility).to_string());
+    map.insert(
+        "visibility".to_string(),
+        format_visibility(style.visibility).to_string(),
+    );
     map.insert("color".to_string(), format_color(&style.color));
     map.insert("background-color".to_string(), format_color(&style.background_color));
     map.insert("font-size".to_string(), format_length_clean(style.font_size));
     map.insert("font-weight".to_string(), style.font_weight.to_string());
-    map.insert("font-style".to_string(), format_font_style(style.font_style).to_string());
+    map.insert(
+        "font-style".to_string(),
+        format_font_style(style.font_style).to_string(),
+    );
     map.insert("font-family".to_string(), style.font_family.clone());
     map.insert("line-height".to_string(), format_length_clean(style.line_height));
-    map.insert("text-align".to_string(), format_text_align(style.text_align).to_string());
-    map.insert("text-decoration".to_string(), format_text_decoration(style.text_decoration).to_string());
+    map.insert(
+        "text-align".to_string(),
+        format_text_align(style.text_align).to_string(),
+    );
+    map.insert(
+        "text-decoration".to_string(),
+        format_text_decoration(style.text_decoration).to_string(),
+    );
     map.insert("margin-top".to_string(), format_length_clean(style.margin_top));
     map.insert("margin-right".to_string(), format_length_clean(style.margin_right));
     map.insert("margin-bottom".to_string(), format_length_clean(style.margin_bottom));
@@ -257,9 +261,7 @@ fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
 ///
 /// The cascade and computed modules define their own `CascadedEntry` types with identical
 /// fields (`value: String`, `important: bool`). This function bridges between them.
-fn cascade_to_computed_entries(
-    cascaded: &CascadedValues,
-) -> HashMap<String, crate::css::computed::CascadedEntry> {
+fn cascade_to_computed_entries(cascaded: &CascadedValues) -> HashMap<String, crate::css::computed::CascadedEntry> {
     cascaded
         .iter()
         .map(|(prop, entry)| {
@@ -398,12 +400,10 @@ mod tests {
     /// Find the first element with the given tag name.
     fn find_element<'a>(tree: &'a DomTree, tag: &str) -> Option<(NodeId, &'a HashMap<String, String>)> {
         let elements = tree.get_elements_by_tag_name(tag);
-        elements.into_iter().next().and_then(|nid| {
-            tree.get_node(nid)
-                .computed_style
-                .as_ref()
-                .map(|cs| (nid, cs))
-        })
+        elements
+            .into_iter()
+            .next()
+            .and_then(|nid| tree.get_node(nid).computed_style.as_ref().map(|cs| (nid, cs)))
     }
 
     // -----------------------------------------------------------------------
@@ -418,7 +418,11 @@ mod tests {
         assert_eq!(p_style.get("display").unwrap(), "block", "p should be display:block");
 
         let (_, body_style) = find_element(&tree, "body").expect("body should have computed style");
-        assert_eq!(body_style.get("display").unwrap(), "block", "body should be display:block");
+        assert_eq!(
+            body_style.get("display").unwrap(),
+            "block",
+            "body should be display:block"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -430,7 +434,11 @@ mod tests {
         let tree = styled_tree("<html><head><title>T</title></head><body></body></html>");
 
         let (_, head_style) = find_element(&tree, "head").expect("head should have computed style");
-        assert_eq!(head_style.get("display").unwrap(), "none", "head should be display:none");
+        assert_eq!(
+            head_style.get("display").unwrap(),
+            "none",
+            "head should be display:none"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -453,9 +461,7 @@ mod tests {
 
     #[test]
     fn style_tag_applies_rules() {
-        let tree = styled_tree(
-            "<html><head><style>p { color: blue }</style></head><body><p>text</p></body></html>",
-        );
+        let tree = styled_tree("<html><head><style>p { color: blue }</style></head><body><p>text</p></body></html>");
 
         let (_, p_style) = find_element(&tree, "p").expect("p should have computed style");
         let color = p_style.get("color").unwrap();
@@ -469,9 +475,7 @@ mod tests {
 
     #[test]
     fn color_inheritance() {
-        let tree = styled_tree(
-            r#"<html><body><div style="color: red"><p>text</p></div></body></html>"#,
-        );
+        let tree = styled_tree(r#"<html><body><div style="color: red"><p>text</p></div></body></html>"#);
 
         let (_, p_style) = find_element(&tree, "p").expect("p should have computed style");
         let color = p_style.get("color").unwrap();
@@ -485,9 +489,7 @@ mod tests {
 
     #[test]
     fn heading_sizes_h1_larger_than_h2() {
-        let tree = styled_tree(
-            "<html><body><h1>Big</h1><h2>Medium</h2></body></html>",
-        );
+        let tree = styled_tree("<html><body><h1>Big</h1><h2>Medium</h2></body></html>");
 
         let (_, h1_style) = find_element(&tree, "h1").expect("h1 should have computed style");
         let (_, h2_style) = find_element(&tree, "h2").expect("h2 should have computed style");
@@ -530,8 +532,15 @@ mod tests {
         let divs = tree.get_elements_by_tag_name("div");
         assert!(!divs.is_empty(), "should find a div");
         let div_node = tree.get_node(divs[0]);
-        let style = div_node.computed_style.as_ref().expect("div should have computed style");
-        assert_eq!(style.get("display").unwrap(), "none", "div.hidden should be display:none");
+        let style = div_node
+            .computed_style
+            .as_ref()
+            .expect("div should have computed style");
+        assert_eq!(
+            style.get("display").unwrap(),
+            "none",
+            "div.hidden should be display:none"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -609,7 +618,13 @@ mod tests {
         for nid in 0..tree.node_count() {
             let node = tree.get_node(nid);
             match &node.data {
-                NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. } | NodeData::Document | NodeData::Doctype { .. } | NodeData::DocumentFragment | NodeData::Attr { .. } => {
+                NodeData::Text { .. }
+                | NodeData::Comment { .. }
+                | NodeData::ProcessingInstruction { .. }
+                | NodeData::Document
+                | NodeData::Doctype { .. }
+                | NodeData::DocumentFragment
+                | NodeData::Attr { .. } => {
                     assert!(
                         node.computed_style.is_none(),
                         "non-element node {} should not have computed_style",
@@ -630,9 +645,8 @@ mod tests {
 
     #[test]
     fn author_style_overrides_ua() {
-        let tree = styled_tree(
-            r#"<html><head><style>p { display: inline }</style></head><body><p>text</p></body></html>"#,
-        );
+        let tree =
+            styled_tree(r#"<html><head><style>p { display: inline }</style></head><body><p>text</p></body></html>"#);
 
         let (_, p_style) = find_element(&tree, "p").expect("p should have computed style");
         assert_eq!(

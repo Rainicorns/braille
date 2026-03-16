@@ -113,11 +113,21 @@ impl ComputedColor {
     }
 
     pub fn black() -> Self {
-        ComputedColor { r: 0, g: 0, b: 0, a: 1.0 }
+        ComputedColor {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 1.0,
+        }
     }
 
     pub fn transparent() -> Self {
-        ComputedColor { r: 0, g: 0, b: 0, a: 0.0 }
+        ComputedColor {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0.0,
+        }
     }
 }
 
@@ -467,10 +477,7 @@ fn parse_optional_length(val: &str, parent_font_size: f32) -> Option<f32> {
 
 /// Parse an opacity value (0.0 to 1.0).
 fn parse_opacity(val: &str) -> f32 {
-    val.trim()
-        .parse::<f32>()
-        .unwrap_or(1.0)
-        .clamp(0.0, 1.0)
+    val.trim().parse::<f32>().unwrap_or(1.0).clamp(0.0, 1.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -544,10 +551,7 @@ const INHERITED_PROPERTIES: &[&str] = &[
 ///
 /// `parent_style` is the computed style of the parent element. Pass `None` for
 /// the root element.
-pub fn resolve_style(
-    cascaded: &HashMap<String, CascadedEntry>,
-    parent_style: Option<&ComputedStyle>,
-) -> ComputedStyle {
+pub fn resolve_style(cascaded: &HashMap<String, CascadedEntry>, parent_style: Option<&ComputedStyle>) -> ComputedStyle {
     let initial = ComputedStyle::initial();
     let parent = parent_style.unwrap_or(&initial);
 
@@ -633,13 +637,7 @@ pub fn resolve_style(
 }
 
 /// Apply a parsed (non-keyword) value to a computed style.
-fn apply_parsed_value(
-    style: &mut ComputedStyle,
-    property: &str,
-    val: &str,
-    parent_font_size: f32,
-    own_font_size: f32,
-) {
+fn apply_parsed_value(style: &mut ComputedStyle, property: &str, val: &str, parent_font_size: f32, own_font_size: f32) {
     match property {
         "display" => style.display = parse_display(val),
         "visibility" => style.visibility = parse_visibility(val),
@@ -648,11 +646,7 @@ fn apply_parsed_value(
         "font-weight" => style.font_weight = parse_font_weight(val),
         "font-style" => style.font_style = parse_font_style(val),
         "font-family" => {
-            style.font_family = val
-                .trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_string();
+            style.font_family = val.trim().trim_matches('"').trim_matches('\'').to_string();
         }
         "line-height" => style.line_height = parse_line_height(val, own_font_size, parent_font_size),
         "text-align" => style.text_align = parse_text_align(val),
@@ -738,10 +732,7 @@ mod tests {
     }
 
     fn cascaded_with(pairs: &[(&str, &str)]) -> HashMap<String, CascadedEntry> {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), make_entry(v)))
-            .collect()
+        pairs.iter().map(|(k, v)| (k.to_string(), make_entry(v))).collect()
     }
 
     // --- 1. Initial values ---
@@ -977,10 +968,7 @@ mod tests {
 
     #[test]
     fn test_rgb_functional_color() {
-        assert_eq!(
-            parse_color("rgb(128, 64, 32)"),
-            ComputedColor::new(128, 64, 32, 1.0)
-        );
+        assert_eq!(parse_color("rgb(128, 64, 32)"), ComputedColor::new(128, 64, 32, 1.0));
     }
 
     #[test]
@@ -1015,10 +1003,7 @@ mod tests {
     #[test]
     fn test_padding_em_uses_own_font_size() {
         // When padding uses em, it is relative to the element's own font-size.
-        let cascaded = cascaded_with(&[
-            ("font-size", "20px"),
-            ("padding-top", "2em"),
-        ]);
+        let cascaded = cascaded_with(&[("font-size", "20px"), ("padding-top", "2em")]);
         let style = resolve_style(&cascaded, None);
 
         // own font-size is 20px, so 2em = 40px
@@ -1135,10 +1120,7 @@ mod tests {
 
     #[test]
     fn test_line_height_unitless_multiplier() {
-        let cascaded = cascaded_with(&[
-            ("font-size", "20px"),
-            ("line-height", "1.5"),
-        ]);
+        let cascaded = cascaded_with(&[("font-size", "20px"), ("line-height", "1.5")]);
         let style = resolve_style(&cascaded, None);
 
         // 1.5 * 20px = 30px

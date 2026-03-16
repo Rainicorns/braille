@@ -7,9 +7,9 @@ use boa_engine::{
     Context, JsError, JsResult, JsValue,
 };
 
-use crate::dom::NodeData;
 use super::element::JsElement;
 use super::event::JsEvent;
+use crate::dom::NodeData;
 
 // ---------------------------------------------------------------------------
 // HTMLElement properties — tabIndex, title, lang, dir, getBoundingClientRect,
@@ -37,8 +37,13 @@ fn get_tab_index(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
 
     // Determine the tag name (lowercased) and the tabindex attribute
     let (tag_name, tabindex_attr) = match &node.data {
-        NodeData::Element { tag_name, attributes, .. } => {
-            let attr_val = attributes.iter().find(|a| a.local_name == "tabindex").map(|a| a.value.clone());
+        NodeData::Element {
+            tag_name, attributes, ..
+        } => {
+            let attr_val = attributes
+                .iter()
+                .find(|a| a.local_name == "tabindex")
+                .map(|a| a.value.clone());
             (tag_name.to_lowercase(), attr_val)
         }
         _ => return Ok(JsValue::from(-1)),
@@ -70,11 +75,7 @@ fn set_tab_index(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
         .downcast_ref::<JsElement>()
         .ok_or_else(|| JsError::from_opaque(js_string!("tabIndex setter: `this` is not an Element").into()))?;
 
-    let value = args
-        .first()
-        .map(|v| v.to_number(ctx))
-        .transpose()?
-        .unwrap_or(0.0) as i32;
+    let value = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i32;
 
     super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "tabindex", &value.to_string());
     Ok(JsValue::undefined())
@@ -321,25 +322,13 @@ pub(crate) fn register_html_element(class: &mut ClassBuilder) -> JsResult<()> {
     );
 
     // focus method (stub)
-    class.method(
-        js_string!("focus"),
-        0,
-        NativeFunction::from_fn_ptr(focus),
-    );
+    class.method(js_string!("focus"), 0, NativeFunction::from_fn_ptr(focus));
 
     // blur method (stub)
-    class.method(
-        js_string!("blur"),
-        0,
-        NativeFunction::from_fn_ptr(blur),
-    );
+    class.method(js_string!("blur"), 0, NativeFunction::from_fn_ptr(blur));
 
     // click method
-    class.method(
-        js_string!("click"),
-        0,
-        NativeFunction::from_fn_ptr(click),
-    );
+    class.method(js_string!("click"), 0, NativeFunction::from_fn_ptr(click));
 
     Ok(())
 }
@@ -397,16 +386,22 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><div id='d'></div></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var d = document.getElementById('d');
             d.tabIndex = 5;
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
         let result = runtime.eval("document.getElementById('d').tabIndex").unwrap();
         let n = result.to_number(&mut runtime.context).unwrap();
         assert_eq!(n, 5.0);
 
         // Verify the underlying attribute
-        let attr = runtime.eval("document.getElementById('d').getAttribute('tabindex')").unwrap();
+        let attr = runtime
+            .eval("document.getElementById('d').getAttribute('tabindex')")
+            .unwrap();
         let s = attr.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "5");
     }
@@ -439,7 +434,9 @@ mod tests {
         assert_eq!(s, "hello");
 
         // Verify underlying attribute
-        let attr = runtime.eval("document.getElementById('d').getAttribute('title')").unwrap();
+        let attr = runtime
+            .eval("document.getElementById('d').getAttribute('title')")
+            .unwrap();
         let s = attr.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "hello");
     }
@@ -462,7 +459,9 @@ mod tests {
         assert_eq!(s, "en");
 
         // Verify underlying attribute
-        let attr = runtime.eval("document.getElementById('d').getAttribute('lang')").unwrap();
+        let attr = runtime
+            .eval("document.getElementById('d').getAttribute('lang')")
+            .unwrap();
         let s = attr.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "en");
     }
@@ -485,7 +484,9 @@ mod tests {
         assert_eq!(s, "rtl");
 
         // Verify underlying attribute
-        let attr = runtime.eval("document.getElementById('d').getAttribute('dir')").unwrap();
+        let attr = runtime
+            .eval("document.getElementById('d').getAttribute('dir')")
+            .unwrap();
         let s = attr.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "rtl");
     }
@@ -495,9 +496,13 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><div id='d'></div></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var rect = document.getElementById('d').getBoundingClientRect();
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         for prop in &["x", "y", "width", "height", "top", "right", "bottom", "left"] {
             let result = runtime.eval(&format!("rect.{}", prop)).unwrap();
@@ -524,7 +529,9 @@ mod tests {
         let mut engine = Engine::new();
         engine.load_html("<html><body><button id='btn'>Click</button></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"
+        runtime
+            .eval(
+                r#"
             var clicked = false;
             var eventType = '';
             var btn = document.getElementById('btn');
@@ -533,13 +540,18 @@ mod tests {
                 eventType = e.type;
             });
             btn.click();
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         let clicked = runtime.eval("clicked").unwrap();
         assert_eq!(clicked.to_boolean(), true);
 
         let event_type = runtime.eval("eventType").unwrap();
-        let s = event_type.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
+        let s = event_type
+            .to_string(&mut runtime.context)
+            .unwrap()
+            .to_std_string_escaped();
         assert_eq!(s, "click");
     }
 }

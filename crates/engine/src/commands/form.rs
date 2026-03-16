@@ -1,6 +1,6 @@
-use crate::Engine;
 use crate::dom::{DomTree, NodeId};
-use braille_wire::{NavigateRequest, HttpMethod};
+use crate::Engine;
+use braille_wire::{HttpMethod, NavigateRequest};
 
 impl Engine {
     /// Collect form data and build a NavigateRequest for form submission.
@@ -10,15 +10,16 @@ impl Engine {
         let tree = self.tree.borrow();
 
         // 1. Find the ancestor <form> element using find_ancestor
-        let form_id = tree.find_ancestor(button_id, "form")
+        let form_id = tree
+            .find_ancestor(button_id, "form")
             .ok_or_else(|| format!("no parent <form> found for submit button (node {})", button_id))?;
 
         // 2. Get form's action attribute (default to current URL or "")
-        let action = tree.get_attribute(form_id, "action")
-            .unwrap_or_default();
+        let action = tree.get_attribute(form_id, "action").unwrap_or_default();
 
         // 3. Get form's method attribute (default to "get")
-        let method_str = tree.get_attribute(form_id, "method")
+        let method_str = tree
+            .get_attribute(form_id, "method")
             .unwrap_or_else(|| "get".to_string())
             .to_ascii_lowercase();
 
@@ -83,20 +84,18 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
         };
 
         // Check input type
-        let input_type = tree.get_attribute(input_id, "type")
+        let input_type = tree
+            .get_attribute(input_id, "type")
             .unwrap_or_else(|| "text".to_string())
             .to_ascii_lowercase();
 
         // For checkbox/radio, only include if checked
-        if (input_type == "checkbox" || input_type == "radio")
-            && !tree.has_attribute(input_id, "checked")
-        {
+        if (input_type == "checkbox" || input_type == "radio") && !tree.has_attribute(input_id, "checked") {
             continue;
         }
 
         // Get value (default to empty string)
-        let value = tree.get_attribute(input_id, "value")
-            .unwrap_or_default();
+        let value = tree.get_attribute(input_id, "value").unwrap_or_default();
 
         data.push((name, value));
     }
@@ -111,8 +110,7 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
         };
 
         // Get value attribute
-        let value = tree.get_attribute(select_id, "value")
-            .unwrap_or_default();
+        let value = tree.get_attribute(select_id, "value").unwrap_or_default();
 
         data.push((name, value));
     }
@@ -127,8 +125,7 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
         };
 
         // Get value attribute
-        let value = tree.get_attribute(textarea_id, "value")
-            .unwrap_or_default();
+        let value = tree.get_attribute(textarea_id, "value").unwrap_or_default();
 
         data.push((name, value));
     }
@@ -140,9 +137,7 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
 /// Implements simple percent-encoding for special characters.
 pub fn url_encode_form_data(data: &[(String, String)]) -> String {
     data.iter()
-        .map(|(name, value)| {
-            format!("{}={}", url_encode(name), url_encode(value))
-        })
+        .map(|(name, value)| format!("{}={}", url_encode(name), url_encode(value)))
         .collect::<Vec<_>>()
         .join("&")
 }
@@ -170,23 +165,29 @@ fn url_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::DomTree;
     use crate::dom::node::DomAttribute;
+    use crate::dom::DomTree;
 
     #[test]
     fn collect_form_data_from_form_with_text_inputs() {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
-        let input1 = tree.create_element_with_attrs("input", vec![
-            DomAttribute::new("type", "text"),
-            DomAttribute::new("name", "username"),
-            DomAttribute::new("value", "alice"),
-        ]);
-        let input2 = tree.create_element_with_attrs("input", vec![
-            DomAttribute::new("type", "email"),
-            DomAttribute::new("name", "email"),
-            DomAttribute::new("value", "alice@example.com"),
-        ]);
+        let input1 = tree.create_element_with_attrs(
+            "input",
+            vec![
+                DomAttribute::new("type", "text"),
+                DomAttribute::new("name", "username"),
+                DomAttribute::new("value", "alice"),
+            ],
+        );
+        let input2 = tree.create_element_with_attrs(
+            "input",
+            vec![
+                DomAttribute::new("type", "email"),
+                DomAttribute::new("name", "email"),
+                DomAttribute::new("value", "alice@example.com"),
+            ],
+        );
 
         tree.append_child(tree.document(), form);
         tree.append_child(form, input1);
@@ -203,15 +204,18 @@ mod tests {
     fn collect_form_data_skips_inputs_without_name() {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
-        let input1 = tree.create_element_with_attrs("input", vec![
-            DomAttribute::new("type", "text"),
-            DomAttribute::new("value", "no-name"),
-        ]);
-        let input2 = tree.create_element_with_attrs("input", vec![
-            DomAttribute::new("type", "text"),
-            DomAttribute::new("name", "username"),
-            DomAttribute::new("value", "alice"),
-        ]);
+        let input1 = tree.create_element_with_attrs(
+            "input",
+            vec![DomAttribute::new("type", "text"), DomAttribute::new("value", "no-name")],
+        );
+        let input2 = tree.create_element_with_attrs(
+            "input",
+            vec![
+                DomAttribute::new("type", "text"),
+                DomAttribute::new("name", "username"),
+                DomAttribute::new("value", "alice"),
+            ],
+        );
 
         tree.append_child(tree.document(), form);
         tree.append_child(form, input1);
@@ -227,12 +231,15 @@ mod tests {
     fn collect_form_data_includes_checked_checkbox() {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
-        let checkbox = tree.create_element_with_attrs("input", vec![
-            DomAttribute::new("type", "checkbox"),
-            DomAttribute::new("name", "subscribe"),
-            DomAttribute::new("value", "yes"),
-            DomAttribute::new("checked", ""),
-        ]);
+        let checkbox = tree.create_element_with_attrs(
+            "input",
+            vec![
+                DomAttribute::new("type", "checkbox"),
+                DomAttribute::new("name", "subscribe"),
+                DomAttribute::new("value", "yes"),
+                DomAttribute::new("checked", ""),
+            ],
+        );
 
         tree.append_child(tree.document(), form);
         tree.append_child(form, checkbox);
@@ -247,11 +254,14 @@ mod tests {
     fn collect_form_data_skips_unchecked_checkbox() {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
-        let checkbox = tree.create_element_with_attrs("input", vec![
-            DomAttribute::new("type", "checkbox"),
-            DomAttribute::new("name", "subscribe"),
-            DomAttribute::new("value", "yes"),
-        ]);
+        let checkbox = tree.create_element_with_attrs(
+            "input",
+            vec![
+                DomAttribute::new("type", "checkbox"),
+                DomAttribute::new("name", "subscribe"),
+                DomAttribute::new("value", "yes"),
+            ],
+        );
 
         tree.append_child(tree.document(), form);
         tree.append_child(form, checkbox);
@@ -265,10 +275,10 @@ mod tests {
     fn collect_form_data_includes_select_elements() {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
-        let select = tree.create_element_with_attrs("select", vec![
-            DomAttribute::new("name", "country"),
-            DomAttribute::new("value", "USA"),
-        ]);
+        let select = tree.create_element_with_attrs(
+            "select",
+            vec![DomAttribute::new("name", "country"), DomAttribute::new("value", "USA")],
+        );
 
         tree.append_child(tree.document(), form);
         tree.append_child(form, select);
@@ -283,10 +293,13 @@ mod tests {
     fn collect_form_data_includes_textarea_elements() {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
-        let textarea = tree.create_element_with_attrs("textarea", vec![
-            DomAttribute::new("name", "message"),
-            DomAttribute::new("value", "Hello world"),
-        ]);
+        let textarea = tree.create_element_with_attrs(
+            "textarea",
+            vec![
+                DomAttribute::new("name", "message"),
+                DomAttribute::new("value", "Hello world"),
+            ],
+        );
 
         tree.append_child(tree.document(), form);
         tree.append_child(form, textarea);
@@ -302,11 +315,14 @@ mod tests {
         let mut tree = DomTree::new();
         let form = tree.create_element("form");
         let div = tree.create_element("div");
-        let input = tree.create_element_with_attrs("input", vec![
-            DomAttribute::new("type", "text"),
-            DomAttribute::new("name", "nested"),
-            DomAttribute::new("value", "value"),
-        ]);
+        let input = tree.create_element_with_attrs(
+            "input",
+            vec![
+                DomAttribute::new("type", "text"),
+                DomAttribute::new("name", "nested"),
+                DomAttribute::new("value", "value"),
+            ],
+        );
 
         tree.append_child(tree.document(), form);
         tree.append_child(form, div);
@@ -354,14 +370,16 @@ mod tests {
     #[test]
     fn handle_form_submit_with_method_get_builds_url_with_query_string() {
         let mut engine = Engine::new();
-        engine.load_html(r#"
+        engine.load_html(
+            r#"
             <html><body>
                 <form action="/search" method="get">
                     <input type="text" name="q" value="rust" />
                     <button type="submit" id="submit-btn">Search</button>
                 </form>
             </body></html>
-        "#);
+        "#,
+        );
 
         // Find the button
         let tree = engine.tree.borrow();
@@ -381,7 +399,8 @@ mod tests {
     #[test]
     fn handle_form_submit_with_method_post_builds_body() {
         let mut engine = Engine::new();
-        engine.load_html(r#"
+        engine.load_html(
+            r#"
             <html><body>
                 <form action="/submit" method="post">
                     <input type="text" name="username" value="alice" />
@@ -389,7 +408,8 @@ mod tests {
                     <button type="submit" id="submit-btn">Submit</button>
                 </form>
             </body></html>
-        "#);
+        "#,
+        );
 
         // Find the button
         let tree = engine.tree.borrow();
@@ -402,18 +422,26 @@ mod tests {
         let request = request.unwrap();
         assert_eq!(request.method, HttpMethod::Post);
         assert_eq!(request.url, "/submit");
-        assert_eq!(request.body, Some("username=alice&email=alice%40example.com".to_string()));
-        assert_eq!(request.content_type, Some("application/x-www-form-urlencoded".to_string()));
+        assert_eq!(
+            request.body,
+            Some("username=alice&email=alice%40example.com".to_string())
+        );
+        assert_eq!(
+            request.content_type,
+            Some("application/x-www-form-urlencoded".to_string())
+        );
     }
 
     #[test]
     fn handle_form_submit_returns_error_when_no_ancestor_form_found() {
         let mut engine = Engine::new();
-        engine.load_html(r#"
+        engine.load_html(
+            r#"
             <html><body>
                 <button type="submit" id="orphan-btn">Submit</button>
             </body></html>
-        "#);
+        "#,
+        );
 
         // Find the button
         let tree = engine.tree.borrow();
@@ -424,20 +452,26 @@ mod tests {
 
         assert!(result.is_err(), "expected Err when no parent form");
         let err = result.unwrap_err();
-        assert!(err.contains("no parent <form> found"), "error should mention no parent form, got: {}", err);
+        assert!(
+            err.contains("no parent <form> found"),
+            "error should mention no parent form, got: {}",
+            err
+        );
     }
 
     #[test]
     fn handle_form_submit_defaults_to_get_when_no_method() {
         let mut engine = Engine::new();
-        engine.load_html(r#"
+        engine.load_html(
+            r#"
             <html><body>
                 <form action="/search">
                     <input type="text" name="q" value="test" />
                     <button type="submit" id="submit-btn">Search</button>
                 </form>
             </body></html>
-        "#);
+        "#,
+        );
 
         // Find the button
         let tree = engine.tree.borrow();
@@ -455,14 +489,16 @@ mod tests {
     #[test]
     fn handle_form_submit_defaults_to_empty_action_when_no_action() {
         let mut engine = Engine::new();
-        engine.load_html(r#"
+        engine.load_html(
+            r#"
             <html><body>
                 <form method="post">
                     <input type="text" name="data" value="test" />
                     <button type="submit" id="submit-btn">Submit</button>
                 </form>
             </body></html>
-        "#);
+        "#,
+        );
 
         // Find the button
         let tree = engine.tree.borrow();
@@ -479,14 +515,16 @@ mod tests {
     #[test]
     fn handle_form_submit_with_get_appends_to_existing_query_string() {
         let mut engine = Engine::new();
-        engine.load_html(r#"
+        engine.load_html(
+            r#"
             <html><body>
                 <form action="/search?category=books" method="get">
                     <input type="text" name="q" value="rust" />
                     <button type="submit" id="submit-btn">Search</button>
                 </form>
             </body></html>
-        "#);
+        "#,
+        );
 
         // Find the button
         let tree = engine.tree.borrow();
@@ -503,7 +541,8 @@ mod tests {
     #[test]
     fn handle_form_submit_handles_radio_buttons() {
         let mut engine = Engine::new();
-        engine.load_html(r#"
+        engine.load_html(
+            r#"
             <html><body>
                 <form action="/vote" method="post">
                     <input type="radio" name="option" value="a" />
@@ -512,7 +551,8 @@ mod tests {
                     <button type="submit" id="submit-btn">Vote</button>
                 </form>
             </body></html>
-        "#);
+        "#,
+        );
 
         // Find the button
         let tree = engine.tree.borrow();
@@ -529,7 +569,8 @@ mod tests {
     #[test]
     fn handle_form_submit_with_multiple_checkboxes() {
         let mut engine = Engine::new();
-        engine.load_html(r#"
+        engine.load_html(
+            r#"
             <html><body>
                 <form action="/prefs" method="post">
                     <input type="checkbox" name="feature1" value="on" checked />
@@ -538,7 +579,8 @@ mod tests {
                     <button type="submit" id="submit-btn">Save</button>
                 </form>
             </body></html>
-        "#);
+        "#,
+        );
 
         // Find the button
         let tree = engine.tree.borrow();
@@ -554,9 +596,7 @@ mod tests {
 
     #[test]
     fn url_encode_encodes_ampersand_and_equals() {
-        let data = vec![
-            ("param".to_string(), "a&b=c".to_string()),
-        ];
+        let data = vec![("param".to_string(), "a&b=c".to_string())];
 
         let encoded = url_encode_form_data(&data);
 
@@ -566,13 +606,15 @@ mod tests {
     #[test]
     fn handle_form_submit_with_empty_form() {
         let mut engine = Engine::new();
-        engine.load_html(r#"
+        engine.load_html(
+            r#"
             <html><body>
                 <form action="/empty" method="get">
                     <button type="submit" id="submit-btn">Submit</button>
                 </form>
             </body></html>
-        "#);
+        "#,
+        );
 
         // Find the button
         let tree = engine.tree.borrow();

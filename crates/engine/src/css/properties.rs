@@ -367,9 +367,7 @@ impl PropertyId {
 
             // Positioning
             PropertyId::ZIndex => CssValue::Auto,
-            PropertyId::Top | PropertyId::Right | PropertyId::Bottom | PropertyId::Left => {
-                CssValue::Auto
-            }
+            PropertyId::Top | PropertyId::Right | PropertyId::Bottom | PropertyId::Left => CssValue::Auto,
 
             // Miscellaneous
             PropertyId::Cursor => CssValue::Auto,
@@ -439,56 +437,29 @@ mod tests {
 
     #[test]
     fn test_property_from_name_basic() {
-        assert_eq!(
-            PropertyId::from_name("display"),
-            Some(PropertyId::Display)
-        );
+        assert_eq!(PropertyId::from_name("display"), Some(PropertyId::Display));
         assert_eq!(PropertyId::from_name("color"), Some(PropertyId::Color));
-        assert_eq!(
-            PropertyId::from_name("font-size"),
-            Some(PropertyId::FontSize)
-        );
+        assert_eq!(PropertyId::from_name("font-size"), Some(PropertyId::FontSize));
     }
 
     #[test]
     fn test_property_from_name_kebab_case() {
-        assert_eq!(
-            PropertyId::from_name("margin-top"),
-            Some(PropertyId::MarginTop)
-        );
-        assert_eq!(
-            PropertyId::from_name("padding-left"),
-            Some(PropertyId::PaddingLeft)
-        );
-        assert_eq!(
-            PropertyId::from_name("border-color"),
-            Some(PropertyId::BorderColor)
-        );
+        assert_eq!(PropertyId::from_name("margin-top"), Some(PropertyId::MarginTop));
+        assert_eq!(PropertyId::from_name("padding-left"), Some(PropertyId::PaddingLeft));
+        assert_eq!(PropertyId::from_name("border-color"), Some(PropertyId::BorderColor));
         assert_eq!(
             PropertyId::from_name("background-color"),
             Some(PropertyId::BackgroundColor)
         );
-        assert_eq!(
-            PropertyId::from_name("flex-direction"),
-            Some(PropertyId::FlexDirection)
-        );
+        assert_eq!(PropertyId::from_name("flex-direction"), Some(PropertyId::FlexDirection));
     }
 
     #[test]
     fn test_property_from_name_case_insensitive() {
-        assert_eq!(
-            PropertyId::from_name("DISPLAY"),
-            Some(PropertyId::Display)
-        );
+        assert_eq!(PropertyId::from_name("DISPLAY"), Some(PropertyId::Display));
         assert_eq!(PropertyId::from_name("Color"), Some(PropertyId::Color));
-        assert_eq!(
-            PropertyId::from_name("Font-Size"),
-            Some(PropertyId::FontSize)
-        );
-        assert_eq!(
-            PropertyId::from_name("MARGIN-TOP"),
-            Some(PropertyId::MarginTop)
-        );
+        assert_eq!(PropertyId::from_name("Font-Size"), Some(PropertyId::FontSize));
+        assert_eq!(PropertyId::from_name("MARGIN-TOP"), Some(PropertyId::MarginTop));
     }
 
     #[test]
@@ -593,10 +564,7 @@ mod tests {
             CssValue::Keyword("row".to_string())
         );
         assert_eq!(PropertyId::FlexGrow.initial_value(), CssValue::Number(0.0));
-        assert_eq!(
-            PropertyId::FlexShrink.initial_value(),
-            CssValue::Number(1.0)
-        );
+        assert_eq!(PropertyId::FlexShrink.initial_value(), CssValue::Number(1.0));
     }
 
     #[test]

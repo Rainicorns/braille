@@ -1,13 +1,10 @@
 use boa_engine::{
-    class::ClassBuilder,
-    js_string,
-    native_function::NativeFunction,
-    property::Attribute,
-    Context, JsError, JsResult, JsValue,
+    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute, Context, JsError, JsResult,
+    JsValue,
 };
 
+use super::element::{get_or_create_js_element, JsElement};
 use crate::dom::NodeData;
-use super::element::{JsElement, get_or_create_js_element};
 
 /// Register all attribute methods and properties on the Element class.
 pub(crate) fn register_attributes(class: &mut ClassBuilder) -> JsResult<()> {
@@ -127,7 +124,11 @@ fn get_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
 
     // Per spec, lowercase the name for HTML elements in HTML documents
     let tree = el.tree.borrow();
-    let name = if tree.is_html_document() { name.to_ascii_lowercase() } else { name };
+    let name = if tree.is_html_document() {
+        name.to_ascii_lowercase()
+    } else {
+        name
+    };
     match tree.get_attribute(el.node_id, &name) {
         Some(val) => Ok(JsValue::from(js_string!(val))),
         None => Ok(JsValue::null()),
@@ -163,7 +164,11 @@ fn set_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
         .unwrap_or_default();
 
     // Per spec, lowercase the name for HTML elements in HTML documents
-    let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
+    let name = if el.tree.borrow().is_html_document() {
+        name.to_ascii_lowercase()
+    } else {
+        name
+    };
     super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, &name, &value);
     // Compile inline event handler if this is an on* attribute
     if name.starts_with("on") && name.len() > 2 {
@@ -190,7 +195,11 @@ fn remove_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
         .unwrap_or_default();
 
     // Per spec, lowercase the name for HTML elements in HTML documents
-    let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
+    let name = if el.tree.borrow().is_html_document() {
+        name.to_ascii_lowercase()
+    } else {
+        name
+    };
     super::mutation_observer::remove_attribute_with_observer(ctx, &el.tree, el.node_id, &name);
     // Clear inline event handler if this is an on* attribute
     if name.starts_with("on") && name.len() > 2 {
@@ -217,7 +226,11 @@ fn has_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
 
     // Per spec, lowercase the name for HTML elements in HTML documents
     let tree = el.tree.borrow();
-    let name = if tree.is_html_document() { name.to_ascii_lowercase() } else { name };
+    let name = if tree.is_html_document() {
+        name.to_ascii_lowercase()
+    } else {
+        name
+    };
     let has_attr = tree.has_attribute(el.node_id, &name);
     Ok(JsValue::from(has_attr))
 }
@@ -245,9 +258,10 @@ fn get_attribute_node_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) ->
         let t = tree.borrow();
         let node = t.get_node(el.node_id);
         match &node.data {
-            NodeData::Element { attributes, .. } => {
-                attributes.iter().find(|a| a.qualified_name() == name || a.local_name == name).map(|a| (a.qualified_name(), a.value.clone()))
-            }
+            NodeData::Element { attributes, .. } => attributes
+                .iter()
+                .find(|a| a.qualified_name() == name || a.local_name == name)
+                .map(|a| (a.qualified_name(), a.value.clone())),
             _ => None,
         }
     };
@@ -294,12 +308,17 @@ fn get_attribute_node_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context)
         let t = tree.borrow();
         let node = t.get_node(el.node_id);
         match &node.data {
-            NodeData::Element { attributes, .. } => {
-                attributes
-                    .iter()
-                    .find(|a| a.namespace == namespace && a.local_name == local_name)
-                    .map(|a| (a.local_name.clone(), a.namespace.clone(), a.prefix.clone(), a.value.clone()))
-            }
+            NodeData::Element { attributes, .. } => attributes
+                .iter()
+                .find(|a| a.namespace == namespace && a.local_name == local_name)
+                .map(|a| {
+                    (
+                        a.local_name.clone(),
+                        a.namespace.clone(),
+                        a.prefix.clone(),
+                        a.value.clone(),
+                    )
+                }),
             _ => None,
         }
     };
@@ -307,7 +326,9 @@ fn get_attribute_node_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context)
     match attr_info {
         Some((attr_local, attr_ns, attr_prefix, attr_value)) => {
             // Create an Attr node in the tree with full namespace info
-            let node_id = tree.borrow_mut().create_attr(&attr_local, &attr_ns, &attr_prefix, &attr_value);
+            let node_id = tree
+                .borrow_mut()
+                .create_attr(&attr_local, &attr_ns, &attr_prefix, &attr_value);
             let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
             Ok(js_obj.into())
         }
@@ -342,10 +363,11 @@ fn set_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
     if let Some(colon_pos) = qualified_name.find(':') {
         let prefix_part = &qualified_name[..colon_pos];
         let local_part = &qualified_name[colon_pos + 1..];
-        let invalid_prefix = prefix_part.is_empty()
-            || prefix_part.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']);
+        let invalid_prefix =
+            prefix_part.is_empty() || prefix_part.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']);
         if invalid_prefix || !crate::dom::is_valid_attribute_name(local_part) {
-            let exc = super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
+            let exc =
+                super::create_dom_exception(ctx, "InvalidCharacterError", "String contains an invalid character", 5)?;
             return Err(JsError::from_opaque(exc.into()));
         }
     } else if !crate::dom::is_valid_attribute_name(&qualified_name) {
@@ -360,7 +382,14 @@ fn set_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_ns_with_observer(ctx, &el.tree, el.node_id, &namespace, &qualified_name, &value);
+    super::mutation_observer::set_attribute_ns_with_observer(
+        ctx,
+        &el.tree,
+        el.node_id,
+        &namespace,
+        &qualified_name,
+        &value,
+    );
     Ok(JsValue::undefined())
 }
 
@@ -485,7 +514,11 @@ fn toggle_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
     }
 
     // Per spec, lowercase the name for HTML elements in HTML documents
-    let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
+    let name = if el.tree.borrow().is_html_document() {
+        name.to_ascii_lowercase()
+    } else {
+        name
+    };
 
     let force_arg = args.get(1);
     let has_force = force_arg.is_some_and(|v| !v.is_undefined());
@@ -622,12 +655,14 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.getElementById("app");
             el.getAttribute("id");
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(value, "app");
@@ -638,12 +673,14 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.getElementById("app");
             el.getAttribute("nonexistent");
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         assert!(result.is_null());
     }
@@ -658,7 +695,8 @@ mod tests {
             var el = document.getElementById("app");
             el.setAttribute("data-x", "hello");
         "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Verify via DomTree
         let t = tree.borrow();
@@ -671,13 +709,15 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.getElementById("app");
             el.setAttribute("data-x", "hello");
             el.getAttribute("data-x");
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(value, "hello");
@@ -693,7 +733,8 @@ mod tests {
             var el = document.getElementById("app");
             el.removeAttribute("id");
         "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Verify via DomTree
         let t = tree.borrow();
@@ -706,12 +747,14 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.getElementById("app");
             el.hasAttribute("id");
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         assert_eq!(result.as_boolean(), Some(true));
     }
@@ -721,12 +764,14 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.getElementById("app");
             el.hasAttribute("nonexistent");
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         assert_eq!(result.as_boolean(), Some(false));
     }
@@ -736,12 +781,14 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.getElementById("app");
             el.id;
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(value, "app");
@@ -757,7 +804,8 @@ mod tests {
             var el = document.getElementById("app");
             el.id = "newId";
         "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Verify via DomTree
         let t = tree.borrow();
@@ -770,13 +818,15 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.getElementById("app");
             el.id = "newId";
             el.id;
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(value, "newId");
@@ -792,14 +842,17 @@ mod tests {
             var el = document.getElementById("app");
             el.setAttribute("class", "container");
         "#,
-        ).unwrap();
+        )
+        .unwrap();
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.getElementById("app");
             el.className;
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(value, "container");
@@ -815,7 +868,8 @@ mod tests {
             var el = document.getElementById("app");
             el.className = "wrapper";
         "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Verify via DomTree
         let t = tree.borrow();
@@ -828,12 +882,14 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.getElementById("app");
             el.className;
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(value, "");
@@ -849,14 +905,17 @@ mod tests {
             var el = document.getElementById("app");
             el.removeAttribute("id");
         "#,
-        ).unwrap();
+        )
+        .unwrap();
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.createElement("div");
             el.id;
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(value, "");
@@ -890,7 +949,8 @@ mod tests {
             // Remove data-value
             el.removeAttribute("data-value");
         "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Verify the final state via DomTree
         let t = tree.borrow();
@@ -905,14 +965,16 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(
-            r#"
+        let result = rt
+            .eval(
+                r#"
             var el = document.createElement("foo");
             el.setAttributeNS("http://www.w3.org/XML/1998/namespace", "a:bb", "pass");
             var attr = el.attributes[0];
             attr ? attr.value : "NO_ATTR";
         "#,
-        ).unwrap();
+            )
+            .unwrap();
 
         let value = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(value, "pass");

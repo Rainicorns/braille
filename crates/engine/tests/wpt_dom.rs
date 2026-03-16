@@ -332,16 +332,28 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
     let skip_patterns: &[(&str, &str)] = &[
         // Iframes — broad skip removed; specific patterns below for tests needing advanced iframe features
         ("Node-parentNode-iframe", "content file for iframe-based test"),
-        ("Node-appendChild-script-and-iframe", "requires advanced iframe insertion steps"),
-        ("insertion-removing-steps-iframe", "requires advanced iframe insertion steps"),
+        (
+            "Node-appendChild-script-and-iframe",
+            "requires advanced iframe insertion steps",
+        ),
+        (
+            "insertion-removing-steps-iframe",
+            "requires advanced iframe insertion steps",
+        ),
         ("iframe-document-preserve", "requires moveBefore with iframes"),
         ("moveBefore-iframe", "requires moveBefore with iframes"),
         ("cross-doc", "requires cross-document"),
         ("adoption", "requires cross-document adoption"),
         // MutationObserver — specific tests that need features beyond basic MutationObserver
         ("MutationObserver-document", "requires parser-time mutations"),
-        ("MutationObserver-textContent", "requires microtask queue (Promise.resolve)"),
-        ("MutationObserver-cross-realm", "requires cross-realm iframe + frames[N].Function"),
+        (
+            "MutationObserver-textContent",
+            "requires microtask queue (Promise.resolve)",
+        ),
+        (
+            "MutationObserver-cross-realm",
+            "requires cross-realm iframe + frames[N].Function",
+        ),
         ("mutation-observer", "requires moveBefore"),
         // Range / Selection
         ("Range", "requires Range API"),
@@ -388,7 +400,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // CharacterData-remove — ChildNode-remove.js helper now resolved by script loader (unskip)
         // ("CharacterData-remove", "requires ChildNode-remove.js helper"),
         // CharacterData-surrogates requires UTF-16 internal storage (Rust String is UTF-8)
-        ("CharacterData-surrogates", "requires UTF-16 internal string storage for lone surrogates"),
+        (
+            "CharacterData-surrogates",
+            "requires UTF-16 internal string storage for lone surrogates",
+        ),
         // Pre-insertion validation (requires DOMException hierarchy)
         ("pre-insertion", "requires DOMException types"),
         // Document.URL — URL/documentURI defined as "about:blank", test requires iframe src loading with redirect
@@ -409,9 +424,18 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // These specific cloneNode tests need features we don't have:
         ("Node-cloneNode-XMLDocument", "requires XML Document support"),
         ("Node-cloneNode-svg", "requires SVG namespace support"),
-        ("Node-cloneNode-external-stylesheet", "requires external stylesheet loading"),
-        ("Node-cloneNode-document-allow-declarative-shadow-roots", "requires declarative shadow DOM"),
-        ("Node-cloneNode-on-inactive-document-crash", "requires inactive document"),
+        (
+            "Node-cloneNode-external-stylesheet",
+            "requires external stylesheet loading",
+        ),
+        (
+            "Node-cloneNode-document-allow-declarative-shadow-roots",
+            "requires declarative shadow DOM",
+        ),
+        (
+            "Node-cloneNode-on-inactive-document-crash",
+            "requires inactive document",
+        ),
         // Node-parentNode, Node-contains — now implemented
         // getElementsByClassName — now returns live HTMLCollection (unskip)
         // ("getElementsByClassName", "requires full getElementsByClassName"),
@@ -427,14 +451,32 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Document-createEvent.html", "requires full createEvent spec"),
         // querySelector — now working; skip specific tests that need unimplemented features
         // ("query", "requires full querySelector"),  // removed broad pattern
-        ("ParentNode-querySelector-All.html", "requires iframes and requestAnimationFrame"),
-        ("ParentNode-querySelector-All-content", "content file for iframe-based test"),
-        ("ParentNode-querySelectors-namespaces", "requires SVG xlink namespace attributes"),
+        (
+            "ParentNode-querySelector-All.html",
+            "requires iframes and requestAnimationFrame",
+        ),
+        (
+            "ParentNode-querySelector-All-content",
+            "content file for iframe-based test",
+        ),
+        (
+            "ParentNode-querySelectors-namespaces",
+            "requires SVG xlink namespace attributes",
+        ),
         // ParentNode-querySelectors-exclusive — unskipped, querySelector now excludes root
-        ("ParentNode-querySelector-scope", "2/4 pass; sibling combinator (+) not yet supported"),
-        ("query-target-in-load-event", "requires window.parent, postMessage, :target pseudo-class"),
+        (
+            "ParentNode-querySelector-scope",
+            "2/4 pass; sibling combinator (+) not yet supported",
+        ),
+        (
+            "query-target-in-load-event",
+            "requires window.parent, postMessage, :target pseudo-class",
+        ),
         // svg-template-querySelector — unskipped, template.content now works
-        ("querySelector-mixed-case", "requires SVG/MathML foreignObject namespace handling"),
+        (
+            "querySelector-mixed-case",
+            "requires SVG/MathML foreignObject namespace handling",
+        ),
         // EventTarget constructor — now implemented
         // ("EventTarget-constructible", "requires EventTarget constructor"),
         // addEventListener advanced options
@@ -445,10 +487,19 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Body-FrameSet", "requires body/frameset event forwarding"),
         // Event global — window.event now implemented
         // event-global.html: 4/8 pass, 4 fail (Shadow DOM + XMLHttpRequest)
-        ("event-global.html", "4/8 pass; 4 fail requiring Shadow DOM and XMLHttpRequest"),
+        (
+            "event-global.html",
+            "4/8 pass; 4 fail requiring Shadow DOM and XMLHttpRequest",
+        ),
         ("event-global-extra", "requires contentWindow with own globals"),
-        ("event-global-is-still-set-when-coercing-beforeunload-result", "requires iframes and beforeunload"),
-        ("event-global-is-still-set-when-reporting-exception-onerror", "requires cross-realm Function via contentWindow"),
+        (
+            "event-global-is-still-set-when-coercing-beforeunload-result",
+            "requires iframes and beforeunload",
+        ),
+        (
+            "event-global-is-still-set-when-reporting-exception-onerror",
+            "requires cross-realm Function via contentWindow",
+        ),
         // relatedTarget
         ("relatedTarget", "requires relatedTarget"),
         // legacy-pre-activation — now supported (activation behavior)
@@ -468,7 +519,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Full createEvent spec (hundreds of event types)
         ("Document-createEvent.https", "requires full createEvent spec"),
         // Event subclasses (UIEvent, MouseEvent, etc.)
-        ("Event-subclasses", "missing CompositionEvent, UIEvent not on global, no class inheritance support"),
+        (
+            "Event-subclasses",
+            "missing CompositionEvent, UIEvent not on global, no class inheritance support",
+        ),
         // Document.implementation
         // Document-implementation — now have document.implementation (W2 un-skip)
         // ("Document-implementation", "requires DOMImplementation"),
@@ -503,9 +557,15 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // getElementsByTagName — now returns live HTMLCollection (unskip)
         // ("Element-getElementsByTagName", "requires full getElementsByTagName"),
         // ("Document-getElementsByTagName", "requires full getElementsByTagName"),
-        ("Element-getElementsByTagName-change-document-HTMLNess", "requires iframes for document HTMLNess change"),
+        (
+            "Element-getElementsByTagName-change-document-HTMLNess",
+            "requires iframes for document HTMLNess change",
+        ),
         // Document-getElementById — 6/18 pass; needs innerHTML/outerHTML, id-cache-on-insert semantics
-        ("Document-getElementById", "6/18 pass; needs innerHTML/outerHTML, in-document id-cache semantics"),
+        (
+            "Document-getElementById",
+            "6/18 pass; needs innerHTML/outerHTML, in-document id-cache semantics",
+        ),
         // DocumentFragment-getElementById — constructor implemented (unskip)
         // ("DocumentFragment-getElementById", "requires DocumentFragment constructor"),
         // Node-properties — unskipped, document.nextSibling/previousSibling/ownerDocument/hasChildNodes now defined
@@ -528,7 +588,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Event-timestamp", "requires DOMHighResTimeStamp"),
         // ("Event-timestamp-high-resolution", "requires performance.now() and MouseEvent/KeyboardEvent"),
         // ("Event-timestamp-safe-resolution", "requires MouseEvent constructor"),
-        ("Event-timestamp-high-resolution.https", "requires GamepadEvent constructor"),
+        (
+            "Event-timestamp-high-resolution.https",
+            "requires GamepadEvent constructor",
+        ),
         // Event-dispatch-click — now supported (click() activation behavior)
         // ("Event-dispatch-click", "requires click() activation"),
         // ("Event-dispatch-detached-click", "requires click() activation"),
@@ -579,21 +642,33 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("EventTarget-addEventListener.any", "requires EventTarget constructor"),
         // ("EventTarget-add-remove-listener.any", "requires EventTarget constructor"),
         // ("EventTarget-removeEventListener.any", "requires EventTarget constructor"),
-        ("EventTarget-add-listener-platform-object", "requires customElements.define and el.click()"),
+        (
+            "EventTarget-add-listener-platform-object",
+            "requires customElements.define and el.click()",
+        ),
         // ("EventTarget-dispatchEvent.html", "requires createEvent InvalidStateError and exception swallowing in Element dispatch"),
         // ("AddEventListenerOptions-once.any", "requires EventTarget constructor"),
         // ("AddEventListenerOptions-passive.any", "requires EventTarget constructor"),
         // ("EventListenerOptions-capture", "requires truthy-value capture handling and options parsing for null callback in Element dispatch"),
         // Event-dispatch-on-disabled-elements — promise_test works, but CSS animations still missing
-        ("Event-dispatch-on-disabled-elements", "requires CSS animations for promise_test subtests"),
+        (
+            "Event-dispatch-on-disabled-elements",
+            "requires CSS animations for promise_test subtests",
+        ),
         // EventListener-invoke-legacy — requires TransitionEvent/AnimationEvent constructors (keep skipped)
-        ("EventListener-invoke-legacy", "requires TransitionEvent/AnimationEvent constructors"),
+        (
+            "EventListener-invoke-legacy",
+            "requires TransitionEvent/AnimationEvent constructors",
+        ),
         // Event-dispatch-bubbles-true/false — now supported (cross-document listener isolation + window check)
         // ("Event-dispatch-bubbles-true", "requires window event target and cross-document dispatch"),
         // ("Event-dispatch-bubbles-false", "requires window event target and cross-document dispatch"),
         // Event-dispatch-reenter — now supported (window participates in event propagation)
         // Event-dispatch-listener-order — fails with "not a callable function"
-        ("Event-dispatch-listener-order", "not a callable function: missing API on window or document"),
+        (
+            "Event-dispatch-listener-order",
+            "not a callable function: missing API on window or document",
+        ),
         // Tests needing frames/DOMImplementation — W2-D: now enabled
         // ("Node-removeChild", "requires frames and DOMImplementation"),
         // ("Node-insertBefore.html", "requires frames and DOMImplementation"),
@@ -628,7 +703,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Event-dispatch-multiple-cancelBubble", "requires cancelBubble during propagation"),
         // ("Event-dispatch-multiple-stopPropagation", "requires stopPropagation during propagation"),
         // NodeList-static-length-getter-tampered — performance test, too slow for interpreter
-        ("NodeList-static-length-getter-tampered", "performance test, too slow for interpreter"),
+        (
+            "NodeList-static-length-getter-tampered",
+            "performance test, too slow for interpreter",
+        ),
         // unskipped: basic iframe support added (crash tests — no testharness.js)
         // ("createDocument-with-null-browsing-context", "requires iframes"),
         // ("createHTMLDocument-with-null-browsing-context", "requires iframes"),
@@ -653,12 +731,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
 ///   - `/resources/testharnessreport.js` → our shim
 ///   - `../foo.js` → relative to the HTML file
 ///   - `foo.js` → relative to the HTML file
-fn resolve_script_src(
-    html_path: &Path,
-    src: &str,
-    preamble: &str,
-    report_shim: &str,
-) -> Option<String> {
+fn resolve_script_src(html_path: &Path, src: &str, preamble: &str, report_shim: &str) -> Option<String> {
     if src == "/resources/testharness.js" {
         return Some(preamble.to_string());
     }
@@ -783,7 +856,7 @@ fn extract_js_iframe_srcs(html: &str) -> Vec<String> {
             // Look for .src followed by optional whitespace and =
             if let Some(idx) = body[spos..].find(".src") {
                 let after_src = spos + idx + 4; // skip ".src"
-                // Skip whitespace
+                                                // Skip whitespace
                 let rest = &body[after_src..];
                 let trimmed = rest.trim_start();
                 if trimmed.starts_with('=') {
@@ -823,11 +896,7 @@ fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// Run a single WPT test HTML file and return (pass_count, fail_count, failures_detail).
-fn run_wpt_test(
-    html_path: &Path,
-    preamble: &str,
-    report_shim: &str,
-) -> Result<(), Failed> {
+fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> Result<(), Failed> {
     let html = std::fs::read_to_string(html_path)
         .map_err(|e| Failed::from(format!("failed to read {}: {}", html_path.display(), e)))?;
 
@@ -874,8 +943,10 @@ fn run_wpt_test(
         let err_summary = if js_errors.is_empty() {
             "test harness preamble did not load".to_string()
         } else {
-            format!("preamble failed. First error: {}",
-                    js_errors[0].chars().take(200).collect::<String>())
+            format!(
+                "preamble failed. First error: {}",
+                js_errors[0].chars().take(200).collect::<String>()
+            )
         };
         return Err(Failed::from(err_summary));
     }
@@ -887,12 +958,14 @@ fn run_wpt_test(
 
     if results_json == "undefined" || results_json == "null" || results_json == "[]" {
         // No tests ran — might be a setup-only file or all tests need unsupported features
-        let errs: Vec<String> = js_errors.iter()
+        let errs: Vec<String> = js_errors
+            .iter()
             .map(|e| e.chars().take(200).collect::<String>())
             .collect();
         return Err(Failed::from(format!(
             "no tests ran. js_errors({})={:?}",
-            js_errors.len(), errs
+            js_errors.len(),
+            errs
         )));
     }
 
@@ -900,7 +973,6 @@ fn run_wpt_test(
     // Status: 0=PASS, 1=FAIL, 2=TIMEOUT, 3=NOTRUN
     let results: Vec<WptResult> = serde_json::from_str(&results_json)
         .map_err(|e| Failed::from(format!("failed to parse results JSON: {}\nJSON: {}", e, results_json)))?;
-
 
     let mut failures = Vec::new();
     for r in &results {

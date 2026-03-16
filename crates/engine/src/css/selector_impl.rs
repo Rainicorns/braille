@@ -96,10 +96,7 @@ impl NonTSPseudoClassTrait for PseudoClass {
     }
 
     fn is_user_action_state(&self) -> bool {
-        matches!(
-            self,
-            PseudoClass::Active | PseudoClass::Hover | PseudoClass::Focus
-        )
+        matches!(self, PseudoClass::Active | PseudoClass::Hover | PseudoClass::Focus)
     }
 }
 
@@ -200,9 +197,7 @@ impl<'i> parser::Parser<'i> for BrailleSelectorParser {
             "invalid" => Ok(PseudoClass::Invalid),
             "valid" => Ok(PseudoClass::Valid),
             _ => Err(cssparser::ParseError {
-                kind: cssparser::ParseErrorKind::Custom(
-                    parser::SelectorParseErrorKind::UnexpectedIdent(name.clone()),
-                ),
+                kind: cssparser::ParseErrorKind::Custom(parser::SelectorParseErrorKind::UnexpectedIdent(name.clone())),
                 location: _location,
             }),
         }
@@ -217,9 +212,7 @@ impl<'i> parser::Parser<'i> for BrailleSelectorParser {
             "before" => Ok(PseudoElement::Before),
             "after" => Ok(PseudoElement::After),
             _ => Err(cssparser::ParseError {
-                kind: cssparser::ParseErrorKind::Custom(
-                    parser::SelectorParseErrorKind::UnexpectedIdent(name.clone()),
-                ),
+                kind: cssparser::ParseErrorKind::Custom(parser::SelectorParseErrorKind::UnexpectedIdent(name.clone())),
                 location: _location,
             }),
         }
@@ -311,7 +304,10 @@ mod tests {
                 if i == j {
                     assert_eq!(class1, class2);
                 } else {
-                    if !matches!((class1, class2), (PseudoClass::NthChild(_, _), PseudoClass::NthChild(_, _))) {
+                    if !matches!(
+                        (class1, class2),
+                        (PseudoClass::NthChild(_, _), PseudoClass::NthChild(_, _))
+                    ) {
                         assert_ne!(class1, class2);
                     }
                 }

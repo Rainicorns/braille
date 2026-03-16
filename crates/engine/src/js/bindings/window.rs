@@ -30,89 +30,109 @@ fn console_format_args(args: &[JsValue], ctx: &mut Context) -> JsResult<String> 
 }
 
 fn make_console_method(buffer: ConsoleBuffer, prefix: Option<&'static str>) -> NativeFunction {
-    unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
-        let msg = console_format_args(args, ctx)?;
-        let formatted = match prefix {
-            Some(p) => format!("{}{}", p, msg),
-            None => msg,
-        };
-        buffer.borrow_mut().push(formatted);
-        Ok(JsValue::undefined())
-    }) }
+    unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let msg = console_format_args(args, ctx)?;
+            let formatted = match prefix {
+                Some(p) => format!("{}{}", p, msg),
+                None => msg,
+            };
+            buffer.borrow_mut().push(formatted);
+            Ok(JsValue::undefined())
+        })
+    }
 }
 
 fn make_set_timer(timers: TimerMap, next_id: Rc<RefCell<u32>>) -> NativeFunction {
-    unsafe { NativeFunction::from_closure(move |_this, args, _ctx| {
-        let callback = args.first().cloned().unwrap_or(JsValue::undefined());
-        let mut id_ref = next_id.borrow_mut();
-        let id = *id_ref;
-        *id_ref += 1;
-        timers.borrow_mut().insert(id, callback);
-        Ok(JsValue::from(id))
-    }) }
+    unsafe {
+        NativeFunction::from_closure(move |_this, args, _ctx| {
+            let callback = args.first().cloned().unwrap_or(JsValue::undefined());
+            let mut id_ref = next_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            timers.borrow_mut().insert(id, callback);
+            Ok(JsValue::from(id))
+        })
+    }
 }
 
 fn make_clear_timer(timers: TimerMap) -> NativeFunction {
-    unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
-        if let Some(id_val) = args.first() {
-            let id = id_val.to_u32(ctx)?;
-            timers.borrow_mut().remove(&id);
-        }
-        Ok(JsValue::undefined())
-    }) }
+    unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            if let Some(id_val) = args.first() {
+                let id = id_val.to_u32(ctx)?;
+                timers.borrow_mut().remove(&id);
+            }
+            Ok(JsValue::undefined())
+        })
+    }
 }
 fn build_location(url: &str, context: &mut Context) -> boa_engine::JsObject {
     let url_str = Rc::new(RefCell::new(url.to_string()));
 
     let url_for_href_get = Rc::clone(&url_str);
-    let href_getter = unsafe { NativeFunction::from_closure(move |_this, _args, _ctx| {
-        let val = url_for_href_get.borrow().clone();
-        Ok(JsValue::from(js_string!(val)))
-    }) };
+    let href_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let val = url_for_href_get.borrow().clone();
+            Ok(JsValue::from(js_string!(val)))
+        })
+    };
 
     let url_for_href_set = Rc::clone(&url_str);
-    let href_setter = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
-        if let Some(v) = args.first() {
-            let new_url = v.to_string(ctx)?.to_std_string_escaped();
-            *url_for_href_set.borrow_mut() = new_url;
-        }
-        Ok(JsValue::undefined())
-    }) };
+    let href_setter = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            if let Some(v) = args.first() {
+                let new_url = v.to_string(ctx)?.to_std_string_escaped();
+                *url_for_href_set.borrow_mut() = new_url;
+            }
+            Ok(JsValue::undefined())
+        })
+    };
 
     let url_for_pathname = Rc::clone(&url_str);
-    let pathname_getter = unsafe { NativeFunction::from_closure(move |_this, _args, _ctx| {
-        let u = url_for_pathname.borrow().clone();
-        let path = extract_pathname(&u);
-        Ok(JsValue::from(js_string!(path)))
-    }) };
+    let pathname_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let u = url_for_pathname.borrow().clone();
+            let path = extract_pathname(&u);
+            Ok(JsValue::from(js_string!(path)))
+        })
+    };
 
     let url_for_hostname = Rc::clone(&url_str);
-    let hostname_getter = unsafe { NativeFunction::from_closure(move |_this, _args, _ctx| {
-        let u = url_for_hostname.borrow().clone();
-        let host = extract_hostname(&u);
-        Ok(JsValue::from(js_string!(host)))
-    }) };
+    let hostname_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let u = url_for_hostname.borrow().clone();
+            let host = extract_hostname(&u);
+            Ok(JsValue::from(js_string!(host)))
+        })
+    };
 
     let url_for_protocol = Rc::clone(&url_str);
-    let protocol_getter = unsafe { NativeFunction::from_closure(move |_this, _args, _ctx| {
-        let u = url_for_protocol.borrow().clone();
-        let proto = extract_protocol(&u);
-        Ok(JsValue::from(js_string!(proto)))
-    }) };
+    let protocol_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let u = url_for_protocol.borrow().clone();
+            let proto = extract_protocol(&u);
+            Ok(JsValue::from(js_string!(proto)))
+        })
+    };
 
     let url_for_search = Rc::clone(&url_str);
-    let search_getter = unsafe { NativeFunction::from_closure(move |_this, _args, _ctx| {
-        let u = url_for_search.borrow().clone();
-        let search = extract_search(&u);
-        Ok(JsValue::from(js_string!(search)))
-    }) };
+    let search_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let u = url_for_search.borrow().clone();
+            let search = extract_search(&u);
+            Ok(JsValue::from(js_string!(search)))
+        })
+    };
 
     let url_for_hash = Rc::clone(&url_str);
-    let hash_getter = unsafe { NativeFunction::from_closure(move |_this, _args, _ctx| {
-        let u = url_for_hash.borrow().clone();
-        let hash = extract_hash(&u);
-        Ok(JsValue::from(js_string!(hash)))
-    }) };
+    let hash_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let u = url_for_hash.borrow().clone();
+            let hash = extract_hash(&u);
+            Ok(JsValue::from(js_string!(hash)))
+        })
+    };
 
     let location = ObjectInitializer::new(context).build();
     let realm = context.realm().clone();
@@ -206,9 +226,7 @@ fn extract_hostname(url: &str) -> String {
     } else {
         return String::new();
     };
-    let end = after_scheme
-        .find(['/', ':', '?', '#'])
-        .unwrap_or(after_scheme.len());
+    let end = after_scheme.find(['/', ':', '?', '#']).unwrap_or(after_scheme.len());
     after_scheme[..end].to_string()
 }
 
@@ -223,9 +241,7 @@ fn extract_pathname(url: &str) -> String {
         None => return "/".to_string(),
     };
     let path_portion = &after_scheme[path_start..];
-    let end = path_portion
-        .find(['?', '#'])
-        .unwrap_or(path_portion.len());
+    let end = path_portion.find(['?', '#']).unwrap_or(path_portion.len());
     path_portion[..end].to_string()
 }
 
@@ -247,9 +263,8 @@ fn extract_hash(url: &str) -> String {
     }
 }
 fn build_navigator(context: &mut Context) -> boa_engine::JsObject {
-    let ua_getter = unsafe { NativeFunction::from_closure(|_this, _args, _ctx| {
-        Ok(JsValue::from(js_string!("Braille/0.1")))
-    }) };
+    let ua_getter =
+        unsafe { NativeFunction::from_closure(|_this, _args, _ctx| Ok(JsValue::from(js_string!("Braille/0.1")))) };
 
     let navigator = ObjectInitializer::new(context).build();
     let realm = context.realm().clone();
@@ -336,182 +351,218 @@ pub(crate) fn register_window(
     let navigator = build_navigator(context);
 
     // Window event listeners — stored in event_listeners with WINDOW_LISTENER_ID
-    let add_event_listener = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
-        let event_type = args.first()
-            .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
-            .transpose()?
-            .unwrap_or_default();
+    let add_event_listener = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let event_type = args
+                .first()
+                .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
+                .transpose()?
+                .unwrap_or_default();
 
-        // Parse options (3rd argument): boolean or {capture, once, passive}
-        let mut capture = false;
-        let mut once = false;
-        let mut passive = None;
-        if let Some(opt_val) = args.get(2) {
-            if let Some(b) = opt_val.as_boolean() {
-                capture = b;
-            } else if let Some(opt_obj) = opt_val.as_object() {
-                let c = opt_obj.get(js_string!("capture"), ctx)?;
-                if !c.is_undefined() {
-                    capture = c.to_boolean();
-                }
-                let o = opt_obj.get(js_string!("once"), ctx)?;
-                if !o.is_undefined() {
-                    once = o.to_boolean();
-                }
-                let p = opt_obj.get(js_string!("passive"), ctx)?;
-                if !p.is_undefined() {
-                    passive = Some(p.to_boolean());
+            // Parse options (3rd argument): boolean or {capture, once, passive}
+            let mut capture = false;
+            let mut once = false;
+            let mut passive = None;
+            if let Some(opt_val) = args.get(2) {
+                if let Some(b) = opt_val.as_boolean() {
+                    capture = b;
+                } else if let Some(opt_obj) = opt_val.as_object() {
+                    let c = opt_obj.get(js_string!("capture"), ctx)?;
+                    if !c.is_undefined() {
+                        capture = c.to_boolean();
+                    }
+                    let o = opt_obj.get(js_string!("once"), ctx)?;
+                    if !o.is_undefined() {
+                        once = o.to_boolean();
+                    }
+                    let p = opt_obj.get(js_string!("passive"), ctx)?;
+                    if !p.is_undefined() {
+                        passive = Some(p.to_boolean());
+                    }
                 }
             }
-        }
 
-        let callback_val = match args.get(1) {
-            Some(v) => v,
-            None => return Ok(JsValue::undefined()),
-        };
-        if callback_val.is_null() || callback_val.is_undefined() {
-            return Ok(JsValue::undefined());
-        }
-        let callback = callback_val
-            .as_object()
-            .ok_or_else(|| boa_engine::JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
-            .clone();
+            let callback_val = match args.get(1) {
+                Some(v) => v,
+                None => return Ok(JsValue::undefined()),
+            };
+            if callback_val.is_null() || callback_val.is_undefined() {
+                return Ok(JsValue::undefined());
+            }
+            let callback = callback_val
+                .as_object()
+                .ok_or_else(|| {
+                    boa_engine::JsError::from_opaque(js_string!("addEventListener: callback is not an object").into())
+                })?
+                .clone();
 
-        {
-            let listeners = realm_state::event_listeners(ctx);
-            let mut map = listeners.borrow_mut();
-            let entries = map.entry((usize::MAX, WINDOW_LISTENER_ID)).or_default();
+            {
+                let listeners = realm_state::event_listeners(ctx);
+                let mut map = listeners.borrow_mut();
+                let entries = map.entry((usize::MAX, WINDOW_LISTENER_ID)).or_default();
 
-            let duplicate = entries.iter().any(|entry| {
-                entry.event_type == event_type
-                    && entry.capture == capture
-                    && entry.callback == callback
-            });
-
-            if !duplicate {
-                entries.push(ListenerEntry {
-                    event_type,
-                    callback,
-                    capture,
-                    once,
-                    passive,
+                let duplicate = entries.iter().any(|entry| {
+                    entry.event_type == event_type && entry.capture == capture && entry.callback == callback
                 });
-            }
-        }
 
-        Ok(JsValue::undefined())
-    }) };
-
-    let remove_event_listener = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
-        let event_type = args.first()
-            .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
-            .transpose()?
-            .unwrap_or_default();
-
-        let callback_val = match args.get(1) {
-            Some(v) => v,
-            None => return Ok(JsValue::undefined()),
-        };
-        if callback_val.is_null() || callback_val.is_undefined() {
-            return Ok(JsValue::undefined());
-        }
-        let callback = callback_val
-            .as_object()
-            .ok_or_else(|| boa_engine::JsError::from_opaque(js_string!("removeEventListener: callback is not an object").into()))?
-            .clone();
-
-        let mut capture = false;
-        if let Some(opt_val) = args.get(2) {
-            if let Some(b) = opt_val.as_boolean() {
-                capture = b;
-            } else if let Some(opt_obj) = opt_val.as_object() {
-                let c = opt_obj.get(js_string!("capture"), ctx)?;
-                if !c.is_undefined() {
-                    capture = c.to_boolean();
+                if !duplicate {
+                    entries.push(ListenerEntry {
+                        event_type,
+                        callback,
+                        capture,
+                        once,
+                        passive,
+                    });
                 }
             }
-        }
 
-        {
-            let listeners = realm_state::event_listeners(ctx);
-            let mut map = listeners.borrow_mut();
-            if let Some(entries) = map.get_mut(&(usize::MAX, WINDOW_LISTENER_ID)) {
-                entries.retain(|entry| {
-                    !(entry.event_type == event_type
-                        && entry.capture == capture
-                        && entry.callback == callback)
-                });
-                if entries.is_empty() {
-                    map.remove(&(usize::MAX, WINDOW_LISTENER_ID));
+            Ok(JsValue::undefined())
+        })
+    };
+
+    let remove_event_listener = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let event_type = args
+                .first()
+                .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
+                .transpose()?
+                .unwrap_or_default();
+
+            let callback_val = match args.get(1) {
+                Some(v) => v,
+                None => return Ok(JsValue::undefined()),
+            };
+            if callback_val.is_null() || callback_val.is_undefined() {
+                return Ok(JsValue::undefined());
+            }
+            let callback = callback_val
+                .as_object()
+                .ok_or_else(|| {
+                    boa_engine::JsError::from_opaque(
+                        js_string!("removeEventListener: callback is not an object").into(),
+                    )
+                })?
+                .clone();
+
+            let mut capture = false;
+            if let Some(opt_val) = args.get(2) {
+                if let Some(b) = opt_val.as_boolean() {
+                    capture = b;
+                } else if let Some(opt_obj) = opt_val.as_object() {
+                    let c = opt_obj.get(js_string!("capture"), ctx)?;
+                    if !c.is_undefined() {
+                        capture = c.to_boolean();
+                    }
                 }
             }
-        }
 
-        Ok(JsValue::undefined())
-    }) };
+            {
+                let listeners = realm_state::event_listeners(ctx);
+                let mut map = listeners.borrow_mut();
+                if let Some(entries) = map.get_mut(&(usize::MAX, WINDOW_LISTENER_ID)) {
+                    entries.retain(|entry| {
+                        !(entry.event_type == event_type && entry.capture == capture && entry.callback == callback)
+                    });
+                    if entries.is_empty() {
+                        map.remove(&(usize::MAX, WINDOW_LISTENER_ID));
+                    }
+                }
+            }
 
-    let dispatch_event = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
-        let event_val = args.first().cloned().unwrap_or(JsValue::undefined());
-        if event_val.is_null() || event_val.is_undefined() {
-            return Ok(JsValue::from(true));
-        }
-        let event_obj = match event_val.as_object() {
-            Some(o) => o.clone(),
-            None => return Ok(JsValue::from(true)),
-        };
+            Ok(JsValue::undefined())
+        })
+    };
 
-        let event_type = match event_obj.downcast_ref::<super::event::JsEvent>() {
-            Some(evt) => evt.event_type.clone(),
-            None => return Ok(JsValue::from(true)),
-        };
+    let dispatch_event = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let event_val = args.first().cloned().unwrap_or(JsValue::undefined());
+            if event_val.is_null() || event_val.is_undefined() {
+                return Ok(JsValue::from(true));
+            }
+            let event_obj = match event_val.as_object() {
+                Some(o) => o.clone(),
+                None => return Ok(JsValue::from(true)),
+            };
 
-        {
-            let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
-            evt.dispatching = true;
-            evt.phase = 2;
-        }
+            let event_type = match event_obj.downcast_ref::<super::event::JsEvent>() {
+                Some(evt) => evt.event_type.clone(),
+                None => return Ok(JsValue::from(true)),
+            };
 
-        let window_val: JsValue = realm_state::window_object(ctx)
-            .map(JsValue::from)
-            .unwrap_or(JsValue::undefined());
+            {
+                let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
+                evt.dispatching = true;
+                evt.phase = 2;
+            }
 
-        event_obj.define_property_or_throw(
-            js_string!("target"),
-            PropertyDescriptor::builder().value(window_val.clone()).writable(true).configurable(true).enumerable(true).build(),
-            ctx,
-        )?;
-        event_obj.define_property_or_throw(
-            js_string!("srcElement"),
-            PropertyDescriptor::builder().value(window_val.clone()).writable(true).configurable(true).enumerable(true).build(),
-            ctx,
-        )?;
-        event_obj.define_property_or_throw(
-            js_string!("currentTarget"),
-            PropertyDescriptor::builder().value(window_val).writable(true).configurable(true).enumerable(true).build(),
-            ctx,
-        )?;
+            let window_val: JsValue = realm_state::window_object(ctx)
+                .map(JsValue::from)
+                .unwrap_or(JsValue::undefined());
 
-        super::element::invoke_listeners_for_node(
-            (usize::MAX, WINDOW_LISTENER_ID), &event_type, &event_obj, &event_val, false, true, ctx,
-        )?;
+            event_obj.define_property_or_throw(
+                js_string!("target"),
+                PropertyDescriptor::builder()
+                    .value(window_val.clone())
+                    .writable(true)
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx,
+            )?;
+            event_obj.define_property_or_throw(
+                js_string!("srcElement"),
+                PropertyDescriptor::builder()
+                    .value(window_val.clone())
+                    .writable(true)
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx,
+            )?;
+            event_obj.define_property_or_throw(
+                js_string!("currentTarget"),
+                PropertyDescriptor::builder()
+                    .value(window_val)
+                    .writable(true)
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx,
+            )?;
 
-        let default_prevented = {
-            let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
-            evt.phase = 0;
-            evt.dispatching = false;
-            evt.propagation_stopped = false;
-            evt.immediate_propagation_stopped = false;
-            evt.default_prevented
-        };
+            super::element::invoke_listeners_for_node(
+                (usize::MAX, WINDOW_LISTENER_ID),
+                &event_type,
+                &event_obj,
+                &event_val,
+                false,
+                true,
+                ctx,
+            )?;
 
-        event_obj.define_property_or_throw(
-            js_string!("currentTarget"),
-            PropertyDescriptor::builder().value(JsValue::null()).writable(true).configurable(true).enumerable(true).build(),
-            ctx,
-        )?;
+            let default_prevented = {
+                let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
+                evt.phase = 0;
+                evt.dispatching = false;
+                evt.propagation_stopped = false;
+                evt.immediate_propagation_stopped = false;
+                evt.default_prevented
+            };
 
-        Ok(JsValue::from(!default_prevented))
-    }) };
+            event_obj.define_property_or_throw(
+                js_string!("currentTarget"),
+                PropertyDescriptor::builder()
+                    .value(JsValue::null())
+                    .writable(true)
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx,
+            )?;
+
+            Ok(JsValue::from(!default_prevented))
+        })
+    };
 
     let window = ObjectInitializer::new(context)
         .function(set_timeout, js_string!("setTimeout"), 2)
@@ -550,10 +601,31 @@ pub(crate) fn register_window(
     // Register unified on* event handler accessors on window
     super::on_event::register_window_on_event_accessors(
         &window,
-        &["load", "error", "click", "change", "input", "submit", "reset",
-          "mousedown", "mouseup", "mouseover", "mouseout", "mousemove",
-          "keydown", "keyup", "keypress", "focus", "blur", "resize", "scroll",
-          "hashchange", "popstate", "unload", "beforeunload"],
+        &[
+            "load",
+            "error",
+            "click",
+            "change",
+            "input",
+            "submit",
+            "reset",
+            "mousedown",
+            "mouseup",
+            "mouseover",
+            "mouseout",
+            "mousemove",
+            "keydown",
+            "keyup",
+            "keypress",
+            "focus",
+            "blur",
+            "resize",
+            "scroll",
+            "hashchange",
+            "popstate",
+            "unload",
+            "beforeunload",
+        ],
         context,
     );
 
@@ -869,9 +941,7 @@ mod tests {
     #[test]
     fn window_document_same_as_global_document() {
         let mut rt = make_runtime();
-        let result = rt
-            .eval("typeof window.document.createElement === 'function'")
-            .unwrap();
+        let result = rt.eval("typeof window.document.createElement === 'function'").unwrap();
         assert_eq!(result.as_boolean(), Some(true));
     }
 
@@ -879,10 +949,7 @@ mod tests {
     fn window_location_href_default() {
         let mut rt = make_runtime();
         let result = rt.eval("window.location.href").unwrap();
-        let href = result
-            .to_string(&mut rt.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let href = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(href, "about:blank");
     }
 
@@ -892,54 +959,34 @@ mod tests {
         rt.eval(r#"window.location.href = "https://example.com/path?q=1#sec""#)
             .unwrap();
         let result = rt.eval("window.location.href").unwrap();
-        let href = result
-            .to_string(&mut rt.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let href = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(href, "https://example.com/path?q=1#sec");
     }
 
     #[test]
     fn window_location_parts() {
         let mut rt = make_runtime();
-        rt.eval(
-            r#"window.location.href = "https://example.com:8080/foo/bar?q=hello&b=2#section""#,
-        )
-        .unwrap();
+        rt.eval(r#"window.location.href = "https://example.com:8080/foo/bar?q=hello&b=2#section""#)
+            .unwrap();
 
         let protocol = rt.eval("window.location.protocol").unwrap();
-        let protocol_str = protocol
-            .to_string(&mut rt.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let protocol_str = protocol.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(protocol_str, "https:");
 
         let hostname = rt.eval("window.location.hostname").unwrap();
-        let hostname_str = hostname
-            .to_string(&mut rt.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let hostname_str = hostname.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(hostname_str, "example.com");
 
         let pathname = rt.eval("window.location.pathname").unwrap();
-        let pathname_str = pathname
-            .to_string(&mut rt.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let pathname_str = pathname.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(pathname_str, "/foo/bar");
 
         let search = rt.eval("window.location.search").unwrap();
-        let search_str = search
-            .to_string(&mut rt.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let search_str = search.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(search_str, "?q=hello&b=2");
 
         let hash = rt.eval("window.location.hash").unwrap();
-        let hash_str = hash
-            .to_string(&mut rt.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let hash_str = hash.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(hash_str, "#section");
     }
 
@@ -947,10 +994,7 @@ mod tests {
     fn window_location_pathname_default() {
         let mut rt = make_runtime();
         let result = rt.eval("window.location.pathname").unwrap();
-        let path = result
-            .to_string(&mut rt.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let path = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(path, "/");
     }
 
@@ -1048,10 +1092,7 @@ mod tests {
     fn navigator_user_agent() {
         let mut rt = make_runtime();
         let result = rt.eval("window.navigator.userAgent").unwrap();
-        let ua = result
-            .to_string(&mut rt.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let ua = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
         assert_eq!(ua, "Braille/0.1");
     }
 

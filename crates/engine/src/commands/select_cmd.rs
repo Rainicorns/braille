@@ -1,5 +1,5 @@
-use crate::Engine;
 use crate::dom::NodeData;
+use crate::Engine;
 
 impl Engine {
     /// Select an option in a <select> element identified by selector.
@@ -54,9 +54,8 @@ impl Engine {
             }
         }
 
-        let matching_option = matching_option.ok_or_else(|| {
-            format!("no option matching '{}' found in <select>: {}", value, selector)
-        })?;
+        let matching_option =
+            matching_option.ok_or_else(|| format!("no option matching '{}' found in <select>: {}", value, selector))?;
 
         // Drop the immutable borrow before taking a mutable borrow
         drop(tree);
@@ -150,15 +149,18 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             err.contains("select target must be <select>"),
-            "error should mention it must be a select element, got: {}", err
+            "error should mention it must be a select element, got: {}",
+            err
         );
         assert!(
             err.contains("got <div>"),
-            "error should mention actual tag, got: {}", err
+            "error should mention actual tag, got: {}",
+            err
         );
         assert!(
             err.contains("#notselect"),
-            "error should include selector, got: {}", err
+            "error should include selector, got: {}",
+            err
         );
     }
 
@@ -180,16 +182,15 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             err.contains("no option matching 'uk'"),
-            "error should mention the value searched for, got: {}", err
+            "error should mention the value searched for, got: {}",
+            err
         );
         assert!(
             err.contains("found in <select>"),
-            "error should mention it was in a select, got: {}", err
+            "error should mention it was in a select, got: {}",
+            err
         );
-        assert!(
-            err.contains("#country"),
-            "error should include selector, got: {}", err
-        );
+        assert!(err.contains("#country"), "error should include selector, got: {}", err);
     }
 
     #[test]
@@ -223,9 +224,18 @@ mod tests {
         let select = tree.get_element_by_id("country").unwrap();
         let options = tree.find_descendants_by_tag(select, "option");
 
-        assert!(!tree.has_attribute(options[0], "selected"), "first option should not be selected");
-        assert!(!tree.has_attribute(options[1], "selected"), "second option should not be selected");
-        assert!(tree.has_attribute(options[2], "selected"), "third option should be selected");
+        assert!(
+            !tree.has_attribute(options[0], "selected"),
+            "first option should not be selected"
+        );
+        assert!(
+            !tree.has_attribute(options[1], "selected"),
+            "second option should not be selected"
+        );
+        assert!(
+            tree.has_attribute(options[2], "selected"),
+            "third option should be selected"
+        );
     }
 
     #[test]
@@ -245,11 +255,13 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             err.contains("element not found"),
-            "error should mention element not found, got: {}", err
+            "error should mention element not found, got: {}",
+            err
         );
         assert!(
             err.contains("#nonexistent"),
-            "error should include selector, got: {}", err
+            "error should include selector, got: {}",
+            err
         );
     }
 
@@ -386,12 +398,10 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             err.contains("select target is not an element"),
-            "error should say 'select target is not an element', got: {}", err
+            "error should say 'select target is not an element', got: {}",
+            err
         );
-        assert!(
-            err.contains("@text"),
-            "error should include selector, got: {}", err
-        );
+        assert!(err.contains("@text"), "error should include selector, got: {}", err);
     }
 
     #[test]

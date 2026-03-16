@@ -81,9 +81,7 @@ impl DomTree {
         node.children
             .iter()
             .copied()
-            .filter(|&child_id| {
-                matches!(self.get_node(child_id).data, NodeData::Element { .. })
-            })
+            .filter(|&child_id| matches!(self.get_node(child_id).data, NodeData::Element { .. }))
             .collect()
     }
 }

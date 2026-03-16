@@ -35,14 +35,8 @@ impl Class for JsComputedStyle {
     const NAME: &'static str = "CSSStyleDeclaration";
     const LENGTH: usize = 0;
 
-    fn data_constructor(
-        _this: &JsValue,
-        _args: &[JsValue],
-        _ctx: &mut Context,
-    ) -> JsResult<Self> {
-        Ok(JsComputedStyle {
-            styles: HashMap::new(),
-        })
+    fn data_constructor(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<Self> {
+        Ok(JsComputedStyle { styles: HashMap::new() })
     }
 
     fn init(class: &mut ClassBuilder) -> JsResult<()> {
@@ -105,17 +99,12 @@ impl Class for JsComputedStyle {
             let kebab_owned = kebab.to_string();
             let getter = unsafe {
                 NativeFunction::from_closure(move |this, _args, _ctx| {
-                    let obj = this
-                        .as_object()
-                        .ok_or_else(|| {
-                            JsError::from_opaque(
-                                js_string!("computed style getter: this is not an object").into(),
-                            )
-                        })?;
+                    let obj = this.as_object().ok_or_else(|| {
+                        JsError::from_opaque(js_string!("computed style getter: this is not an object").into())
+                    })?;
                     let cs = obj.downcast_ref::<JsComputedStyle>().ok_or_else(|| {
                         JsError::from_opaque(
-                            js_string!("computed style getter: this is not a CSSStyleDeclaration")
-                                .into(),
+                            js_string!("computed style getter: this is not a CSSStyleDeclaration").into(),
                         )
                     })?;
                     let val = cs.lookup(&kebab_owned);
@@ -137,15 +126,9 @@ impl Class for JsComputedStyle {
 fn get_property_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(
-                js_string!("getPropertyValue: this is not an object").into(),
-            )
-        })?;
+        .ok_or_else(|| JsError::from_opaque(js_string!("getPropertyValue: this is not an object").into()))?;
     let cs = obj.downcast_ref::<JsComputedStyle>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("getPropertyValue: this is not a CSSStyleDeclaration").into(),
-        )
+        JsError::from_opaque(js_string!("getPropertyValue: this is not a CSSStyleDeclaration").into())
     })?;
 
     let prop = args
@@ -162,14 +145,10 @@ fn get_property_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> Js
 fn get_length(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
-        .ok_or_else(|| {
-            JsError::from_opaque(js_string!("length getter: this is not an object").into())
-        })?;
-    let cs = obj.downcast_ref::<JsComputedStyle>().ok_or_else(|| {
-        JsError::from_opaque(
-            js_string!("length getter: this is not a CSSStyleDeclaration").into(),
-        )
-    })?;
+        .ok_or_else(|| JsError::from_opaque(js_string!("length getter: this is not an object").into()))?;
+    let cs = obj
+        .downcast_ref::<JsComputedStyle>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("length getter: this is not a CSSStyleDeclaration").into()))?;
     Ok(JsValue::from(cs.styles.len() as f64))
 }
 
@@ -180,20 +159,14 @@ fn get_length(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult
 pub(crate) fn make_get_computed_style(tree: Rc<RefCell<DomTree>>) -> NativeFunction {
     unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
-            let el_val = args.first().ok_or_else(|| {
-                JsError::from_opaque(
-                    js_string!("getComputedStyle: missing element argument").into(),
-                )
-            })?;
+            let el_val = args
+                .first()
+                .ok_or_else(|| JsError::from_opaque(js_string!("getComputedStyle: missing element argument").into()))?;
             let el_obj = el_val.as_object().ok_or_else(|| {
-                JsError::from_opaque(
-                    js_string!("getComputedStyle: argument is not an object").into(),
-                )
+                JsError::from_opaque(js_string!("getComputedStyle: argument is not an object").into())
             })?;
             let el = el_obj.downcast_ref::<JsElement>().ok_or_else(|| {
-                JsError::from_opaque(
-                    js_string!("getComputedStyle: argument is not an Element").into(),
-                )
+                JsError::from_opaque(js_string!("getComputedStyle: argument is not an Element").into())
             })?;
 
             let styles = {
@@ -223,13 +196,12 @@ mod tests {
         );
         let runtime = engine.runtime.as_mut().unwrap();
         runtime
-            .eval(r#"var s = getComputedStyle(document.getElementById("t")); var result = s.getPropertyValue("color");"#)
+            .eval(
+                r#"var s = getComputedStyle(document.getElementById("t")); var result = s.getPropertyValue("color");"#,
+            )
             .unwrap();
         let result = runtime.eval("result").unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert!(!s.is_empty(), "computed color should not be empty: {}", s);
     }
 
@@ -247,10 +219,7 @@ mod tests {
             .eval(r#"var s = getComputedStyle(document.getElementById("t")); var result = s.display;"#)
             .unwrap();
         let result = runtime.eval("result").unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "none");
     }
 
@@ -278,13 +247,12 @@ mod tests {
         engine.load_html("<html><body><div id='t'>Test</div></body></html>");
         let runtime = engine.runtime.as_mut().unwrap();
         runtime
-            .eval(r#"var s = getComputedStyle(document.getElementById("t")); var result = s.getPropertyValue("color");"#)
+            .eval(
+                r#"var s = getComputedStyle(document.getElementById("t")); var result = s.getPropertyValue("color");"#,
+            )
             .unwrap();
         let result = runtime.eval("result").unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         // No author styles, so UA defaults may or may not be present
         // Just verify it doesn't crash and returns a string
         assert!(s.is_empty() || !s.is_empty(), "should return a string");
@@ -304,10 +272,7 @@ mod tests {
             .eval(r#"var s = window.getComputedStyle(document.getElementById("t")); var result = s.color;"#)
             .unwrap();
         let result = runtime.eval("result").unwrap();
-        let s = result
-            .to_string(&mut runtime.context)
-            .unwrap()
-            .to_std_string_escaped();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert!(!s.is_empty(), "window.getComputedStyle should work");
     }
 
@@ -326,15 +291,21 @@ mod tests {
         );
         let runtime = engine.runtime.as_mut().unwrap();
         runtime
-            .eval(r#"
+            .eval(
+                r#"
                 var a = getComputedStyle(document.getElementById("a")).getPropertyValue("color");
                 var b = getComputedStyle(document.getElementById("b")).getPropertyValue("color");
-            "#)
+            "#,
+            )
             .unwrap();
         let a = runtime.eval("a").unwrap();
         let b = runtime.eval("b").unwrap();
         let a_str = a.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         let b_str = b.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
-        assert_ne!(a_str, b_str, "different classes should give different colors: a={}, b={}", a_str, b_str);
+        assert_ne!(
+            a_str, b_str,
+            "different classes should give different colors: a={}, b={}",
+            a_str, b_str
+        );
     }
 }

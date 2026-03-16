@@ -1,27 +1,27 @@
-pub(crate) mod element;
-pub(crate) mod document;
-pub(crate) mod class_list;
-pub(crate) mod traversal;
+pub(crate) mod activation;
+pub(crate) mod anchor_form;
 pub(crate) mod attributes;
-pub(crate) mod node_info;
-pub(crate) mod inner_html;
-pub(crate) mod mutation;
-pub(crate) mod style;
-pub(crate) mod window;
-pub(crate) mod query;
+pub(crate) mod character_data;
+pub(crate) mod class_list;
+pub(crate) mod collections;
+pub(crate) mod computed_style;
+pub(crate) mod document;
+pub(crate) mod dom_parser;
+pub(crate) mod element;
 pub(crate) mod event;
 pub(crate) mod event_target;
-pub(crate) mod input_props;
-pub(crate) mod select_props;
-pub(crate) mod anchor_form;
 pub(crate) mod html_element;
-pub(crate) mod computed_style;
-pub(crate) mod character_data;
-pub(crate) mod collections;
-pub(crate) mod dom_parser;
+pub(crate) mod inner_html;
+pub(crate) mod input_props;
+pub(crate) mod mutation;
 pub(crate) mod mutation_observer;
+pub(crate) mod node_info;
 pub(crate) mod on_event;
-pub(crate) mod activation;
+pub(crate) mod query;
+pub(crate) mod select_props;
+pub(crate) mod style;
+pub(crate) mod traversal;
+pub(crate) mod window;
 
 pub(crate) use document::register_document;
 
@@ -57,8 +57,16 @@ pub(crate) fn register_dom_exception(ctx: &mut Context) {
         let proto = proto_val.as_object().expect("DOMException.prototype must exist");
 
         let obj = ObjectInitializer::with_native_data(DomExceptionData, ctx)
-            .property(js_string!("message"), js_string!(message), Attribute::CONFIGURABLE | Attribute::WRITABLE)
-            .property(js_string!("name"), js_string!(name), Attribute::CONFIGURABLE | Attribute::WRITABLE)
+            .property(
+                js_string!("message"),
+                js_string!(message),
+                Attribute::CONFIGURABLE | Attribute::WRITABLE,
+            )
+            .property(
+                js_string!("name"),
+                js_string!(name),
+                Attribute::CONFIGURABLE | Attribute::WRITABLE,
+            )
             .property(js_string!("code"), code, Attribute::CONFIGURABLE | Attribute::WRITABLE)
             .build();
 
@@ -126,8 +134,16 @@ pub(crate) fn create_dom_exception(ctx: &mut Context, name: &str, message: &str,
     let proto = proto_val.as_object().expect("DOMException.prototype must exist");
 
     let obj = ObjectInitializer::with_native_data(DomExceptionData, ctx)
-        .property(js_string!("message"), js_string!(message), Attribute::CONFIGURABLE | Attribute::WRITABLE)
-        .property(js_string!("name"), js_string!(name), Attribute::CONFIGURABLE | Attribute::WRITABLE)
+        .property(
+            js_string!("message"),
+            js_string!(message),
+            Attribute::CONFIGURABLE | Attribute::WRITABLE,
+        )
+        .property(
+            js_string!("name"),
+            js_string!(name),
+            Attribute::CONFIGURABLE | Attribute::WRITABLE,
+        )
         .property(js_string!("code"), code, Attribute::CONFIGURABLE | Attribute::WRITABLE)
         .build();
 

@@ -27,17 +27,18 @@ impl NetworkClient {
             .cookie_store(true)
             .build()
             .expect("failed to build reqwest client");
-        NetworkClient {
-            client,
-            base_url: None,
-        }
+        NetworkClient { client, base_url: None }
     }
 
     /// Fetch a URL. Follows redirects automatically (reqwest default).
     /// Updates base_url to the final URL after redirects.
     pub fn fetch(&mut self, url: &str) -> Result<FetchResponse, String> {
         let resolved = self.resolve_url(url);
-        let response = self.client.get(&resolved).send().map_err(|e| format!("fetch failed: {e}"))?;
+        let response = self
+            .client
+            .get(&resolved)
+            .send()
+            .map_err(|e| format!("fetch failed: {e}"))?;
 
         let final_url = response.url().to_string();
         let status = response.status().as_u16();
@@ -166,10 +167,7 @@ mod tests {
     #[test]
     fn resolve_absolute_http() {
         let client = NetworkClient::new();
-        assert_eq!(
-            client.resolve_url("http://example.com/page"),
-            "http://example.com/page"
-        );
+        assert_eq!(client.resolve_url("http://example.com/page"), "http://example.com/page");
     }
 
     #[test]
@@ -185,10 +183,7 @@ mod tests {
     fn resolve_absolute_ignores_base_url() {
         let mut client = NetworkClient::new();
         client.set_base_url("https://base.com/old");
-        assert_eq!(
-            client.resolve_url("https://other.com/new"),
-            "https://other.com/new"
-        );
+        assert_eq!(client.resolve_url("https://other.com/new"), "https://other.com/new");
     }
 
     // -- URL resolution: protocol-relative --
@@ -219,20 +214,14 @@ mod tests {
     fn resolve_root_relative() {
         let mut client = NetworkClient::new();
         client.set_base_url("https://example.com/a/b/c");
-        assert_eq!(
-            client.resolve_url("/other/path"),
-            "https://example.com/other/path"
-        );
+        assert_eq!(client.resolve_url("/other/path"), "https://example.com/other/path");
     }
 
     #[test]
     fn resolve_root_relative_with_port() {
         let mut client = NetworkClient::new();
         client.set_base_url("https://example.com:8080/a/b/c");
-        assert_eq!(
-            client.resolve_url("/other/path"),
-            "https://example.com:8080/other/path"
-        );
+        assert_eq!(client.resolve_url("/other/path"), "https://example.com:8080/other/path");
     }
 
     // -- URL resolution: fragment --
@@ -241,20 +230,14 @@ mod tests {
     fn resolve_fragment() {
         let mut client = NetworkClient::new();
         client.set_base_url("https://example.com/page");
-        assert_eq!(
-            client.resolve_url("#section"),
-            "https://example.com/page#section"
-        );
+        assert_eq!(client.resolve_url("#section"), "https://example.com/page#section");
     }
 
     #[test]
     fn resolve_fragment_replaces_existing() {
         let mut client = NetworkClient::new();
         client.set_base_url("https://example.com/page#old");
-        assert_eq!(
-            client.resolve_url("#new"),
-            "https://example.com/page#new"
-        );
+        assert_eq!(client.resolve_url("#new"), "https://example.com/page#new");
     }
 
     // -- URL resolution: relative path --
@@ -263,20 +246,14 @@ mod tests {
     fn resolve_relative_path() {
         let mut client = NetworkClient::new();
         client.set_base_url("https://example.com/a/b/page.html");
-        assert_eq!(
-            client.resolve_url("other.html"),
-            "https://example.com/a/b/other.html"
-        );
+        assert_eq!(client.resolve_url("other.html"), "https://example.com/a/b/other.html");
     }
 
     #[test]
     fn resolve_relative_path_from_directory() {
         let mut client = NetworkClient::new();
         client.set_base_url("https://example.com/a/b/");
-        assert_eq!(
-            client.resolve_url("other.html"),
-            "https://example.com/a/b/other.html"
-        );
+        assert_eq!(client.resolve_url("other.html"), "https://example.com/a/b/other.html");
     }
 
     #[test]
@@ -289,10 +266,7 @@ mod tests {
     fn resolve_relative_base_no_path() {
         let mut client = NetworkClient::new();
         client.set_base_url("https://example.com");
-        assert_eq!(
-            client.resolve_url("page.html"),
-            "https://example.com/page.html"
-        );
+        assert_eq!(client.resolve_url("page.html"), "https://example.com/page.html");
     }
 
     // -- base_url management --
@@ -321,20 +295,32 @@ mod tests {
     #[test]
     fn test_extract_origin() {
         assert_eq!(extract_origin("https://example.com/path"), "https://example.com");
-        assert_eq!(extract_origin("https://example.com:8080/path"), "https://example.com:8080");
+        assert_eq!(
+            extract_origin("https://example.com:8080/path"),
+            "https://example.com:8080"
+        );
         assert_eq!(extract_origin("https://example.com"), "https://example.com");
     }
 
     #[test]
     fn test_strip_fragment() {
-        assert_eq!(strip_fragment("https://example.com/page#frag"), "https://example.com/page");
+        assert_eq!(
+            strip_fragment("https://example.com/page#frag"),
+            "https://example.com/page"
+        );
         assert_eq!(strip_fragment("https://example.com/page"), "https://example.com/page");
     }
 
     #[test]
     fn test_extract_directory() {
-        assert_eq!(extract_directory("https://example.com/a/b/page.html"), "https://example.com/a/b/");
-        assert_eq!(extract_directory("https://example.com/a/b/"), "https://example.com/a/b/");
+        assert_eq!(
+            extract_directory("https://example.com/a/b/page.html"),
+            "https://example.com/a/b/"
+        );
+        assert_eq!(
+            extract_directory("https://example.com/a/b/"),
+            "https://example.com/a/b/"
+        );
         assert_eq!(extract_directory("https://example.com"), "https://example.com/");
     }
 

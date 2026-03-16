@@ -52,10 +52,7 @@ impl JsClassList {
 
     /// Returns true if the element has a "class" attribute (even if empty).
     fn has_class_attribute(&self) -> bool {
-        self.tree
-            .borrow()
-            .get_attribute(self.node_id, "class")
-            .is_some()
+        self.tree.borrow().get_attribute(self.node_id, "class").is_some()
     }
 
     /// Returns the raw class attribute string, or empty string if no attribute.
@@ -172,13 +169,9 @@ impl JsClassList {
         validate_token(&class_name)?;
 
         // Check for force parameter (second argument)
-        let force = args.get(1).and_then(|v| {
-            if v.is_undefined() {
-                None
-            } else {
-                Some(v.to_boolean())
-            }
-        });
+        let force = args
+            .get(1)
+            .and_then(|v| if v.is_undefined() { None } else { Some(v.to_boolean()) });
 
         let mut classes = class_list.get_classes();
         let has_token = classes.contains(&class_name);
@@ -361,7 +354,13 @@ impl JsClassList {
             .map(|s| s.to_std_string_escaped())
             .unwrap_or_default();
 
-        super::mutation_observer::set_attribute_with_observer(ctx, &class_list.tree, class_list.node_id, "class", &value);
+        super::mutation_observer::set_attribute_with_observer(
+            ctx,
+            &class_list.tree,
+            class_list.node_id,
+            "class",
+            &value,
+        );
         Ok(JsValue::undefined())
     }
 
@@ -383,11 +382,7 @@ impl Class for JsClassList {
     const NAME: &'static str = "ClassList";
     const LENGTH: usize = 0;
 
-    fn data_constructor(
-        _new_target: &JsValue,
-        _args: &[JsValue],
-        _context: &mut Context,
-    ) -> JsResult<Self> {
+    fn data_constructor(_new_target: &JsValue, _args: &[JsValue], _context: &mut Context) -> JsResult<Self> {
         Err(JsError::from_opaque(
             js_string!("ClassList cannot be constructed directly from JS").into(),
         ))
@@ -395,41 +390,17 @@ impl Class for JsClassList {
 
     fn init(class: &mut ClassBuilder) -> JsResult<()> {
         // Methods
-        class.method(
-            js_string!("add"),
-            0,
-            NativeFunction::from_fn_ptr(Self::add),
-        );
+        class.method(js_string!("add"), 0, NativeFunction::from_fn_ptr(Self::add));
 
-        class.method(
-            js_string!("remove"),
-            0,
-            NativeFunction::from_fn_ptr(Self::remove),
-        );
+        class.method(js_string!("remove"), 0, NativeFunction::from_fn_ptr(Self::remove));
 
-        class.method(
-            js_string!("toggle"),
-            1,
-            NativeFunction::from_fn_ptr(Self::toggle),
-        );
+        class.method(js_string!("toggle"), 1, NativeFunction::from_fn_ptr(Self::toggle));
 
-        class.method(
-            js_string!("replace"),
-            2,
-            NativeFunction::from_fn_ptr(Self::replace),
-        );
+        class.method(js_string!("replace"), 2, NativeFunction::from_fn_ptr(Self::replace));
 
-        class.method(
-            js_string!("contains"),
-            1,
-            NativeFunction::from_fn_ptr(Self::contains),
-        );
+        class.method(js_string!("contains"), 1, NativeFunction::from_fn_ptr(Self::contains));
 
-        class.method(
-            js_string!("item"),
-            1,
-            NativeFunction::from_fn_ptr(Self::item),
-        );
+        class.method(js_string!("item"), 1, NativeFunction::from_fn_ptr(Self::item));
 
         class.method(
             js_string!("toString"),

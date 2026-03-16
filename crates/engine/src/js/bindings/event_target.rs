@@ -120,11 +120,9 @@ impl JsEventTarget {
             let mut map = listeners.borrow_mut();
             let entries = map.entry((0usize, id)).or_default();
 
-            let duplicate = entries.iter().any(|entry| {
-                entry.event_type == event_type
-                    && entry.capture == capture
-                    && entry.callback == callback
-            });
+            let duplicate = entries
+                .iter()
+                .any(|entry| entry.event_type == event_type && entry.capture == capture && entry.callback == callback);
 
             if !duplicate {
                 entries.push(ListenerEntry {
@@ -144,9 +142,9 @@ impl JsEventTarget {
         let this_obj = this
             .as_object()
             .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: `this` is not an object").into()))?;
-        let et = this_obj
-            .downcast_ref::<JsEventTarget>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: `this` is not an EventTarget").into()))?;
+        let et = this_obj.downcast_ref::<JsEventTarget>().ok_or_else(|| {
+            JsError::from_opaque(js_string!("removeEventListener: `this` is not an EventTarget").into())
+        })?;
         let id = et.id;
 
         let event_type = args
@@ -186,9 +184,7 @@ impl JsEventTarget {
             let mut map = listeners.borrow_mut();
             if let Some(entries) = map.get_mut(&(0usize, id)) {
                 entries.retain(|entry| {
-                    !(entry.event_type == event_type
-                        && entry.capture == capture
-                        && entry.callback == callback)
+                    !(entry.event_type == event_type && entry.capture == capture && entry.callback == callback)
                 });
                 if entries.is_empty() {
                     map.remove(&(0usize, id));
@@ -213,18 +209,16 @@ impl JsEventTarget {
         let event_val = args
             .first()
             .ok_or_else(|| {
-                JsError::from_native(
-                    boa_engine::JsNativeError::typ()
-                        .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present.")
-                )
+                JsError::from_native(boa_engine::JsNativeError::typ().with_message(
+                    "Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present.",
+                ))
             })?
             .clone();
 
         if event_val.is_null() || event_val.is_undefined() {
-            return Err(JsError::from_native(
-                boa_engine::JsNativeError::typ()
-                    .with_message("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
-            ));
+            return Err(JsError::from_native(boa_engine::JsNativeError::typ().with_message(
+                "Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.",
+            )));
         }
 
         let event_obj = event_val
@@ -313,9 +307,8 @@ impl JsEventTarget {
                 let listeners = realm_state::event_listeners(ctx);
                 let mut map = listeners.borrow_mut();
                 if let Some(entries) = map.get_mut(&(0usize, id)) {
-                    entries.retain(|entry| {
-                        !(entry.event_type == event_type && entry.callback == *callback && entry.once)
-                    });
+                    entries
+                        .retain(|entry| !(entry.event_type == event_type && entry.callback == *callback && entry.once));
                     if entries.is_empty() {
                         map.remove(&(0usize, id));
                     }
@@ -328,7 +321,9 @@ impl JsEventTarget {
                 event_obj.downcast_mut::<super::event::JsEvent>().unwrap().cancelable = false;
 
                 // Per spec: callable → call with this=currentTarget; object → look up handleEvent
-                let current_target = event_obj.get(js_string!("currentTarget"), ctx).unwrap_or(JsValue::undefined());
+                let current_target = event_obj
+                    .get(js_string!("currentTarget"), ctx)
+                    .unwrap_or(JsValue::undefined());
                 let result = if callback.is_callable() {
                     callback.call(&current_target, std::slice::from_ref(event_val), ctx)
                 } else {
@@ -349,7 +344,9 @@ impl JsEventTarget {
                 result
             } else {
                 // Per spec: callable → call with this=currentTarget; object → look up handleEvent
-                let current_target = event_obj.get(js_string!("currentTarget"), ctx).unwrap_or(JsValue::undefined());
+                let current_target = event_obj
+                    .get(js_string!("currentTarget"), ctx)
+                    .unwrap_or(JsValue::undefined());
                 if callback.is_callable() {
                     callback.call(&current_target, std::slice::from_ref(event_val), ctx)
                 } else {
@@ -371,7 +368,10 @@ impl JsEventTarget {
                 super::element::report_listener_error(err, ctx);
             }
 
-            let imm_stopped = event_obj.downcast_ref::<super::event::JsEvent>().unwrap().immediate_propagation_stopped;
+            let imm_stopped = event_obj
+                .downcast_ref::<super::event::JsEvent>()
+                .unwrap()
+                .immediate_propagation_stopped;
 
             if imm_stopped {
                 // Restore previous CURRENT_EVENT before returning
@@ -383,7 +383,10 @@ impl JsEventTarget {
         // Restore previous CURRENT_EVENT
         realm_state::set_current_event(ctx, prev_event);
 
-        let propagation_stopped = event_obj.downcast_ref::<super::event::JsEvent>().unwrap().propagation_stopped;
+        let propagation_stopped = event_obj
+            .downcast_ref::<super::event::JsEvent>()
+            .unwrap()
+            .propagation_stopped;
         Ok(propagation_stopped)
     }
 
@@ -406,11 +409,7 @@ impl Class for JsEventTarget {
     const NAME: &'static str = "EventTarget";
     const LENGTH: usize = 0;
 
-    fn data_constructor(
-        _new_target: &JsValue,
-        _args: &[JsValue],
-        _context: &mut Context,
-    ) -> JsResult<Self> {
+    fn data_constructor(_new_target: &JsValue, _args: &[JsValue], _context: &mut Context) -> JsResult<Self> {
         Ok(JsEventTarget {
             id: next_event_target_id(),
         })

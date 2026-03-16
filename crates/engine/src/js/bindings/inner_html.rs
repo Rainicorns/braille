@@ -1,13 +1,10 @@
 use boa_engine::{
-    class::ClassBuilder,
-    js_string,
-    native_function::NativeFunction,
-    property::Attribute,
-    Context, JsError, JsResult, JsValue,
+    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute, Context, JsError, JsResult,
+    JsValue,
 };
 
-use crate::dom::NodeId;
 use super::element::JsElement;
+use crate::dom::NodeId;
 
 fn get_inner_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
@@ -62,7 +59,13 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
     // Queue MutationObserver childList record
     if !removed_children.is_empty() || !added_ids.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            ctx, &tree_rc, node_id, added_ids, removed_children, None, None,
+            ctx,
+            &tree_rc,
+            node_id,
+            added_ids,
+            removed_children,
+            None,
+            None,
         );
     }
 
@@ -83,27 +86,42 @@ fn get_outer_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
 }
 
 fn insert_adjacent_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this.as_object()
+    let obj = this
+        .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("not object").into()))?;
-    let el = obj.downcast_ref::<JsElement>()
+    let el = obj
+        .downcast_ref::<JsElement>()
         .ok_or_else(|| JsError::from_opaque(js_string!("not Element").into()))?;
-    let pos = args.first().map(|v| v.to_string(ctx))
-        .transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
-    let hs = args.get(1).map(|v| v.to_string(ctx))
-        .transpose()?.map(|s| s.to_std_string_escaped()).unwrap_or_default();
+    let pos = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+    let hs = args
+        .get(1)
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
     let nid = el.node_id;
     let trc = el.tree.clone();
     let w = format!("<html><body>{}</body></html>", hs);
     let tmp = crate::html::parse_html(&w);
     let tt = tmp.borrow();
     let kids: Vec<NodeId> = match tt.body() {
-        Some(b) => tt.get_node(b).children.clone(), None => vec![],
+        Some(b) => tt.get_node(b).children.clone(),
+        None => vec![],
     };
     let mut imp: Vec<NodeId> = vec![];
-    for &c in &kids { imp.push(trc.borrow_mut().import_subtree(&tt, c)); }
+    for &c in &kids {
+        imp.push(trc.borrow_mut().import_subtree(&tt, c));
+    }
     match pos.to_lowercase().as_str() {
         "beforebegin" => {
-            for id in imp { trc.borrow_mut().insert_before(nid, id); }
+            for id in imp {
+                trc.borrow_mut().insert_before(nid, id);
+            }
         }
         "afterbegin" => {
             for id in imp.into_iter().rev() {
@@ -116,7 +134,9 @@ fn insert_adjacent_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> 
             }
         }
         "beforeend" => {
-            for id in imp { trc.borrow_mut().append_child(nid, id); }
+            for id in imp {
+                trc.borrow_mut().append_child(nid, id);
+            }
         }
         "afterend" => {
             for id in imp.into_iter().rev() {
@@ -132,24 +152,27 @@ fn insert_adjacent_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> 
     Ok(JsValue::undefined())
 }
 
-
 pub(crate) fn register_inner_html(c: &mut ClassBuilder) -> JsResult<()> {
     let r = c.context().realm().clone();
     let g = NativeFunction::from_fn_ptr(get_inner_html);
     let s = NativeFunction::from_fn_ptr(set_inner_html);
     let o = NativeFunction::from_fn_ptr(get_outer_html);
     let i = NativeFunction::from_fn_ptr(insert_adjacent_html);
-    c.accessor(js_string!("innerHTML"),
-        Some(g.to_js_function(&r)),Some(s.to_js_function(&r)),
-        Attribute::CONFIGURABLE|Attribute::NON_ENUMERABLE);
-    c.accessor(js_string!("outerHTML"),
-        Some(o.to_js_function(&r)),None,
-        Attribute::CONFIGURABLE|Attribute::NON_ENUMERABLE);
-    c.method(js_string!("insertAdjacentHTML"),
-        2,i);
+    c.accessor(
+        js_string!("innerHTML"),
+        Some(g.to_js_function(&r)),
+        Some(s.to_js_function(&r)),
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+    c.accessor(
+        js_string!("outerHTML"),
+        Some(o.to_js_function(&r)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+    c.method(js_string!("insertAdjacentHTML"), 2, i);
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -215,7 +238,8 @@ mod tests {
     fn inner_html_getter_escapes_entities() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"document.getElementById("app").textContent = "1 < 2 & 3 > 1""#).unwrap();
+        rt.eval(r#"document.getElementById("app").textContent = "1 < 2 & 3 > 1""#)
+            .unwrap();
         let r = rt.eval(r#"document.getElementById("app").innerHTML"#).unwrap();
         let h = r.as_string().unwrap().to_std_string_escaped();
         assert_eq!(h, "1 &lt; 2 &amp; 3 &gt; 1");
@@ -225,7 +249,8 @@ mod tests {
     fn inner_html_setter_replaces_children() {
         let tree = make_tree_with_children();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"document.getElementById("app").innerHTML = "<p>replaced</p>""#).unwrap();
+        rt.eval(r#"document.getElementById("app").innerHTML = "<p>replaced</p>""#)
+            .unwrap();
         let r = rt.eval(r#"document.getElementById("app").innerHTML"#).unwrap();
         assert_eq!(r.as_string().unwrap().to_std_string_escaped(), "<p>replaced</p>");
     }
@@ -234,9 +259,13 @@ mod tests {
     fn inner_html_setter_nested() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"document.getElementById("app").innerHTML = "<div><span>nested</span></div>""#).unwrap();
+        rt.eval(r#"document.getElementById("app").innerHTML = "<div><span>nested</span></div>""#)
+            .unwrap();
         let r = rt.eval(r#"document.getElementById("app").innerHTML"#).unwrap();
-        assert_eq!(r.as_string().unwrap().to_std_string_escaped(), "<div><span>nested</span></div>");
+        assert_eq!(
+            r.as_string().unwrap().to_std_string_escaped(),
+            "<div><span>nested</span></div>"
+        );
     }
 
     #[test]
@@ -266,7 +295,8 @@ mod tests {
     fn void_elements_no_closing_tag() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"document.getElementById("app").innerHTML = "<br><input><hr>""#).unwrap();
+        rt.eval(r#"document.getElementById("app").innerHTML = "<br><input><hr>""#)
+            .unwrap();
         let r = rt.eval(r#"document.getElementById("app").innerHTML"#).unwrap();
         assert_eq!(r.as_string().unwrap().to_std_string_escaped(), "<br><input><hr>");
     }
@@ -275,27 +305,34 @@ mod tests {
     fn insert_adjacent_beforeend() {
         let tree = make_tree_with_children();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"document.getElementById("app").insertAdjacentHTML("beforeend","<b>x</b>")"#).unwrap();
+        rt.eval(r#"document.getElementById("app").insertAdjacentHTML("beforeend","<b>x</b>")"#)
+            .unwrap();
         let r = rt.eval(r#"document.getElementById("app").innerHTML"#).unwrap();
-        assert_eq!(r.as_string().unwrap().to_std_string_escaped(),
-            "<span>hello</span><em>world</em><b>x</b>");
+        assert_eq!(
+            r.as_string().unwrap().to_std_string_escaped(),
+            "<span>hello</span><em>world</em><b>x</b>"
+        );
     }
 
     #[test]
     fn insert_adjacent_afterbegin() {
         let tree = make_tree_with_children();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"document.getElementById("app").insertAdjacentHTML("afterbegin","<b>x</b>")"#).unwrap();
+        rt.eval(r#"document.getElementById("app").insertAdjacentHTML("afterbegin","<b>x</b>")"#)
+            .unwrap();
         let r = rt.eval(r#"document.getElementById("app").innerHTML"#).unwrap();
-        assert_eq!(r.as_string().unwrap().to_std_string_escaped(),
-            "<b>x</b><span>hello</span><em>world</em>");
+        assert_eq!(
+            r.as_string().unwrap().to_std_string_escaped(),
+            "<b>x</b><span>hello</span><em>world</em>"
+        );
     }
 
     #[test]
     fn insert_adjacent_beforebegin() {
         let tree = make_tree_with_children();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"document.getElementById("app").insertAdjacentHTML("beforebegin","<p>b</p>")"#).unwrap();
+        rt.eval(r#"document.getElementById("app").insertAdjacentHTML("beforebegin","<p>b</p>")"#)
+            .unwrap();
         let r = rt.eval(r#"document.body.innerHTML"#).unwrap();
         let h = r.as_string().unwrap().to_std_string_escaped();
         assert!(h.contains("<p>b</p>"), "got: {}", h);
@@ -308,10 +345,12 @@ mod tests {
     fn round_trip_inner_html() {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
-        rt.eval(r#"document.getElementById("app").innerHTML = "<ul><li>a</li><li>b</li></ul>""#).unwrap();
+        rt.eval(r#"document.getElementById("app").innerHTML = "<ul><li>a</li><li>b</li></ul>""#)
+            .unwrap();
         let r = rt.eval(r#"document.getElementById("app").innerHTML"#).unwrap();
-        assert_eq!(r.as_string().unwrap().to_std_string_escaped(),
-            "<ul><li>a</li><li>b</li></ul>");
+        assert_eq!(
+            r.as_string().unwrap().to_std_string_escaped(),
+            "<ul><li>a</li><li>b</li></ul>"
+        );
     }
 }
-

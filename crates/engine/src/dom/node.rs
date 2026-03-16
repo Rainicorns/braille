@@ -60,8 +60,8 @@ pub enum NodeData {
     },
     Attr {
         local_name: String,
-        namespace: String,   // "" = null
-        prefix: String,      // "" = null
+        namespace: String, // "" = null
+        prefix: String,    // "" = null
         value: String,
     },
     DocumentFragment,

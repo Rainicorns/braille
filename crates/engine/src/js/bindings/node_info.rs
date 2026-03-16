@@ -1,16 +1,11 @@
 use boa_engine::{
-    class::ClassBuilder,
-    js_string,
-    native_function::NativeFunction,
-    object::ObjectInitializer,
-    property::Attribute,
+    class::ClassBuilder, js_string, native_function::NativeFunction, object::ObjectInitializer, property::Attribute,
     Context, JsError, JsResult, JsValue,
 };
 
+use super::element::{get_or_create_js_element, JsElement};
 use crate::dom::{NodeData, NodeId};
-use super::element::{JsElement, get_or_create_js_element};
 use crate::js::realm_state;
-
 
 // ---------------------------------------------------------------------------
 // Node information properties
@@ -58,7 +53,9 @@ fn get_node_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
     let node = tree.get_node(el.node_id);
 
     let node_name = match &node.data {
-        NodeData::Element { tag_name, namespace, .. } => {
+        NodeData::Element {
+            tag_name, namespace, ..
+        } => {
             // Per spec: only uppercase when element is in an HTML document AND has XHTML namespace
             if namespace == "http://www.w3.org/1999/xhtml" && tree.is_html_document() {
                 tag_name.to_uppercase()
@@ -99,7 +96,9 @@ fn get_tag_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResu
     let node = tree.get_node(el.node_id);
 
     match &node.data {
-        NodeData::Element { tag_name, namespace, .. } => {
+        NodeData::Element {
+            tag_name, namespace, ..
+        } => {
             // Per spec: only uppercase when element is in an HTML document AND has XHTML namespace
             if namespace == "http://www.w3.org/1999/xhtml" && tree.is_html_document() {
                 Ok(JsValue::from(js_string!(tag_name.to_uppercase())))
@@ -129,7 +128,9 @@ fn get_node_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
         NodeData::Comment { content } => Ok(JsValue::from(js_string!(content.clone()))),
         NodeData::ProcessingInstruction { data, .. } => Ok(JsValue::from(js_string!(data.clone()))),
         NodeData::Attr { value, .. } => Ok(JsValue::from(js_string!(value.clone()))),
-        NodeData::Element { .. } | NodeData::Document | NodeData::Doctype { .. } | NodeData::DocumentFragment => Ok(JsValue::null()),
+        NodeData::Element { .. } | NodeData::Document | NodeData::Doctype { .. } | NodeData::DocumentFragment => {
+            Ok(JsValue::null())
+        }
     }
 }
 
@@ -149,7 +150,13 @@ fn set_node_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
         let tree = el.tree.borrow();
         let node = tree.get_node(el.node_id);
         // No-op for Element, Document, DocumentType, DocumentFragment
-        if !matches!(node.data, NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. } | NodeData::Attr { .. }) {
+        if !matches!(
+            node.data,
+            NodeData::Text { .. }
+                | NodeData::Comment { .. }
+                | NodeData::ProcessingInstruction { .. }
+                | NodeData::Attr { .. }
+        ) {
             return Ok(JsValue::undefined());
         }
     }
@@ -386,21 +393,51 @@ fn get_attributes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
                 let qname = attr.qualified_name();
 
                 attr_obj.set(js_string!("name"), JsValue::from(js_string!(qname.clone())), false, ctx)?;
-                attr_obj.set(js_string!("value"), JsValue::from(js_string!(attr.value.clone())), false, ctx)?;
-                attr_obj.set(js_string!("nodeValue"), JsValue::from(js_string!(attr.value.clone())), false, ctx)?;
-                attr_obj.set(js_string!("textContent"), JsValue::from(js_string!(attr.value.clone())), false, ctx)?;
-                attr_obj.set(js_string!("localName"), JsValue::from(js_string!(attr.local_name.clone())), false, ctx)?;
+                attr_obj.set(
+                    js_string!("value"),
+                    JsValue::from(js_string!(attr.value.clone())),
+                    false,
+                    ctx,
+                )?;
+                attr_obj.set(
+                    js_string!("nodeValue"),
+                    JsValue::from(js_string!(attr.value.clone())),
+                    false,
+                    ctx,
+                )?;
+                attr_obj.set(
+                    js_string!("textContent"),
+                    JsValue::from(js_string!(attr.value.clone())),
+                    false,
+                    ctx,
+                )?;
+                attr_obj.set(
+                    js_string!("localName"),
+                    JsValue::from(js_string!(attr.local_name.clone())),
+                    false,
+                    ctx,
+                )?;
 
                 if attr.prefix.is_empty() {
                     attr_obj.set(js_string!("prefix"), JsValue::null(), false, ctx)?;
                 } else {
-                    attr_obj.set(js_string!("prefix"), JsValue::from(js_string!(attr.prefix.clone())), false, ctx)?;
+                    attr_obj.set(
+                        js_string!("prefix"),
+                        JsValue::from(js_string!(attr.prefix.clone())),
+                        false,
+                        ctx,
+                    )?;
                 }
 
                 if attr.namespace.is_empty() {
                     attr_obj.set(js_string!("namespaceURI"), JsValue::null(), false, ctx)?;
                 } else {
-                    attr_obj.set(js_string!("namespaceURI"), JsValue::from(js_string!(attr.namespace.clone())), false, ctx)?;
+                    attr_obj.set(
+                        js_string!("namespaceURI"),
+                        JsValue::from(js_string!(attr.namespace.clone())),
+                        false,
+                        ctx,
+                    )?;
                 }
 
                 // Set nodeType = 2 (ATTRIBUTE_NODE)
@@ -546,34 +583,106 @@ pub(crate) fn register_node_info(class: &mut ClassBuilder) -> JsResult<()> {
     );
 
     // Node type constants on the prototype (so instances inherit them)
-    class.property(js_string!("ELEMENT_NODE"), JsValue::from(1), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("ATTRIBUTE_NODE"), JsValue::from(2), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("TEXT_NODE"), JsValue::from(3), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("CDATA_SECTION_NODE"), JsValue::from(4), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("ENTITY_REFERENCE_NODE"), JsValue::from(5), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("ENTITY_NODE"), JsValue::from(6), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("PROCESSING_INSTRUCTION_NODE"), JsValue::from(7), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("COMMENT_NODE"), JsValue::from(8), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("DOCUMENT_NODE"), JsValue::from(9), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("DOCUMENT_TYPE_NODE"), JsValue::from(10), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("DOCUMENT_FRAGMENT_NODE"), JsValue::from(11), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("NOTATION_NODE"), JsValue::from(12), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(
+        js_string!("ELEMENT_NODE"),
+        JsValue::from(1),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("ATTRIBUTE_NODE"),
+        JsValue::from(2),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("TEXT_NODE"),
+        JsValue::from(3),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("CDATA_SECTION_NODE"),
+        JsValue::from(4),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("ENTITY_REFERENCE_NODE"),
+        JsValue::from(5),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("ENTITY_NODE"),
+        JsValue::from(6),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("PROCESSING_INSTRUCTION_NODE"),
+        JsValue::from(7),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("COMMENT_NODE"),
+        JsValue::from(8),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("DOCUMENT_NODE"),
+        JsValue::from(9),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("DOCUMENT_TYPE_NODE"),
+        JsValue::from(10),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("DOCUMENT_FRAGMENT_NODE"),
+        JsValue::from(11),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("NOTATION_NODE"),
+        JsValue::from(12),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
 
     // Document position constants on the prototype
-    class.property(js_string!("DOCUMENT_POSITION_DISCONNECTED"), JsValue::from(0x01), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("DOCUMENT_POSITION_PRECEDING"), JsValue::from(0x02), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("DOCUMENT_POSITION_FOLLOWING"), JsValue::from(0x04), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("DOCUMENT_POSITION_CONTAINS"), JsValue::from(0x08), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("DOCUMENT_POSITION_CONTAINED_BY"), JsValue::from(0x10), Attribute::READONLY | Attribute::NON_ENUMERABLE);
-    class.property(js_string!("DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC"), JsValue::from(0x20), Attribute::READONLY | Attribute::NON_ENUMERABLE);
+    class.property(
+        js_string!("DOCUMENT_POSITION_DISCONNECTED"),
+        JsValue::from(0x01),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("DOCUMENT_POSITION_PRECEDING"),
+        JsValue::from(0x02),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("DOCUMENT_POSITION_FOLLOWING"),
+        JsValue::from(0x04),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("DOCUMENT_POSITION_CONTAINS"),
+        JsValue::from(0x08),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("DOCUMENT_POSITION_CONTAINED_BY"),
+        JsValue::from(0x10),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
+    class.property(
+        js_string!("DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC"),
+        JsValue::from(0x20),
+        Attribute::READONLY | Attribute::NON_ENUMERABLE,
+    );
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::js::JsRuntime;
     use crate::dom::{DomTree, NodeData};
+    use crate::js::JsRuntime;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -666,11 +775,18 @@ mod tests {
         let tree = make_test_tree();
         let mut rt = JsRuntime::new(Rc::clone(&tree));
 
-        let result = rt.eval(r#"
+        let result = rt
+            .eval(
+                r#"
             const el = document.getElementById("test");
             el.nodeName === el.tagName
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
-        assert!(result.as_boolean().unwrap(), "nodeName should equal tagName for elements");
+        assert!(
+            result.as_boolean().unwrap(),
+            "nodeName should equal tagName for elements"
+        );
     }
 }

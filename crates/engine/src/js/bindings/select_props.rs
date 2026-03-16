@@ -1,14 +1,10 @@
 use boa_engine::{
-    class::ClassBuilder,
-    js_string,
-    native_function::NativeFunction,
-    object::builtins::JsArray,
-    property::Attribute,
+    class::ClassBuilder, js_string, native_function::NativeFunction, object::builtins::JsArray, property::Attribute,
     Context, JsError, JsResult, JsValue,
 };
 
+use super::element::{get_or_create_js_element, JsElement};
 use crate::dom::{DomTree, NodeData, NodeId};
-use super::element::{JsElement, get_or_create_js_element};
 
 // ---------------------------------------------------------------------------
 // Helper: get all <option> children of a node
@@ -83,16 +79,13 @@ fn set_selected_index(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> Js
         .downcast_ref::<JsElement>()
         .ok_or_else(|| JsError::from_opaque(js_string!("selectedIndex setter: `this` is not an Element").into()))?;
 
-    let index = args
-        .first()
-        .map(|v| v.to_i32(ctx))
-        .transpose()?
-        .unwrap_or(-1);
+    let index = args.first().map(|v| v.to_i32(ctx)).transpose()?.unwrap_or(-1);
 
     let node_id = el.node_id;
     let tree_rc = el.tree.clone();
 
-    if !matches!(&tree_rc.borrow().get_node(node_id).data, NodeData::Element { tag_name, .. } if tag_name.eq_ignore_ascii_case("select")) {
+    if !matches!(&tree_rc.borrow().get_node(node_id).data, NodeData::Element { tag_name, .. } if tag_name.eq_ignore_ascii_case("select"))
+    {
         return Ok(JsValue::undefined());
     }
 
@@ -124,7 +117,8 @@ fn get_options(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
 
-    if !matches!(&tree_rc.borrow().get_node(node_id).data, NodeData::Element { tag_name, .. } if tag_name.eq_ignore_ascii_case("select")) {
+    if !matches!(&tree_rc.borrow().get_node(node_id).data, NodeData::Element { tag_name, .. } if tag_name.eq_ignore_ascii_case("select"))
+    {
         return Ok(JsValue::undefined());
     }
 
@@ -167,15 +161,13 @@ fn set_option_selected(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
         .downcast_ref::<JsElement>()
         .ok_or_else(|| JsError::from_opaque(js_string!("selected setter: `this` is not an Element").into()))?;
 
-    let val = args
-        .first()
-        .map(|v| v.to_boolean())
-        .unwrap_or(false);
+    let val = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
     let node_id = el.node_id;
     let tree_rc = el.tree.clone();
 
-    if !matches!(&tree_rc.borrow().get_node(node_id).data, NodeData::Element { tag_name, .. } if tag_name.eq_ignore_ascii_case("option")) {
+    if !matches!(&tree_rc.borrow().get_node(node_id).data, NodeData::Element { tag_name, .. } if tag_name.eq_ignore_ascii_case("option"))
+    {
         return Ok(JsValue::undefined());
     }
 
@@ -228,7 +220,8 @@ fn set_option_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRes
     let node_id = el.node_id;
     let tree_rc = el.tree.clone();
 
-    if !matches!(&tree_rc.borrow().get_node(node_id).data, NodeData::Element { tag_name, .. } if tag_name.eq_ignore_ascii_case("option")) {
+    if !matches!(&tree_rc.borrow().get_node(node_id).data, NodeData::Element { tag_name, .. } if tag_name.eq_ignore_ascii_case("option"))
+    {
         return Ok(JsValue::undefined());
     }
 
@@ -299,13 +292,15 @@ mod tests {
     #[test]
     fn select_value_returns_selected_option_value() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option value="a">A</option>
                 <option value="b" selected>B</option>
                 <option value="c">C</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
         let result = runtime.eval(r#"document.getElementById('s').value"#).unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
@@ -315,12 +310,14 @@ mod tests {
     #[test]
     fn select_value_returns_first_option_when_none_selected() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option value="x">X</option>
                 <option value="y">Y</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
         let result = runtime.eval(r#"document.getElementById('s').value"#).unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
@@ -330,13 +327,15 @@ mod tests {
     #[test]
     fn select_value_setter_changes_selection() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option value="a">A</option>
                 <option value="b" selected>B</option>
                 <option value="c">C</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
         runtime.eval(r#"document.getElementById('s').value = 'c'"#).unwrap();
         let result = runtime.eval(r#"document.getElementById('s').value"#).unwrap();
@@ -347,13 +346,15 @@ mod tests {
     #[test]
     fn select_selected_index_getter() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option value="a">A</option>
                 <option value="b" selected>B</option>
                 <option value="c">C</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
         let result = runtime.eval(r#"document.getElementById('s').selectedIndex"#).unwrap();
         let n = result.to_number(&mut runtime.context).unwrap();
@@ -363,15 +364,19 @@ mod tests {
     #[test]
     fn select_selected_index_setter() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option value="a">A</option>
                 <option value="b">B</option>
                 <option value="c">C</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"document.getElementById('s').selectedIndex = 2"#).unwrap();
+        runtime
+            .eval(r#"document.getElementById('s').selectedIndex = 2"#)
+            .unwrap();
         let result = runtime.eval(r#"document.getElementById('s').value"#).unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "c");
@@ -380,13 +385,15 @@ mod tests {
     #[test]
     fn select_options_returns_array_with_correct_length() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option value="a">A</option>
                 <option value="b">B</option>
                 <option value="c">C</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
         let result = runtime.eval(r#"document.getElementById('s').options.length"#).unwrap();
         let n = result.to_number(&mut runtime.context).unwrap();
@@ -396,18 +403,22 @@ mod tests {
     #[test]
     fn option_value_getter_setter() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option id="opt" value="original">Original</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
         // getter
         let result = runtime.eval(r#"document.getElementById('opt').value"#).unwrap();
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s, "original");
         // setter
-        runtime.eval(r#"document.getElementById('opt').value = 'changed'"#).unwrap();
+        runtime
+            .eval(r#"document.getElementById('opt').value = 'changed'"#)
+            .unwrap();
         let result2 = runtime.eval(r#"document.getElementById('opt').value"#).unwrap();
         let s2 = result2.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s2, "changed");
@@ -416,22 +427,28 @@ mod tests {
     #[test]
     fn option_selected_getter_setter() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option id="opt1" value="a">A</option>
                 <option id="opt2" value="b">B</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
         // Initially neither is explicitly selected
         let result = runtime.eval(r#"document.getElementById('opt1').selected"#).unwrap();
         assert_eq!(result.to_boolean(), false);
         // Set selected
-        runtime.eval(r#"document.getElementById('opt2').selected = true"#).unwrap();
+        runtime
+            .eval(r#"document.getElementById('opt2').selected = true"#)
+            .unwrap();
         let result2 = runtime.eval(r#"document.getElementById('opt2').selected"#).unwrap();
         assert_eq!(result2.to_boolean(), true);
         // Unset
-        runtime.eval(r#"document.getElementById('opt2').selected = false"#).unwrap();
+        runtime
+            .eval(r#"document.getElementById('opt2').selected = false"#)
+            .unwrap();
         let result3 = runtime.eval(r#"document.getElementById('opt2').selected"#).unwrap();
         assert_eq!(result3.to_boolean(), false);
     }
@@ -439,11 +456,13 @@ mod tests {
     #[test]
     fn option_text_getter_setter() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option id="opt" value="a">Alpha</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
         // getter
         let result = runtime.eval(r#"document.getElementById('opt').text"#).unwrap();
@@ -459,13 +478,15 @@ mod tests {
     #[test]
     fn selecting_by_value_deselects_others() {
         let mut engine = Engine::new();
-        engine.load_html(r##"<html><body>
+        engine.load_html(
+            r##"<html><body>
             <select id="s">
                 <option id="opt1" value="a" selected>A</option>
                 <option id="opt2" value="b">B</option>
                 <option id="opt3" value="c">C</option>
             </select>
-        </body></html>"##);
+        </body></html>"##,
+        );
         let runtime = engine.runtime.as_mut().unwrap();
         // Initially opt1 is selected
         let r1 = runtime.eval(r#"document.getElementById('opt1').selected"#).unwrap();

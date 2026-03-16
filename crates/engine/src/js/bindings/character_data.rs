@@ -1,13 +1,10 @@
 use boa_engine::{
-    class::ClassBuilder,
-    js_string,
-    native_function::NativeFunction,
-    property::Attribute,
-    Context, JsError, JsNativeError, JsResult, JsValue,
+    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute, Context, JsError,
+    JsNativeError, JsResult, JsValue,
 };
 
+use super::element::{get_or_create_js_element, JsElement};
 use crate::dom::NodeData;
-use super::element::{JsElement, get_or_create_js_element};
 
 /// Registers CharacterData properties and methods on the Element class.
 /// These only apply to Text (nodeType 3) and Comment (nodeType 8) nodes.
@@ -34,32 +31,16 @@ pub(crate) fn register_character_data(class: &mut ClassBuilder) -> JsResult<()> 
     );
 
     // appendData method
-    class.method(
-        js_string!("appendData"),
-        1,
-        NativeFunction::from_fn_ptr(append_data),
-    );
+    class.method(js_string!("appendData"), 1, NativeFunction::from_fn_ptr(append_data));
 
     // deleteData method
-    class.method(
-        js_string!("deleteData"),
-        2,
-        NativeFunction::from_fn_ptr(delete_data),
-    );
+    class.method(js_string!("deleteData"), 2, NativeFunction::from_fn_ptr(delete_data));
 
     // insertData method
-    class.method(
-        js_string!("insertData"),
-        2,
-        NativeFunction::from_fn_ptr(insert_data),
-    );
+    class.method(js_string!("insertData"), 2, NativeFunction::from_fn_ptr(insert_data));
 
     // replaceData method
-    class.method(
-        js_string!("replaceData"),
-        3,
-        NativeFunction::from_fn_ptr(replace_data),
-    );
+    class.method(js_string!("replaceData"), 3, NativeFunction::from_fn_ptr(replace_data));
 
     // substringData method
     class.method(
@@ -69,11 +50,7 @@ pub(crate) fn register_character_data(class: &mut ClassBuilder) -> JsResult<()> 
     );
 
     // splitText method (Text-only, but registered here for convenience)
-    class.method(
-        js_string!("splitText"),
-        1,
-        NativeFunction::from_fn_ptr(split_text),
-    );
+    class.method(js_string!("splitText"), 1, NativeFunction::from_fn_ptr(split_text));
 
     // wholeText getter (Text-only)
     let whole_text_getter = NativeFunction::from_fn_ptr(get_whole_text);
@@ -91,7 +68,10 @@ pub(crate) fn register_character_data(class: &mut ClassBuilder) -> JsResult<()> 
 fn is_character_data(el: &JsElement) -> bool {
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
-    matches!(node.data, NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. })
+    matches!(
+        node.data,
+        NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. }
+    )
 }
 
 /// Helper to create an IndexSizeError DOMException.
@@ -318,9 +298,7 @@ fn split_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
         let tree = el.tree.borrow();
         let node = tree.get_node(el.node_id);
         if !matches!(node.data, NodeData::Text { .. }) {
-            return Err(JsError::from_opaque(
-                js_string!("splitText: not a Text node").into(),
-            ));
+            return Err(JsError::from_opaque(js_string!("splitText: not a Text node").into()));
         }
     }
 

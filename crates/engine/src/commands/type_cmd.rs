@@ -1,6 +1,6 @@
-use crate::Engine;
 use crate::dom::find::resolve_selector;
 use crate::dom::node::NodeData;
+use crate::Engine;
 
 impl Engine {
     /// Type text into an element identified by selector.
@@ -41,7 +41,10 @@ impl Engine {
                 }
 
                 // 5. Otherwise: return error with actual tag
-                Err(format!("type target must be <input> or <textarea>, got <{}>: {}", tag_lower, selector))
+                Err(format!(
+                    "type target must be <input> or <textarea>, got <{}>: {}",
+                    tag_lower, selector
+                ))
             }
             _ => {
                 // Non-element nodes cannot receive text input
@@ -93,7 +96,10 @@ mod tests {
         // Verify the value attribute was set
         let tree = engine.tree.borrow();
         let node_id = tree.get_element_by_id("email").unwrap();
-        assert_eq!(tree.get_attribute(node_id, "value"), Some("test@example.com".to_string()));
+        assert_eq!(
+            tree.get_attribute(node_id, "value"),
+            Some("test@example.com".to_string())
+        );
     }
 
     #[test]
@@ -131,8 +137,16 @@ mod tests {
         assert!(result.is_err(), "Expected error, got {:?}", result);
 
         let err = result.unwrap_err();
-        assert!(err.contains("type target must be <input> or <textarea>"), "Error should describe valid targets, got: {}", err);
-        assert!(err.contains("got <div>"), "Error should mention actual tag name, got: {}", err);
+        assert!(
+            err.contains("type target must be <input> or <textarea>"),
+            "Error should describe valid targets, got: {}",
+            err
+        );
+        assert!(
+            err.contains("got <div>"),
+            "Error should mention actual tag name, got: {}",
+            err
+        );
         assert!(err.contains("#content"), "Error should mention selector, got: {}", err);
     }
 
@@ -151,8 +165,16 @@ mod tests {
         assert!(result.is_err(), "Expected error, got {:?}", result);
 
         let err = result.unwrap_err();
-        assert!(err.contains("element not found"), "Error should mention element not found, got: {}", err);
-        assert!(err.contains("#nonexistent"), "Error should include selector, got: {}", err);
+        assert!(
+            err.contains("element not found"),
+            "Error should mention element not found, got: {}",
+            err
+        );
+        assert!(
+            err.contains("#nonexistent"),
+            "Error should include selector, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -319,8 +341,16 @@ mod tests {
         assert!(result.is_err(), "Expected error, got {:?}", result);
 
         let err = result.unwrap_err();
-        assert!(err.contains("type target must be <input> or <textarea>"), "Error should describe valid targets, got: {}", err);
-        assert!(err.contains("got <p>"), "Error should mention actual tag name, got: {}", err);
+        assert!(
+            err.contains("type target must be <input> or <textarea>"),
+            "Error should describe valid targets, got: {}",
+            err
+        );
+        assert!(
+            err.contains("got <p>"),
+            "Error should mention actual tag name, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -347,7 +377,11 @@ mod tests {
         assert!(result.is_err(), "Expected error, got {:?}", result);
 
         let err = result.unwrap_err();
-        assert!(err.contains("type target is not an element"), "Error should say 'type target is not an element', got: {}", err);
+        assert!(
+            err.contains("type target is not an element"),
+            "Error should say 'type target is not an element', got: {}",
+            err
+        );
         assert!(err.contains("@text"), "Error should contain selector, got: {}", err);
     }
 }
