@@ -1469,6 +1469,7 @@ pub(crate) fn add_document_properties_to_element(
                         namespace,
                     } => t.create_element_ns(tag_name, attributes.clone(), namespace),
                     NodeData::Text { content } => t.create_text(content),
+                    NodeData::CDATASection { content } => t.create_cdata_section(content),
                     NodeData::Comment { content } => t.create_comment(content),
                     NodeData::Doctype {
                         name,
@@ -1636,7 +1637,7 @@ pub(crate) fn add_document_properties_to_element(
         ctx,
     )?;
 
-    // createCDATASection method (uses Text node as stand-in)
+    // createCDATASection method
     let tree_for_cdata = new_tree.clone();
     let cdata_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
@@ -1646,7 +1647,7 @@ pub(crate) fn add_document_properties_to_element(
                 .transpose()?
                 .map(|s| s.to_std_string_escaped())
                 .unwrap_or_default();
-            let node_id = tree_for_cdata.borrow_mut().create_text(&data);
+            let node_id = tree_for_cdata.borrow_mut().create_cdata_section(&data);
             let js_el = get_or_create_js_element(node_id, tree_for_cdata.clone(), ctx2)?;
             Ok(js_el.into())
         })
@@ -1967,6 +1968,7 @@ fn document_import_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> 
                 namespace,
             } => t.create_element_ns(tag_name, attributes.clone(), namespace),
             NodeData::Text { content } => t.create_text(content),
+            NodeData::CDATASection { content } => t.create_cdata_section(content),
             NodeData::Comment { content } => t.create_comment(content),
             NodeData::Doctype {
                 name,
@@ -2913,7 +2915,7 @@ pub(crate) fn create_blank_xml_document(ctx: &mut Context) -> JsResult<JsValue> 
         ctx,
     )?;
 
-    // Add createCDATASection method -- uses Text node as stand-in
+    // Add createCDATASection method
     let tree_for_cdata = new_tree.clone();
     let realm = ctx.realm().clone();
     let cdata_fn = unsafe {
@@ -2924,7 +2926,7 @@ pub(crate) fn create_blank_xml_document(ctx: &mut Context) -> JsResult<JsValue> 
                 .transpose()?
                 .map(|s| s.to_std_string_escaped())
                 .unwrap_or_default();
-            let node_id = tree_for_cdata.borrow_mut().create_text(&data);
+            let node_id = tree_for_cdata.borrow_mut().create_cdata_section(&data);
             let js_el = get_or_create_js_element(node_id, tree_for_cdata.clone(), ctx2)?;
             Ok(js_el.into())
         })

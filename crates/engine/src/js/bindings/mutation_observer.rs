@@ -8,10 +8,12 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use boa_engine::{
+    job::{Job, PromiseJob},
     js_string,
     native_function::NativeFunction,
     object::{builtins::JsArray, FunctionObjectBuilder, ObjectInitializer},
     property::{Attribute, PropertyDescriptor},
+    realm::Realm,
     Context, JsData, JsError, JsNativeError, JsObject, JsResult, JsValue,
 };
 use boa_gc::{Finalize, Trace};
@@ -60,6 +62,9 @@ struct ObserverEntry {
     callback: JsObject,
     js_object: JsObject,
     pending_records: Vec<RawMutationRecord>,
+    /// The realm the callback function belongs to (for cross-realm error routing).
+    /// `None` means the callback is from the current (main) realm.
+    callback_realm: Option<Realm>,
 }
 
 /// Links a node to a specific observer with its options.
@@ -73,6 +78,8 @@ pub(crate) struct MutationObserverState {
     observers: Vec<ObserverEntry>,
     /// Key is (tree_ptr as usize, node_id).
     registrations: HashMap<(usize, NodeId), Vec<NodeRegistration>>,
+    /// True when a microtask to deliver MO records has been queued but not yet run.
+    notification_microtask_queued: bool,
 }
 
 impl MutationObserverState {
@@ -81,6 +88,7 @@ impl MutationObserverState {
         Self {
             observers: Vec::new(),
             registrations: HashMap::new(),
+            notification_microtask_queued: false,
         }
     }
 }
@@ -129,6 +137,10 @@ pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
                     })?
                     .clone();
 
+            // Detect which realm the callback belongs to by comparing its prototype
+            // against each known realm's Function.prototype
+            let callback_realm = detect_callback_realm(&callback, ctx);
+
             // Create the observer entry (with a placeholder js_object)
             let placeholder = ObjectInitializer::new(ctx).build();
             let observer_index = {
@@ -139,6 +151,7 @@ pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
                     callback,
                     js_object: placeholder,
                     pending_records: Vec::new(),
+                    callback_realm,
                 });
                 idx
             };
@@ -515,22 +528,132 @@ fn raw_record_to_js(record: &RawMutationRecord, ctx: &mut Context) -> JsResult<J
 // notify_mutation_observers: deliver pending records to callbacks
 // ---------------------------------------------------------------------------
 
+/// If there are pending MO records and no notification microtask is already queued,
+/// enqueue a PromiseJob (microtask) that will call `notify_mutation_observers`.
+fn maybe_queue_notification_microtask(ctx: &mut Context) {
+    let state_rc = realm_state::mutation_observer_state(ctx);
+    let needs_queue = {
+        let state = state_rc.borrow();
+        !state.notification_microtask_queued && state.observers.iter().any(|e| !e.pending_records.is_empty())
+    };
+    if needs_queue {
+        state_rc.borrow_mut().notification_microtask_queued = true;
+        let job = PromiseJob::new(|ctx: &mut Context| {
+            notify_mutation_observers(ctx);
+            Ok(JsValue::undefined())
+        });
+        ctx.enqueue_job(Job::PromiseJob(job));
+    }
+}
+
+/// Route an error to a specific realm's `onerror` handler.
+/// If `target_realm` is `None`, uses the current realm.
+fn route_error_to_realm(ctx: &mut Context, err: &JsError, target_realm: Option<&Realm>) {
+    let invoke = |ctx: &mut Context| {
+        let win = realm_state::window_object(ctx);
+        if let Some(window) = win {
+            // Get onerror as a plain property
+            if let Ok(handler_val) = window.get(js_string!("onerror"), ctx) {
+                if let Some(handler) = handler_val.as_object() {
+                    if handler.is_callable() {
+                        // Extract error message
+                        let err_val = err.to_opaque(ctx);
+                        let msg = if let Some(obj) = err_val.as_object() {
+                            obj.get(js_string!("message"), ctx)
+                                .unwrap_or(JsValue::undefined())
+                        } else {
+                            err_val.clone()
+                        };
+                        // Call onerror(message, source, lineno, colno, error)
+                        let _ = handler.call(
+                            &JsValue::from(window.clone()),
+                            &[
+                                msg,
+                                JsValue::from(js_string!("")),
+                                JsValue::from(0),
+                                JsValue::from(0),
+                                err_val,
+                            ],
+                            ctx,
+                        );
+                    }
+                }
+            }
+        }
+    };
+
+    match target_realm {
+        Some(realm) => {
+            realm_state::with_realm(ctx, realm, invoke);
+        }
+        None => {
+            invoke(ctx);
+        }
+    }
+}
+
+/// Detect which realm a callback function belongs to by comparing its [[Prototype]]
+/// against each known realm's `Function.prototype`.
+fn detect_callback_realm(callback: &JsObject, ctx: &mut Context) -> Option<Realm> {
+    let all_realms = realm_state::all_realms(ctx);
+    let realms = all_realms.borrow();
+
+    // Get the callback's prototype
+    let callback_proto = callback.get(js_string!("__proto__"), ctx).ok()?;
+    let callback_proto_obj = callback_proto.as_object()?;
+
+    let current_realm = ctx.realm().clone();
+
+    for realm in realms.iter() {
+        // Skip current realm — None means "same realm"
+        if *realm == current_realm {
+            continue;
+        }
+
+        // Enter realm to get its Function.prototype
+        let func_proto = realm_state::with_realm(ctx, realm, |ctx| {
+            ctx.realm()
+                .intrinsics()
+                .constructors()
+                .function()
+                .prototype()
+        });
+
+        if JsObject::equals(&callback_proto_obj, &func_proto) {
+            return Some(realm.clone());
+        }
+    }
+
+    None // Callback is from the current realm
+}
+
 pub(crate) fn notify_mutation_observers(ctx: &mut Context) {
+    // Clear the microtask flag so new mutations can queue a fresh microtask
+    {
+        let state_rc = realm_state::mutation_observer_state(ctx);
+        state_rc.borrow_mut().notification_microtask_queued = false;
+    }
+
     // Collect observers with pending records
-    let observers_to_notify: Vec<(JsObject, Vec<RawMutationRecord>, JsObject)> = {
+    let observers_to_notify: Vec<(JsObject, Vec<RawMutationRecord>, JsObject, Option<Realm>)> = {
         let state_rc = realm_state::mutation_observer_state(ctx);
         let mut state = state_rc.borrow_mut();
         let mut result = Vec::new();
         for entry in state.observers.iter_mut() {
             if !entry.pending_records.is_empty() {
                 let records = std::mem::take(&mut entry.pending_records);
-                result.push((entry.callback.clone(), records, entry.js_object.clone()));
+                result.push((
+                    entry.callback.clone(),
+                    records,
+                    entry.js_object.clone(),
+                    entry.callback_realm.clone(),
+                ));
             }
         }
         result
     };
 
-    for (callback, records, observer_obj) in observers_to_notify {
+    for (callback, records, observer_obj, callback_realm) in observers_to_notify {
         let arr = JsArray::new(ctx);
         for record in &records {
             if let Ok(js_rec) = raw_record_to_js(record, ctx) {
@@ -539,11 +662,16 @@ pub(crate) fn notify_mutation_observers(ctx: &mut Context) {
         }
 
         // Call callback(records, observer)
-        let _ = callback.call(
+        let result = callback.call(
             &JsValue::from(observer_obj.clone()),
             &[JsValue::from(arr), JsValue::from(observer_obj)],
             ctx,
         );
+
+        // If the callback threw, route the error to the callback's realm's onerror
+        if let Err(err) = result {
+            route_error_to_realm(ctx, &err, callback_realm.as_ref());
+        }
     }
 }
 
@@ -593,7 +721,7 @@ fn collect_interested_observers(
 // ---------------------------------------------------------------------------
 
 fn queue_attributes_mutation(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     attr_name: &str,
@@ -602,71 +730,79 @@ fn queue_attributes_mutation(
 ) {
     let tree_ptr = Rc::as_ptr(tree) as usize;
 
-    let state_rc = realm_state::mutation_observer_state(ctx);
-    let mut state = state_rc.borrow_mut();
+    {
+        let state_rc = realm_state::mutation_observer_state(ctx);
+        let mut state = state_rc.borrow_mut();
 
-    let interested = collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
-        if !opts.attributes {
-            return false;
-        }
-        if let Some(ref filter) = opts.attribute_filter {
-            if !filter.iter().any(|f| f == attr_name) {
+        let interested = collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
+            if !opts.attributes {
                 return false;
             }
-        }
-        true
-    });
+            if let Some(ref filter) = opts.attribute_filter {
+                if !filter.iter().any(|f| f == attr_name) {
+                    return false;
+                }
+            }
+            true
+        });
 
-    for (obs_idx, capture_old) in interested {
-        let record = RawMutationRecord {
-            mutation_type: "attributes".to_string(),
-            target_tree: tree.clone(),
-            target_node_id: node_id,
-            attribute_name: Some(attr_name.to_string()),
-            attribute_namespace: attr_namespace.map(|s| s.to_string()),
-            old_value: if capture_old { old_value.clone() } else { None },
-            added_node_ids: Vec::new(),
-            removed_node_ids: Vec::new(),
-            previous_sibling_id: None,
-            next_sibling_id: None,
-        };
-        state.observers[obs_idx].pending_records.push(record);
+        for (obs_idx, capture_old) in interested {
+            let record = RawMutationRecord {
+                mutation_type: "attributes".to_string(),
+                target_tree: tree.clone(),
+                target_node_id: node_id,
+                attribute_name: Some(attr_name.to_string()),
+                attribute_namespace: attr_namespace.map(|s| s.to_string()),
+                old_value: if capture_old { old_value.clone() } else { None },
+                added_node_ids: Vec::new(),
+                removed_node_ids: Vec::new(),
+                previous_sibling_id: None,
+                next_sibling_id: None,
+            };
+            state.observers[obs_idx].pending_records.push(record);
+        }
     }
+
+    maybe_queue_notification_microtask(ctx);
 }
 
 fn queue_character_data_mutation(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     old_value: Option<String>,
 ) {
     let tree_ptr = Rc::as_ptr(tree) as usize;
 
-    let state_rc = realm_state::mutation_observer_state(ctx);
-    let mut state = state_rc.borrow_mut();
+    {
+        let state_rc = realm_state::mutation_observer_state(ctx);
+        let mut state = state_rc.borrow_mut();
 
-    let interested = collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| opts.character_data);
+        let interested = collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| opts.character_data);
 
-    for (obs_idx, capture_old) in interested {
-        let record = RawMutationRecord {
-            mutation_type: "characterData".to_string(),
-            target_tree: tree.clone(),
-            target_node_id: node_id,
-            attribute_name: None,
-            attribute_namespace: None,
-            old_value: if capture_old { old_value.clone() } else { None },
-            added_node_ids: Vec::new(),
-            removed_node_ids: Vec::new(),
-            previous_sibling_id: None,
-            next_sibling_id: None,
-        };
-        state.observers[obs_idx].pending_records.push(record);
+        for (obs_idx, capture_old) in interested {
+            let record = RawMutationRecord {
+                mutation_type: "characterData".to_string(),
+                target_tree: tree.clone(),
+                target_node_id: node_id,
+                attribute_name: None,
+                attribute_namespace: None,
+                old_value: if capture_old { old_value.clone() } else { None },
+                added_node_ids: Vec::new(),
+                removed_node_ids: Vec::new(),
+                previous_sibling_id: None,
+                next_sibling_id: None,
+            };
+            state.observers[obs_idx].pending_records.push(record);
+        }
     }
+
+    maybe_queue_notification_microtask(ctx);
 }
 
 /// Queue a childList mutation record for interested observers.
 pub(crate) fn queue_childlist_mutation(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     parent_id: NodeId,
     added_ids: Vec<NodeId>,
@@ -676,26 +812,30 @@ pub(crate) fn queue_childlist_mutation(
 ) {
     let tree_ptr = Rc::as_ptr(tree) as usize;
 
-    let state_rc = realm_state::mutation_observer_state(ctx);
-    let mut state = state_rc.borrow_mut();
+    {
+        let state_rc = realm_state::mutation_observer_state(ctx);
+        let mut state = state_rc.borrow_mut();
 
-    let interested = collect_interested_observers(&state, tree, parent_id, tree_ptr, |opts| opts.child_list);
+        let interested = collect_interested_observers(&state, tree, parent_id, tree_ptr, |opts| opts.child_list);
 
-    for (obs_idx, _) in interested {
-        let record = RawMutationRecord {
-            mutation_type: "childList".to_string(),
-            target_tree: tree.clone(),
-            target_node_id: parent_id,
-            attribute_name: None,
-            attribute_namespace: None,
-            old_value: None,
-            added_node_ids: added_ids.clone(),
-            removed_node_ids: removed_ids.clone(),
-            previous_sibling_id: prev_sibling,
-            next_sibling_id: next_sibling,
-        };
-        state.observers[obs_idx].pending_records.push(record);
+        for (obs_idx, _) in interested {
+            let record = RawMutationRecord {
+                mutation_type: "childList".to_string(),
+                target_tree: tree.clone(),
+                target_node_id: parent_id,
+                attribute_name: None,
+                attribute_namespace: None,
+                old_value: None,
+                added_node_ids: added_ids.clone(),
+                removed_node_ids: removed_ids.clone(),
+                previous_sibling_id: prev_sibling,
+                next_sibling_id: next_sibling,
+            };
+            state.observers[obs_idx].pending_records.push(record);
+        }
     }
+
+    maybe_queue_notification_microtask(ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -703,7 +843,7 @@ pub(crate) fn queue_childlist_mutation(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn set_attribute_with_observer(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     name: &str,
@@ -714,7 +854,7 @@ pub(crate) fn set_attribute_with_observer(
     queue_attributes_mutation(ctx, tree, node_id, name, None, old_value);
 }
 
-pub(crate) fn remove_attribute_with_observer(ctx: &Context, tree: &Rc<RefCell<DomTree>>, node_id: NodeId, name: &str) {
+pub(crate) fn remove_attribute_with_observer(ctx: &mut Context, tree: &Rc<RefCell<DomTree>>, node_id: NodeId, name: &str) {
     let old_value = tree.borrow().get_attribute(node_id, name).map(|s| s.to_string());
     tree.borrow_mut().remove_attribute(node_id, name);
     // Only queue if attribute actually existed
@@ -724,7 +864,7 @@ pub(crate) fn remove_attribute_with_observer(ctx: &Context, tree: &Rc<RefCell<Do
 }
 
 pub(crate) fn set_attribute_ns_with_observer(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     namespace: &str,
@@ -755,7 +895,7 @@ pub(crate) fn set_attribute_ns_with_observer(
 }
 
 pub(crate) fn remove_attribute_ns_with_observer(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     namespace: &str,
@@ -784,7 +924,7 @@ pub(crate) fn remove_attribute_ns_with_observer(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn character_data_set_with_observer(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     data: &str,
@@ -795,7 +935,7 @@ pub(crate) fn character_data_set_with_observer(
 }
 
 pub(crate) fn character_data_append_with_observer(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     data: &str,
@@ -806,7 +946,7 @@ pub(crate) fn character_data_append_with_observer(
 }
 
 pub(crate) fn character_data_delete_with_observer(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     offset: usize,
@@ -821,7 +961,7 @@ pub(crate) fn character_data_delete_with_observer(
 }
 
 pub(crate) fn character_data_insert_with_observer(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     offset: usize,
@@ -836,7 +976,7 @@ pub(crate) fn character_data_insert_with_observer(
 }
 
 pub(crate) fn character_data_replace_with_observer(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     offset: usize,
@@ -849,4 +989,90 @@ pub(crate) fn character_data_replace_with_observer(
         queue_character_data_mutation(ctx, tree, node_id, old_value);
     }
     result
+}
+
+// ---------------------------------------------------------------------------
+// Synthesize MO records for parser-inserted nodes (incremental parsing)
+// ---------------------------------------------------------------------------
+
+/// Synthesize childList MutationObserver records for nodes added by the parser
+/// since the given watermark. Nodes with IDs in `[watermark, node_count)` are
+/// considered newly added. For each new node that has a parent, a childList
+/// record is queued on the parent (if any observer is interested).
+pub(crate) fn synthesize_parser_mutations(
+    ctx: &mut Context,
+    tree: &Rc<RefCell<DomTree>>,
+    watermark: usize,
+) {
+    let tree_ptr = Rc::as_ptr(tree) as usize;
+    let node_count = tree.borrow().node_count();
+
+    if watermark >= node_count {
+        return;
+    }
+
+    // Collect records to queue — we need to borrow tree and state separately
+    struct PendingRecord {
+        parent_id: NodeId,
+        added_id: NodeId,
+        prev_sibling: Option<NodeId>,
+        next_sibling: Option<NodeId>,
+    }
+
+    let pending: Vec<PendingRecord> = {
+        let t = tree.borrow();
+        let mut records = Vec::new();
+        for nid in watermark..node_count {
+            let node = t.get_node(nid);
+            if let Some(parent_id) = node.parent {
+                // Compute siblings from parent's children list
+                let parent = t.get_node(parent_id);
+                let children = &parent.children;
+                let pos = children.iter().position(|&c| c == nid);
+                let prev_sibling = pos.and_then(|p| if p > 0 { Some(children[p - 1]) } else { None });
+                let next_sibling = pos.and_then(|p| children.get(p + 1).copied());
+
+                records.push(PendingRecord {
+                    parent_id,
+                    added_id: nid,
+                    prev_sibling,
+                    next_sibling,
+                });
+            }
+        }
+        records
+    };
+
+    // Queue each record through the normal MO mechanism
+    let mut any_queued = false;
+    {
+        let state_rc = realm_state::mutation_observer_state(ctx);
+        let mut state = state_rc.borrow_mut();
+
+        for rec in &pending {
+            let interested =
+                collect_interested_observers(&state, tree, rec.parent_id, tree_ptr, |opts| opts.child_list);
+
+            for (obs_idx, _) in interested {
+                let record = RawMutationRecord {
+                    mutation_type: "childList".to_string(),
+                    target_tree: tree.clone(),
+                    target_node_id: rec.parent_id,
+                    attribute_name: None,
+                    attribute_namespace: None,
+                    old_value: None,
+                    added_node_ids: vec![rec.added_id],
+                    removed_node_ids: Vec::new(),
+                    previous_sibling_id: rec.prev_sibling,
+                    next_sibling_id: rec.next_sibling,
+                };
+                state.observers[obs_idx].pending_records.push(record);
+                any_queued = true;
+            }
+        }
+    }
+
+    if any_queued {
+        maybe_queue_notification_microtask(ctx);
+    }
 }

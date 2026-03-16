@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use html5ever::interface::{Attribute, ElementFlags, NodeOrText, QuirksMode, TreeSink};
-use html5ever::{parse_document, parse_fragment, ParseOpts, QualName};
+use html5ever::{parse_document, parse_fragment, Parser, ParseOpts, QualName};
 use markup5ever::{ns, LocalName, Namespace};
 use tendril::{StrTendril, TendrilSink};
 
@@ -29,6 +29,18 @@ impl BrailleSink {
     fn new() -> Self {
         let tree = Rc::new(RefCell::new(DomTree::new()));
         // Index 0 is the Document root — no QualName for it.
+        let names = RefCell::new(vec![None]);
+        let mathml_integration_points = RefCell::new(vec![false]);
+        BrailleSink {
+            tree,
+            names,
+            mathml_integration_points,
+        }
+    }
+
+    /// Create a sink that shares an existing tree (which already has a Document root at id 0).
+    fn with_tree(tree: Rc<RefCell<DomTree>>) -> Self {
+        // One entry (index 0) for the Document root — no QualName.
         let names = RefCell::new(vec![None]);
         let mathml_integration_points = RefCell::new(vec![false]);
         BrailleSink {
@@ -510,6 +522,71 @@ pub fn parse_html_fragment_scripting(
     // POLYFILL: selectedcontent cloning (see polyfill_selectedcontent docs).
     polyfill_selectedcontent(&mut tree.borrow_mut());
     tree
+}
+
+// ---------------------------------------------------------------------------
+// Incremental parser — feeds HTML in chunks for interleaved script execution
+// ---------------------------------------------------------------------------
+
+/// A parser that feeds HTML in chunks, allowing scripts to execute between chunks.
+/// The parser and the caller share the same `Rc<RefCell<DomTree>>`.
+pub struct IncrementalParser {
+    parser: Parser<BrailleSink>,
+    tree: Rc<RefCell<DomTree>>,
+}
+
+impl IncrementalParser {
+    /// Create a new incremental parser. The returned parser and tree share the same `Rc`.
+    pub fn new() -> Self {
+        let tree = Rc::new(RefCell::new(DomTree::new()));
+        let sink = BrailleSink::with_tree(Rc::clone(&tree));
+        let parser = parse_document(sink, make_opts(true));
+        IncrementalParser { parser, tree }
+    }
+
+    /// Returns a reference to the shared tree.
+    pub fn tree(&self) -> &Rc<RefCell<DomTree>> {
+        &self.tree
+    }
+
+    /// Feed a chunk of HTML to the parser. The tree is updated immediately.
+    pub fn process(&mut self, chunk: &str) {
+        self.parser.process(StrTendril::from(chunk));
+    }
+
+    /// Signal end-of-input and run post-parse fixups.
+    /// Consumes self, returns the final tree.
+    pub fn finish(self) -> Rc<RefCell<DomTree>> {
+        let tree = self.parser.finish();
+        polyfill_selectedcontent(&mut tree.borrow_mut());
+        tree
+    }
+}
+
+/// Split HTML at `</script>` boundaries (case-insensitive).
+/// Each chunk (except possibly the last) ends with `</script>`.
+/// Concatenating all chunks yields the original HTML.
+pub fn split_html_at_scripts(html: &str) -> Vec<String> {
+    let lower = html.to_ascii_lowercase();
+    let mut chunks = Vec::new();
+    let mut start = 0;
+
+    while start < html.len() {
+        match lower[start..].find("</script>") {
+            Some(offset) => {
+                let end = start + offset + "</script>".len();
+                chunks.push(html[start..end].to_string());
+                start = end;
+            }
+            None => {
+                // Remainder after last </script>
+                chunks.push(html[start..].to_string());
+                start = html.len();
+            }
+        }
+    }
+
+    chunks
 }
 
 #[cfg(test)]

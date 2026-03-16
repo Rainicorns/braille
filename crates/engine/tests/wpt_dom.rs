@@ -345,15 +345,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("cross-doc", "requires cross-document"),
         ("adoption", "requires cross-document adoption"),
         // MutationObserver — specific tests that need features beyond basic MutationObserver
-        ("MutationObserver-document", "requires parser-time mutations"),
-        (
-            "MutationObserver-textContent",
-            "requires microtask queue (Promise.resolve)",
-        ),
-        (
-            "MutationObserver-cross-realm",
-            "requires cross-realm iframe + frames[N].Function",
-        ),
+        // MutationObserver-cross-realm — now supported (per-iframe realms with shared MO state)
         ("mutation-observer", "requires moveBefore"),
         // Range / Selection
         ("Range", "requires Range API"),
@@ -895,6 +887,10 @@ fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<String> {
 // Run a single WPT test file
 // ---------------------------------------------------------------------------
 
+/// Tests that need incremental (interleaved) HTML parsing — scripts run as the parser
+/// encounters them, with MutationObserver records synthesized between chunks.
+const INCREMENTAL_TESTS: &[&str] = &["MutationObserver-document"];
+
 /// Run a single WPT test HTML file and return (pass_count, fail_count, failures_detail).
 fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> Result<(), Failed> {
     let html = std::fs::read_to_string(html_path)
@@ -929,7 +925,15 @@ fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> Result<(
     };
 
     let mut engine = Engine::new();
-    let js_errors = engine.load_html_with_resources_lossy(&html, &resources);
+
+    // Use incremental parsing for tests that need interleaved script execution
+    let file_stem = html_path.file_stem().unwrap().to_str().unwrap();
+    let use_incremental = INCREMENTAL_TESTS.iter().any(|t| file_stem.contains(t));
+    let js_errors = if use_incremental {
+        engine.load_html_incremental_with_resources_lossy(&html, &resources)
+    } else {
+        engine.load_html_with_resources_lossy(&html, &resources)
+    };
 
     // Crash tests don't include testharness.js — if we got here, the test passed
     let is_crash_test = !srcs.iter().any(|s| s.contains("testharness.js"));

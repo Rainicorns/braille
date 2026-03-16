@@ -70,7 +70,7 @@ fn is_character_data(el: &JsElement) -> bool {
     let node = tree.get_node(el.node_id);
     matches!(
         node.data,
-        NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. }
+        NodeData::Text { .. } | NodeData::CDATASection { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. }
     )
 }
 

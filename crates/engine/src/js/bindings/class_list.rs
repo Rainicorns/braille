@@ -83,7 +83,7 @@ impl JsClassList {
 
     /// Helper to write class names back to the class attribute.
     /// Per spec, sets to empty string when all classes are removed (does not remove the attribute).
-    fn set_classes(&self, classes: Vec<String>, ctx: &Context) {
+    fn set_classes(&self, classes: Vec<String>, ctx: &mut Context) {
         let class_str = classes.join(" ");
         super::mutation_observer::set_attribute_with_observer(ctx, &self.tree, self.node_id, "class", &class_str);
     }

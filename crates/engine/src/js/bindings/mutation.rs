@@ -190,6 +190,11 @@ fn adopt_node_recursive(
             drop(src);
             dst_tree.borrow_mut().create_attr(&ln, &ns, &pfx, &val)
         }
+        NodeData::CDATASection { content } => {
+            let t = content.clone();
+            drop(src);
+            dst_tree.borrow_mut().create_cdata_section(&t)
+        }
         NodeData::Document => {
             drop(src);
             dst_tree.borrow_mut().create_document_fragment()
@@ -261,7 +266,7 @@ pub(crate) fn validate_pre_insert(
     let nt = node_tree.unwrap_or(tree);
     let node_data = &nt.get_node(node_id).data;
 
-    // Step 4: node must be DocumentFragment, DocumentType, Element, Text, Comment, PI, or Attr
+    // Step 4: node must be DocumentFragment, DocumentType, Element, Text, Comment, PI, CDATASection, or Attr
     match node_data {
         NodeData::DocumentFragment
         | NodeData::Doctype { .. }
@@ -269,7 +274,8 @@ pub(crate) fn validate_pre_insert(
         | NodeData::Text { .. }
         | NodeData::Comment { .. }
         | NodeData::ProcessingInstruction { .. }
-        | NodeData::Attr { .. } => {}
+        | NodeData::Attr { .. }
+        | NodeData::CDATASection { .. } => {}
         NodeData::Document => {
             return Err(hierarchy_request_error("Cannot insert a Document node"));
         }
@@ -452,7 +458,8 @@ fn validate_pre_replace(
         | NodeData::Text { .. }
         | NodeData::Comment { .. }
         | NodeData::ProcessingInstruction { .. }
-        | NodeData::Attr { .. } => {}
+        | NodeData::Attr { .. }
+        | NodeData::CDATASection { .. } => {}
         NodeData::Document => {
             return Err(hierarchy_request_error("Cannot insert a Document node"));
         }
@@ -657,7 +664,7 @@ fn capture_insert_state(
 
 /// Fire MutationObserver childList records after an insertion.
 fn fire_insert_records(
-    ctx: &Context,
+    ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     parent_id: NodeId,
     added_ids: &[NodeId],
@@ -1136,6 +1143,7 @@ pub(crate) fn clone_node_cross_tree(src: &DomTree, src_id: NodeId, dst: &mut Dom
         }
         NodeData::Text { content } => dst.create_text(content),
         NodeData::Comment { content } => dst.create_comment(content),
+        NodeData::CDATASection { content } => dst.create_cdata_section(content),
         NodeData::Doctype {
             name,
             public_id,

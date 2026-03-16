@@ -54,8 +54,8 @@ fn walk(
                 walk(tree, child_id, indent, ref_counter, output, ref_map, focused);
             }
         }
-        NodeData::Text { .. } | NodeData::Comment { .. } => {
-            // Text and Comment nodes are never rendered on their own;
+        NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::CDATASection { .. } => {
+            // Text, Comment, and CDATASection nodes are never rendered on their own;
             // text content is collected by the parent element's role line.
         }
         NodeData::Doctype { .. }
@@ -208,8 +208,11 @@ fn collect_direct_text(tree: &DomTree, node_id: NodeId) -> String {
     let mut text = String::new();
     for &child_id in &node.children {
         let child = tree.get_node(child_id);
-        if let NodeData::Text { content } = &child.data {
-            text.push_str(content);
+        match &child.data {
+            NodeData::Text { content } | NodeData::CDATASection { content } => {
+                text.push_str(content);
+            }
+            _ => {}
         }
     }
     text.trim().to_string()

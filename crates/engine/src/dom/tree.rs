@@ -145,7 +145,7 @@ impl DomTree {
     pub fn get_text_content(&self, node_id: NodeId) -> String {
         let node = &self.nodes[node_id];
         match &node.data {
-            NodeData::Text { content } => content.clone(),
+            NodeData::Text { content } | NodeData::CDATASection { content } => content.clone(),
             NodeData::Comment { content } => content.clone(),
             NodeData::ProcessingInstruction { data, .. } => data.clone(),
             NodeData::Attr { value, .. } => value.clone(),
@@ -166,7 +166,7 @@ impl DomTree {
     fn collect_descendant_text(&self, node_id: NodeId, result: &mut String) {
         for &child_id in &self.nodes[node_id].children {
             match &self.nodes[child_id].data {
-                NodeData::Text { content } => result.push_str(content),
+                NodeData::Text { content } | NodeData::CDATASection { content } => result.push_str(content),
                 NodeData::Element { .. } | NodeData::DocumentFragment => {
                     self.collect_descendant_text(child_id, result);
                 }
@@ -248,6 +248,22 @@ impl DomTree {
                 namespace: namespace.to_string(),
                 prefix: prefix.to_string(),
                 value: value.to_string(),
+            },
+            parent: None,
+            children: Vec::new(),
+            computed_style: None,
+            template_contents: None,
+        });
+        id
+    }
+
+    /// Allocates a new CDATASection node (unattached) and returns its NodeId.
+    pub fn create_cdata_section(&mut self, content: &str) -> NodeId {
+        let id = self.nodes.len();
+        self.nodes.push(Node {
+            id,
+            data: NodeData::CDATASection {
+                content: content.to_string(),
             },
             parent: None,
             children: Vec::new(),
@@ -386,6 +402,8 @@ impl DomTree {
     }
 
     /// If the node is a Text node, appends `extra` to its content. Returns true if successful.
+    /// If the node is a Text node, appends `extra` to its content. Returns true if successful.
+    /// CDATASection nodes are NOT merged (returns false).
     pub fn append_to_text(&mut self, node_id: NodeId, extra: &str) -> bool {
         if let NodeData::Text { ref mut content } = self.nodes[node_id].data {
             content.push_str(extra);
@@ -554,6 +572,7 @@ impl DomTree {
                     format!(" {}", data)
                 }
             ),
+            NodeData::CDATASection { content } => format!("<![CDATA[{}]]>", content),
             NodeData::Attr { .. } => String::new(), // Attr nodes are not serialized as children
             NodeData::Document | NodeData::DocumentFragment => self.serialize_children_html(nid),
         }
@@ -589,6 +608,7 @@ impl DomTree {
                 public_id,
                 system_id,
             } => self.create_doctype(name, public_id, system_id),
+            NodeData::CDATASection { content } => self.create_cdata_section(content),
             NodeData::Document => panic!("cannot import Document node"),
             NodeData::DocumentFragment => self.create_document_fragment(),
         };
@@ -608,7 +628,7 @@ impl DomTree {
     /// Returns the text content of a Text or Comment node, or None for other node types.
     pub fn character_data_get(&self, id: NodeId) -> Option<String> {
         match &self.nodes[id].data {
-            NodeData::Text { content } => Some(content.clone()),
+            NodeData::Text { content } | NodeData::CDATASection { content } => Some(content.clone()),
             NodeData::Comment { content } => Some(content.clone()),
             NodeData::ProcessingInstruction { data, .. } => Some(data.clone()),
             _ => None,
@@ -618,7 +638,7 @@ impl DomTree {
     /// Sets the text content of a Text or Comment node.
     pub fn character_data_set(&mut self, id: NodeId, new_data: &str) {
         match &mut self.nodes[id].data {
-            NodeData::Text { content } => *content = new_data.to_string(),
+            NodeData::Text { content } | NodeData::CDATASection { content } => *content = new_data.to_string(),
             NodeData::Comment { content } => *content = new_data.to_string(),
             NodeData::ProcessingInstruction { data, .. } => *data = new_data.to_string(),
             _ => {}
@@ -628,7 +648,7 @@ impl DomTree {
     /// Returns the length of the CharacterData in UTF-16 code units.
     pub fn character_data_length(&self, id: NodeId) -> usize {
         match &self.nodes[id].data {
-            NodeData::Text { content } => content.encode_utf16().count(),
+            NodeData::Text { content } | NodeData::CDATASection { content } => content.encode_utf16().count(),
             NodeData::Comment { content } => content.encode_utf16().count(),
             NodeData::ProcessingInstruction { data, .. } => data.encode_utf16().count(),
             _ => 0,
@@ -638,7 +658,7 @@ impl DomTree {
     /// Appends data to a Text or Comment node.
     pub fn character_data_append(&mut self, id: NodeId, append_data: &str) {
         match &mut self.nodes[id].data {
-            NodeData::Text { content } => content.push_str(append_data),
+            NodeData::Text { content } | NodeData::CDATASection { content } => content.push_str(append_data),
             NodeData::Comment { content } => content.push_str(append_data),
             NodeData::ProcessingInstruction { data, .. } => data.push_str(append_data),
             _ => {}
@@ -649,7 +669,7 @@ impl DomTree {
     /// Returns Err if offset > length.
     pub fn character_data_delete(&mut self, id: NodeId, offset: usize, count: usize) -> Result<(), &'static str> {
         let content = match &self.nodes[id].data {
-            NodeData::Text { content } => content.clone(),
+            NodeData::Text { content } | NodeData::CDATASection { content } => content.clone(),
             NodeData::Comment { content } => content.clone(),
             NodeData::ProcessingInstruction { data, .. } => data.clone(),
             _ => return Ok(()),
@@ -668,7 +688,7 @@ impl DomTree {
     /// Returns Err if offset > length.
     pub fn character_data_insert(&mut self, id: NodeId, offset: usize, data: &str) -> Result<(), &'static str> {
         let content = match &self.nodes[id].data {
-            NodeData::Text { content } => content.clone(),
+            NodeData::Text { content } | NodeData::CDATASection { content } => content.clone(),
             NodeData::Comment { content } => content.clone(),
             NodeData::ProcessingInstruction { data: pi_data, .. } => pi_data.clone(),
             _ => return Ok(()),
@@ -692,7 +712,7 @@ impl DomTree {
         data: &str,
     ) -> Result<(), &'static str> {
         let content = match &self.nodes[id].data {
-            NodeData::Text { content } => content.clone(),
+            NodeData::Text { content } | NodeData::CDATASection { content } => content.clone(),
             NodeData::Comment { content } => content.clone(),
             NodeData::ProcessingInstruction { data: pi_data, .. } => pi_data.clone(),
             _ => return Ok(()),
@@ -711,7 +731,7 @@ impl DomTree {
     /// Returns Err if offset > length.
     pub fn character_data_substring(&self, id: NodeId, offset: usize, count: usize) -> Result<String, &'static str> {
         let content = match &self.nodes[id].data {
-            NodeData::Text { content } => content,
+            NodeData::Text { content } | NodeData::CDATASection { content } => content,
             NodeData::Comment { content } => content,
             NodeData::ProcessingInstruction { data, .. } => data,
             _ => return Ok(String::new()),
@@ -886,6 +906,7 @@ impl DomTree {
         match &self.nodes[id].data {
             NodeData::Element { .. } => 1,
             NodeData::Text { .. } => 3,
+            NodeData::CDATASection { .. } => 4,
             NodeData::ProcessingInstruction { .. } => 7,
             NodeData::Attr { .. } => 2,
             NodeData::Comment { .. } => 8,
@@ -957,7 +978,8 @@ impl DomTree {
                     return false;
                 }
             }
-            (NodeData::Text { content: c1 }, NodeData::Text { content: c2 }) => {
+            (NodeData::Text { content: c1 }, NodeData::Text { content: c2 })
+            | (NodeData::CDATASection { content: c1 }, NodeData::CDATASection { content: c2 }) => {
                 if c1 != c2 {
                     return false;
                 }
@@ -1226,7 +1248,10 @@ impl DomTree {
                 }
                 None
             }
-            NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. } => {
+            NodeData::Text { .. }
+            | NodeData::CDATASection { .. }
+            | NodeData::Comment { .. }
+            | NodeData::ProcessingInstruction { .. } => {
                 // Delegate to parent element
                 if let Some(parent_id) = node.parent {
                     if matches!(self.get_node(parent_id).data, NodeData::Element { .. }) {
@@ -1333,7 +1358,10 @@ impl DomTree {
                 }
                 None
             }
-            NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::ProcessingInstruction { .. } => {
+            NodeData::Text { .. }
+            | NodeData::CDATASection { .. }
+            | NodeData::Comment { .. }
+            | NodeData::ProcessingInstruction { .. } => {
                 // Delegate to parent element
                 if let Some(parent_id) = node.parent {
                     if matches!(self.get_node(parent_id).data, NodeData::Element { .. }) {

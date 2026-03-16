@@ -646,22 +646,16 @@ pub(crate) fn register_window(
 
             // Set numeric indices
             for (i, &nid) in iframe_ids.iter().enumerate() {
-                let doc_obj = super::element::ensure_iframe_content_doc(tree_ptr, nid, ctx2)?;
-                let cw = ObjectInitializer::new(ctx2).build();
-                cw.define_property_or_throw(
-                    js_string!("document"),
-                    PropertyDescriptor::builder()
-                        .value(JsValue::from(doc_obj))
-                        .writable(true)
-                        .configurable(true)
-                        .enumerable(true)
-                        .build(),
-                    ctx2,
-                )?;
+                // Ensure iframe content doc + realm is created
+                let _doc_obj = super::element::ensure_iframe_content_doc(tree_ptr, nid, ctx2)?;
+
+                // Look up the iframe's realm and return its real window object
+                let cw = get_iframe_window(tree_ptr, nid, ctx2);
+
                 frames_obj.define_property_or_throw(
                     js_string!(i.to_string()),
                     PropertyDescriptor::builder()
-                        .value(JsValue::from(cw))
+                        .value(cw)
                         .writable(true)
                         .configurable(true)
                         .enumerable(true)
@@ -826,22 +820,12 @@ pub(crate) fn register_window(
             let frames_obj = ObjectInitializer::new(ctx2).build();
 
             for (i, &nid) in iframe_ids.iter().enumerate() {
-                let doc_obj = super::element::ensure_iframe_content_doc(tree_ptr, nid, ctx2)?;
-                let cw = ObjectInitializer::new(ctx2).build();
-                cw.define_property_or_throw(
-                    js_string!("document"),
-                    PropertyDescriptor::builder()
-                        .value(JsValue::from(doc_obj))
-                        .writable(true)
-                        .configurable(true)
-                        .enumerable(true)
-                        .build(),
-                    ctx2,
-                )?;
+                let _doc_obj = super::element::ensure_iframe_content_doc(tree_ptr, nid, ctx2)?;
+                let cw = get_iframe_window(tree_ptr, nid, ctx2);
                 frames_obj.define_property_or_throw(
                     js_string!(i.to_string()),
                     PropertyDescriptor::builder()
-                        .value(JsValue::from(cw))
+                        .value(cw)
                         .writable(true)
                         .configurable(true)
                         .enumerable(true)
@@ -878,6 +862,43 @@ pub(crate) fn register_window(
             context,
         )
         .expect("failed to define global frames");
+}
+
+/// Look up the real window object for an iframe's realm.
+/// If the iframe has a realm, enters it to read its window object.
+/// Falls back to a plain object with just `document` if no realm exists.
+fn get_iframe_window(tree_ptr: usize, nid: crate::dom::NodeId, ctx: &mut Context) -> JsValue {
+    let realms = realm_state::iframe_realms(ctx);
+    let realm_opt = realms.borrow().get(&(tree_ptr, nid)).cloned();
+
+    if let Some(realm) = realm_opt {
+        // Enter the iframe realm to read its window object
+        let win = realm_state::with_realm(ctx, &realm, |ctx| realm_state::window_object(ctx));
+        match win {
+            Some(w) => JsValue::from(w),
+            None => JsValue::undefined(),
+        }
+    } else {
+        // Fallback: no realm, create a plain object with just document
+        let doc_obj = super::element::ensure_iframe_content_doc(tree_ptr, nid, ctx);
+        match doc_obj {
+            Ok(doc) => {
+                let cw = ObjectInitializer::new(ctx).build();
+                let _ = cw.define_property_or_throw(
+                    js_string!("document"),
+                    PropertyDescriptor::builder()
+                        .value(JsValue::from(doc))
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(true)
+                        .build(),
+                    ctx,
+                );
+                JsValue::from(cw)
+            }
+            Err(_) => JsValue::undefined(),
+        }
+    }
 }
 
 /// Recursively collects NodeIds of `<iframe>` elements in document order.

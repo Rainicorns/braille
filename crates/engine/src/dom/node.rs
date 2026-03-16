@@ -65,6 +65,9 @@ pub enum NodeData {
         value: String,
     },
     DocumentFragment,
+    CDATASection {
+        content: String,
+    },
 }
 
 #[derive(Debug, Clone)]

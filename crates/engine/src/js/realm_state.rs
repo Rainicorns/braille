@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use boa_engine::realm::Realm;
-use boa_engine::{js_string, property::PropertyDescriptor, Context, JsObject, JsValue};
+use boa_engine::{js_string, property::PropertyDescriptor, Context, JsObject, JsResult, JsValue};
 use boa_gc::{Finalize, Trace};
 
 use crate::dom::{DomTree, NodeId};
@@ -116,6 +116,15 @@ pub(crate) struct RealmState {
 
     #[unsafe_ignore_trace]
     pub(crate) creation_time: Instant,
+
+    // -- Cross-realm iframe support --
+    /// Map from (tree_ptr, node_id) to Realm for iframes with their own JS realm.
+    #[unsafe_ignore_trace]
+    pub(crate) iframe_realms: Rc<RefCell<HashMap<(usize, NodeId), Realm>>>,
+
+    /// All realms (main + iframes) — used for callback realm detection in MutationObserver.
+    #[unsafe_ignore_trace]
+    pub(crate) all_realms: Rc<RefCell<Vec<Realm>>>,
 }
 
 impl RealmState {
@@ -143,6 +152,45 @@ impl RealmState {
             current_event: RefCell::new(None),
             dispatch_target: RefCell::new(None),
             creation_time: Instant::now(),
+            iframe_realms: Rc::new(RefCell::new(HashMap::new())),
+            all_realms: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    /// Create a new `RealmState` for an iframe realm that shares MO state with the parent.
+    pub(crate) fn new_with_shared(
+        tree: Rc<RefCell<DomTree>>,
+        shared_mo_state: Rc<RefCell<MutationObserverState>>,
+        shared_iframe_realms: Rc<RefCell<HashMap<(usize, NodeId), Realm>>>,
+        shared_all_realms: Rc<RefCell<Vec<Realm>>>,
+        shared_iframe_content_docs: Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>,
+        shared_iframe_src_content: Rc<RefCell<HashMap<String, String>>>,
+        shared_node_cache: Rc<RefCell<NodeCache>>,
+    ) -> Self {
+        Self {
+            node_cache: shared_node_cache,
+            event_listeners: Rc::new(RefCell::new(HashMap::new())),
+            on_event_handlers: Rc::new(RefCell::new(HashMap::new())),
+            iframe_content_docs: shared_iframe_content_docs,
+            iframe_src_content: shared_iframe_src_content,
+            mutation_observer_state: shared_mo_state,
+            child_nodes_cache: Rc::new(RefCell::new(HashMap::new())),
+            children_cache: Rc::new(RefCell::new(HashMap::new())),
+            dom_prototypes: RefCell::new(None),
+            nodelist_proto: RefCell::new(None),
+            htmlcollection_proto: RefCell::new(None),
+            nl_proxy_factory: RefCell::new(None),
+            hc_proxy_factory: RefCell::new(None),
+            domimpl_proto: RefCell::new(None),
+            mutation_record_proto: RefCell::new(None),
+            is_trusted_getter: RefCell::new(None),
+            dom_tree: tree,
+            window_object: RefCell::new(None),
+            current_event: RefCell::new(None),
+            dispatch_target: RefCell::new(None),
+            creation_time: Instant::now(),
+            iframe_realms: shared_iframe_realms,
+            all_realms: shared_all_realms,
         }
     }
 }
@@ -220,6 +268,12 @@ rc_accessor!(
     Rc<RefCell<HashMap<CollectionCacheKey, JsObject>>>
 );
 rc_accessor!(dom_tree, dom_tree, Rc<RefCell<DomTree>>);
+rc_accessor!(
+    iframe_realms,
+    iframe_realms,
+    Rc<RefCell<HashMap<(usize, NodeId), Realm>>>
+);
+rc_accessor!(all_realms, all_realms, Rc<RefCell<Vec<Realm>>>);
 
 // -- Prototype/factory cache accessors (clone Option<T> out) --
 
@@ -308,7 +362,6 @@ pub(crate) fn creation_time(ctx: &Context) -> Instant {
 // with_realm — execute a closure in a different realm's context
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)] // Will be used in Phase 5 (iframe realm creation)
 pub(crate) fn with_realm<F, R>(ctx: &mut Context, realm: &Realm, f: F) -> R
 where
     F: FnOnce(&mut Context) -> R,
@@ -338,6 +391,51 @@ pub(crate) fn register_realm_globals(
         .host_defined_mut()
         .insert(RealmState::new(Rc::clone(&tree)));
 
+    // 1b. Register this realm in all_realms
+    {
+        let all = all_realms(context);
+        all.borrow_mut().push(context.realm().clone());
+    }
+
+    register_realm_globals_inner(context, tree, console_buffer);
+}
+
+/// Initialize globals for an iframe realm that shares MO state, iframe data, and node cache
+/// with its parent.
+pub(crate) fn register_iframe_realm_globals(
+    context: &mut Context,
+    tree: Rc<RefCell<DomTree>>,
+    console_buffer: Rc<RefCell<Vec<String>>>,
+    shared_mo_state: Rc<RefCell<MutationObserverState>>,
+    shared_iframe_realms: Rc<RefCell<HashMap<(usize, NodeId), Realm>>>,
+    shared_all_realms: Rc<RefCell<Vec<Realm>>>,
+    shared_iframe_content_docs: Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>,
+    shared_iframe_src_content: Rc<RefCell<HashMap<String, String>>>,
+    shared_node_cache: Rc<RefCell<NodeCache>>,
+) {
+    // 1. Insert RealmState with shared fields
+    context.realm().host_defined_mut().insert(RealmState::new_with_shared(
+        Rc::clone(&tree),
+        shared_mo_state,
+        shared_iframe_realms,
+        Rc::clone(&shared_all_realms),
+        shared_iframe_content_docs,
+        shared_iframe_src_content,
+        shared_node_cache,
+    ));
+
+    // 1b. Register this realm in all_realms
+    shared_all_realms.borrow_mut().push(context.realm().clone());
+
+    register_realm_globals_inner(context, tree, console_buffer);
+}
+
+/// Shared inner initialization for both main and iframe realms.
+fn register_realm_globals_inner(
+    context: &mut Context,
+    tree: Rc<RefCell<DomTree>>,
+    console_buffer: Rc<RefCell<Vec<String>>>,
+) {
     // 2. DOMImplementation, DOMParser, DOMException — must be before register_document/register_window
     bindings::document::register_domimplementation(context);
     bindings::dom_parser::register_dom_parser(context);
@@ -383,6 +481,74 @@ pub(crate) fn register_realm_globals(
 
     // 13. Copy globals to window (EventTarget, constructors, event methods)
     copy_globals_to_window(context);
+}
+
+/// Create a new Boa Realm for an iframe, fully initialized with global constructors.
+/// The new realm shares MutationObserver state, iframe data, and node cache with the parent.
+/// Returns the new Realm and its window JsObject.
+pub(crate) fn create_iframe_realm(
+    ctx: &mut Context,
+    iframe_tree: Rc<RefCell<DomTree>>,
+    tree_ptr: usize,
+    iframe_node_id: NodeId,
+) -> JsResult<(Realm, JsObject)> {
+    // Collect shared state from parent realm before switching
+    let shared_mo_state = mutation_observer_state(ctx);
+    let shared_iframe_realms = iframe_realms(ctx);
+    let shared_all_realms = all_realms(ctx);
+    let shared_iframe_content_docs = iframe_content_docs(ctx);
+    let shared_iframe_src_content = iframe_src_content(ctx);
+    let shared_node_cache = node_cache(ctx);
+    let console_buffer = {
+        // Get console_buffer from current realm -- it's stored in the window/console closures
+        // For simplicity, create a new empty buffer for iframe realms
+        Rc::new(RefCell::new(Vec::new()))
+    };
+    let parent_window = window_object(ctx);
+
+    // Create new realm
+    let new_realm = ctx.create_realm()?;
+
+    // Enter the new realm, init globals, restore
+    let iframe_window = with_realm(ctx, &new_realm, |ctx| {
+        register_iframe_realm_globals(
+            ctx,
+            Rc::clone(&iframe_tree),
+            console_buffer,
+            shared_mo_state,
+            Rc::clone(&shared_iframe_realms),
+            shared_all_realms,
+            shared_iframe_content_docs,
+            shared_iframe_src_content,
+            shared_node_cache,
+        );
+
+        // Set `parent` property on iframe window → parent window object
+        if let Some(parent_win) = parent_window {
+            let iframe_win = window_object(ctx);
+            if let Some(ref win) = iframe_win {
+                let _ = win.define_property_or_throw(
+                    js_string!("parent"),
+                    PropertyDescriptor::builder()
+                        .value(JsValue::from(parent_win))
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(true)
+                        .build(),
+                    ctx,
+                );
+            }
+        }
+
+        window_object(ctx)
+    });
+
+    // Store realm in shared iframe_realms map
+    shared_iframe_realms
+        .borrow_mut()
+        .insert((tree_ptr, iframe_node_id), new_realm.clone());
+
+    Ok((new_realm, iframe_window.unwrap()))
 }
 
 /// Copy EventTarget, event constructors, and event listener methods onto the window object.

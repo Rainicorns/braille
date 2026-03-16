@@ -107,6 +107,11 @@ fn cross_tree_is_equal_node(tree_a: &DomTree, a: NodeId, tree_b: &DomTree, b: No
                 return false;
             }
         }
+        (NodeData::CDATASection { content: c1 }, NodeData::CDATASection { content: c2 }) => {
+            if c1 != c2 {
+                return false;
+            }
+        }
         (NodeData::Document, NodeData::Document) => {}
         (NodeData::DocumentFragment, NodeData::DocumentFragment) => {}
         _ => return false,
@@ -212,7 +217,10 @@ pub(crate) fn ensure_iframe_content_doc(tree_ptr: usize, node_id: NodeId, ctx: &
         map.insert((tree_ptr, node_id), new_tree.clone());
     }
 
-    // Create document JsObject
+    // Create a per-iframe Realm with full globals (MutationObserver, Function, Error, etc.)
+    let _ = realm_state::create_iframe_realm(ctx, Rc::clone(&new_tree), tree_ptr, node_id)?;
+
+    // Create document JsObject (in the main realm — for backward compat)
     let doc_id = new_tree.borrow().document();
     let js_obj = get_or_create_js_element(doc_id, new_tree.clone(), ctx)?;
     super::document::add_document_properties_to_element(&js_obj, new_tree, "text/html".to_string(), ctx)?;
@@ -302,7 +310,7 @@ pub(crate) fn get_or_create_js_element(
         let tree_ref = tree.borrow();
         let node = tree_ref.get_node(node_id);
         match &node.data {
-            NodeData::Text { .. } => NodeKind::Text,
+            NodeData::Text { .. } | NodeData::CDATASection { .. } => NodeKind::Text,
             NodeData::Comment { .. } => NodeKind::Comment,
             NodeData::Element {
                 tag_name, namespace, ..
@@ -1085,6 +1093,7 @@ impl JsElement {
                 crate::dom::NodeData::Text { .. }
                     | crate::dom::NodeData::Comment { .. }
                     | crate::dom::NodeData::ProcessingInstruction { .. }
+                    | crate::dom::NodeData::CDATASection { .. }
             ) {
                 drop(tree);
                 // null converts to ""

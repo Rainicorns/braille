@@ -331,6 +331,117 @@ impl Engine {
         self.load_html_with_resources_lossy(html, &FetchedResources::scripts_only(fetched.clone()))
     }
 
+    /// Incrementally parse HTML, executing scripts as the parser encounters them.
+    /// MutationObserver records are synthesized for parser-inserted nodes between
+    /// script executions. Returns any JS errors encountered.
+    pub fn load_html_incremental_with_resources_lossy(
+        &mut self,
+        html: &str,
+        fetched: &FetchedResources,
+    ) -> Vec<String> {
+        use crate::html::parser::{split_html_at_scripts, IncrementalParser};
+        use crate::js::bindings::mutation_observer::synthesize_parser_mutations;
+
+        let mut errors = Vec::new();
+
+        // 1. Create incremental parser (creates tree internally)
+        let mut inc = IncrementalParser::new();
+        let tree = Rc::clone(inc.tree());
+
+        // 2. Create JsRuntime bound to the shared tree
+        let mut runtime = JsRuntime::new(Rc::clone(&tree));
+
+        // 3. Populate iframe src content
+        Self::populate_iframe_src_content(&fetched.iframes, &runtime.context);
+
+        // 4. Split HTML at </script> boundaries
+        let chunks = split_html_at_scripts(html);
+
+        // 5. Feed chunks, executing scripts between them
+        for chunk in &chunks {
+            let watermark = tree.borrow().node_count();
+
+            // Feed this chunk to the parser
+            inc.process(chunk);
+
+            // Find new script nodes (ID >= watermark, tag == "script")
+            let new_scripts: Vec<(NodeId, Option<String>, String)> = {
+                let t = tree.borrow();
+                let count = t.node_count();
+                let mut scripts = Vec::new();
+                for nid in watermark..count {
+                    let node = t.get_node(nid);
+                    if let NodeData::Element {
+                        tag_name, attributes, ..
+                    } = &node.data
+                    {
+                        if tag_name.eq_ignore_ascii_case("script") {
+                            let src = attributes
+                                .iter()
+                                .find(|a| a.local_name == "src")
+                                .map(|a| a.value.clone());
+                            let inline_text = t.get_text_content(nid);
+                            scripts.push((nid, src, inline_text));
+                        }
+                    }
+                }
+                scripts
+            };
+
+            // Synthesize MO records for ALL new nodes (including scripts and their text children)
+            synthesize_parser_mutations(&mut runtime.context, &tree, watermark);
+
+            // Execute each new script
+            for (_script_id, src, inline_text) in &new_scripts {
+                let code = if let Some(url) = src {
+                    match fetched.scripts.get(url) {
+                        Some(content) if !content.trim().is_empty() => content.clone(),
+                        _ => continue,
+                    }
+                } else if !inline_text.trim().is_empty() {
+                    inline_text.clone()
+                } else {
+                    continue
+                };
+
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    runtime.eval(&code)
+                })) {
+                    Ok(Ok(_)) => {
+                        runtime.notify_mutation_observers();
+                    }
+                    Ok(Err(e)) => {
+                        runtime.notify_mutation_observers();
+                        errors.push(format!("{:?}", e));
+                    }
+                    Err(panic_err) => {
+                        let msg = if let Some(s) = panic_err.downcast_ref::<String>() {
+                            s.clone()
+                        } else if let Some(s) = panic_err.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else {
+                            "unknown panic".to_string()
+                        };
+                        errors.push(format!("PANIC: {}", msg));
+                    }
+                }
+            }
+        }
+
+        // 6. Finish parsing
+        let _ = inc.finish();
+
+        // 7. Post-processing
+        Self::process_iframe_loads(&mut runtime, &tree);
+        Self::fire_window_load(&mut runtime);
+
+        self.tree = tree;
+        self.runtime = Some(runtime);
+        self.focused_element = None;
+        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+        errors
+    }
+
     /// Evaluate a JavaScript expression and return the result as a string.
     /// Panics if no runtime is loaded (call load_html or execute_scripts first).
     pub fn eval_js(&mut self, code: &str) -> Result<String, String> {

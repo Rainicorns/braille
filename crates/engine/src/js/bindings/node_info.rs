@@ -28,6 +28,7 @@ fn get_node_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
         NodeData::Element { .. } => 1,
         NodeData::Attr { .. } => 2,
         NodeData::Text { .. } => 3,
+        NodeData::CDATASection { .. } => 4,
         NodeData::ProcessingInstruction { .. } => 7,
         NodeData::Comment { .. } => 8,
         NodeData::Document => 9,
@@ -72,6 +73,7 @@ fn get_node_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
             }
         }
         NodeData::Text { .. } => "#text".to_string(),
+        NodeData::CDATASection { .. } => "#cdata-section".to_string(),
         NodeData::Comment { .. } => "#comment".to_string(),
         NodeData::Document => "#document".to_string(),
         NodeData::Doctype { name, .. } => name.clone(),
@@ -124,7 +126,9 @@ fn get_node_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
     let node = tree.get_node(el.node_id);
 
     match &node.data {
-        NodeData::Text { content } => Ok(JsValue::from(js_string!(content.clone()))),
+        NodeData::Text { content } | NodeData::CDATASection { content } => {
+            Ok(JsValue::from(js_string!(content.clone())))
+        }
         NodeData::Comment { content } => Ok(JsValue::from(js_string!(content.clone()))),
         NodeData::ProcessingInstruction { data, .. } => Ok(JsValue::from(js_string!(data.clone()))),
         NodeData::Attr { value, .. } => Ok(JsValue::from(js_string!(value.clone()))),
@@ -153,6 +157,7 @@ fn set_node_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
         if !matches!(
             node.data,
             NodeData::Text { .. }
+                | NodeData::CDATASection { .. }
                 | NodeData::Comment { .. }
                 | NodeData::ProcessingInstruction { .. }
                 | NodeData::Attr { .. }
