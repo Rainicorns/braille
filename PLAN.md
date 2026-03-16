@@ -13,7 +13,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 **Build quality:** Workspace lint configuration enforces `warnings = "deny"` and `clippy::all = "warn"`. Zero compiler warnings, zero clippy lints. `rustfmt.toml` configured (edition 2021, max_width 120).
 
-**WPT Phase 6 — Click Activation + on* Handlers + MouseEvent Properties COMPLETE.** Unified on* IDL event handler system (`on_event.rs`), activation behavior (`activation.rs`), MouseEvent with 10 properties (button, buttons, clientX/Y, screenX/Y, altKey, ctrlKey, metaKey, shiftKey). element.click() dispatches MouseEvent with activation hooks (pre-activation checkbox/radio toggle, post-activation form submit/reset/label click/details toggle). Key spec distinction: click() skips disabled elements, dispatchEvent() does not. 4 new test files passing (Event-dispatch-click 33/33, Event-dispatch-detached-click, label-default-action, legacy-pre-activation-behavior). **171/263 WPT tests passing.** Phase 5 also complete: MutationObserver (7 pass, 2 fail Range-only), ParentNode-replaceChildren fixed (29/29). Post-phase quick wins: unified event types, Node-properties, node-appendchild-crash. Phase 4: event system (DOMHighResTimeStamp, UIEvent subclasses, handleEvent, window event target, standalone EventTarget). Phase 3: attribute NS refactor, live HTMLCollection, querySelector unskip. Phase 2: all 5 fixable tests at 100%. **Post-phase fixes:** namespace validation, DOMException constructor, createDocument fixes, NameStartChar ranges. **Event dispatch edge cases:** cross-document isolation, document-to-window bubble, window.event/onerror — 10 new tests. **Basic iframe support + src loading:** contentDocument/contentWindow, frames[], FetchedResources, iframe.src/onload IDL, document.defaultView, URL fragment stripping, dynamic iframe loading — 9 new tests.
+**WPT Phase 7 — Inline Event Handlers + promise_test COMPLETE.** Inline event handler compilation (`compile_inline_event_handler()` in `on_event.rs`): HTML attributes like `onclick="..."` and dynamic `setAttribute("onclick", "...")` are compiled to JS functions and registered in ON_EVENT_HANDLERS. `return false` from inline handlers calls `preventDefault()`. `promise_test` harness: real implementation replacing NOTRUN stub, with `run_jobs()` after every `eval()` to flush microtask/Promise queue. Activation target now walks nearest inclusive ancestors per DOM spec (with `bubbles` param for non-bubbling events). `input[type=image]` added to activation behavior. `step_timeout` added to async_test's test object. RefCell fix: extracted `tree.borrow()` temporaries in `run_post_activation()`. **176/263 WPT tests passing.** Event-dispatch-single-activation-behavior unskipped (102/132 subtests pass; 22 `<a>`/`<area>` need `location.hash`, 8 form-form need submit event propagation fix). Phase 6 also complete: unified on* IDL event handler system (`on_event.rs`), activation behavior (`activation.rs`), MouseEvent with 10 properties, element.click() with disabled check, 4 activation test files (Event-dispatch-click 33/33, Event-dispatch-detached-click, label-default-action, legacy-pre-activation-behavior). Phase 5: MutationObserver (7 pass, 2 fail Range-only), ParentNode-replaceChildren fixed (29/29). Post-phase quick wins: unified event types, Node-properties, node-appendchild-crash. Phase 4: event system (DOMHighResTimeStamp, UIEvent subclasses, handleEvent, window event target, standalone EventTarget). Phase 3: attribute NS refactor, live HTMLCollection, querySelector unskip. Phase 2: all 5 fixable tests at 100%. **Post-phase fixes:** namespace validation, DOMException constructor, createDocument fixes, NameStartChar ranges. **Event dispatch edge cases:** cross-document isolation, document-to-window bubble, window.event/onerror — 10 new tests. **Basic iframe support + src loading:** contentDocument/contentWindow, frames[], FetchedResources, iframe.src/onload IDL, document.defaultView, URL fragment stripping, dynamic iframe loading — 9 new tests.
 
 **Wave 2 completed tasks (13 total):**
 
@@ -56,7 +56,7 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 | Component | Gap |
 |-----------|-----|
-| WPT harness | **Phase 6 complete — click activation + on* handlers + MouseEvent** (171/263 passing). Phase 6: unified on* IDL handlers (on_event.rs), activation behavior (activation.rs), MouseEvent properties, element.click() disabled check. Phase 5: MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode. Remaining ~92 skipped need Shadow DOM/workers/Range/advanced iframes/NamedNodeMap/inline handler scope. |
+| WPT harness | **Phase 7 complete — inline event handlers + promise_test** (176/263 passing). Phase 7: inline handler compilation, return false→preventDefault, promise_test harness, run_jobs(), ancestor activation target, input[type=image]. Phase 6: unified on* IDL handlers (on_event.rs), activation behavior (activation.rs), MouseEvent properties, element.click() disabled check. Phase 5: MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode. Remaining ~87 skipped need Shadow DOM/workers/Range/advanced iframes/NamedNodeMap/location.hash. |
 | Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height |
 | WASM sandbox | Not started — engine runs in-process |
 
@@ -247,11 +247,11 @@ Run all three directions concurrently where dependencies allow. Recommended inte
 
 ### WPT DOM Conformance — Comprehensive Test Status
 
-**263 total test files** across `dom/nodes/` and `dom/events/`. **171 pass, 7 fail (partial subtest failures — most accepted), 85 skipped.** Implemented across 6 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system, Phase 5: MutationObserver, Phase 6: click activation + on* handlers + MouseEvent). Phase 6 added unified on* IDL event handler system (on_event.rs), activation behavior (activation.rs), MouseEvent with 10 properties, element.click() with disabled check. Phase 5 added MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode, getAttributeNodeNS. Post-phase: dynamic iframe loading unblocked Element-webkitMatchesSelector.
+**263 total test files** across `dom/nodes/` and `dom/events/`. **176 pass, 8 fail (partial subtest failures — most accepted), 79 skipped.** Implemented across 7 phases (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system, Phase 5: MutationObserver, Phase 6: click activation + on* handlers + MouseEvent, Phase 7: inline event handlers + promise_test). Phase 7 added inline event handler compilation (on_event.rs), return false→preventDefault, promise_test harness, run_jobs() for microtask queue, ancestor activation target walking, input[type=image] activation. Phase 6 added unified on* IDL event handler system, activation behavior, MouseEvent with 10 properties, element.click() with disabled check. Phase 5 added MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode, getAttributeNodeNS. Post-phase: dynamic iframe loading unblocked Element-webkitMatchesSelector.
 
-Known subtest counts where recorded: Event-dispatch-click 33/33, Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Node-appendChild 11/11, Node-removeChild 28/28, Node-isConnected 2/2, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, DOMImplementation-createDocument 434/434, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19, Event-dispatch-bubbles-false 5/5, Event-dispatch-bubbles-true 5/5, Event-dispatch-throwing 2/2, event-global-set-before-handleEvent-lookup 1/1, MutationObserver-sanity 12/12, MutationObserver-disconnect 2/2, MutationObserver-takeRecords 3/3, MutationObserver-callback-arguments 1/1, MutationObserver-characterData 15/16, MutationObserver-childList 25/26, ParentNode-replaceChildren 29/29, Document-getElementsByTagNameNS pass, Element-getElementsByTagNameNS pass, case.html pass, Node-lookupNamespaceURI pass, Document-importNode pass.
+Known subtest counts where recorded: Event-dispatch-single-activation-behavior 102/132, Event-dispatch-click 33/33, Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Node-appendChild 11/11, Node-removeChild 28/28, Node-isConnected 2/2, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, DOMImplementation-createDocument 434/434, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 3/3, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19, Event-dispatch-bubbles-false 5/5, Event-dispatch-bubbles-true 5/5, Event-dispatch-throwing 2/2, event-global-set-before-handleEvent-lookup 1/1, MutationObserver-sanity 12/12, MutationObserver-disconnect 2/2, MutationObserver-takeRecords 3/3, MutationObserver-callback-arguments 1/1, MutationObserver-characterData 15/16, MutationObserver-childList 25/26, ParentNode-replaceChildren 29/29, Document-getElementsByTagNameNS pass, Element-getElementsByTagNameNS pass, case.html pass, Node-lookupNamespaceURI pass, Document-importNode pass.
 
-#### dom/events/ (53 pass, 1 fail, 39 skip)
+#### dom/events/ (55 pass, 2 fail, 36 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -277,14 +277,14 @@ Known subtest counts where recorded: Event-dispatch-click 33/33, Element-classli
 | Event-dispatch-multiple-cancelBubble.html | PASS | |
 | Event-dispatch-multiple-stopPropagation.html | PASS | |
 | Event-dispatch-omitted-capture.html | PASS | |
-| Event-dispatch-on-disabled-elements.html | SKIP | requires promise_test (CSS animations, real clicks) |
+| Event-dispatch-on-disabled-elements.html | SKIP | requires CSS animations for promise_test subtests |
 | Event-dispatch-order-at-target.html | PASS | |
 | Event-dispatch-order.html | PASS | |
 | Event-dispatch-other-document.html | PASS | |
 | Event-dispatch-propagation-stopped.html | PASS | |
 | Event-dispatch-redispatch.html | SKIP | requires re-dispatch semantics |
 | Event-dispatch-reenter.html | PASS | |
-| Event-dispatch-single-activation-behavior.html | SKIP | requires inline event handler global scope (onsubmit attribute) |
+| Event-dispatch-single-activation-behavior.html | FAIL | 102/132; 22 `<a>`/`<area>` need location.hash, 8 form-form need submit propagation fix |
 | Event-dispatch-target-moved.html | PASS | |
 | Event-dispatch-target-removed.html | PASS | |
 | Event-dispatch-throwing-multiple-globals.html | SKIP | requires multi-globals |
@@ -305,7 +305,7 @@ Known subtest counts where recorded: Event-dispatch-click 33/33, Element-classli
 | Event-type.html | PASS | |
 | EventListener-addEventListener.sub.window.js | SKIP | requires server-side substitution |
 | EventListener-handleEvent-cross-realm.html | PASS | |
-| EventListener-handleEvent.html | FAIL | 3/6; promise_test not supported (accepted partial) |
+| EventListener-handleEvent.html | FAIL | 3/6; 3 promise_test subtests still fail (accepted partial) |
 | EventListener-incumbent-global-1.sub.html | SKIP | requires server-side substitution |
 | EventListener-incumbent-global-2.sub.html | SKIP | requires server-side substitution |
 | EventListener-incumbent-global-subframe-1.sub.html | SKIP | requires server-side substitution |
@@ -338,7 +338,7 @@ Known subtest counts where recorded: Event-dispatch-click 33/33, Element-classli
 | no-focus-events-at-clicking-editable-content-in-link.html | SKIP | requires focus events |
 | passive-by-default.html | SKIP | requires passive event handling |
 | pointer-event-document-move.html | SKIP | requires PointerEvent |
-| preventDefault-during-activation-behavior.html | SKIP | requires promise_test |
+| preventDefault-during-activation-behavior.html | PASS | promise_test with async/await, form submit activation |
 | relatedTarget.window.js | SKIP | requires relatedTarget |
 | remove-all-listeners.html | SKIP | requires full listener removal |
 | replace-event-listener-null-browsing-context-crash.html | PASS | |
@@ -349,7 +349,7 @@ Known subtest counts where recorded: Event-dispatch-click 33/33, Element-classli
 | webkit-transition-end-event.html | SKIP | requires TransitionEvent |
 | window-composed-path.html | PASS | |
 
-#### dom/nodes/ (118 pass, 6 fail, 46 skip)
+#### dom/nodes/ (121 pass, 6 fail, 43 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -524,7 +524,7 @@ Known subtest counts where recorded: Event-dispatch-click 33/33, Element-classli
 | rootNode.html | FAIL | 0/1; Shadow DOM subtest (accepted partial) |
 | svg-template-querySelector.html | PASS | unskipped — template.content works |
 
-#### Skip reasons summary (85 skipped tests)
+#### Skip reasons summary (79 skipped tests)
 
 | Category | Count | Tests |
 |----------|-------|-------|
@@ -533,7 +533,7 @@ Known subtest counts where recorded: Event-dispatch-click 33/33, Element-classli
 | Shadow DOM | 5 | Node-isConnected-shadow-dom, shadow-relatedTarget, remove-from-shadow-host-* |
 | Server-side substitution (.sub.) | 7 | EventListener-incumbent-global-*, Node-cloneNode-external-stylesheet, EventListener-addEventListener.sub |
 | window.event / window.onerror | 4 | event-global.html (Shadow DOM/XHR), event-global-extra (iframes), event-global-is-still-set-* (iframes) |
-| Activation behavior (remaining) | 3 | Event-dispatch-single-activation (inline handler scope), preventDefault-during-activation (promise_test), Event-dispatch-on-disabled-elements (promise_test/CSS animations) |
+| Activation behavior (remaining) | 1 | Event-dispatch-on-disabled-elements (CSS animations) |
 | Event subclasses (Animation/Transition/Focus/Pointer) | 9 | webkit-animation-*, webkit-transition-*, focus-event-*, pointer-event-*, mouse-event-*, KeyEvent-initKeyEvent, EventListener-invoke-legacy |
 | AbortController/AbortSignal | 2 | AddEventListenerOptions-signal, event-disabled-dynamic (via abort pattern) |
 | TreeWalker/NodeIterator | 1 | Document-createTreeWalker |
@@ -542,11 +542,11 @@ Known subtest counts where recorded: Event-dispatch-click 33/33, Element-classli
 | Custom elements | 2 | Node-appendChild-cereactions, EventTarget-add-listener-platform-object |
 | Misc (characterSet, etc.) | 7 | Document-characterSet-*, Document-URL (iframe redirect), Document-getElementById, remove-unscopable (onclick handlers), etc. |
 | Event dispatch edge cases | 2 | Event-dispatch-redispatch, Event-dispatch-throwing-multiple-globals |
-| Other (GamepadEvent, composedPath, browsing context, etc.) | 14 | remaining miscellaneous skips |
+| Other (GamepadEvent, composedPath, browsing context, etc.) | 11 | remaining miscellaneous skips |
 
 ### WPT Phases 5–6 — Implementation Targets
 
-Prioritized by tests-unblocked and cascading dependencies. Started at 147, now at 171 passing (Phase 5: MutationObserver + quick wins, Phase 6: click activation + on* handlers + MouseEvent).
+Prioritized by tests-unblocked and cascading dependencies. Started at 147, now at 176 passing (Phase 5: MutationObserver + quick wins, Phase 6: click activation + on* handlers + MouseEvent, Phase 7: inline event handlers + promise_test).
 
 **Tier 1: MutationObserver (3 agents, parallel) — DONE (+8 pass, +2 fail)**
 
@@ -566,7 +566,7 @@ Architecture: `mutation_observer.rs` (~940 lines). `MutationObserverState` threa
 
 | Feature | Tests | Effort | Status |
 |---------|-------|--------|--------|
-| click() activation behavior | 7 (4 pass, 3 re-skipped) | Medium | **DONE** — Phase 6. Unified on* handlers, activation.rs, MouseEvent properties. 4 new test files passing; 2 re-skipped (inline handler scope, promise_test); 1 already passing. |
+| click() activation behavior | 7 (6 pass, 1 partial) | Medium | **DONE** — Phase 6+7. Unified on* handlers, activation.rs, MouseEvent properties, inline handler compilation, promise_test harness. 6 test files passing; Event-dispatch-single-activation-behavior 102/132 (a/area need location.hash). |
 | NamedNodeMap | 3 | Medium | element.attributes collection: item(), getNamedItem(), length, indexed access. New Proxy-based collection type. |
 
 **Quick win fixes (DONE — +5 tests):**
@@ -784,7 +784,7 @@ Must support: clicking links/buttons, filling form inputs, selecting dropdowns, 
   - Git submodule at `tests/wpt/` with sparse checkout: `resources`, `dom/nodes`, `dom/events`
   - 164 HTML test files in `dom/nodes/`, 78 in `dom/events/`
   - jsdom's `to-run.yaml` provides a curated roadmap of which tests are feasible for non-browser DOM implementations
-  - **Phase 6 COMPLETE (click activation + on* handlers + MouseEvent) + Phase 5 (MutationObserver) + quick wins + dynamic iframe loading** — 171/263 passing, remainder deferred (Shadow DOM/workers/Range/advanced iframes)
+  - **Phase 7 COMPLETE (inline event handlers + promise_test) + Phase 6 (click activation + on* handlers + MouseEvent) + Phase 5 (MutationObserver) + quick wins + dynamic iframe loading** — 176/263 passing, remainder deferred (Shadow DOM/workers/Range/advanced iframes/location.hash)
   - Future phases: `html/dom/`, `css/selectors/`
 - **html5lib-tests** — integrated as git submodule at `tests/html5lib-tests/`
   - **Tree-construction:** 1778 test cases from 56 `.dat` files, run via `cargo test --test html5lib_tree_construction`

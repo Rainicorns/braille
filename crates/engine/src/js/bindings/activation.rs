@@ -47,7 +47,7 @@ pub(crate) fn has_activation_behavior(tree: &DomTree, node_id: NodeId) -> bool {
                         .find(|a| a.local_name == "type")
                         .map(|a| a.value.to_lowercase())
                         .unwrap_or_else(|| "text".to_string());
-                    matches!(input_type.as_str(), "checkbox" | "radio" | "submit" | "reset" | "button")
+                    matches!(input_type.as_str(), "checkbox" | "radio" | "submit" | "reset" | "button" | "image")
                 }
                 "button" => true,
                 "a" => attributes.iter().any(|a| a.local_name == "href"),
@@ -62,14 +62,26 @@ pub(crate) fn has_activation_behavior(tree: &DomTree, node_id: NodeId) -> bool {
 }
 
 /// Find the activation target per the DOM spec:
-/// "Let activationTarget be target if target has activation behavior, or null otherwise."
-/// The propagation_path is ordered root-to-target, so the target is the last element.
-pub(crate) fn find_activation_target(tree: &DomTree, propagation_path: &[NodeId]) -> Option<NodeId> {
-    let target = *propagation_path.last()?;
-    if has_activation_behavior(tree, target) {
-        Some(target)
-    } else {
+/// "Set activationTarget to the nearest inclusive ancestor of target that has activation behavior."
+/// The propagation_path is ordered root-to-target, so we walk backwards from the target.
+/// When `bubbles` is false, only the target itself is checked (parents are not reached).
+pub(crate) fn find_activation_target(tree: &DomTree, propagation_path: &[NodeId], bubbles: bool) -> Option<NodeId> {
+    if bubbles {
+        // Walk from target (last) towards root (first) to find nearest inclusive ancestor
+        for &node_id in propagation_path.iter().rev() {
+            if has_activation_behavior(tree, node_id) {
+                return Some(node_id);
+            }
+        }
         None
+    } else {
+        // Non-bubbling: only check the target itself
+        let target = *propagation_path.last()?;
+        if has_activation_behavior(tree, target) {
+            Some(target)
+        } else {
+            None
+        }
     }
 }
 
@@ -207,14 +219,16 @@ pub(crate) fn run_post_activation(
                     fire_simple_event(tree, node_id, "input", true, false, ctx);
                     fire_simple_event(tree, node_id, "change", true, false, ctx);
                 }
-                "submit" => {
-                    // Find ancestor form and fire submit event
-                    if let Some(form_id) = find_ancestor_form(&tree.borrow(), node_id) {
+                "submit" | "image" => {
+                    // Drop tree borrow before fire_simple_event (which re-enters dispatch)
+                    let form_id = { find_ancestor_form(&tree.borrow(), node_id) };
+                    if let Some(form_id) = form_id {
                         fire_simple_event(tree, form_id, "submit", true, true, ctx);
                     }
                 }
                 "reset" => {
-                    if let Some(form_id) = find_ancestor_form(&tree.borrow(), node_id) {
+                    let form_id = { find_ancestor_form(&tree.borrow(), node_id) };
+                    if let Some(form_id) = form_id {
                         fire_simple_event(tree, form_id, "reset", true, true, ctx);
                     }
                 }
@@ -225,12 +239,14 @@ pub(crate) fn run_post_activation(
             let button_type = if input_type.is_empty() { "submit" } else { &input_type };
             match button_type {
                 "submit" => {
-                    if let Some(form_id) = find_ancestor_form(&tree.borrow(), node_id) {
+                    let form_id = { find_ancestor_form(&tree.borrow(), node_id) };
+                    if let Some(form_id) = form_id {
                         fire_simple_event(tree, form_id, "submit", true, true, ctx);
                     }
                 }
                 "reset" => {
-                    if let Some(form_id) = find_ancestor_form(&tree.borrow(), node_id) {
+                    let form_id = { find_ancestor_form(&tree.borrow(), node_id) };
+                    if let Some(form_id) = form_id {
                         fire_simple_event(tree, form_id, "reset", true, true, ctx);
                     }
                 }
@@ -238,9 +254,9 @@ pub(crate) fn run_post_activation(
             }
         }
         "label" => {
-            // Find associated control and click it
-            if let Some(control_id) = find_label_control(&tree.borrow(), node_id) {
-                // Dispatch a synthetic click on the control
+            // Drop tree borrow before click dispatch (which re-enters dispatch)
+            let control_id = { find_label_control(&tree.borrow(), node_id) };
+            if let Some(control_id) = control_id {
                 let control_js = get_or_create_js_element(control_id, tree.clone(), ctx);
                 if let Ok(js_obj) = control_js {
                     let click_fn = js_obj.get(js_string!("click"), ctx);

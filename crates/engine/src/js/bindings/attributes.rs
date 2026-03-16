@@ -165,6 +165,12 @@ fn set_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     // Per spec, lowercase the name for HTML elements in HTML documents
     let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
     super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, &name, &value);
+    // Compile inline event handler if this is an on* attribute
+    if name.starts_with("on") && name.len() > 2 {
+        let tree_ptr = std::rc::Rc::as_ptr(&el.tree) as usize;
+        let node_id = el.node_id;
+        super::on_event::compile_inline_event_handler(tree_ptr, node_id, &name[2..], &value, ctx);
+    }
     Ok(JsValue::undefined())
 }
 
@@ -186,6 +192,11 @@ fn remove_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
     // Per spec, lowercase the name for HTML elements in HTML documents
     let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
     super::mutation_observer::remove_attribute_with_observer(&el.tree, el.node_id, &name);
+    // Clear inline event handler if this is an on* attribute
+    if name.starts_with("on") && name.len() > 2 {
+        let tree_ptr = std::rc::Rc::as_ptr(&el.tree) as usize;
+        super::on_event::set_on_event_handler(tree_ptr, el.node_id, &name[2..], None);
+    }
     Ok(JsValue::undefined())
 }
 

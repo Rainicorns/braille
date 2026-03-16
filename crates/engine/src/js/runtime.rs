@@ -1760,7 +1760,9 @@ impl JsRuntime {
 
     /// Evaluates a JS source string and returns the result.
     pub fn eval(&mut self, code: &str) -> JsResult<JsValue> {
-        self.context.eval(Source::from_bytes(code))
+        let result = self.context.eval(Source::from_bytes(code));
+        let _ = self.context.run_jobs();
+        result
     }
 
     /// Deliver pending MutationObserver records to their callbacks.

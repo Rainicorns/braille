@@ -754,6 +754,30 @@ pub(crate) fn get_or_create_js_element(
         }
     }
 
+    // Compile inline event handler attributes (e.g., onclick="...") into JS functions
+    {
+        let inline_handlers: Vec<(String, String)> = {
+            let t = tree.borrow();
+            let node = t.get_node(node_id);
+            match &node.data {
+                NodeData::Element { attributes, .. } => {
+                    attributes
+                        .iter()
+                        .filter(|a| a.local_name.starts_with("on") && a.local_name.len() > 2)
+                        .map(|a| (a.local_name[2..].to_string(), a.value.clone()))
+                        .collect()
+                }
+                _ => Vec::new(),
+            }
+        };
+        if !inline_handlers.is_empty() {
+            let tp = Rc::as_ptr(&tree) as usize;
+            for (event_name, attr_value) in inline_handlers {
+                super::on_event::compile_inline_event_handler(tp, node_id, &event_name, &attr_value, ctx);
+            }
+        }
+    }
+
     NODE_CACHE.with(|cell| {
         let rc = cell.borrow();
         let cache_rc = rc.as_ref().expect("NODE_CACHE not initialized");
@@ -1537,7 +1561,7 @@ impl JsElement {
         // Activation behavior: find activation target and run pre-activation
         let (activation_target, saved_activation) = if is_click_mouse {
             let tree_ref = tree.borrow();
-            let at = super::activation::find_activation_target(&tree_ref, &propagation_path);
+            let at = super::activation::find_activation_target(&tree_ref, &propagation_path, bubbles);
             drop(tree_ref);
             if let Some(at_id) = at {
                 let saved = super::activation::run_legacy_pre_activation(&mut tree.borrow_mut(), at_id);
@@ -1655,7 +1679,7 @@ impl JsElement {
 
             // Invoke on* handler at target
             super::on_event::invoke_on_event_handler(
-                tree_scope, target_node_id, &event_type, this, &event_val, ctx,
+                tree_scope, target_node_id, &event_type, this, &event_val, &event_obj, ctx,
             );
 
             if should_stop {
@@ -1678,7 +1702,7 @@ impl JsElement {
 
                 // Invoke on* handler during bubble
                 super::on_event::invoke_on_event_handler(
-                    tree_scope, node_id, &event_type, &JsValue::from(current_target_js), &event_val, ctx,
+                    tree_scope, node_id, &event_type, &JsValue::from(current_target_js), &event_val, &event_obj, ctx,
                 );
 
                 if should_stop {
@@ -1701,7 +1725,7 @@ impl JsElement {
 
                 // Invoke on* handler for window during bubble
                 super::on_event::invoke_on_event_handler(
-                    usize::MAX, WINDOW_LISTENER_ID, &event_type, &window_val, &event_val, ctx,
+                    usize::MAX, WINDOW_LISTENER_ID, &event_type, &window_val, &event_val, &event_obj, ctx,
                 );
 
                 let _ = should_stop;

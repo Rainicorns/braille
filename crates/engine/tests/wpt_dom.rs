@@ -108,6 +108,7 @@ fn testharness_preamble() -> String {
                 return function() { throw new Error(msg || "unreached"); };
             },
             add_cleanup: function() {},
+            step_timeout: function(fn, timeout) { fn(); },
             _done: false
         };
         var result = { name: t.name, status: 0, message: "" };
@@ -124,8 +125,38 @@ fn testharness_preamble() -> String {
     };
 
     self.promise_test = function(fn, name) {
-        // Stub — mark as NOTRUN
-        results.push({ name: name || "(unnamed)", status: 3, message: "promise_test not supported" });
+        var result = { name: name || "(unnamed)", status: 0, message: "" };
+        results.push(result);
+        try {
+            var t = {
+                name: name || "(unnamed)",
+                step_func: function(f) {
+                    return function() { return f.apply(t, arguments); };
+                },
+                step_func_done: function(f) {
+                    return function() {
+                        f.apply(t, arguments);
+                        t._done = true;
+                    };
+                },
+                done: function() { t._done = true; },
+                unreached_func: function(msg) {
+                    return function() { throw new Error(msg || "unreached"); };
+                },
+                add_cleanup: function() {},
+                _done: false
+            };
+            var p = fn(t);
+            if (p && typeof p.then === 'function') {
+                p.then(function() {}, function(e) {
+                    result.status = 1;
+                    result.message = e.message || String(e);
+                });
+            }
+        } catch(e) {
+            result.status = 1;
+            result.message = e.message || String(e);
+        }
     };
 
     self.setup = function(fn_or_props) {
@@ -505,9 +536,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Event-dispatch-other-document", "requires multi-document"),
         // Event-dispatch-throwing-multiple-globals
         ("Event-dispatch-throwing-multiple-globals", "requires multi-globals"),
-        // Event-dispatch-single-activation-behavior — activation works but inline event handlers
-        // (onsubmit="activated(this)") can't resolve global functions; needs attribute handler scope fix
-        ("Event-dispatch-single-activation-behavior", "requires inline event handler global scope"),
+        // Event-dispatch-single-activation-behavior — now supported (inline handlers + promise_test)
+        // ("Event-dispatch-single-activation-behavior", "requires inline event handler global scope"),
         // Event-dispatch-target-moved/removed — propagation path is snapshot, arena nodes survive (unskip)
         // ("Event-dispatch-target-moved", "requires live dispatch mutation"),
         // ("Event-dispatch-target-removed", "requires live dispatch mutation"),
@@ -522,8 +552,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("handler-count", "requires handler counting"),
         // label default action — now supported (activation behavior)
         // ("label-default-action", "requires label activation"),
-        // preventDefault during activation behavior — uses promise_test (not supported)
-        ("preventDefault-during-activation", "requires promise_test"),
+        // preventDefault-during-activation — now supported (promise_test implemented)
+        // ("preventDefault-during-activation", "requires promise_test"),
         // Window composed path — unskipped: composedPath now implemented
         // ("window-composed-path", "requires composedPath with window"),
         // webkit animation/transition events
@@ -554,8 +584,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("AddEventListenerOptions-once.any", "requires EventTarget constructor"),
         // ("AddEventListenerOptions-passive.any", "requires EventTarget constructor"),
         // ("EventListenerOptions-capture", "requires truthy-value capture handling and options parsing for null callback in Element dispatch"),
-        // Event-dispatch-on-disabled-elements — 4/9 pass, 5 need promise_test (CSS animations, real clicks)
-        ("Event-dispatch-on-disabled-elements", "requires promise_test (CSS animations, real clicks)"),
+        // Event-dispatch-on-disabled-elements — promise_test works, but CSS animations still missing
+        ("Event-dispatch-on-disabled-elements", "requires CSS animations for promise_test subtests"),
         // EventListener-invoke-legacy — requires TransitionEvent/AnimationEvent constructors (keep skipped)
         ("EventListener-invoke-legacy", "requires TransitionEvent/AnimationEvent constructors"),
         // Event-dispatch-bubbles-true/false — now supported (cross-document listener isolation + window check)
