@@ -164,7 +164,7 @@ fn set_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
 
     // Per spec, lowercase the name for HTML elements in HTML documents
     let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, &name, &value);
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, &name, &value);
     // Compile inline event handler if this is an on* attribute
     if name.starts_with("on") && name.len() > 2 {
         let tree_ptr = std::rc::Rc::as_ptr(&el.tree) as usize;
@@ -191,11 +191,11 @@ fn remove_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
 
     // Per spec, lowercase the name for HTML elements in HTML documents
     let name = if el.tree.borrow().is_html_document() { name.to_ascii_lowercase() } else { name };
-    super::mutation_observer::remove_attribute_with_observer(&el.tree, el.node_id, &name);
+    super::mutation_observer::remove_attribute_with_observer(ctx, &el.tree, el.node_id, &name);
     // Clear inline event handler if this is an on* attribute
     if name.starts_with("on") && name.len() > 2 {
         let tree_ptr = std::rc::Rc::as_ptr(&el.tree) as usize;
-        super::on_event::set_on_event_handler(tree_ptr, el.node_id, &name[2..], None);
+        super::on_event::set_on_event_handler(tree_ptr, el.node_id, &name[2..], None, ctx);
     }
     Ok(JsValue::undefined())
 }
@@ -360,7 +360,7 @@ fn set_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_ns_with_observer(&el.tree, el.node_id, &namespace, &qualified_name, &value);
+    super::mutation_observer::set_attribute_ns_with_observer(ctx, &el.tree, el.node_id, &namespace, &qualified_name, &value);
     Ok(JsValue::undefined())
 }
 
@@ -417,7 +417,7 @@ fn remove_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::remove_attribute_ns_with_observer(&el.tree, el.node_id, &namespace, &local_name);
+    super::mutation_observer::remove_attribute_ns_with_observer(ctx, &el.tree, el.node_id, &namespace, &local_name);
     Ok(JsValue::undefined())
 }
 
@@ -498,14 +498,14 @@ fn toggle_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
             Ok(JsValue::from(true))
         } else if !has_force || !force_arg.unwrap().to_boolean() {
             // force missing or false: remove the attribute, return false
-            super::mutation_observer::remove_attribute_with_observer(&el.tree, el.node_id, &name);
+            super::mutation_observer::remove_attribute_with_observer(ctx, &el.tree, el.node_id, &name);
             Ok(JsValue::from(false))
         } else {
             Ok(JsValue::from(true))
         }
     } else if !has_force || force_arg.unwrap().to_boolean() {
         // force missing or true: add the attribute with empty value, return true
-        super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, &name, "");
+        super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, &name, "");
         Ok(JsValue::from(true))
     } else {
         // force=false and attribute doesn't exist: return false
@@ -544,7 +544,7 @@ fn set_id(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "id", &value);
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "id", &value);
     Ok(JsValue::undefined())
 }
 
@@ -579,7 +579,7 @@ fn set_class_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "class", &value);
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "class", &value);
     Ok(JsValue::undefined())
 }
 

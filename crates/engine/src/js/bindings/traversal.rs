@@ -1,36 +1,17 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use boa_engine::{
     class::ClassBuilder,
     js_string,
     native_function::NativeFunction,
-    object::JsObject,
     property::Attribute,
     Context, JsError, JsResult, JsValue,
 };
 
-use crate::dom::NodeId;
+use crate::js::realm_state;
 
 use super::element::{JsElement, get_or_create_js_element};
 use super::collections;
-
-// ---------------------------------------------------------------------------
-// Cache for live NodeList / HTMLCollection per (tree_ptr, node_id)
-// ---------------------------------------------------------------------------
-
-/// Cache key is (tree_ptr, node_id).
-type CollectionCacheKey = (usize, NodeId);
-
-thread_local! {
-    /// Cached childNodes NodeList objects per (tree_ptr, node_id)
-    static CHILD_NODES_CACHE: RefCell<HashMap<CollectionCacheKey, JsObject>> =
-        RefCell::new(HashMap::new());
-    /// Cached children HTMLCollection objects per (tree_ptr, node_id)
-    static CHILDREN_CACHE: RefCell<HashMap<CollectionCacheKey, JsObject>> =
-        RefCell::new(HashMap::new());
-}
 
 /// Registers all traversal properties on the Element class.
 pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
@@ -327,11 +308,8 @@ fn get_child_nodes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
     let cache_key = (tree_ptr, node_id);
 
     // Check cache first for identity (el.childNodes === el.childNodes)
-    let cached = CHILD_NODES_CACHE.with(|cell| {
-        cell.borrow().get(&cache_key).cloned()
-    });
-
-    if let Some(cached_obj) = cached {
+    let cache = realm_state::child_nodes_cache(ctx);
+    if let Some(cached_obj) = cache.borrow().get(&cache_key).cloned() {
         return Ok(cached_obj.into());
     }
 
@@ -339,9 +317,8 @@ fn get_child_nodes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
     let nodelist = collections::create_live_nodelist(node_id, tree_rc, ctx)?;
 
     // Cache it
-    CHILD_NODES_CACHE.with(|cell| {
-        cell.borrow_mut().insert(cache_key, nodelist.clone());
-    });
+    let cache = realm_state::child_nodes_cache(ctx);
+    cache.borrow_mut().insert(cache_key, nodelist.clone());
 
     Ok(nodelist.into())
 }
@@ -361,11 +338,8 @@ fn get_children(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResul
     let cache_key = (tree_ptr, node_id);
 
     // Check cache first for identity
-    let cached = CHILDREN_CACHE.with(|cell| {
-        cell.borrow().get(&cache_key).cloned()
-    });
-
-    if let Some(cached_obj) = cached {
+    let cache = realm_state::children_cache(ctx);
+    if let Some(cached_obj) = cache.borrow().get(&cache_key).cloned() {
         return Ok(cached_obj.into());
     }
 
@@ -373,9 +347,8 @@ fn get_children(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResul
     let htmlcollection = collections::create_live_htmlcollection(node_id, tree_rc, ctx)?;
 
     // Cache it
-    CHILDREN_CACHE.with(|cell| {
-        cell.borrow_mut().insert(cache_key, htmlcollection.clone());
-    });
+    let cache = realm_state::children_cache(ctx);
+    cache.borrow_mut().insert(cache_key, htmlcollection.clone());
 
     Ok(htmlcollection.into())
 }

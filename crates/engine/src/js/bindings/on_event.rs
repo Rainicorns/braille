@@ -1,68 +1,49 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-
 use boa_engine::{
     js_string, native_function::NativeFunction, property::PropertyDescriptor, Context, JsObject, JsValue, Source,
 };
 
 use crate::dom::NodeId;
+use crate::js::realm_state;
 
 use super::element::JsElement;
 use super::window::WINDOW_LISTENER_ID;
 
-/// Unified on* IDL event handler storage.
-/// Key: (tree_ptr, node_id, event_name) — for window handlers, tree_ptr = usize::MAX.
-type OnEventKey = (usize, NodeId, String);
-
-type OnEventMap = HashMap<OnEventKey, JsObject>;
-
-thread_local! {
-    #[allow(clippy::type_complexity)]
-    pub(crate) static ON_EVENT_HANDLERS: RefCell<Option<Rc<RefCell<OnEventMap>>>> = const { RefCell::new(None) };
-}
-
-/// Initialize the ON_EVENT_HANDLERS thread-local (called from JsRuntime::new).
-pub(crate) fn init_on_event_handlers() {
-    ON_EVENT_HANDLERS.with(|cell| {
-        let mut opt = cell.borrow_mut();
-        if opt.is_none() {
-            *opt = Some(Rc::new(RefCell::new(HashMap::new())));
-        }
-    });
-}
-
 /// Get an on* event handler for a given node.
-pub(crate) fn get_on_event_handler(tree_ptr: usize, node_id: NodeId, event_name: &str) -> Option<JsObject> {
-    ON_EVENT_HANDLERS.with(|cell| {
-        let rc = cell.borrow();
-        let map_rc = rc.as_ref()?;
-        let map = map_rc.borrow();
-        map.get(&(tree_ptr, node_id, event_name.to_string())).cloned()
-    })
+pub(crate) fn get_on_event_handler(
+    tree_ptr: usize,
+    node_id: NodeId,
+    event_name: &str,
+    ctx: &Context,
+) -> Option<JsObject> {
+    let handlers = realm_state::on_event_handlers(ctx);
+    let map = handlers.borrow();
+    map.get(&(tree_ptr, node_id, event_name.to_string())).cloned()
 }
 
 /// Set (or clear) an on* event handler for a given node.
 /// Pass a callable JsObject to set, or None to clear.
-pub(crate) fn set_on_event_handler(tree_ptr: usize, node_id: NodeId, event_name: &str, handler: Option<JsObject>) {
-    ON_EVENT_HANDLERS.with(|cell| {
-        let rc = cell.borrow();
-        let map_rc = rc.as_ref().expect("ON_EVENT_HANDLERS not initialized");
-        let mut map = map_rc.borrow_mut();
-        let key = (tree_ptr, node_id, event_name.to_string());
-        match handler {
-            Some(h) => {
-                map.insert(key, h);
-            }
-            None => {
-                map.remove(&key);
-            }
+pub(crate) fn set_on_event_handler(
+    tree_ptr: usize,
+    node_id: NodeId,
+    event_name: &str,
+    handler: Option<JsObject>,
+    ctx: &Context,
+) {
+    let handlers = realm_state::on_event_handlers(ctx);
+    let mut map = handlers.borrow_mut();
+    let key = (tree_ptr, node_id, event_name.to_string());
+    match handler {
+        Some(h) => {
+            map.insert(key, h);
         }
-    });
+        None => {
+            map.remove(&key);
+        }
+    }
 }
 
 /// Compile an inline event handler attribute (e.g., `onclick="alert(1)"`) into a JS function
-/// and register it in ON_EVENT_HANDLERS.
+/// and register it in the per-realm on-event handler map.
 /// The attribute value is wrapped as `(function(event) { <value> })` and evaluated.
 /// On compilation error, the handler is silently not set (per spec).
 pub(crate) fn compile_inline_event_handler(
@@ -76,7 +57,7 @@ pub(crate) fn compile_inline_event_handler(
     match ctx.eval(Source::from_bytes(code.as_bytes())) {
         Ok(val) => {
             if let Some(func) = val.as_object().filter(|o| o.is_callable()) {
-                set_on_event_handler(tree_ptr, node_id, event_name, Some(func.clone()));
+                set_on_event_handler(tree_ptr, node_id, event_name, Some(func.clone()), ctx);
             }
         }
         Err(_) => {
@@ -97,7 +78,7 @@ pub(crate) fn invoke_on_event_handler(
     event_obj: &JsObject,
     ctx: &mut Context,
 ) -> bool {
-    let handler = get_on_event_handler(tree_ptr, node_id, event_name);
+    let handler = get_on_event_handler(tree_ptr, node_id, event_name, ctx);
     if let Some(handler_fn) = handler {
         if handler_fn.is_callable() {
             let result = handler_fn.call(this_val, std::slice::from_ref(event_val), ctx);
@@ -124,7 +105,7 @@ pub(crate) fn invoke_on_event_handler(
 
 /// Register on* accessor properties (getter/setter) on an element prototype.
 /// `event_names` is a list like &["click", "change", "input", "load", ...].
-/// Each creates an `onclick`, `onchange`, etc. accessor that reads/writes ON_EVENT_HANDLERS.
+/// Each creates an `onclick`, `onchange`, etc. accessor that reads/writes the per-realm on-event handler map.
 pub(crate) fn register_on_event_accessors(
     proto: &JsObject,
     event_names: &[&str],
@@ -138,7 +119,7 @@ pub(crate) fn register_on_event_accessors(
         let event_name_for_set = event_name.to_string();
 
         let getter = unsafe {
-            NativeFunction::from_closure(move |this, _args, _ctx| {
+            NativeFunction::from_closure(move |this, _args, ctx2| {
                 let obj = match this.as_object() {
                     Some(o) => o,
                     None => return Ok(JsValue::null()),
@@ -147,7 +128,7 @@ pub(crate) fn register_on_event_accessors(
                     Some(el) => (std::rc::Rc::as_ptr(&el.tree) as usize, el.node_id),
                     None => return Ok(JsValue::null()),
                 };
-                match get_on_event_handler(tree_ptr, node_id, &event_name_for_get) {
+                match get_on_event_handler(tree_ptr, node_id, &event_name_for_get, ctx2) {
                     Some(h) => Ok(JsValue::from(h)),
                     None => Ok(JsValue::null()),
                 }
@@ -155,7 +136,7 @@ pub(crate) fn register_on_event_accessors(
         };
 
         let setter = unsafe {
-            NativeFunction::from_closure(move |this, args, _ctx| {
+            NativeFunction::from_closure(move |this, args, ctx2| {
                 let obj = match this.as_object() {
                     Some(o) => o,
                     None => return Ok(JsValue::undefined()),
@@ -166,9 +147,9 @@ pub(crate) fn register_on_event_accessors(
                 };
                 let val = args.first().cloned().unwrap_or(JsValue::null());
                 if let Some(func) = val.as_object().filter(|o| o.is_callable()) {
-                    set_on_event_handler(tree_ptr, node_id, &event_name_for_set, Some(func.clone()));
+                    set_on_event_handler(tree_ptr, node_id, &event_name_for_set, Some(func.clone()), ctx2);
                 } else {
-                    set_on_event_handler(tree_ptr, node_id, &event_name_for_set, None);
+                    set_on_event_handler(tree_ptr, node_id, &event_name_for_set, None, ctx2);
                 }
                 Ok(JsValue::undefined())
             })
@@ -204,8 +185,8 @@ pub(crate) fn register_window_on_event_accessors(
         let event_name_for_set = event_name.to_string();
 
         let getter = unsafe {
-            NativeFunction::from_closure(move |_this, _args, _ctx| {
-                match get_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, &event_name_for_get) {
+            NativeFunction::from_closure(move |_this, _args, ctx2| {
+                match get_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, &event_name_for_get, ctx2) {
                     Some(h) => Ok(JsValue::from(h)),
                     None => Ok(JsValue::null()),
                 }
@@ -213,12 +194,12 @@ pub(crate) fn register_window_on_event_accessors(
         };
 
         let setter = unsafe {
-            NativeFunction::from_closure(move |_this, args, _ctx| {
+            NativeFunction::from_closure(move |_this, args, ctx2| {
                 let val = args.first().cloned().unwrap_or(JsValue::null());
                 if let Some(func) = val.as_object().filter(|o| o.is_callable()) {
-                    set_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, &event_name_for_set, Some(func.clone()));
+                    set_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, &event_name_for_set, Some(func.clone()), ctx2);
                 } else {
-                    set_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, &event_name_for_set, None);
+                    set_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, &event_name_for_set, None, ctx2);
                 }
                 Ok(JsValue::undefined())
             })

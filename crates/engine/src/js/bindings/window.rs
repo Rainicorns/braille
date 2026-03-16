@@ -5,29 +5,21 @@ use std::rc::Rc;
 use boa_engine::{
     js_string,
     native_function::NativeFunction,
-    object::{JsObject, ObjectInitializer},
+    object::ObjectInitializer,
     property::{Attribute, PropertyDescriptor},
     Context, JsResult, JsValue,
 };
 
-use super::event_target::{ListenerEntry, EVENT_LISTENERS};
+use super::event_target::ListenerEntry;
+use crate::js::realm_state;
 
 type ConsoleBuffer = Rc<RefCell<Vec<String>>>;
 type TimerMap = Rc<RefCell<HashMap<u32, JsValue>>>;
 
-/// Well-known ID for window in the EVENT_LISTENERS map.
+/// Well-known ID for window in the event listeners map.
 /// Uses usize::MAX - 1 to avoid collision with DOM NodeIds (start at 0)
 /// and standalone EventTarget IDs (start at usize::MAX / 2).
 pub(crate) const WINDOW_LISTENER_ID: usize = usize::MAX - 1;
-
-thread_local! {
-    /// Thread-local storing the window JsObject so dispatch_event in element.rs
-    /// can include window in the event propagation path.
-    pub(crate) static WINDOW_OBJECT: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-
-    /// Thread-local storing the `window.onload` handler function.
-    pub(crate) static WINDOW_ONLOAD_HANDLER: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-}
 
 fn console_format_args(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
     let parts: Vec<String> = args
@@ -343,7 +335,7 @@ pub(crate) fn register_window(
     let location = build_location("about:blank", context);
     let navigator = build_navigator(context);
 
-    // Window event listeners — stored in EVENT_LISTENERS with WINDOW_LISTENER_ID
+    // Window event listeners — stored in event_listeners with WINDOW_LISTENER_ID
     let add_event_listener = unsafe { NativeFunction::from_closure(move |_this, args, ctx| {
         let event_type = args.first()
             .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
@@ -385,11 +377,10 @@ pub(crate) fn register_window(
             .ok_or_else(|| boa_engine::JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
             .clone();
 
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-            let mut map = listeners_rc.borrow_mut();
-            let entries = map.entry((usize::MAX, WINDOW_LISTENER_ID)).or_insert_with(Vec::new);
+        {
+            let listeners = realm_state::event_listeners(ctx);
+            let mut map = listeners.borrow_mut();
+            let entries = map.entry((usize::MAX, WINDOW_LISTENER_ID)).or_default();
 
             let duplicate = entries.iter().any(|entry| {
                 entry.event_type == event_type
@@ -406,7 +397,7 @@ pub(crate) fn register_window(
                     passive,
                 });
             }
-        });
+        }
 
         Ok(JsValue::undefined())
     }) };
@@ -441,10 +432,9 @@ pub(crate) fn register_window(
             }
         }
 
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-            let mut map = listeners_rc.borrow_mut();
+        {
+            let listeners = realm_state::event_listeners(ctx);
+            let mut map = listeners.borrow_mut();
             if let Some(entries) = map.get_mut(&(usize::MAX, WINDOW_LISTENER_ID)) {
                 entries.retain(|entry| {
                     !(entry.event_type == event_type
@@ -455,7 +445,7 @@ pub(crate) fn register_window(
                     map.remove(&(usize::MAX, WINDOW_LISTENER_ID));
                 }
             }
-        });
+        }
 
         Ok(JsValue::undefined())
     }) };
@@ -481,9 +471,9 @@ pub(crate) fn register_window(
             evt.phase = 2;
         }
 
-        let window_val: JsValue = WINDOW_OBJECT.with(|cell: &RefCell<Option<JsObject>>| {
-            cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
-        }).unwrap_or(JsValue::undefined());
+        let window_val: JsValue = realm_state::window_object(ctx)
+            .map(JsValue::from)
+            .unwrap_or(JsValue::undefined());
 
         event_obj.define_property_or_throw(
             js_string!("target"),
@@ -535,8 +525,8 @@ pub(crate) fn register_window(
 
     // window.event getter — returns the current event during dispatch, undefined otherwise
     let event_getter = unsafe {
-        NativeFunction::from_closure(|_this, _args, _ctx| {
-            let event = super::element::CURRENT_EVENT.with(|cell| cell.borrow().clone());
+        NativeFunction::from_closure(|_this, _args, ctx| {
+            let event = crate::js::realm_state::current_event(ctx);
             match event {
                 Some(obj) => Ok(JsValue::from(obj)),
                 None => Ok(JsValue::undefined()),
@@ -727,11 +717,9 @@ pub(crate) fn register_window(
         )
         .expect("failed to define window.getComputedStyle");
 
-    // Store the window object in the thread-local so dispatch_event in element.rs
+    // Store the window object in realm state so dispatch_event in element.rs
     // can include window in event propagation paths.
-    WINDOW_OBJECT.with(|cell: &RefCell<Option<JsObject>>| {
-        *cell.borrow_mut() = Some(window.clone());
-    });
+    realm_state::set_window_object(context, window.clone());
 
     context
         .register_global_property(js_string!("window"), window, Attribute::all())

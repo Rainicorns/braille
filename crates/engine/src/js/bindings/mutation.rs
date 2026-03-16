@@ -8,7 +8,8 @@ use boa_engine::{
 use boa_engine::JsObject;
 
 use crate::dom::{DomTree, NodeData, NodeId};
-use super::element::{JsElement, get_or_create_js_element, NODE_CACHE};
+use super::element::{JsElement, get_or_create_js_element};
+use crate::js::realm_state;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -41,17 +42,15 @@ pub(crate) fn update_node_cache_after_adoption(
     dst_tree: &Rc<RefCell<DomTree>>,
     adopted_id: NodeId,
     js_obj: &JsObject,
+    ctx: &boa_engine::Context,
 ) {
     let src_ptr = Rc::as_ptr(src_tree) as usize;
     let dst_ptr = Rc::as_ptr(dst_tree) as usize;
 
-    NODE_CACHE.with(|cell| {
-        let rc = cell.borrow();
-        let cache_rc = rc.as_ref().expect("NODE_CACHE not initialized");
-        let mut cache = cache_rc.borrow_mut();
-        cache.remove(&(src_ptr, src_node_id));
-        cache.insert((dst_ptr, adopted_id), js_obj.clone());
-    });
+    let cache = realm_state::node_cache(ctx);
+    let mut cache = cache.borrow_mut();
+    cache.remove(&(src_ptr, src_node_id));
+    cache.insert((dst_ptr, adopted_id), js_obj.clone());
 }
 
 /// Update the NODE_CACHE for all entries in a (src_id, dst_id) mapping.
@@ -62,26 +61,24 @@ pub(crate) fn update_node_cache_for_adoption_mapping(
     src_tree: &Rc<RefCell<DomTree>>,
     dst_tree: &Rc<RefCell<DomTree>>,
     mapping: &[(NodeId, NodeId)],
+    ctx: &boa_engine::Context,
 ) {
     let src_ptr = Rc::as_ptr(src_tree) as usize;
     let dst_ptr = Rc::as_ptr(dst_tree) as usize;
 
-    NODE_CACHE.with(|cell| {
-        let rc = cell.borrow();
-        let cache_rc = rc.as_ref().expect("NODE_CACHE not initialized");
-        let mut cache = cache_rc.borrow_mut();
+    let cache = realm_state::node_cache(ctx);
+    let mut cache = cache.borrow_mut();
 
-        for &(src_id, dst_id) in mapping {
-            if let Some(js_obj) = cache.remove(&(src_ptr, src_id)) {
-                // Update the JsElement inside the JsObject to point to the new tree/node
-                if let Some(mut el_mut) = js_obj.downcast_mut::<JsElement>() {
-                    el_mut.node_id = dst_id;
-                    el_mut.tree = dst_tree.clone();
-                }
-                cache.insert((dst_ptr, dst_id), js_obj);
+    for &(src_id, dst_id) in mapping {
+        if let Some(js_obj) = cache.remove(&(src_ptr, src_id)) {
+            // Update the JsElement inside the JsObject to point to the new tree/node
+            if let Some(mut el_mut) = js_obj.downcast_mut::<JsElement>() {
+                el_mut.node_id = dst_id;
+                el_mut.tree = dst_tree.clone();
             }
+            cache.insert((dst_ptr, dst_id), js_obj);
         }
-    });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -697,6 +694,7 @@ fn capture_insert_state(
 
 /// Fire MutationObserver childList records after an insertion.
 fn fire_insert_records(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     parent_id: NodeId,
     added_ids: &[NodeId],
@@ -707,14 +705,14 @@ fn fire_insert_records(
     // Queue removal from old parent
     if let Some((old_pid, old_prev, old_next)) = removal_info {
         super::mutation_observer::queue_childlist_mutation(
-            tree, old_pid, vec![], vec![added_ids[0]], old_prev, old_next,
+            ctx, tree, old_pid, vec![], vec![added_ids[0]], old_prev, old_next,
         );
     }
 
     // Queue addition to new parent
     if !added_ids.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            tree, parent_id, added_ids.to_vec(), vec![], prev_sib, next_sib,
+            ctx, tree, parent_id, added_ids.to_vec(), vec![], prev_sib, next_sib,
         );
     }
 }
@@ -797,7 +795,7 @@ pub(crate) fn register_mutation(class: &mut ClassBuilder) -> JsResult<()> {
     Ok(())
 }
 
-fn insert_before(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+fn insert_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let this_obj = this
         .as_object()
         .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: this is not an object"))?;
@@ -840,7 +838,7 @@ fn insert_before(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResu
         child_mut.node_id = adopted_id;
         child_mut.tree = tree.clone();
         drop(child_mut);
-        update_node_cache_after_adoption(&src_tree, src_id, &tree, adopted_id, &new_node_obj);
+        update_node_cache_after_adoption(&src_tree, src_id, &tree, adopted_id, &new_node_obj, ctx);
         adopted_id
     } else {
         new_node.node_id
@@ -876,7 +874,7 @@ fn insert_before(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResu
     do_insert(&tree, parent_id, new_node_id, ref_id);
 
     // Queue MutationObserver records
-    fire_insert_records(&tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
+    fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
 
     Ok(new_node_arg.clone())
 }
@@ -924,7 +922,7 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
         child_mut.node_id = adopted_id;
         child_mut.tree = tree.clone();
         drop(child_mut);
-        update_node_cache_after_adoption(&src_tree, src_id, &tree, adopted_id, &new_child_obj);
+        update_node_cache_after_adoption(&src_tree, src_id, &tree, adopted_id, &new_child_obj, ctx);
         adopted_id
     } else {
         new_child.node_id
@@ -994,13 +992,13 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
     // Queue removal of new_child from old parent (if moved)
     if let Some((old_pid, old_prev, old_next)) = removal_info {
         super::mutation_observer::queue_childlist_mutation(
-            &tree, old_pid, vec![], vec![new_child_id], old_prev, old_next,
+            ctx, &tree, old_pid, vec![], vec![new_child_id], old_prev, old_next,
         );
     }
 
     // Queue the replace record (both added and removed on the parent)
     super::mutation_observer::queue_childlist_mutation(
-        &tree, parent_id, added_ids, vec![old_child_id], prev_sib, next_sib,
+        ctx, &tree, parent_id, added_ids, vec![old_child_id], prev_sib, next_sib,
     );
 
     let js_obj = get_or_create_js_element(old_child_id, tree, ctx)?;
@@ -1055,7 +1053,7 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
 
     tree.borrow_mut().remove_child(parent_id, child_id);
 
-    super::mutation_observer::queue_childlist_mutation(&tree, parent_id, vec![], vec![child_id], prev_sib, next_sib);
+    super::mutation_observer::queue_childlist_mutation(ctx, &tree, parent_id, vec![], vec![child_id], prev_sib, next_sib);
 
     let js_obj = get_or_create_js_element(child_id, tree, ctx)?;
     Ok(js_obj.into())
@@ -1187,7 +1185,7 @@ fn append(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
         validate_pre_insert(&tree.borrow(), parent_id, nid, None, None)?;
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, None);
         do_insert(&tree, parent_id, nid, None);
-        fire_insert_records(&tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
+        fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1209,7 +1207,7 @@ fn prepend(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVa
         validate_pre_insert(&tree.borrow(), parent_id, nid, original_first_child, None)?;
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, original_first_child);
         do_insert(&tree, parent_id, nid, original_first_child);
-        fire_insert_records(&tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
+        fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1235,13 +1233,13 @@ fn replace_children(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     tree.borrow_mut().clear_children(parent_id);
     if !removed_children.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            &tree, parent_id, vec![], removed_children, None, None,
+            ctx, &tree, parent_id, vec![], removed_children, None, None,
         );
     }
     for nid in node_ids {
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, None);
         do_insert(&tree, parent_id, nid, None);
-        fire_insert_records(&tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
+        fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1309,7 +1307,7 @@ fn child_node_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsR
     // Queue MutationObserver record for the batch insertion
     if !node_ids.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            &tree, parent_id, node_ids, vec![], mo_prev_sib, reference,
+            ctx, &tree, parent_id, node_ids, vec![], mo_prev_sib, reference,
         );
     }
 
@@ -1375,7 +1373,7 @@ fn child_node_after(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     // Queue MutationObserver record
     if !node_ids.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            &tree, parent_id, node_ids, vec![], mo_prev_sib, mo_next_sib,
+            ctx, &tree, parent_id, node_ids, vec![], mo_prev_sib, mo_next_sib,
         );
     }
 
@@ -1445,7 +1443,7 @@ fn child_node_replace_with(this: &JsValue, args: &[JsValue], ctx: &mut Context) 
 
     // Queue MutationObserver record: this_id removed, node_ids added
     super::mutation_observer::queue_childlist_mutation(
-        &tree, parent_id, node_ids, vec![this_id], mo_prev_sib, mo_next_sib,
+        ctx, &tree, parent_id, node_ids, vec![this_id], mo_prev_sib, mo_next_sib,
     );
 
     Ok(JsValue::undefined())
@@ -1647,7 +1645,7 @@ pub(crate) fn document_append(this: &JsValue, args: &[JsValue], ctx: &mut Contex
         validate_pre_insert(&tree.borrow(), doc_id, nid, None, None)?;
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, None);
         do_insert(&tree, doc_id, nid, None);
-        fire_insert_records(&tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
+        fire_insert_records(ctx, &tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1668,7 +1666,7 @@ pub(crate) fn document_prepend(this: &JsValue, args: &[JsValue], ctx: &mut Conte
         validate_pre_insert(&tree.borrow(), doc_id, nid, original_first_child, None)?;
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, original_first_child);
         do_insert(&tree, doc_id, nid, original_first_child);
-        fire_insert_records(&tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
+        fire_insert_records(ctx, &tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }
@@ -1691,13 +1689,13 @@ pub(crate) fn document_replace_children(this: &JsValue, args: &[JsValue], ctx: &
     tree.borrow_mut().clear_children(doc_id);
     if !removed_children.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            &tree, doc_id, vec![], removed_children, None, None,
+            ctx, &tree, doc_id, vec![], removed_children, None, None,
         );
     }
     for nid in node_ids {
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, None);
         do_insert(&tree, doc_id, nid, None);
-        fire_insert_records(&tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
+        fire_insert_records(ctx, &tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }
     Ok(JsValue::undefined())
 }

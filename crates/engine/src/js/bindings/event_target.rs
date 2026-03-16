@@ -1,6 +1,4 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use boa_engine::{
@@ -14,6 +12,7 @@ use boa_engine::{
 use boa_gc::{Finalize, Trace};
 
 use crate::dom::NodeId;
+use crate::js::realm_state;
 
 // ---------------------------------------------------------------------------
 // ListenerEntry — one registered event listener
@@ -33,16 +32,6 @@ pub(crate) struct ListenerEntry {
 // ---------------------------------------------------------------------------
 
 pub(crate) type ListenerMap = HashMap<(usize, NodeId), Vec<ListenerEntry>>;
-
-// ---------------------------------------------------------------------------
-// Thread-local storage for the listener map.
-// This allows NativeFunction callbacks (addEventListener, removeEventListener)
-// to access the listener map without needing a reference to JsRuntime.
-// ---------------------------------------------------------------------------
-
-thread_local! {
-    pub(crate) static EVENT_LISTENERS: RefCell<Option<Rc<RefCell<ListenerMap>>>> = const { RefCell::new(None) };
-}
 
 // ---------------------------------------------------------------------------
 // Atomic counter for standalone EventTarget IDs.
@@ -126,11 +115,10 @@ impl JsEventTarget {
             .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
             .clone();
 
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-            let mut map = listeners_rc.borrow_mut();
-            let entries = map.entry((0usize, id)).or_insert_with(Vec::new);
+        {
+            let listeners = realm_state::event_listeners(ctx);
+            let mut map = listeners.borrow_mut();
+            let entries = map.entry((0usize, id)).or_default();
 
             let duplicate = entries.iter().any(|entry| {
                 entry.event_type == event_type
@@ -147,7 +135,7 @@ impl JsEventTarget {
                     passive,
                 });
             }
-        });
+        }
 
         Ok(JsValue::undefined())
     }
@@ -193,10 +181,9 @@ impl JsEventTarget {
             }
         }
 
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-            let mut map = listeners_rc.borrow_mut();
+        {
+            let listeners = realm_state::event_listeners(ctx);
+            let mut map = listeners.borrow_mut();
             if let Some(entries) = map.get_mut(&(0usize, id)) {
                 entries.retain(|entry| {
                     !(entry.event_type == event_type
@@ -207,7 +194,7 @@ impl JsEventTarget {
                     map.remove(&(0usize, id));
                 }
             }
-        });
+        }
 
         Ok(JsValue::undefined())
     }
@@ -270,18 +257,14 @@ impl JsEventTarget {
         Self::set_event_prop(&event_obj, "srcElement", this.clone(), ctx)?;
         Self::set_event_prop(&event_obj, "currentTarget", this.clone(), ctx)?;
 
-        // Store `this` in a thread-local for composedPath() access during dispatch
-        DISPATCH_TARGET.with(|cell| {
-            *cell.borrow_mut() = Some(this.clone());
-        });
+        // Store `this` in realm state for composedPath() access during dispatch
+        realm_state::set_dispatch_target(ctx, Some(this.clone()));
 
         // Invoke listeners at-target: all listeners in registration order
         let _should_stop = Self::invoke_listeners(id, &event_type, &event_obj, &event_val, ctx)?;
 
         // Clear dispatch target
-        DISPATCH_TARGET.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
+        realm_state::set_dispatch_target(ctx, None);
 
         // Reset event state
         let default_prevented = {
@@ -308,10 +291,9 @@ impl JsEventTarget {
         ctx: &mut Context,
     ) -> JsResult<bool> {
         // Snapshot listeners to avoid borrow issues
-        let matching: Vec<(JsObject, bool, Option<bool>)> = EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-            let map = listeners_rc.borrow();
+        let matching: Vec<(JsObject, bool, Option<bool>)> = {
+            let listeners = realm_state::event_listeners(ctx);
+            let map = listeners.borrow();
             match map.get(&(0usize, id)) {
                 Some(entries) => entries
                     .iter()
@@ -320,29 +302,24 @@ impl JsEventTarget {
                     .collect(),
                 None => Vec::new(),
             }
-        });
+        };
 
         // Save previous CURRENT_EVENT and set to current event (for window.event)
-        let prev_event = super::element::CURRENT_EVENT.with(|cell| cell.borrow().clone());
-        super::element::CURRENT_EVENT.with(|cell| {
-            *cell.borrow_mut() = Some(event_obj.clone());
-        });
+        let prev_event = realm_state::current_event(ctx);
+        realm_state::set_current_event(ctx, Some(event_obj.clone()));
 
         for (callback, once, passive) in &matching {
             if *once {
-                EVENT_LISTENERS.with(|el| {
-                    let rc = el.borrow();
-                    let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-                    let mut map = listeners_rc.borrow_mut();
-                    if let Some(entries) = map.get_mut(&(0usize, id)) {
-                        entries.retain(|entry| {
-                            !(entry.event_type == event_type && entry.callback == *callback && entry.once)
-                        });
-                        if entries.is_empty() {
-                            map.remove(&(0usize, id));
-                        }
+                let listeners = realm_state::event_listeners(ctx);
+                let mut map = listeners.borrow_mut();
+                if let Some(entries) = map.get_mut(&(0usize, id)) {
+                    entries.retain(|entry| {
+                        !(entry.event_type == event_type && entry.callback == *callback && entry.once)
+                    });
+                    if entries.is_empty() {
+                        map.remove(&(0usize, id));
                     }
-                });
+                }
             }
 
             let is_passive = passive.unwrap_or(false);
@@ -398,17 +375,13 @@ impl JsEventTarget {
 
             if imm_stopped {
                 // Restore previous CURRENT_EVENT before returning
-                super::element::CURRENT_EVENT.with(|cell| {
-                    *cell.borrow_mut() = prev_event.clone();
-                });
+                realm_state::set_current_event(ctx, prev_event.clone());
                 return Ok(true);
             }
         }
 
         // Restore previous CURRENT_EVENT
-        super::element::CURRENT_EVENT.with(|cell| {
-            *cell.borrow_mut() = prev_event;
-        });
+        realm_state::set_current_event(ctx, prev_event);
 
         let propagation_stopped = event_obj.downcast_ref::<super::event::JsEvent>().unwrap().propagation_stopped;
         Ok(propagation_stopped)
@@ -466,17 +439,9 @@ impl Class for JsEventTarget {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Thread-local for current dispatch target (for composedPath())
-// ---------------------------------------------------------------------------
-
-thread_local! {
-    pub(crate) static DISPATCH_TARGET: RefCell<Option<JsValue>> = const { RefCell::new(None) };
-}
-
 /// composedPath() implementation for Event — returns [target] during dispatch, [] after.
 pub(crate) fn composed_path(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let target = DISPATCH_TARGET.with(|cell| cell.borrow().clone());
+    let target = realm_state::dispatch_target(ctx);
     let array = boa_engine::object::builtins::JsArray::new(ctx);
     if let Some(t) = target {
         array.push(t, ctx)?;

@@ -17,6 +17,7 @@ use boa_engine::{
 use boa_gc::{Finalize, Trace};
 
 use crate::dom::{DomTree, NodeData, NodeId};
+use crate::js::realm_state;
 
 use super::collections::create_static_nodelist;
 use super::document::JsDocument;
@@ -68,34 +69,23 @@ struct NodeRegistration {
 }
 
 /// Top-level state for the MutationObserver subsystem.
-struct MutationObserverState {
+pub(crate) struct MutationObserverState {
     observers: Vec<ObserverEntry>,
     /// Key is (tree_ptr as usize, node_id).
     registrations: HashMap<(usize, NodeId), Vec<NodeRegistration>>,
 }
 
-// ---------------------------------------------------------------------------
-// Thread-locals
-// ---------------------------------------------------------------------------
-
-thread_local! {
-    pub(crate) static MUTATION_OBSERVER_STATE: RefCell<Option<Rc<RefCell<MutationObserverState>>>> = const { RefCell::new(None) };
-    static MUTATION_RECORD_PROTO: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-}
-
-// ---------------------------------------------------------------------------
-// Initialization
-// ---------------------------------------------------------------------------
-
-/// Creates an empty `MutationObserverState` and stores it in the thread-local.
-pub(crate) fn init_mutation_observer_state() {
-    MUTATION_OBSERVER_STATE.with(|cell| {
-        *cell.borrow_mut() = Some(Rc::new(RefCell::new(MutationObserverState {
+impl MutationObserverState {
+    /// Create an empty `MutationObserverState`.
+    pub(crate) fn new() -> Self {
+        Self {
             observers: Vec::new(),
             registrations: HashMap::new(),
-        })));
-    });
+        }
+    }
 }
+
+// (Thread-locals removed — state is now stored in RealmState via realm_state accessors)
 
 // ---------------------------------------------------------------------------
 // JsMutationObserver native data
@@ -149,9 +139,8 @@ pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
 
             // Create the observer entry (with a placeholder js_object)
             let placeholder = ObjectInitializer::new(ctx).build();
-            let observer_index = MUTATION_OBSERVER_STATE.with(|cell| {
-                let rc = cell.borrow();
-                let state_rc = rc.as_ref().expect("MutationObserver state not initialized");
+            let observer_index = {
+                let state_rc = realm_state::mutation_observer_state(ctx);
                 let mut state = state_rc.borrow_mut();
                 let idx = state.observers.len();
                 state.observers.push(ObserverEntry {
@@ -160,7 +149,7 @@ pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
                     pending_records: Vec::new(),
                 });
                 idx
-            });
+            };
 
             // Create the JS object with native data
             let obj =
@@ -169,12 +158,11 @@ pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
             obj.set_prototype(Some(proto_clone.clone()));
 
             // Store the JsObject back in the entry
-            MUTATION_OBSERVER_STATE.with(|cell| {
-                let rc = cell.borrow();
-                let state_rc = rc.as_ref().expect("MutationObserver state not initialized");
+            {
+                let state_rc = realm_state::mutation_observer_state(ctx);
                 let mut state = state_rc.borrow_mut();
                 state.observers[observer_index].js_object = obj.clone();
-            });
+            }
 
             Ok(JsValue::from(obj))
         })
@@ -222,9 +210,7 @@ pub(crate) fn register_mutation_observer_global(ctx: &mut Context) {
 
 pub(crate) fn register_mutation_record_global(ctx: &mut Context) {
     let proto = ObjectInitializer::new(ctx).build();
-    MUTATION_RECORD_PROTO.with(|cell| {
-        *cell.borrow_mut() = Some(proto.clone());
-    });
+    realm_state::set_mutation_record_proto(ctx, proto.clone());
 
     let ctor = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
         Err(JsError::from_native(
@@ -380,9 +366,8 @@ fn observe_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
     };
 
     // Add or replace registration
-    MUTATION_OBSERVER_STATE.with(|cell| {
-        let rc = cell.borrow();
-        let state_rc = rc.as_ref().expect("state");
+    {
+        let state_rc = realm_state::mutation_observer_state(ctx);
         let mut state = state_rc.borrow_mut();
 
         let key = (tree_ptr, target_node_id);
@@ -397,7 +382,7 @@ fn observe_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
                 options: init,
             });
         }
-    });
+    }
 
     Ok(JsValue::undefined())
 }
@@ -406,7 +391,7 @@ fn observe_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
 // disconnect() method
 // ---------------------------------------------------------------------------
 
-fn disconnect_fn(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+fn disconnect_fn(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let this_obj = this.as_object().ok_or_else(|| {
         JsError::from_opaque(js_string!("disconnect: this is not an object").into())
     })?;
@@ -415,9 +400,8 @@ fn disconnect_fn(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
     })?;
     let observer_index = mo.observer_index;
 
-    MUTATION_OBSERVER_STATE.with(|cell| {
-        let rc = cell.borrow();
-        let state_rc = rc.as_ref().expect("state");
+    {
+        let state_rc = realm_state::mutation_observer_state(ctx);
         let mut state = state_rc.borrow_mut();
 
         // Remove all registrations for this observer
@@ -430,7 +414,7 @@ fn disconnect_fn(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
         if observer_index < state.observers.len() {
             state.observers[observer_index].pending_records.clear();
         }
-    });
+    }
 
     Ok(JsValue::undefined())
 }
@@ -448,16 +432,15 @@ fn take_records_fn(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
     })?;
     let observer_index = mo.observer_index;
 
-    let records = MUTATION_OBSERVER_STATE.with(|cell| {
-        let rc = cell.borrow();
-        let state_rc = rc.as_ref().expect("state");
+    let records = {
+        let state_rc = realm_state::mutation_observer_state(ctx);
         let mut state = state_rc.borrow_mut();
         if observer_index < state.observers.len() {
             std::mem::take(&mut state.observers[observer_index].pending_records)
         } else {
             Vec::new()
         }
-    });
+    };
 
     // Convert to JS array
     let arr = JsArray::new(ctx);
@@ -494,7 +477,7 @@ fn extract_node_info(val: &JsValue) -> JsResult<(NodeId, Rc<RefCell<DomTree>>)> 
 // ---------------------------------------------------------------------------
 
 fn raw_record_to_js(record: &RawMutationRecord, ctx: &mut Context) -> JsResult<JsValue> {
-    let proto = MUTATION_RECORD_PROTO.with(|cell| cell.borrow().clone());
+    let proto = realm_state::mutation_record_proto(ctx);
 
     let target = get_or_create_js_element(record.target_node_id, record.target_tree.clone(), ctx)?;
     let added = create_static_nodelist(
@@ -567,23 +550,18 @@ fn raw_record_to_js(record: &RawMutationRecord, ctx: &mut Context) -> JsResult<J
 
 pub(crate) fn notify_mutation_observers(ctx: &mut Context) {
     // Collect observers with pending records
-    let observers_to_notify: Vec<(JsObject, Vec<RawMutationRecord>, JsObject)> =
-        MUTATION_OBSERVER_STATE.with(|cell| {
-            let rc = cell.borrow();
-            let state_rc = match rc.as_ref() {
-                Some(s) => s,
-                None => return Vec::new(),
-            };
-            let mut state = state_rc.borrow_mut();
-            let mut result = Vec::new();
-            for entry in state.observers.iter_mut() {
-                if !entry.pending_records.is_empty() {
-                    let records = std::mem::take(&mut entry.pending_records);
-                    result.push((entry.callback.clone(), records, entry.js_object.clone()));
-                }
+    let observers_to_notify: Vec<(JsObject, Vec<RawMutationRecord>, JsObject)> = {
+        let state_rc = realm_state::mutation_observer_state(ctx);
+        let mut state = state_rc.borrow_mut();
+        let mut result = Vec::new();
+        for entry in state.observers.iter_mut() {
+            if !entry.pending_records.is_empty() {
+                let records = std::mem::take(&mut entry.pending_records);
+                result.push((entry.callback.clone(), records, entry.js_object.clone()));
             }
-            result
-        });
+        }
+        result
+    };
 
     for (callback, records, observer_obj) in observers_to_notify {
         let arr = JsArray::new(ctx);
@@ -649,6 +627,7 @@ fn collect_interested_observers(
 // ---------------------------------------------------------------------------
 
 fn queue_attributes_mutation(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     attr_name: &str,
@@ -657,85 +636,75 @@ fn queue_attributes_mutation(
 ) {
     let tree_ptr = Rc::as_ptr(tree) as usize;
 
-    MUTATION_OBSERVER_STATE.with(|cell| {
-        let rc = cell.borrow();
-        let state_rc = match rc.as_ref() {
-            Some(s) => s,
-            None => return,
-        };
-        let mut state = state_rc.borrow_mut();
+    let state_rc = realm_state::mutation_observer_state(ctx);
+    let mut state = state_rc.borrow_mut();
 
-        let interested =
-            collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
-                if !opts.attributes {
+    let interested =
+        collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
+            if !opts.attributes {
+                return false;
+            }
+            if let Some(ref filter) = opts.attribute_filter {
+                if !filter.iter().any(|f| f == attr_name) {
                     return false;
                 }
-                if let Some(ref filter) = opts.attribute_filter {
-                    if !filter.iter().any(|f| f == attr_name) {
-                        return false;
-                    }
-                }
-                true
-            });
+            }
+            true
+        });
 
-        for (obs_idx, capture_old) in interested {
-            let record = RawMutationRecord {
-                mutation_type: "attributes".to_string(),
-                target_tree: tree.clone(),
-                target_node_id: node_id,
-                attribute_name: Some(attr_name.to_string()),
-                attribute_namespace: attr_namespace.map(|s| s.to_string()),
-                old_value: if capture_old { old_value.clone() } else { None },
-                added_node_ids: Vec::new(),
-                removed_node_ids: Vec::new(),
-                previous_sibling_id: None,
-                next_sibling_id: None,
-            };
-            state.observers[obs_idx].pending_records.push(record);
-        }
-    });
+    for (obs_idx, capture_old) in interested {
+        let record = RawMutationRecord {
+            mutation_type: "attributes".to_string(),
+            target_tree: tree.clone(),
+            target_node_id: node_id,
+            attribute_name: Some(attr_name.to_string()),
+            attribute_namespace: attr_namespace.map(|s| s.to_string()),
+            old_value: if capture_old { old_value.clone() } else { None },
+            added_node_ids: Vec::new(),
+            removed_node_ids: Vec::new(),
+            previous_sibling_id: None,
+            next_sibling_id: None,
+        };
+        state.observers[obs_idx].pending_records.push(record);
+    }
 }
 
 fn queue_character_data_mutation(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     old_value: Option<String>,
 ) {
     let tree_ptr = Rc::as_ptr(tree) as usize;
 
-    MUTATION_OBSERVER_STATE.with(|cell| {
-        let rc = cell.borrow();
-        let state_rc = match rc.as_ref() {
-            Some(s) => s,
-            None => return,
+    let state_rc = realm_state::mutation_observer_state(ctx);
+    let mut state = state_rc.borrow_mut();
+
+    let interested =
+        collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
+            opts.character_data
+        });
+
+    for (obs_idx, capture_old) in interested {
+        let record = RawMutationRecord {
+            mutation_type: "characterData".to_string(),
+            target_tree: tree.clone(),
+            target_node_id: node_id,
+            attribute_name: None,
+            attribute_namespace: None,
+            old_value: if capture_old { old_value.clone() } else { None },
+            added_node_ids: Vec::new(),
+            removed_node_ids: Vec::new(),
+            previous_sibling_id: None,
+            next_sibling_id: None,
         };
-        let mut state = state_rc.borrow_mut();
-
-        let interested =
-            collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
-                opts.character_data
-            });
-
-        for (obs_idx, capture_old) in interested {
-            let record = RawMutationRecord {
-                mutation_type: "characterData".to_string(),
-                target_tree: tree.clone(),
-                target_node_id: node_id,
-                attribute_name: None,
-                attribute_namespace: None,
-                old_value: if capture_old { old_value.clone() } else { None },
-                added_node_ids: Vec::new(),
-                removed_node_ids: Vec::new(),
-                previous_sibling_id: None,
-                next_sibling_id: None,
-            };
-            state.observers[obs_idx].pending_records.push(record);
-        }
-    });
+        state.observers[obs_idx].pending_records.push(record);
+    }
 }
 
 /// Queue a childList mutation record for interested observers.
 pub(crate) fn queue_childlist_mutation(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     parent_id: NodeId,
     added_ids: Vec<NodeId>,
@@ -745,35 +714,29 @@ pub(crate) fn queue_childlist_mutation(
 ) {
     let tree_ptr = Rc::as_ptr(tree) as usize;
 
-    MUTATION_OBSERVER_STATE.with(|cell| {
-        let rc = cell.borrow();
-        let state_rc = match rc.as_ref() {
-            Some(s) => s,
-            None => return,
+    let state_rc = realm_state::mutation_observer_state(ctx);
+    let mut state = state_rc.borrow_mut();
+
+    let interested =
+        collect_interested_observers(&state, tree, parent_id, tree_ptr, |opts| {
+            opts.child_list
+        });
+
+    for (obs_idx, _) in interested {
+        let record = RawMutationRecord {
+            mutation_type: "childList".to_string(),
+            target_tree: tree.clone(),
+            target_node_id: parent_id,
+            attribute_name: None,
+            attribute_namespace: None,
+            old_value: None,
+            added_node_ids: added_ids.clone(),
+            removed_node_ids: removed_ids.clone(),
+            previous_sibling_id: prev_sibling,
+            next_sibling_id: next_sibling,
         };
-        let mut state = state_rc.borrow_mut();
-
-        let interested =
-            collect_interested_observers(&state, tree, parent_id, tree_ptr, |opts| {
-                opts.child_list
-            });
-
-        for (obs_idx, _) in interested {
-            let record = RawMutationRecord {
-                mutation_type: "childList".to_string(),
-                target_tree: tree.clone(),
-                target_node_id: parent_id,
-                attribute_name: None,
-                attribute_namespace: None,
-                old_value: None,
-                added_node_ids: added_ids.clone(),
-                removed_node_ids: removed_ids.clone(),
-                previous_sibling_id: prev_sibling,
-                next_sibling_id: next_sibling,
-            };
-            state.observers[obs_idx].pending_records.push(record);
-        }
-    });
+        state.observers[obs_idx].pending_records.push(record);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -781,6 +744,7 @@ pub(crate) fn queue_childlist_mutation(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn set_attribute_with_observer(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     name: &str,
@@ -788,10 +752,11 @@ pub(crate) fn set_attribute_with_observer(
 ) {
     let old_value = tree.borrow().get_attribute(node_id, name).map(|s| s.to_string());
     tree.borrow_mut().set_attribute(node_id, name, value);
-    queue_attributes_mutation(tree, node_id, name, None, old_value);
+    queue_attributes_mutation(ctx, tree, node_id, name, None, old_value);
 }
 
 pub(crate) fn remove_attribute_with_observer(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     name: &str,
@@ -800,11 +765,12 @@ pub(crate) fn remove_attribute_with_observer(
     tree.borrow_mut().remove_attribute(node_id, name);
     // Only queue if attribute actually existed
     if old_value.is_some() {
-        queue_attributes_mutation(tree, node_id, name, None, old_value);
+        queue_attributes_mutation(ctx, tree, node_id, name, None, old_value);
     }
 }
 
 pub(crate) fn set_attribute_ns_with_observer(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     namespace: &str,
@@ -831,10 +797,11 @@ pub(crate) fn set_attribute_ns_with_observer(
     };
     tree.borrow_mut()
         .set_attribute_ns(node_id, namespace, qualified_name, value);
-    queue_attributes_mutation(tree, node_id, local_name, Some(namespace), old_value);
+    queue_attributes_mutation(ctx, tree, node_id, local_name, Some(namespace), old_value);
 }
 
 pub(crate) fn remove_attribute_ns_with_observer(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     namespace: &str,
@@ -855,7 +822,7 @@ pub(crate) fn remove_attribute_ns_with_observer(
     tree.borrow_mut()
         .remove_attribute_ns(node_id, namespace, local_name);
     if old_value.is_some() {
-        queue_attributes_mutation(tree, node_id, local_name, Some(namespace), old_value);
+        queue_attributes_mutation(ctx, tree, node_id, local_name, Some(namespace), old_value);
     }
 }
 
@@ -864,26 +831,29 @@ pub(crate) fn remove_attribute_ns_with_observer(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn character_data_set_with_observer(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     data: &str,
 ) {
     let old_value = tree.borrow().character_data_get(node_id);
     tree.borrow_mut().character_data_set(node_id, data);
-    queue_character_data_mutation(tree, node_id, old_value);
+    queue_character_data_mutation(ctx, tree, node_id, old_value);
 }
 
 pub(crate) fn character_data_append_with_observer(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     data: &str,
 ) {
     let old_value = tree.borrow().character_data_get(node_id);
     tree.borrow_mut().character_data_append(node_id, data);
-    queue_character_data_mutation(tree, node_id, old_value);
+    queue_character_data_mutation(ctx, tree, node_id, old_value);
 }
 
 pub(crate) fn character_data_delete_with_observer(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     offset: usize,
@@ -892,12 +862,13 @@ pub(crate) fn character_data_delete_with_observer(
     let old_value = tree.borrow().character_data_get(node_id);
     let result = tree.borrow_mut().character_data_delete(node_id, offset, count);
     if result.is_ok() {
-        queue_character_data_mutation(tree, node_id, old_value);
+        queue_character_data_mutation(ctx, tree, node_id, old_value);
     }
     result
 }
 
 pub(crate) fn character_data_insert_with_observer(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     offset: usize,
@@ -906,12 +877,13 @@ pub(crate) fn character_data_insert_with_observer(
     let old_value = tree.borrow().character_data_get(node_id);
     let result = tree.borrow_mut().character_data_insert(node_id, offset, data);
     if result.is_ok() {
-        queue_character_data_mutation(tree, node_id, old_value);
+        queue_character_data_mutation(ctx, tree, node_id, old_value);
     }
     result
 }
 
 pub(crate) fn character_data_replace_with_observer(
+    ctx: &Context,
     tree: &Rc<RefCell<DomTree>>,
     node_id: NodeId,
     offset: usize,
@@ -923,7 +895,7 @@ pub(crate) fn character_data_replace_with_observer(
         .borrow_mut()
         .character_data_replace(node_id, offset, count, data);
     if result.is_ok() {
-        queue_character_data_mutation(tree, node_id, old_value);
+        queue_character_data_mutation(ctx, tree, node_id, old_value);
     }
     result
 }

@@ -16,12 +16,13 @@ use crate::dom::is_valid_xml_name;
 
 use crate::dom::NodeData;
 
-use super::element::{JsElement, get_or_create_js_element, NODE_CACHE, DOM_PROTOTYPES};
+use super::element::{JsElement, get_or_create_js_element};
 use super::event::{JsEvent, EventKind};
-use super::event_target::{ListenerEntry, EVENT_LISTENERS};
+use super::event_target::ListenerEntry;
 use super::class_list::register_class_list_class;
 use super::style::register_style_class;
 use super::query;
+use crate::js::realm_state;
 
 // ---------------------------------------------------------------------------
 // DOM "validate and extract" algorithm (namespace validation)
@@ -113,10 +114,6 @@ fn validate_and_extract(
 // DOMImplementation prototype (for instanceof checks)
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    static DOMIMPL_PROTO: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-}
-
 /// Register the DOMImplementation global constructor (illegal — just for instanceof)
 pub(crate) fn register_domimplementation(ctx: &mut Context) {
     let proto = ObjectInitializer::new(ctx).build();
@@ -161,9 +158,7 @@ pub(crate) fn register_domimplementation(ctx: &mut Context) {
         )
         .expect("failed to set DOMImplementation.prototype.constructor");
 
-    DOMIMPL_PROTO.with(|cell| {
-        *cell.borrow_mut() = Some(proto);
-    });
+    realm_state::set_domimpl_proto(ctx, proto);
 
     ctx.register_global_property(
         js_string!("DOMImplementation"),
@@ -668,7 +663,7 @@ fn document_create_event(
         current_target: None,
         phase: 0,
         dispatching: false,
-        time_stamp: super::event::dom_high_res_time_stamp(),
+        time_stamp: super::event::dom_high_res_time_stamp(ctx),
         initialized: false,
         kind,
     };
@@ -753,11 +748,10 @@ fn document_add_event_listener(
         .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
         .clone();
 
-    EVENT_LISTENERS.with(|el| {
-        let rc = el.borrow();
-        let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-        let mut map = listeners_rc.borrow_mut();
-        let entries = map.entry(listener_key).or_insert_with(Vec::new);
+    {
+        let listeners = realm_state::event_listeners(ctx);
+        let mut map = listeners.borrow_mut();
+        let entries = map.entry(listener_key).or_default();
 
         let duplicate = entries.iter().any(|entry| {
             entry.event_type == event_type
@@ -774,7 +768,7 @@ fn document_add_event_listener(
                 passive: None,
             });
         }
-    });
+    }
 
     Ok(JsValue::undefined())
 }
@@ -817,10 +811,9 @@ fn document_remove_event_listener(
         .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: callback is not an object").into()))?
         .clone();
 
-    EVENT_LISTENERS.with(|el| {
-        let rc = el.borrow();
-        let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-        let mut map = listeners_rc.borrow_mut();
+    {
+        let listeners = realm_state::event_listeners(ctx);
+        let mut map = listeners.borrow_mut();
         if let Some(entries) = map.get_mut(&listener_key) {
             entries.retain(|entry| {
                 !(entry.event_type == event_type
@@ -831,7 +824,7 @@ fn document_remove_event_listener(
                 map.remove(&listener_key);
             }
         }
-    });
+    }
 
     Ok(JsValue::undefined())
 }
@@ -921,14 +914,12 @@ fn document_dispatch_event(
         ctx,
     )?;
 
-    use super::window::{WINDOW_LISTENER_ID, WINDOW_OBJECT};
+    use super::window::WINDOW_LISTENER_ID;
 
-    let is_global_doc = super::element::DOM_TREE.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .map(|global| Rc::ptr_eq(&tree, global))
-            .unwrap_or(false)
-    });
+    let is_global_doc = {
+        let global_tree = realm_state::dom_tree(ctx);
+        Rc::ptr_eq(&tree, &global_tree)
+    };
 
     let mut stopped = false;
 
@@ -939,12 +930,8 @@ fn document_dispatch_event(
             evt.current_target = Some(WINDOW_LISTENER_ID);
             evt.phase = 1; // CAPTURING_PHASE
         }
-        let window_val: JsValue =
-            WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
-                cell.borrow()
-                    .as_ref()
-                    .map(|w| JsValue::from(w.clone()))
-            })
+        let window_val: JsValue = realm_state::window_object(ctx)
+            .map(JsValue::from)
             .unwrap_or(JsValue::undefined());
         event_obj.define_property_or_throw(
             js_string!("currentTarget"),
@@ -1002,12 +989,8 @@ fn document_dispatch_event(
             evt.current_target = Some(WINDOW_LISTENER_ID);
             evt.phase = 3; // BUBBLING_PHASE
         }
-        let window_val: JsValue =
-            WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
-                cell.borrow()
-                    .as_ref()
-                    .map(|w| JsValue::from(w.clone()))
-            })
+        let window_val: JsValue = realm_state::window_object(ctx)
+            .map(JsValue::from)
             .unwrap_or(JsValue::undefined());
         event_obj.define_property_or_throw(
             js_string!("currentTarget"),
@@ -1427,8 +1410,7 @@ pub(crate) fn add_document_properties_to_element(
         )
         .function(has_feature_fn, js_string!("hasFeature"), 0)
         .build();
-    let domimpl_proto = DOMIMPL_PROTO.with(|cell| cell.borrow().clone());
-    if let Some(p) = domimpl_proto {
+    if let Some(p) = realm_state::domimpl_proto(ctx) {
         implementation.set_prototype(Some(p));
     }
     js_obj.define_property_or_throw(
@@ -1503,7 +1485,7 @@ pub(crate) fn add_document_properties_to_element(
     // adoptNode method
     let tree_for_adopt = new_tree.clone();
     let adopt_node_fn = unsafe {
-        NativeFunction::from_closure(move |_this, args, _ctx2| {
+        NativeFunction::from_closure(move |_this, args, ctx2| {
             let node_val = args.first()
                 .ok_or_else(|| JsError::from_opaque(js_string!("adoptNode: missing argument").into()))?;
             let node_obj = node_val.as_object()
@@ -1536,7 +1518,7 @@ pub(crate) fn add_document_properties_to_element(
                 );
                 // Update all cached JS objects (root + descendants) to point to new tree/nodes
                 super::mutation::update_node_cache_for_adoption_mapping(
-                    &source_tree, &tree_for_adopt, &mapping,
+                    &source_tree, &tree_for_adopt, &mapping, ctx2,
                 );
                 // Also update the root node_obj directly (in case it wasn't cached yet)
                 let mut el_mut = node_obj.downcast_mut::<JsElement>().unwrap();
@@ -1726,10 +1708,7 @@ fn domimpl_create_document_type(
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    let tree = super::element::DOM_TREE.with(|cell| {
-        let rc = cell.borrow();
-        rc.as_ref().expect("DOM_TREE not initialized").clone()
-    });
+    let tree = realm_state::dom_tree(ctx);
 
     let node_id = tree.borrow_mut().create_doctype(&name, &public_id, &system_id);
     let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
@@ -1754,10 +1733,7 @@ fn domimpl_create_html_document(
         })
         .transpose()?;
 
-    let _tree = super::element::DOM_TREE.with(|cell| {
-        let rc = cell.borrow();
-        rc.as_ref().expect("DOM_TREE not initialized").clone()
-    });
+    let _tree = realm_state::dom_tree(ctx);
 
     // Create a new DomTree for the new document
     let new_tree = Rc::new(RefCell::new(crate::dom::DomTree::new()));
@@ -1879,7 +1855,7 @@ fn domimpl_create_document(
             // Cross-tree adoption: move the node and update caches
             let (adopted_id, mapping) =
                 super::mutation::adopt_node_with_mapping(src_tree, src_id, &new_tree);
-            super::mutation::update_node_cache_for_adoption_mapping(src_tree, &new_tree, &mapping);
+            super::mutation::update_node_cache_for_adoption_mapping(src_tree, &new_tree, &mapping, ctx);
             // Update the doctype JS object directly to point to the new tree/node
             let mut el_mut = doctype_obj.downcast_mut::<JsElement>().unwrap();
             el_mut.node_id = adopted_id;
@@ -1915,14 +1891,11 @@ fn domimpl_create_document(
     // Per DOM spec, createDocument returns an XMLDocument (subinterface of Document).
     // Override the prototype from Document.prototype to XMLDocument.prototype so that
     // `doc instanceof XMLDocument` returns true.
-    DOM_PROTOTYPES.with(|cell| {
-        let protos = cell.borrow();
-        if let Some(ref p) = *protos {
-            if let Some(ref xml_proto) = p.xml_document_proto {
-                js_obj.set_prototype(Some(xml_proto.clone()));
-            }
+    if let Some(ref p) = realm_state::dom_prototypes(ctx) {
+        if let Some(ref xml_proto) = p.xml_document_proto {
+            js_obj.set_prototype(Some(xml_proto.clone()));
         }
-    });
+    }
 
     add_document_properties_to_element(&js_obj, new_tree, content_type.to_string(), ctx)?;
 
@@ -2015,7 +1988,7 @@ fn document_import_node(
 fn document_adopt_node(
     this: &JsValue,
     args: &[JsValue],
-    _ctx: &mut Context,
+    ctx: &mut Context,
 ) -> JsResult<JsValue> {
     let obj = this
         .as_object()
@@ -2061,7 +2034,7 @@ fn document_adopt_node(
         );
         // Update all cached JS objects (root + descendants) to point to new tree/nodes
         super::mutation::update_node_cache_for_adoption_mapping(
-            &source_tree, &target_tree, &mapping,
+            &source_tree, &target_tree, &mapping, ctx,
         );
         // Also update the root node_obj directly (in case it wasn't cached yet)
         let mut el_mut = node_obj.downcast_mut::<JsElement>().unwrap();
@@ -2595,8 +2568,7 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
         )
         .build();
     // Set DOMImplementation prototype for instanceof checks
-    let domimpl_proto = DOMIMPL_PROTO.with(|cell| cell.borrow().clone());
-    if let Some(p) = domimpl_proto {
+    if let Some(p) = realm_state::domimpl_proto(context) {
         implementation.set_prototype(Some(p));
     }
     document
@@ -2922,13 +2894,10 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
     // Store the document JsObject in NODE_CACHE so that get_or_create_js_element
     // returns this same object when looking up the Document node. This ensures
     // evt.currentTarget === document during event propagation.
-    NODE_CACHE.with(|cell| {
-        let rc = cell.borrow();
-        if let Some(cache_rc) = rc.as_ref() {
-            let mut cache = cache_rc.borrow_mut();
-            cache.insert((tree_ptr, doc_id), document.clone());
-        }
-    });
+    {
+        let cache = realm_state::node_cache(context);
+        cache.borrow_mut().insert((tree_ptr, doc_id), document.clone());
+    }
 
     context
         .register_global_property(js_string!("document"), document, Attribute::all())

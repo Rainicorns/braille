@@ -17,8 +17,9 @@ use crate::dom::{DomTree, NodeData, NodeId};
 use super::class_list::JsClassList;
 use super::document::JsDocument;
 use super::event::JsEvent;
-use super::event_target::{ListenerEntry, EVENT_LISTENERS};
-use super::window::{WINDOW_LISTENER_ID, WINDOW_OBJECT};
+use super::event_target::ListenerEntry;
+use super::window::WINDOW_LISTENER_ID;
+use crate::js::realm_state;
 
 /// Compare nodes from different DomTrees for equality (recursive).
 fn cross_tree_is_equal_node(tree_a: &DomTree, a: NodeId, tree_b: &DomTree, b: NodeId) -> bool {
@@ -100,59 +101,11 @@ fn extract_node_id(val: &JsValue) -> Option<(NodeId, Rc<RefCell<DomTree>>)> {
 }
 
 // ---------------------------------------------------------------------------
-// NodeId -> JsObject cache (thread-local, same pattern as EVENT_LISTENERS)
+// NodeId -> JsObject cache (stored in RealmState)
 // ---------------------------------------------------------------------------
 
 /// Cache key is (tree_ptr, node_id) so nodes from different trees don't collide.
 pub(crate) type NodeCache = HashMap<(usize, NodeId), JsObject>;
-
-thread_local! {
-    pub(crate) static NODE_CACHE: RefCell<Option<Rc<RefCell<NodeCache>>>> = const { RefCell::new(None) };
-}
-
-// ---------------------------------------------------------------------------
-// DOM tree thread-local (used by Text/Comment constructors)
-// ---------------------------------------------------------------------------
-thread_local! {
-    pub(crate) static DOM_TREE: RefCell<Option<Rc<RefCell<DomTree>>>> = const { RefCell::new(None) };
-}
-
-// ---------------------------------------------------------------------------
-// Current event thread-local (for window.event)
-// ---------------------------------------------------------------------------
-thread_local! {
-    /// The event currently being dispatched (for window.event).
-    /// Stored as a stack-like Option: set before each listener callback, restored after.
-    pub(crate) static CURRENT_EVENT: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-}
-
-// ---------------------------------------------------------------------------
-// Iframe content document storage
-// ---------------------------------------------------------------------------
-thread_local! {
-    /// Maps (tree_ptr, iframe_node_id) -> the iframe's content document DomTree.
-    #[allow(clippy::type_complexity)]
-    pub(crate) static IFRAME_CONTENT_DOCS: RefCell<Option<Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>>> = const { RefCell::new(None) };
-}
-
-// ---------------------------------------------------------------------------
-// Pre-fetched iframe src content (populated from FetchedResources)
-// ---------------------------------------------------------------------------
-thread_local! {
-    /// Maps iframe src URL -> pre-fetched HTML content.
-    /// Populated by Engine::populate_iframe_src_content() before script execution.
-    #[allow(clippy::type_complexity)]
-    pub(crate) static IFRAME_SRC_CONTENT: RefCell<Option<Rc<RefCell<HashMap<String, String>>>>> = const { RefCell::new(None) };
-}
-
-// ---------------------------------------------------------------------------
-// Iframe onload handler storage (JS-property-set handlers, not HTML attributes)
-// ---------------------------------------------------------------------------
-thread_local! {
-    /// Maps (tree_ptr, iframe_node_id) -> JS function set via `iframe.onload = func`.
-    #[allow(clippy::type_complexity)]
-    pub(crate) static IFRAME_ONLOAD_HANDLERS: RefCell<Option<Rc<RefCell<HashMap<(usize, NodeId), JsObject>>>>> = const { RefCell::new(None) };
-}
 
 /// Lazily creates (or retrieves) the content document for an `<iframe>` element.
 /// Returns the JsObject representing the iframe's content document.
@@ -162,12 +115,11 @@ pub(crate) fn ensure_iframe_content_doc(
     ctx: &mut Context,
 ) -> JsResult<JsObject> {
     // Check if we already have a content doc for this iframe
-    let existing = IFRAME_CONTENT_DOCS.with(|cell| {
-        let rc = cell.borrow();
-        let map_rc = rc.as_ref().expect("IFRAME_CONTENT_DOCS not initialized");
-        let map = map_rc.borrow();
+    let existing = {
+        let docs = realm_state::iframe_content_docs(ctx);
+        let map = docs.borrow();
         map.get(&(tree_ptr, node_id)).cloned()
-    });
+    };
 
     if let Some(ref existing_tree) = existing {
         // Already exists -- return its document JsObject from NODE_CACHE
@@ -176,25 +128,26 @@ pub(crate) fn ensure_iframe_content_doc(
     }
 
     // Check if the iframe has a `src` attribute with pre-fetched content
-    let prefetched_html: Option<String> = DOM_TREE.with(|cell| {
-        let rc = cell.borrow();
-        let dom_tree = rc.as_ref()?;
+    let prefetched_html: Option<String> = {
+        let dom_tree = realm_state::dom_tree(ctx);
         let t = dom_tree.borrow();
         let node = t.get_node(node_id);
         if let NodeData::Element { attributes, .. } = &node.data {
-            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone())?;
-            // Strip URL fragment (#...) before lookup
-            let src_no_fragment = src.split('#').next().unwrap_or(&src).to_string();
-            IFRAME_SRC_CONTENT.with(|src_cell| {
-                let src_rc = src_cell.borrow();
-                let map_rc = src_rc.as_ref()?;
-                let map = map_rc.borrow();
-                map.get(&src_no_fragment).cloned()
-            })
+            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+            match src {
+                Some(src_val) => {
+                    let src_no_fragment = src_val.split('#').next().unwrap_or(&src_val).to_string();
+                    drop(t);
+                    let src_content = realm_state::iframe_src_content(ctx);
+                    let map = src_content.borrow();
+                    map.get(&src_no_fragment).cloned()
+                }
+                None => None,
+            }
         } else {
             None
         }
-    });
+    };
 
     // Create a new DomTree for the iframe content document
     let new_tree = if let Some(ref html_content) = prefetched_html {
@@ -217,12 +170,11 @@ pub(crate) fn ensure_iframe_content_doc(
     };
 
     // Store in IFRAME_CONTENT_DOCS
-    IFRAME_CONTENT_DOCS.with(|cell| {
-        let rc = cell.borrow();
-        let map_rc = rc.as_ref().expect("IFRAME_CONTENT_DOCS not initialized");
-        let mut map = map_rc.borrow_mut();
+    {
+        let docs = realm_state::iframe_content_docs(ctx);
+        let mut map = docs.borrow_mut();
         map.insert((tree_ptr, node_id), new_tree.clone());
-    });
+    }
 
     // Create document JsObject
     let doc_id = new_tree.borrow().document();
@@ -238,7 +190,7 @@ pub(crate) fn ensure_iframe_content_doc(
 // ---------------------------------------------------------------------------
 
 /// Holds the prototype objects for DOM node types.
-/// Stored in a thread-local so get_or_create_js_element can assign the right prototype.
+/// Stored in RealmState so get_or_create_js_element can assign the right prototype.
 #[derive(Clone)]
 pub(crate) struct DomPrototypes {
     pub(crate) text_proto: JsObject,
@@ -263,10 +215,6 @@ pub(crate) struct DomPrototypes {
     pub(crate) xml_document_proto: Option<JsObject>,
 }
 
-thread_local! {
-    pub(crate) static DOM_PROTOTYPES: RefCell<Option<DomPrototypes>> = const { RefCell::new(None) };
-}
-
 /// Look up or create the JsObject wrapper for a given NodeId.
 /// Returns the same JsObject every time for the same NodeId, preserving `===` identity.
 /// For Text and Comment nodes, sets the prototype to Text.prototype / Comment.prototype
@@ -281,12 +229,11 @@ pub(crate) fn get_or_create_js_element(
     let cache_key = (tree_ptr, node_id);
 
     // Check cache first
-    let cached = NODE_CACHE.with(|cell| {
-        let rc = cell.borrow();
-        let cache_rc = rc.as_ref().expect("NODE_CACHE not initialized");
-        let cache = cache_rc.borrow();
-        cache.get(&cache_key).cloned()
-    });
+    let cached = {
+        let cache = realm_state::node_cache(ctx);
+        let val = cache.borrow().get(&cache_key).cloned();
+        val
+    };
 
     if let Some(obj) = cached {
         return Ok(obj);
@@ -347,63 +294,60 @@ pub(crate) fn get_or_create_js_element(
     let js_obj = JsElement::from_data(element, ctx)?;
 
     // Set the right prototype based on node kind (for instanceof support)
-    DOM_PROTOTYPES.with(|cell| {
-        let protos = cell.borrow();
-        if let Some(ref p) = *protos {
-            match &node_kind {
-                NodeKind::Text => {
-                    js_obj.set_prototype(Some(p.text_proto.clone()));
+    if let Some(ref p) = realm_state::dom_prototypes(ctx) {
+        match &node_kind {
+            NodeKind::Text => {
+                js_obj.set_prototype(Some(p.text_proto.clone()));
+            }
+            NodeKind::Comment => {
+                js_obj.set_prototype(Some(p.comment_proto.clone()));
+            }
+            NodeKind::ProcessingInstruction { .. } => {
+                if let Some(ref proto) = p.pi_proto {
+                    js_obj.set_prototype(Some(proto.clone()));
                 }
-                NodeKind::Comment => {
-                    js_obj.set_prototype(Some(p.comment_proto.clone()));
+            }
+            NodeKind::Attr { .. } => {
+                if let Some(ref proto) = p.attr_proto {
+                    js_obj.set_prototype(Some(proto.clone()));
                 }
-                NodeKind::ProcessingInstruction { .. } => {
-                    if let Some(ref proto) = p.pi_proto {
+            }
+            NodeKind::HtmlElement(tag) => {
+                // Look up specific HTML element prototype by tag name
+                if let Some(proto) = p.html_tag_protos.get(tag.as_str()) {
+                    js_obj.set_prototype(Some(proto.clone()));
+                } else if is_known_html_element(tag) {
+                    // Known HTML element without a specific type -> HTMLElement
+                    if let Some(ref proto) = p.html_element_proto {
                         js_obj.set_prototype(Some(proto.clone()));
                     }
-                }
-                NodeKind::Attr { .. } => {
-                    if let Some(ref proto) = p.attr_proto {
-                        js_obj.set_prototype(Some(proto.clone()));
-                    }
-                }
-                NodeKind::HtmlElement(tag) => {
-                    // Look up specific HTML element prototype by tag name
-                    if let Some(proto) = p.html_tag_protos.get(tag.as_str()) {
-                        js_obj.set_prototype(Some(proto.clone()));
-                    } else if is_known_html_element(tag) {
-                        // Known HTML element without a specific type -> HTMLElement
-                        if let Some(ref proto) = p.html_element_proto {
-                            js_obj.set_prototype(Some(proto.clone()));
-                        }
-                    } else {
-                        // Unknown HTML element -> HTMLUnknownElement
-                        if let Some(ref proto) = p.html_unknown_proto {
-                            js_obj.set_prototype(Some(proto.clone()));
-                        }
-                    }
-                }
-                NodeKind::NonHtmlElement => {
-                    // Non-HTML namespace elements keep Element.prototype (default)
-                }
-                NodeKind::DocumentFragment => {
-                    if let Some(ref proto) = p.document_fragment_proto {
-                        js_obj.set_prototype(Some(proto.clone()));
-                    }
-                }
-                NodeKind::Doctype { .. } => {
-                    if let Some(ref proto) = p.document_type_proto {
-                        js_obj.set_prototype(Some(proto.clone()));
-                    }
-                }
-                NodeKind::Document => {
-                    if let Some(ref proto) = p.document_proto {
+                } else {
+                    // Unknown HTML element -> HTMLUnknownElement
+                    if let Some(ref proto) = p.html_unknown_proto {
                         js_obj.set_prototype(Some(proto.clone()));
                     }
                 }
             }
+            NodeKind::NonHtmlElement => {
+                // Non-HTML namespace elements keep Element.prototype (default)
+            }
+            NodeKind::DocumentFragment => {
+                if let Some(ref proto) = p.document_fragment_proto {
+                    js_obj.set_prototype(Some(proto.clone()));
+                }
+            }
+            NodeKind::Doctype { .. } => {
+                if let Some(ref proto) = p.document_type_proto {
+                    js_obj.set_prototype(Some(proto.clone()));
+                }
+            }
+            NodeKind::Document => {
+                if let Some(ref proto) = p.document_proto {
+                    js_obj.set_prototype(Some(proto.clone()));
+                }
+            }
         }
-    });
+    }
 
     // Set own property for ProcessingInstruction nodes (target)
     if let NodeKind::ProcessingInstruction { target } = &node_kind {
@@ -697,7 +641,7 @@ pub(crate) fn get_or_create_js_element(
                         .map(|s| s.to_std_string_escaped())
                         .unwrap_or_default();
                     super::mutation_observer::set_attribute_with_observer(
-                        &tree_for_src_set, nid_for_src_set, "src", &value,
+                        ctx2, &tree_for_src_set, nid_for_src_set, "src", &value,
                     );
                     Ok(JsValue::undefined())
                 })
@@ -718,9 +662,9 @@ pub(crate) fn get_or_create_js_element(
             let tree_for_onload_get = tree.clone();
             let nid_for_onload_get = node_id;
             let onload_getter = unsafe {
-                NativeFunction::from_closure(move |_this, _args, _ctx2| {
+                NativeFunction::from_closure(move |_this, _args, ctx2| {
                     let tp = Rc::as_ptr(&tree_for_onload_get) as usize;
-                    match super::on_event::get_on_event_handler(tp, nid_for_onload_get, "load") {
+                    match super::on_event::get_on_event_handler(tp, nid_for_onload_get, "load", ctx2) {
                         Some(func) => Ok(JsValue::from(func)),
                         None => Ok(JsValue::null()),
                     }
@@ -729,13 +673,13 @@ pub(crate) fn get_or_create_js_element(
             let tree_for_onload_set = tree.clone();
             let nid_for_onload_set = node_id;
             let onload_setter = unsafe {
-                NativeFunction::from_closure(move |_this, args, _ctx2| {
+                NativeFunction::from_closure(move |_this, args, ctx2| {
                     let tp = Rc::as_ptr(&tree_for_onload_set) as usize;
                     let val = args.first().cloned().unwrap_or(JsValue::null());
                     if let Some(obj) = val.as_object().filter(|o| o.is_callable()) {
-                        super::on_event::set_on_event_handler(tp, nid_for_onload_set, "load", Some(obj.clone()));
+                        super::on_event::set_on_event_handler(tp, nid_for_onload_set, "load", Some(obj.clone()), ctx2);
                     } else {
-                        super::on_event::set_on_event_handler(tp, nid_for_onload_set, "load", None);
+                        super::on_event::set_on_event_handler(tp, nid_for_onload_set, "load", None, ctx2);
                     }
                     Ok(JsValue::undefined())
                 })
@@ -778,12 +722,10 @@ pub(crate) fn get_or_create_js_element(
         }
     }
 
-    NODE_CACHE.with(|cell| {
-        let rc = cell.borrow();
-        let cache_rc = rc.as_ref().expect("NODE_CACHE not initialized");
-        let mut cache = cache_rc.borrow_mut();
-        cache.insert(cache_key, js_obj.clone());
-    });
+    {
+        let cache = realm_state::node_cache(ctx);
+        cache.borrow_mut().insert(cache_key, js_obj.clone());
+    }
 
     Ok(js_obj)
 }
@@ -833,7 +775,7 @@ impl JsElement {
     }
 
     /// Native implementation of element.appendChild(child)
-    fn append_child(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+    fn append_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
         let this_obj = this
             .as_object()
             .ok_or_else(|| JsNativeError::typ().with_message("appendChild: this is not an object"))?;
@@ -877,7 +819,7 @@ impl JsElement {
             child_mut.node_id = adopted_id;
             child_mut.tree = tree.clone();
             drop(child_mut);
-            super::mutation::update_node_cache_after_adoption(&src_tree, src_id, &tree, adopted_id, &child_obj);
+            super::mutation::update_node_cache_after_adoption(&src_tree, src_id, &tree, adopted_id, &child_obj, ctx);
             adopted_id
         } else {
             child.node_id
@@ -960,7 +902,7 @@ impl JsElement {
                 } else {
                     val.to_string(ctx)?.to_std_string_escaped()
                 };
-                super::mutation_observer::character_data_set_with_observer(&el.tree, el.node_id, &data);
+                super::mutation_observer::character_data_set_with_observer(ctx, &el.tree, el.node_id, &data);
                 return Ok(JsValue::undefined());
             }
         }
@@ -1000,7 +942,7 @@ impl JsElement {
         let added_ids = added_id.map(|id| vec![id]).unwrap_or_default();
         if !removed_children.is_empty() || !added_ids.is_empty() {
             super::mutation_observer::queue_childlist_mutation(
-                &el.tree, el.node_id, added_ids, removed_children, None, None,
+                ctx, &el.tree, el.node_id, added_ids, removed_children, None, None,
             );
         }
 
@@ -1126,7 +1068,7 @@ impl JsElement {
     }
 
     /// Native implementation of element.remove()
-    fn remove(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+    fn remove(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
         let this_obj = this
             .as_object()
             .ok_or_else(|| JsError::from_opaque(js_string!("remove: `this` is not an object").into()))?;
@@ -1155,7 +1097,7 @@ impl JsElement {
         // Queue MutationObserver record
         if let Some((parent_id, prev_sib, next_sib)) = parent_info {
             super::mutation_observer::queue_childlist_mutation(
-                &tree, parent_id, vec![], vec![node_id], prev_sib, next_sib,
+                ctx, &tree, parent_id, vec![], vec![node_id], prev_sib, next_sib,
             );
         }
 
@@ -1394,11 +1336,10 @@ impl JsElement {
 
         let listener_key = (Rc::as_ptr(&el.tree) as usize, node_id);
 
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-            let mut map = listeners_rc.borrow_mut();
-            let entries = map.entry(listener_key).or_insert_with(Vec::new);
+        {
+            let listeners = realm_state::event_listeners(ctx);
+            let mut map = listeners.borrow_mut();
+            let entries = map.entry(listener_key).or_default();
 
             // Check for duplicates: same event_type + same callback object (by pointer) + same capture
             let duplicate = entries.iter().any(|entry| {
@@ -1416,7 +1357,7 @@ impl JsElement {
                     passive: None,
                 });
             }
-        });
+        }
 
         Ok(JsValue::undefined())
     }
@@ -1458,10 +1399,9 @@ impl JsElement {
 
         let listener_key = (Rc::as_ptr(&el.tree) as usize, node_id);
 
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-            let mut map = listeners_rc.borrow_mut();
+        {
+            let listeners = realm_state::event_listeners(ctx);
+            let mut map = listeners.borrow_mut();
             if let Some(entries) = map.get_mut(&listener_key) {
                 entries.retain(|entry| {
                     !(entry.event_type == event_type
@@ -1473,7 +1413,7 @@ impl JsElement {
                     map.remove(&listener_key);
                 }
             }
-        });
+        }
 
         Ok(JsValue::undefined())
     }
@@ -1580,12 +1520,10 @@ impl JsElement {
             if let Some(&root_id) = propagation_path.first() {
                 if matches!(tree_ref.get_node(root_id).data, NodeData::Document) {
                     // Only include window for the global document, not created documents
-                    DOM_TREE.with(|cell| {
-                        cell.borrow()
-                            .as_ref()
-                            .map(|global| Rc::ptr_eq(&tree, global))
-                            .unwrap_or(false)
-                    })
+                    {
+                        let global_tree = realm_state::dom_tree(ctx);
+                        Rc::ptr_eq(&tree, &global_tree)
+                    }
                 } else {
                     false
                 }
@@ -1624,9 +1562,9 @@ impl JsElement {
         if include_window && !dispatch_stopped {
             // Set phase on native event data
             set_phase(&event_obj, Some(WINDOW_LISTENER_ID), 1);
-            let window_val: JsValue = WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
-                cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
-            }).unwrap_or(JsValue::undefined());
+            let window_val: JsValue = realm_state::window_object(ctx)
+                .map(JsValue::from)
+                .unwrap_or(JsValue::undefined());
             Self::set_event_prop(&event_obj, "currentTarget", window_val.clone(), ctx)?;
 
             let should_stop = invoke_listeners_for_node(
@@ -1714,9 +1652,9 @@ impl JsElement {
             // Window bubble listeners last (if applicable)
             if include_window && !dispatch_stopped {
                 set_phase(&event_obj, Some(WINDOW_LISTENER_ID), 3);
-                let window_val: JsValue = WINDOW_OBJECT.with(|cell: &std::cell::RefCell<Option<JsObject>>| {
-                    cell.borrow().as_ref().map(|w| JsValue::from(w.clone()))
-                }).unwrap_or(JsValue::undefined());
+                let window_val: JsValue = realm_state::window_object(ctx)
+                    .map(JsValue::from)
+                    .unwrap_or(JsValue::undefined());
                 Self::set_event_prop(&event_obj, "currentTarget", window_val.clone(), ctx)?;
 
                 let should_stop = invoke_listeners_for_node(
@@ -1811,10 +1749,9 @@ pub(crate) fn invoke_listeners_for_node(
     ctx: &mut Context,
 ) -> JsResult<bool> {
     // Collect matching listeners (snapshot to avoid borrow issues during callback invocation)
-    let matching: Vec<(JsObject, bool)> = EVENT_LISTENERS.with(|el| {
-        let rc = el.borrow();
-        let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-        let map = listeners_rc.borrow();
+    let matching: Vec<(JsObject, bool)> = {
+        let listeners = realm_state::event_listeners(ctx);
+        let map = listeners.borrow();
         match map.get(&listener_key) {
             Some(entries) => entries
                 .iter()
@@ -1834,29 +1771,24 @@ pub(crate) fn invoke_listeners_for_node(
                 .collect(),
             None => Vec::new(),
         }
-    });
+    };
 
     // Save previous CURRENT_EVENT and set to current event (for window.event)
-    let prev_event = CURRENT_EVENT.with(|cell| cell.borrow().clone());
-    CURRENT_EVENT.with(|cell| {
-        *cell.borrow_mut() = Some(event_obj.clone());
-    });
+    let prev_event = realm_state::current_event(ctx);
+    realm_state::set_current_event(ctx, Some(event_obj.clone()));
 
     for (callback, once) in &matching {
         if *once {
-            EVENT_LISTENERS.with(|el| {
-                let rc = el.borrow();
-                let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-                let mut map = listeners_rc.borrow_mut();
-                if let Some(entries) = map.get_mut(&listener_key) {
-                    entries.retain(|entry| {
-                        !(entry.event_type == event_type && entry.callback == *callback && entry.once)
-                    });
-                    if entries.is_empty() {
-                        map.remove(&listener_key);
-                    }
+            let listeners = realm_state::event_listeners(ctx);
+            let mut map = listeners.borrow_mut();
+            if let Some(entries) = map.get_mut(&listener_key) {
+                entries.retain(|entry| {
+                    !(entry.event_type == event_type && entry.callback == *callback && entry.once)
+                });
+                if entries.is_empty() {
+                    map.remove(&listener_key);
                 }
-            });
+            }
         }
 
         // Per spec: if callback is callable, call with this=currentTarget.
@@ -1895,9 +1827,7 @@ pub(crate) fn invoke_listeners_for_node(
 
         if imm_stopped {
             // Restore previous CURRENT_EVENT before returning
-            CURRENT_EVENT.with(|cell| {
-                *cell.borrow_mut() = prev_event.clone();
-            });
+            realm_state::set_current_event(ctx, prev_event.clone());
             return Ok(true);
         }
         // prop_stopped: don't return yet -- continue processing listeners on this node
@@ -1905,9 +1835,7 @@ pub(crate) fn invoke_listeners_for_node(
     }
 
     // Restore previous CURRENT_EVENT
-    CURRENT_EVENT.with(|cell| {
-        *cell.borrow_mut() = prev_event;
-    });
+    realm_state::set_current_event(ctx, prev_event);
 
     let propagation_stopped = event_obj.downcast_ref::<JsEvent>().unwrap().propagation_stopped;
     Ok(propagation_stopped)
@@ -1929,12 +1857,7 @@ pub(crate) fn report_listener_error(err: JsError, ctx: &mut Context) {
         .unwrap_or_else(|| "unknown error".to_string());
 
     // Try to call window.onerror(message, filename, lineno, colno, error)
-    let onerror: Option<JsObject> = WINDOW_OBJECT.with(|cell| {
-        let borrow = cell.borrow();
-        let w = match borrow.as_ref() {
-            Some(w) => w,
-            None => return None,
-        };
+    let onerror: Option<JsObject> = realm_state::window_object(ctx).and_then(|w| {
         let val = match w.get(js_string!("onerror"), ctx) {
             Ok(v) if !v.is_undefined() && !v.is_null() => v,
             _ => return None,
@@ -2163,16 +2086,14 @@ pub(crate) fn node_is_default_namespace(this: &JsValue, args: &[JsValue], ctx: &
 #[cfg(test)]
 mod tests {
     use crate::Engine;
-    use crate::js::bindings::event_target::EVENT_LISTENERS;
+    use crate::js::realm_state;
 
     /// Helper to count total listeners across all elements.
-    fn listener_count() -> usize {
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().expect("EVENT_LISTENERS not initialized");
-            let map = listeners_rc.borrow();
-            map.values().map(|v| v.len()).sum::<usize>()
-        })
+    fn listener_count(engine: &Engine) -> usize {
+        let ctx = &engine.runtime.as_ref().unwrap().context;
+        let listeners = realm_state::event_listeners(ctx);
+        let map = listeners.borrow();
+        map.values().map(|v| v.len()).sum::<usize>()
     }
 
     #[test]
@@ -2203,7 +2124,7 @@ mod tests {
             .unwrap();
 
         // Listener map should be empty after removal
-        assert_eq!(listener_count(), 0);
+        assert_eq!(listener_count(&engine), 0);
     }
 
     #[test]
@@ -2215,17 +2136,17 @@ mod tests {
             .eval("document.getElementById('d').addEventListener('click', function() {}, true)")
             .unwrap();
 
-        assert_eq!(listener_count(), 1);
+        assert_eq!(listener_count(&engine), 1);
 
         // Verify the capture flag is true
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().unwrap();
-            let map = listeners_rc.borrow();
+        {
+            let ctx = &engine.runtime.as_ref().unwrap().context;
+            let listeners = realm_state::event_listeners(ctx);
+            let map = listeners.borrow();
             let entries = map.values().next().unwrap();
             assert!(entries[0].capture);
             assert!(!entries[0].once);
-        });
+        }
     }
 
     #[test]
@@ -2237,14 +2158,14 @@ mod tests {
             .eval("document.getElementById('d').addEventListener('click', function() {}, { capture: true, once: true })")
             .unwrap();
 
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().unwrap();
-            let map = listeners_rc.borrow();
+        {
+            let ctx = &engine.runtime.as_ref().unwrap().context;
+            let listeners = realm_state::event_listeners(ctx);
+            let map = listeners.borrow();
             let entries = map.values().next().unwrap();
             assert!(entries[0].capture);
             assert!(entries[0].once);
-        });
+        }
     }
 
     #[test]
@@ -2262,7 +2183,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(listener_count(), 2);
+        assert_eq!(listener_count(&engine), 2);
     }
 
     #[test]
@@ -2283,7 +2204,7 @@ mod tests {
             .unwrap();
 
         // Same callback + same type + same capture should only be stored once
-        assert_eq!(listener_count(), 1);
+        assert_eq!(listener_count(&engine), 1);
     }
 
     #[test]
@@ -2303,7 +2224,7 @@ mod tests {
             .unwrap();
 
         // Different capture flag means they are distinct listeners
-        assert_eq!(listener_count(), 2);
+        assert_eq!(listener_count(&engine), 2);
     }
 
     #[test]
@@ -2325,7 +2246,7 @@ mod tests {
             .unwrap();
 
         // Only h2 should remain
-        assert_eq!(listener_count(), 1);
+        assert_eq!(listener_count(&engine), 1);
     }
 
     #[test]
@@ -2346,7 +2267,7 @@ mod tests {
             .unwrap();
 
         // h1 should still be there, h2 was never added
-        assert_eq!(listener_count(), 1);
+        assert_eq!(listener_count(&engine), 1);
     }
 
     #[test]
@@ -2366,7 +2287,7 @@ mod tests {
             .unwrap();
 
         // Capture flag doesn't match, so the listener should NOT be removed
-        assert_eq!(listener_count(), 1);
+        assert_eq!(listener_count(&engine), 1);
 
         // Now remove with matching capture
         runtime
@@ -2378,7 +2299,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(listener_count(), 0);
+        assert_eq!(listener_count(&engine), 0);
     }
 
     #[test]
@@ -2398,14 +2319,14 @@ mod tests {
             .unwrap();
 
         // Two different elements, each with one listener
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().unwrap();
-            let map = listeners_rc.borrow();
+        {
+            let ctx = &engine.runtime.as_ref().unwrap().context;
+            let listeners = realm_state::event_listeners(ctx);
+            let map = listeners.borrow();
             assert_eq!(map.len(), 2);
             let total: usize = map.values().map(|v| v.len()).sum();
             assert_eq!(total, 2);
-        });
+        }
     }
 
     #[test]
@@ -2418,7 +2339,7 @@ mod tests {
             .eval("document.getElementById('d').addEventListener('click', null)")
             .unwrap();
 
-        assert_eq!(listener_count(), 0);
+        assert_eq!(listener_count(&engine), 0);
     }
 
     #[test]
@@ -2437,7 +2358,7 @@ mod tests {
             .unwrap();
 
         // The listener should still be there
-        assert_eq!(listener_count(), 1);
+        assert_eq!(listener_count(&engine), 1);
     }
 
     #[test]
@@ -2449,14 +2370,14 @@ mod tests {
             .eval("document.getElementById('d').addEventListener('click', function() {})")
             .unwrap();
 
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().unwrap();
-            let map = listeners_rc.borrow();
+        {
+            let ctx = &engine.runtime.as_ref().unwrap().context;
+            let listeners = realm_state::event_listeners(ctx);
+            let map = listeners.borrow();
             let entries = map.values().next().unwrap();
             assert!(!entries[0].capture);
             assert!(!entries[0].once);
-        });
+        }
     }
 
     #[test]
@@ -2475,16 +2396,16 @@ mod tests {
             )
             .unwrap();
 
-        EVENT_LISTENERS.with(|el| {
-            let rc = el.borrow();
-            let listeners_rc = rc.as_ref().unwrap();
-            let map = listeners_rc.borrow();
+        {
+            let ctx = &engine.runtime.as_ref().unwrap().context;
+            let listeners = realm_state::event_listeners(ctx);
+            let map = listeners.borrow();
             let entries = map.values().next().unwrap();
             let types: Vec<&str> = entries.iter().map(|e| e.event_type.as_str()).collect();
             assert!(types.contains(&"mousedown"));
             assert!(types.contains(&"mouseup"));
             assert!(types.contains(&"keypress"));
-        });
+        }
     }
 
     // ---- dispatchEvent tests ----

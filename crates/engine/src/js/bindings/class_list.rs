@@ -86,9 +86,9 @@ impl JsClassList {
 
     /// Helper to write class names back to the class attribute.
     /// Per spec, sets to empty string when all classes are removed (does not remove the attribute).
-    fn set_classes(&self, classes: Vec<String>) {
+    fn set_classes(&self, classes: Vec<String>, ctx: &Context) {
         let class_str = classes.join(" ");
-        super::mutation_observer::set_attribute_with_observer(&self.tree, self.node_id, "class", &class_str);
+        super::mutation_observer::set_attribute_with_observer(ctx, &self.tree, self.node_id, "class", &class_str);
     }
 
     /// Native implementation of classList.add(...classNames)
@@ -117,7 +117,7 @@ impl JsClassList {
             }
         }
 
-        class_list.set_classes(classes);
+        class_list.set_classes(classes, ctx);
         Ok(JsValue::undefined())
     }
 
@@ -150,7 +150,7 @@ impl JsClassList {
             classes.retain(|c| c != token);
         }
 
-        class_list.set_classes(classes);
+        class_list.set_classes(classes, ctx);
         Ok(JsValue::undefined())
     }
 
@@ -188,7 +188,7 @@ impl JsClassList {
                 // Force add: if already present, it's a noop (don't update attribute for noop)
                 if !has_token {
                     classes.push(class_name);
-                    class_list.set_classes(classes);
+                    class_list.set_classes(classes, ctx);
                 } else if class_list.has_class_attribute() {
                     // Even if noop, dedup if attribute exists (for force toggle noop case,
                     // the spec says don't run update steps, so we skip set_classes)
@@ -201,7 +201,7 @@ impl JsClassList {
                 // Force remove: if not present, it's a noop
                 if has_token {
                     classes.retain(|c| c != &class_name);
-                    class_list.set_classes(classes);
+                    class_list.set_classes(classes, ctx);
                 } else if class_list.has_class_attribute() {
                     // Noop - don't run update steps
                 }
@@ -216,7 +216,7 @@ impl JsClassList {
                     classes.push(class_name);
                     true
                 };
-                class_list.set_classes(classes);
+                class_list.set_classes(classes, ctx);
                 Ok(JsValue::from(result))
             }
         }
@@ -274,7 +274,7 @@ impl JsClassList {
             }
         }
 
-        class_list.set_classes(deduped);
+        class_list.set_classes(deduped, ctx);
         Ok(JsValue::from(true))
     }
 
@@ -361,7 +361,7 @@ impl JsClassList {
             .map(|s| s.to_std_string_escaped())
             .unwrap_or_default();
 
-        super::mutation_observer::set_attribute_with_observer(&class_list.tree, class_list.node_id, "class", &value);
+        super::mutation_observer::set_attribute_with_observer(ctx, &class_list.tree, class_list.node_id, "class", &value);
         Ok(JsValue::undefined())
     }
 

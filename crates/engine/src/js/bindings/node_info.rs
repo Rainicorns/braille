@@ -8,7 +8,8 @@ use boa_engine::{
 };
 
 use crate::dom::{NodeData, NodeId};
-use super::element::{JsElement, DOM_TREE, get_or_create_js_element};
+use super::element::{JsElement, get_or_create_js_element};
+use crate::js::realm_state;
 
 
 // ---------------------------------------------------------------------------
@@ -174,7 +175,7 @@ fn set_node_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
         }
     }
 
-    super::mutation_observer::character_data_set_with_observer(&el.tree, el.node_id, &data);
+    super::mutation_observer::character_data_set_with_observer(ctx, &el.tree, el.node_id, &data);
     Ok(JsValue::undefined())
 }
 
@@ -213,14 +214,11 @@ fn get_owner_document(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> J
     }
     drop(tree);
 
-    // Check if this node's tree is the global DOM_TREE
-    let is_global = DOM_TREE.with(|cell| {
-        let rc = cell.borrow();
-        match rc.as_ref() {
-            Some(global_tree) => std::rc::Rc::ptr_eq(&el.tree, global_tree),
-            None => false,
-        }
-    });
+    // Check if this node's tree is the global document tree
+    let is_global = {
+        let global_tree = realm_state::dom_tree(ctx);
+        std::rc::Rc::ptr_eq(&el.tree, &global_tree)
+    };
 
     if is_global {
         // Return the global document object
@@ -357,13 +355,10 @@ fn get_attributes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
 
             // Compute ownerDocument for attrs (same as element's ownerDocument)
             let owner_doc = {
-                let is_global = DOM_TREE.with(|cell| {
-                    let rc = cell.borrow();
-                    match rc.as_ref() {
-                        Some(global_tree) => std::rc::Rc::ptr_eq(&el_tree, global_tree),
-                        None => false,
-                    }
-                });
+                let is_global = {
+                    let global_tree = realm_state::dom_tree(ctx);
+                    std::rc::Rc::ptr_eq(&el_tree, &global_tree)
+                };
                 if is_global {
                     let global = ctx.global_object();
                     global.get(js_string!("document"), ctx)?

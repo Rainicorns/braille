@@ -1,8 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
-
 use boa_engine::{
     class::Class,
     js_string,
@@ -15,11 +13,11 @@ use boa_engine::{
 use crate::dom::DomTree;
 
 use super::bindings;
-use super::bindings::event_target::{ListenerMap, EVENT_LISTENERS};
 use super::bindings::element::{
-    get_or_create_js_element, DomPrototypes, NodeCache, DOM_PROTOTYPES, DOM_TREE, NODE_CACHE,
+    get_or_create_js_element, DomPrototypes,
 };
-use super::bindings::event::RUNTIME_CREATION_TIME;
+use super::realm_state;
+use super::realm_state::RealmState;
 
 pub struct JsRuntime {
     pub(crate) context: Context,
@@ -32,54 +30,15 @@ impl JsRuntime {
     /// Registers the `document` global, the `Element` class,
     /// the `window` global, and the `console` object.
     pub fn new(tree: Rc<RefCell<DomTree>>) -> Self {
-        let creation_time = Instant::now();
         let mut context = Context::default();
+
+        // Insert per-realm state into the default realm's host_defined().
+        // During migration this coexists with thread-locals; once all call sites
+        // are migrated the thread-locals will be removed (Phase 3).
+        context.realm().host_defined_mut().insert(RealmState::new(Rc::clone(&tree)));
+
         let console_buffer = Rc::new(RefCell::new(Vec::new()));
-        let listeners: Rc<RefCell<ListenerMap>> = Rc::new(RefCell::new(HashMap::new()));
-        let node_cache: Rc<RefCell<NodeCache>> = Rc::new(RefCell::new(HashMap::new()));
 
-        // Store the listeners Rc in the thread-local so NativeFunction callbacks
-        // (addEventListener, removeEventListener) can access it.
-        EVENT_LISTENERS.with(|el| {
-            *el.borrow_mut() = Some(Rc::clone(&listeners));
-        });
-
-        // Store the node cache Rc in the thread-local so NativeFunction callbacks
-        // can return the same JsObject for the same NodeId (object identity).
-        NODE_CACHE.with(|cell| {
-            *cell.borrow_mut() = Some(Rc::clone(&node_cache));
-        });
-
-        // Store the DomTree in the thread-local so Text/Comment constructors can access it
-        DOM_TREE.with(|cell| {
-            *cell.borrow_mut() = Some(Rc::clone(&tree));
-        });
-
-        // Initialize the iframe content docs map
-        super::bindings::element::IFRAME_CONTENT_DOCS.with(|cell| {
-            *cell.borrow_mut() = Some(Rc::new(RefCell::new(HashMap::new())));
-        });
-
-        // Initialize the iframe src content map (populated later by Engine::populate_iframe_src_content)
-        super::bindings::element::IFRAME_SRC_CONTENT.with(|cell| {
-            *cell.borrow_mut() = Some(Rc::new(RefCell::new(HashMap::new())));
-        });
-
-        // Initialize the iframe onload handlers map
-        super::bindings::element::IFRAME_ONLOAD_HANDLERS.with(|cell| {
-            *cell.borrow_mut() = Some(Rc::new(RefCell::new(HashMap::new())));
-        });
-
-        // Initialize the unified on* event handler map
-        super::bindings::on_event::init_on_event_handlers();
-
-        // Store the creation time in the thread-local so event.rs can compute DOMHighResTimeStamp
-        RUNTIME_CREATION_TIME.with(|cell| {
-            *cell.borrow_mut() = Some(creation_time);
-        });
-
-        // Initialize MutationObserver state
-        bindings::mutation_observer::init_mutation_observer_state();
 
         // Register DOMImplementation global constructor (for instanceof) — must be before register_document
         bindings::document::register_domimplementation(&mut context);
@@ -251,7 +210,7 @@ impl JsRuntime {
                     current_target: None,
                     phase: 0,
                     dispatching: false,
-                    time_stamp: bindings::event::dom_high_res_time_stamp(),
+                    time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
                     initialized: true,
                     kind: EventKind::Standard,
                 };
@@ -366,7 +325,7 @@ impl JsRuntime {
                     current_target: None,
                     phase: 0,
                     dispatching: false,
-                    time_stamp: bindings::event::dom_high_res_time_stamp(),
+                    time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
                     initialized: true,
                     kind: EventKind::Custom { detail },
                 };
@@ -445,7 +404,7 @@ impl JsRuntime {
                             current_target: None,
                             phase: 0,
                             dispatching: false,
-                            time_stamp: bindings::event::dom_high_res_time_stamp(),
+                            time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
                             initialized: true,
                             kind: $kind,
                         };
@@ -666,7 +625,7 @@ impl JsRuntime {
                         current_target: None,
                         phase: 0,
                         dispatching: false,
-                        time_stamp: bindings::event::dom_high_res_time_stamp(),
+                        time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
                         initialized: true,
                         kind: EventKind::Mouse {
                             button, buttons, client_x, client_y,
@@ -713,7 +672,7 @@ impl JsRuntime {
     ///   Text (constructor + prototype inherits from CharacterData.prototype)
     ///   Comment (constructor + prototype inherits from CharacterData.prototype)
     ///
-    /// Also stores Text.prototype and Comment.prototype in the DOM_PROTOTYPES thread-local
+    /// Also stores Text.prototype and Comment.prototype in the RealmState dom_prototypes
     /// so that get_or_create_js_element can set the right prototype on created objects.
     fn register_dom_type_hierarchy(context: &mut Context) {
         // Get the Element class prototype — this is what all JsElement instances inherit from.
@@ -915,10 +874,7 @@ impl JsRuntime {
                     args[0].to_string(ctx)?.to_std_string_escaped()
                 };
 
-                let tree = DOM_TREE.with(|cell| {
-                    let rc = cell.borrow();
-                    rc.as_ref().expect("DOM_TREE not initialized").clone()
-                });
+                let tree = realm_state::dom_tree(ctx);
 
                 let node_id = tree.borrow_mut().create_text(&data);
                 let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
@@ -977,10 +933,7 @@ impl JsRuntime {
                     args[0].to_string(ctx)?.to_std_string_escaped()
                 };
 
-                let tree = DOM_TREE.with(|cell| {
-                    let rc = cell.borrow();
-                    rc.as_ref().expect("DOM_TREE not initialized").clone()
-                });
+                let tree = realm_state::dom_tree(ctx);
 
                 let node_id = tree.borrow_mut().create_comment(&data);
                 let js_obj = get_or_create_js_element(node_id, tree, ctx)?;
@@ -1108,20 +1061,18 @@ impl JsRuntime {
         // ---------------------------------------------------------------
         // Store prototypes in thread-local for get_or_create_js_element
         // ---------------------------------------------------------------
-        DOM_PROTOTYPES.with(|cell| {
-            *cell.borrow_mut() = Some(DomPrototypes {
-                text_proto,
-                comment_proto,
-                pi_proto: Some(pi_proto),
-                attr_proto: Some(attr_proto),
-                html_tag_protos: HashMap::new(),
-                html_element_proto: None,
-                html_unknown_proto: None,
-                document_fragment_proto: None,
-                document_type_proto: None,
-                document_proto: None,
-                xml_document_proto: None,
-            });
+        realm_state::set_dom_prototypes(context, DomPrototypes {
+            text_proto,
+            comment_proto,
+            pi_proto: Some(pi_proto),
+            attr_proto: Some(attr_proto),
+            html_tag_protos: HashMap::new(),
+            html_element_proto: None,
+            html_unknown_proto: None,
+            document_fragment_proto: None,
+            document_type_proto: None,
+            document_proto: None,
+            xml_document_proto: None,
         });
 
         // ---------------------------------------------------------------
@@ -1312,11 +1263,8 @@ impl JsRuntime {
 
         let ctor_native = unsafe {
             NativeFunction::from_closure(move |_this, _args, ctx| {
-                // Get the global document's tree, or create a standalone tree
-                let tree = DOM_TREE.with(|cell| cell.borrow().clone());
-                let tree = tree.unwrap_or_else(|| {
-                    std::rc::Rc::new(std::cell::RefCell::new(crate::dom::DomTree::new()))
-                });
+                // Get the global document's tree from RealmState
+                let tree = realm_state::dom_tree(ctx);
                 let node_id = tree.borrow_mut().create_document_fragment();
                 let js_obj = bindings::element::get_or_create_js_element(node_id, tree, ctx)?;
                 Ok(js_obj.into())
@@ -1529,7 +1477,7 @@ impl JsRuntime {
             .expect("failed to register XMLDocument global");
     }
 
-    /// Populate the DomPrototypes thread-local with prototypes from the globally
+    /// Populate the RealmState dom_prototypes with prototypes from the globally
     /// registered HTML element type constructors, DocumentFragment, and DocumentType.
     fn populate_dom_prototypes(context: &mut Context) {
         let global = context.global_object();
@@ -1633,18 +1581,16 @@ impl JsRuntime {
         let document_proto = get_proto("Document");
         let xml_document_proto = get_proto("XMLDocument");
 
-        DOM_PROTOTYPES.with(|cell| {
-            let mut protos = cell.borrow_mut();
-            if let Some(ref mut p) = *protos {
-                p.html_tag_protos = html_tag_protos;
-                p.html_element_proto = html_element_proto;
-                p.html_unknown_proto = html_unknown_proto;
-                p.document_fragment_proto = document_fragment_proto;
-                p.document_type_proto = document_type_proto;
-                p.document_proto = document_proto;
-                p.xml_document_proto = xml_document_proto;
-            }
-        });
+        if let Some(mut p) = realm_state::dom_prototypes(context) {
+            p.html_tag_protos = html_tag_protos;
+            p.html_element_proto = html_element_proto;
+            p.html_unknown_proto = html_unknown_proto;
+            p.document_fragment_proto = document_fragment_proto;
+            p.document_type_proto = document_type_proto;
+            p.document_proto = document_proto;
+            p.xml_document_proto = xml_document_proto;
+            realm_state::set_dom_prototypes(context, p);
+        }
     }
 
     /// Register the `performance` global object with a `now()` method.
@@ -1652,8 +1598,8 @@ impl JsRuntime {
     fn register_performance_global(context: &mut Context) {
         use bindings::event::dom_high_res_time_stamp;
 
-        let now_fn = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
-            Ok(JsValue::from(dom_high_res_time_stamp()))
+        let now_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
+            Ok(JsValue::from(dom_high_res_time_stamp(ctx)))
         });
 
         let performance = ObjectInitializer::new(context)

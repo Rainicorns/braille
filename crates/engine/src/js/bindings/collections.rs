@@ -6,7 +6,7 @@
 //! Both use JS Proxy objects to support live bracket-index access ([0], [1], etc.)
 //! as well as `length`, `item()`, and iterator methods.
 //!
-//! IMPORTANT: Proxy creation uses pre-built factory functions (stored in thread-locals)
+//! IMPORTANT: Proxy creation uses pre-built factory functions (stored in per-realm state)
 //! instead of context.eval(). This avoids a Boa bug where eval() inside native functions
 //! can corrupt the calling scope's variable environment (index-out-of-bounds in DefInitVar).
 
@@ -22,21 +22,9 @@ use boa_engine::{
 };
 
 use crate::dom::{DomTree, NodeData, NodeId};
+use crate::js::realm_state;
 
 use super::element::get_or_create_js_element;
-
-// ---------------------------------------------------------------------------
-// Thread-local prototype and factory storage
-// ---------------------------------------------------------------------------
-
-thread_local! {
-    pub(crate) static NODELIST_PROTO: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-    pub(crate) static HTMLCOLLECTION_PROTO: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-    /// Factory function: (backing, getLength, getChild) -> Proxy
-    static NL_PROXY_FACTORY: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-    /// Factory function: (backing, getLength, getChild, getNamed, getNamedKeys) -> Proxy
-    static HC_PROXY_FACTORY: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-}
 
 // ---------------------------------------------------------------------------
 // Registration of NodeList and HTMLCollection globals
@@ -114,10 +102,8 @@ pub(crate) fn register_collections(context: &mut Context) {
         )
         .expect("failed to register NodeList global");
 
-    // Store in thread-local
-    NODELIST_PROTO.with(|cell| {
-        *cell.borrow_mut() = Some(nodelist_proto);
-    });
+    // Store in realm state
+    realm_state::set_nodelist_proto(context, nodelist_proto);
 
     // ---------------------------------------------------------------
     // HTMLCollection.prototype
@@ -193,10 +179,8 @@ pub(crate) fn register_collections(context: &mut Context) {
         )
         .expect("failed to register HTMLCollection global");
 
-    // Store in thread-local
-    HTMLCOLLECTION_PROTO.with(|cell| {
-        *cell.borrow_mut() = Some(htmlcollection_proto);
-    });
+    // Store in realm state
+    realm_state::set_htmlcollection_proto(context, htmlcollection_proto);
 
     // Also put NodeList and HTMLCollection on window object
     let global = context.global_object();
@@ -283,14 +267,13 @@ pub(crate) fn register_collections(context: &mut Context) {
         ))
         .expect("failed to create NodeList proxy factory");
 
-    NL_PROXY_FACTORY.with(|cell| {
-        *cell.borrow_mut() = Some(
-            nl_factory
-                .as_object()
-                .expect("NL factory should be an object")
-                .clone(),
-        );
-    });
+    realm_state::set_nl_proxy_factory(
+        context,
+        nl_factory
+            .as_object()
+            .expect("NL factory should be an object")
+            .clone(),
+    );
 
     let hc_factory = context
         .eval(Source::from_bytes(
@@ -390,14 +373,13 @@ pub(crate) fn register_collections(context: &mut Context) {
         ))
         .expect("failed to create HTMLCollection proxy factory");
 
-    HC_PROXY_FACTORY.with(|cell| {
-        *cell.borrow_mut() = Some(
-            hc_factory
-                .as_object()
-                .expect("HC factory should be an object")
-                .clone(),
-        );
-    });
+    realm_state::set_hc_proxy_factory(
+        context,
+        hc_factory
+            .as_object()
+            .expect("HC factory should be an object")
+            .clone(),
+    );
 }
 
 fn make_illegal_constructor(context: &mut Context, name: &str) -> JsObject {
@@ -436,8 +418,7 @@ pub(crate) fn create_live_nodelist(
     let backing = ObjectInitializer::new(context).build();
 
     // Set prototype to NodeList.prototype
-    let proto = NODELIST_PROTO.with(|cell| cell.borrow().clone());
-    if let Some(p) = proto {
+    if let Some(p) = realm_state::nodelist_proto(context) {
         backing.set_prototype(Some(p));
     }
 
@@ -519,11 +500,8 @@ pub(crate) fn create_live_nodelist(
     };
 
     // Call the pre-built factory function: factory(backing, getLength, getChild)
-    let factory = NL_PROXY_FACTORY.with(|cell| {
-        cell.borrow()
-            .clone()
-            .expect("NodeList proxy factory not initialized")
-    });
+    let factory = realm_state::nl_proxy_factory(context)
+        .expect("NodeList proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);
@@ -557,8 +535,7 @@ pub(crate) fn create_static_nodelist(
     let backing = ObjectInitializer::new(context).build();
 
     // Set prototype to NodeList.prototype
-    let proto = NODELIST_PROTO.with(|cell| cell.borrow().clone());
-    if let Some(p) = proto {
+    if let Some(p) = realm_state::nodelist_proto(context) {
         backing.set_prototype(Some(p));
     }
 
@@ -648,8 +625,7 @@ pub(crate) fn create_live_htmlcollection(
     let backing = ObjectInitializer::new(context).build();
 
     // Set prototype to HTMLCollection.prototype
-    let proto = HTMLCOLLECTION_PROTO.with(|cell| cell.borrow().clone());
-    if let Some(p) = proto {
+    if let Some(p) = realm_state::htmlcollection_proto(context) {
         backing.set_prototype(Some(p));
     }
 
@@ -861,11 +837,8 @@ pub(crate) fn create_live_htmlcollection(
     };
 
     // Call the pre-built factory function: factory(backing, getLength, getChild, getNamed, getNamedKeys)
-    let factory = HC_PROXY_FACTORY.with(|cell| {
-        cell.borrow()
-            .clone()
-            .expect("HTMLCollection proxy factory not initialized")
-    });
+    let factory = realm_state::hc_proxy_factory(context)
+        .expect("HTMLCollection proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);
@@ -954,8 +927,7 @@ pub(crate) fn create_live_htmlcollection_by_class(
     let backing = ObjectInitializer::new(context).build();
 
     // Set prototype to HTMLCollection.prototype
-    let proto = HTMLCOLLECTION_PROTO.with(|cell| cell.borrow().clone());
-    if let Some(p) = proto {
+    if let Some(p) = realm_state::htmlcollection_proto(context) {
         backing.set_prototype(Some(p));
     }
 
@@ -1154,11 +1126,8 @@ pub(crate) fn create_live_htmlcollection_by_class(
     };
 
     // Call factory
-    let factory = HC_PROXY_FACTORY.with(|cell| {
-        cell.borrow()
-            .clone()
-            .expect("HTMLCollection proxy factory not initialized")
-    });
+    let factory = realm_state::hc_proxy_factory(context)
+        .expect("HTMLCollection proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);
@@ -1255,8 +1224,7 @@ pub(crate) fn create_live_htmlcollection_by_tag(
 ) -> JsResult<JsObject> {
     let backing = ObjectInitializer::new(context).build();
 
-    let proto = HTMLCOLLECTION_PROTO.with(|cell| cell.borrow().clone());
-    if let Some(p) = proto {
+    if let Some(p) = realm_state::htmlcollection_proto(context) {
         backing.set_prototype(Some(p));
     }
 
@@ -1454,11 +1422,8 @@ pub(crate) fn create_live_htmlcollection_by_tag(
     };
 
     // Call factory
-    let factory = HC_PROXY_FACTORY.with(|cell| {
-        cell.borrow()
-            .clone()
-            .expect("HTMLCollection proxy factory not initialized")
-    });
+    let factory = realm_state::hc_proxy_factory(context)
+        .expect("HTMLCollection proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);
@@ -1551,8 +1516,7 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
 ) -> JsResult<JsObject> {
     let backing = ObjectInitializer::new(context).build();
 
-    let proto = HTMLCOLLECTION_PROTO.with(|cell| cell.borrow().clone());
-    if let Some(p) = proto {
+    if let Some(p) = realm_state::htmlcollection_proto(context) {
         backing.set_prototype(Some(p));
     }
 
@@ -1756,11 +1720,8 @@ pub(crate) fn create_live_htmlcollection_by_tag_name_ns(
     };
 
     // Call factory
-    let factory = HC_PROXY_FACTORY.with(|cell| {
-        cell.borrow()
-            .clone()
-            .expect("HTMLCollection proxy factory not initialized")
-    });
+    let factory = realm_state::hc_proxy_factory(context)
+        .expect("HTMLCollection proxy factory not initialized");
 
     let length_js = length_fn.to_js_function(&realm);
     let get_child_js = get_child_fn.to_js_function(&realm);

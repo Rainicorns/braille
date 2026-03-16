@@ -1,6 +1,3 @@
-use std::cell::RefCell;
-use std::time::Instant;
-
 use boa_engine::{
     class::{Class, ClassBuilder},
     js_string,
@@ -12,53 +9,33 @@ use boa_engine::{
 use boa_gc::{Finalize, Trace};
 
 use crate::dom::NodeId;
-
-// Cached getter for isTrusted — same JsObject across all Event instances.
-thread_local! {
-    static IS_TRUSTED_GETTER: RefCell<Option<JsObject>> = const { RefCell::new(None) };
-}
-
-// Thread-local storing the JsRuntime creation time for DOMHighResTimeStamp computation.
-// Set by JsRuntime::new(), read by get_time_stamp() on JsEvent.
-thread_local! {
-    pub(crate) static RUNTIME_CREATION_TIME: RefCell<Option<Instant>> = const { RefCell::new(None) };
-}
+use crate::js::realm_state;
 
 /// Compute a DOMHighResTimeStamp: milliseconds elapsed since the JsRuntime was created.
 /// Per spec, the result is coarsened to 5 microsecond (0.005ms) resolution to prevent
 /// timing attacks (cross-origin information leaks via high-resolution timestamps).
-pub(crate) fn dom_high_res_time_stamp() -> f64 {
-    RUNTIME_CREATION_TIME.with(|cell| {
-        let opt = cell.borrow();
-        match *opt {
-            Some(ref creation_time) => {
-                let raw_ms = creation_time.elapsed().as_secs_f64() * 1000.0;
-                // Coarsen to 5 microsecond resolution (0.005ms)
-                (raw_ms / 0.005).floor() * 0.005
-            }
-            None => 0.0,
-        }
-    })
+pub(crate) fn dom_high_res_time_stamp(ctx: &Context) -> f64 {
+    let creation_time = realm_state::creation_time(ctx);
+    let raw_ms = creation_time.elapsed().as_secs_f64() * 1000.0;
+    // Coarsen to 5 microsecond resolution (0.005ms)
+    (raw_ms / 0.005).floor() * 0.005
 }
 
 /// Attach `isTrusted` as an own accessor property on the given event object.
 /// Uses a cached getter function so that all instances share the same getter
 /// (required by the spec: `desc1.get === desc2.get`).
 pub(crate) fn attach_is_trusted_own_property(event_obj: &JsObject, ctx: &mut Context) -> JsResult<()> {
-    let getter = IS_TRUSTED_GETTER.with(|cell| {
-        let mut opt = cell.borrow_mut();
-        if let Some(ref g) = *opt {
-            g.clone()
-        } else {
+    let getter = match realm_state::is_trusted_getter(ctx) {
+        Some(g) => g,
+        None => {
             let realm = ctx.realm().clone();
             let fn_obj = NativeFunction::from_fn_ptr(JsEvent::get_is_trusted)
                 .to_js_function(&realm);
-            // to_js_function returns a JsFunction which we store as JsObject
             let g: JsObject = fn_obj.into();
-            *opt = Some(g.clone());
+            realm_state::set_is_trusted_getter(ctx, g.clone());
             g
         }
-    });
+    };
 
     event_obj.define_property_or_throw(
         js_string!("isTrusted"),
@@ -519,7 +496,7 @@ impl Class for JsEvent {
             current_target: None,
             phase: 0,
             dispatching: false,
-            time_stamp: dom_high_res_time_stamp(),
+            time_stamp: dom_high_res_time_stamp(ctx),
             initialized: true,
             kind: EventKind::Standard,
         })

@@ -76,7 +76,7 @@ fn set_tab_index(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
         .transpose()?
         .unwrap_or(0.0) as i32;
 
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "tabindex", &value.to_string());
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "tabindex", &value.to_string());
     Ok(JsValue::undefined())
 }
 
@@ -111,7 +111,7 @@ fn set_title(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<Js
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "title", &value);
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "title", &value);
     Ok(JsValue::undefined())
 }
 
@@ -146,7 +146,7 @@ fn set_lang(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "lang", &value);
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "lang", &value);
     Ok(JsValue::undefined())
 }
 
@@ -181,7 +181,7 @@ fn set_dir(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVa
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "dir", &value);
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "dir", &value);
     Ok(JsValue::undefined())
 }
 
@@ -247,7 +247,7 @@ fn click(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
         current_target: None,
         phase: 0,
         dispatching: false,
-        time_stamp: super::event::dom_high_res_time_stamp(),
+        time_stamp: super::event::dom_high_res_time_stamp(ctx),
         initialized: true,
         kind: super::event::EventKind::mouse_default(),
     };

@@ -159,7 +159,7 @@ fn get_option_selected(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) ->
     Ok(JsValue::from(has_selected))
 }
 
-fn set_option_selected(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+fn set_option_selected(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("selected setter: `this` is not an object").into()))?;
@@ -180,9 +180,9 @@ fn set_option_selected(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> 
     }
 
     if val {
-        super::mutation_observer::set_attribute_with_observer(&tree_rc, node_id, "selected", "");
+        super::mutation_observer::set_attribute_with_observer(ctx, &tree_rc, node_id, "selected", "");
     } else {
-        super::mutation_observer::remove_attribute_with_observer(&tree_rc, node_id, "selected");
+        super::mutation_observer::remove_attribute_with_observer(ctx, &tree_rc, node_id, "selected");
     }
 
     Ok(JsValue::undefined())

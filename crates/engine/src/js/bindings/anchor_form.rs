@@ -85,7 +85,7 @@ fn set_href(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "href", &value);
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "href", &value);
     Ok(JsValue::undefined())
 }
 
@@ -122,7 +122,7 @@ fn set_action(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "action", &value);
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "action", &value);
     Ok(JsValue::undefined())
 }
 
@@ -160,7 +160,7 @@ fn set_method(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "method", &value);
+    super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "method", &value);
     Ok(JsValue::undefined())
 }
 
@@ -229,7 +229,7 @@ fn get_hidden(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult
     Ok(JsValue::from(has))
 }
 
-fn set_hidden(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+fn set_hidden(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
         .as_object()
         .ok_or_else(|| JsError::from_opaque(js_string!("hidden setter: `this` is not an object").into()))?;
@@ -243,9 +243,9 @@ fn set_hidden(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsResult<
         .unwrap_or(false);
 
     if value {
-        super::mutation_observer::set_attribute_with_observer(&el.tree, el.node_id, "hidden", "");
+        super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, "hidden", "");
     } else {
-        super::mutation_observer::remove_attribute_with_observer(&el.tree, el.node_id, "hidden");
+        super::mutation_observer::remove_attribute_with_observer(ctx, &el.tree, el.node_id, "hidden");
     }
     Ok(JsValue::undefined())
 }

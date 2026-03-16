@@ -145,7 +145,7 @@ fn set_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
         val.to_string(ctx)?.to_std_string_escaped()
     };
 
-    super::mutation_observer::character_data_set_with_observer(&el.tree, el.node_id, &data);
+    super::mutation_observer::character_data_set_with_observer(ctx, &el.tree, el.node_id, &data);
     Ok(JsValue::undefined())
 }
 
@@ -183,7 +183,7 @@ fn append_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<
 
     let data = data_val.to_string(ctx)?.to_std_string_escaped();
 
-    super::mutation_observer::character_data_append_with_observer(&el.tree, el.node_id, &data);
+    super::mutation_observer::character_data_append_with_observer(ctx, &el.tree, el.node_id, &data);
     Ok(JsValue::undefined())
 }
 
@@ -216,7 +216,7 @@ fn delete_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<
     let offset = to_unsigned_long(offset_val, ctx)?;
     let count = to_unsigned_long(count_val, ctx)?;
 
-    super::mutation_observer::character_data_delete_with_observer(&el.tree, el.node_id, offset, count)
+    super::mutation_observer::character_data_delete_with_observer(ctx, &el.tree, el.node_id, offset, count)
         .map_err(|_| index_size_error())?;
 
     Ok(JsValue::undefined())
@@ -241,7 +241,7 @@ fn insert_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<
     let offset = to_unsigned_long(offset_val, ctx)?;
     let data = data_val.to_string(ctx)?.to_std_string_escaped();
 
-    super::mutation_observer::character_data_insert_with_observer(&el.tree, el.node_id, offset, &data)
+    super::mutation_observer::character_data_insert_with_observer(ctx, &el.tree, el.node_id, offset, &data)
         .map_err(|_| index_size_error())?;
 
     Ok(JsValue::undefined())
@@ -270,7 +270,7 @@ fn replace_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
     let count = to_unsigned_long(count_val, ctx)?;
     let data = data_val.to_string(ctx)?.to_std_string_escaped();
 
-    super::mutation_observer::character_data_replace_with_observer(&el.tree, el.node_id, offset, count, &data)
+    super::mutation_observer::character_data_replace_with_observer(ctx, &el.tree, el.node_id, offset, count, &data)
         .map_err(|_| index_size_error())?;
 
     Ok(JsValue::undefined())

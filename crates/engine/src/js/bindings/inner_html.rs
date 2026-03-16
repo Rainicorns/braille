@@ -62,7 +62,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
     // Queue MutationObserver childList record
     if !removed_children.is_empty() || !added_ids.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
-            &tree_rc, node_id, added_ids, removed_children, None, None,
+            ctx, &tree_rc, node_id, added_ids, removed_children, None, None,
         );
     }
 

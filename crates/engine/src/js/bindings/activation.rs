@@ -305,7 +305,7 @@ fn fire_simple_event(
             current_target: None,
             phase: 0,
             dispatching: false,
-            time_stamp: super::event::dom_high_res_time_stamp(),
+            time_stamp: super::event::dom_high_res_time_stamp(ctx),
             initialized: true,
             kind: EventKind::Standard,
         };
