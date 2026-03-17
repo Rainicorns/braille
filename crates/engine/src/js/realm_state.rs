@@ -607,6 +607,33 @@ fn copy_globals_to_window(context: &mut Context) {
         );
     }
 
+    // Copy JS built-in constructors to window (needed by WPT tests that do
+    // e.g. element.ownerDocument.defaultView.TypeError)
+    for builtin_name in &[
+        "TypeError",
+        "RangeError",
+        "SyntaxError",
+        "ReferenceError",
+        "EvalError",
+        "URIError",
+        "Error",
+    ] {
+        if let Ok(val) = global.get(js_string!(*builtin_name), context) {
+            if !val.is_undefined() {
+                let _ = window_obj.define_property_or_throw(
+                    js_string!(*builtin_name),
+                    PropertyDescriptor::builder()
+                        .value(val)
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(false)
+                        .build(),
+                    context,
+                );
+            }
+        }
+    }
+
     // Copy addEventListener, removeEventListener, dispatchEvent from window to global
     for method_name in &["addEventListener", "removeEventListener", "dispatchEvent"] {
         if let Ok(method_val) = window_obj.get(js_string!(*method_name), context) {

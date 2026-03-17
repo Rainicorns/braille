@@ -352,16 +352,35 @@ fn element_matches(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRes
     let el = obj
         .downcast_ref::<JsElement>()
         .ok_or_else(|| JsError::from_opaque(js_string!("matches: `this` is not an Element").into()))?;
-    let selector = args
-        .first()
-        .map(|v| v.to_string(ctx))
-        .transpose()?
-        .map(|s| s.to_std_string_escaped())
-        .unwrap_or_default();
 
+    // Per spec, matches() requires 1 argument — missing arg throws TypeError
+    if args.is_empty() {
+        return Err(boa_engine::JsNativeError::typ()
+            .with_message("Failed to execute 'matches' on 'Element': 1 argument required, but only 0 present.")
+            .into());
+    }
+    let selector = args[0].to_string(ctx)?.to_std_string_escaped();
+
+    // Parse the selector — if invalid, throw a DOMException (SyntaxError)
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
     let tree = tree_rc.borrow();
+
+    // Try parsing first to detect invalid selectors
+    let mut parser_input = cssparser::ParserInput::new(&selector);
+    let mut parser = cssparser::Parser::new(&mut parser_input);
+    if selectors::parser::SelectorList::parse(
+        &crate::css::selector_impl::BrailleSelectorParser,
+        &mut parser,
+        selectors::parser::ParseRelative::No,
+    )
+    .is_err()
+    {
+        drop(tree);
+        let exc = super::create_dom_exception(ctx, "SyntaxError", &format!("'{}' is not a valid selector", selector), 12)?;
+        return Err(JsError::from_opaque(exc.into()));
+    }
+
     let result = matching::matches_selector_str(&tree, node_id, &selector, Some(node_id));
     Ok(JsValue::from(result))
 }

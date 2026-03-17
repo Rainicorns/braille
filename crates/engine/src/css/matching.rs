@@ -318,6 +318,32 @@ impl<'a> Element for DomElement<'a> {
                     false
                 }
             }
+            PseudoClass::Target => {
+                // :target matches the element whose id matches the URL fragment
+                if let Some(fragment) = &self.tree.url_fragment {
+                    if !fragment.is_empty() {
+                        if let Some(id) = self.tree.get_attribute(self.node_id, "id") {
+                            return id == *fragment;
+                        }
+                    }
+                }
+                false
+            }
+            PseudoClass::Lang(ref lang) => {
+                // Walk ancestors looking for a lang attribute
+                let mut current = Some(self.node_id);
+                while let Some(nid) = current {
+                    if let Some(attr_lang) = self.tree.get_attribute(nid, "lang") {
+                        // Case-insensitive prefix match: "en" matches "en", "en-US", etc.
+                        return attr_lang.eq_ignore_ascii_case(lang)
+                            || (attr_lang.len() > lang.len()
+                                && attr_lang[..lang.len()].eq_ignore_ascii_case(lang)
+                                && attr_lang.as_bytes()[lang.len()] == b'-');
+                    }
+                    current = self.tree.get_node(nid).parent;
+                }
+                false
+            }
             PseudoClass::Invalid => match self.tag_name() {
                 Some("input") | Some("textarea") | Some("select") => self.is_form_element_invalid(),
                 Some("fieldset") | Some("form") => self.has_invalid_descendant(),
@@ -345,9 +371,9 @@ impl<'a> Element for DomElement<'a> {
     }
 
     fn is_link(&self) -> bool {
-        // An element is a link if it's an <a> with an href attribute
+        // An element is a link if it's an <a> or <area> with an href attribute
         match self.tag_name() {
-            Some("a") => self.tree.has_attribute(self.node_id, "href"),
+            Some("a") | Some("area") => self.tree.has_attribute(self.node_id, "href"),
             _ => false,
         }
     }

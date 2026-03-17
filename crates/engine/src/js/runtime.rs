@@ -1195,7 +1195,7 @@ pub(crate) fn register_dom_type_hierarchy(context: &mut Context) {
     // ---------------------------------------------------------------
     // Register DocumentFragment and DocumentType constructors
     // ---------------------------------------------------------------
-    register_document_fragment_type(context, &element_proto_obj);
+    register_document_fragment_type(context, &node_proto);
     register_document_type_type(context, &element_proto_obj);
     register_document_constructor(context, &element_proto_obj);
     register_xml_document_global(context);
@@ -1420,9 +1420,49 @@ fn register_html_element_types(context: &mut Context, element_proto: &JsObject) 
 
 /// Register DocumentFragment constructor.
 /// `new DocumentFragment()` creates a new empty DocumentFragment node per spec.
-fn register_document_fragment_type(context: &mut Context, element_proto: &JsObject) {
+fn register_document_fragment_type(context: &mut Context, node_proto: &JsObject) {
+    // DocumentFragment.prototype inherits from Node.prototype (NOT Element.prototype).
+    // Per spec, DocumentFragment does NOT have matches/closest/webkitMatchesSelector.
+    // ParentNode mixin methods (querySelector, etc.) are copied from Element.prototype below.
     let proto = ObjectInitializer::new(context).build();
-    proto.set_prototype(Some(element_proto.clone()));
+    proto.set_prototype(Some(node_proto.clone()));
+
+    // Copy ParentNode mixin methods and accessors from Element.prototype to
+    // DocumentFragment.prototype using JS, similar to the CharacterData copy pattern.
+    // This copies querySelector, querySelectorAll, children, childElementCount, etc.
+    // but excludes matches/closest/webkitMatchesSelector (Element-only methods).
+    context
+        .register_global_property(js_string!("__braille_df_proto"), proto.clone(), Attribute::all())
+        .expect("failed to register temp df proto");
+    context
+        .eval(Source::from_bytes(
+            r#"
+            (function() {
+                var src = Element.prototype;
+                var dst = __braille_df_proto;
+                // Copy specific ParentNode/ChildNode mixin properties
+                var names = Object.getOwnPropertyNames(src);
+                // Exclude Element-only methods that DocumentFragment must NOT have
+                var exclude = {
+                    'constructor': true,
+                    'matches': true,
+                    'closest': true,
+                    'webkitMatchesSelector': true
+                };
+                for (var i = 0; i < names.length; i++) {
+                    var name = names[i];
+                    if (exclude[name]) continue;
+                    // Skip if already defined on Node.prototype (inherited)
+                    var desc = Object.getOwnPropertyDescriptor(src, name);
+                    if (desc) {
+                        Object.defineProperty(dst, name, desc);
+                    }
+                }
+                delete self.__braille_df_proto;
+            })();
+            "#,
+        ))
+        .expect("failed to copy ParentNode properties to DocumentFragment.prototype");
 
     let ctor_native = unsafe {
         NativeFunction::from_closure(move |_this, _args, ctx| {

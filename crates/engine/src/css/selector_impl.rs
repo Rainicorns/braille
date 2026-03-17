@@ -79,6 +79,8 @@ pub enum PseudoClass {
     Scope,
     Invalid,
     Valid,
+    Target,
+    Lang(String),
 }
 
 /// Pseudo-elements supported by Braille.
@@ -120,6 +122,8 @@ impl CssparserToCss for PseudoClass {
             PseudoClass::Scope => dest.write_str(":scope"),
             PseudoClass::Invalid => dest.write_str(":invalid"),
             PseudoClass::Valid => dest.write_str(":valid"),
+            PseudoClass::Target => dest.write_str(":target"),
+            PseudoClass::Lang(ref lang) => write!(dest, ":lang({})", lang),
         }
     }
 }
@@ -196,10 +200,36 @@ impl<'i> parser::Parser<'i> for BrailleSelectorParser {
             "scope" => Ok(PseudoClass::Scope),
             "invalid" => Ok(PseudoClass::Invalid),
             "valid" => Ok(PseudoClass::Valid),
+            "target" => Ok(PseudoClass::Target),
             _ => Err(cssparser::ParseError {
                 kind: cssparser::ParseErrorKind::Custom(parser::SelectorParseErrorKind::UnexpectedIdent(name.clone())),
                 location: _location,
             }),
+        }
+    }
+
+    fn parse_non_ts_functional_pseudo_class<'t>(
+        &self,
+        name: cssparser::CowRcStr<'i>,
+        arguments: &mut cssparser::Parser<'i, 't>,
+        _after_part: bool,
+    ) -> Result<PseudoClass, cssparser::ParseError<'i, Self::Error>> {
+        match &*name {
+            "lang" => {
+                let lang = arguments
+                    .expect_ident_or_string()
+                    .map(|v| v.to_string())
+                    .map_err(|e| -> cssparser::ParseError<'i, Self::Error> {
+                        cssparser::ParseError {
+                            kind: cssparser::ParseErrorKind::Custom(
+                                parser::SelectorParseErrorKind::UnexpectedIdent(name.clone()),
+                            ),
+                            location: e.location,
+                        }
+                    })?;
+                Ok(PseudoClass::Lang(lang))
+            }
+            _ => Err(arguments.new_custom_error(parser::SelectorParseErrorKind::UnexpectedIdent(name.clone()))),
         }
     }
 

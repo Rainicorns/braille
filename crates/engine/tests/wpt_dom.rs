@@ -276,6 +276,26 @@ fn testharness_preamble() -> String {
         }
         if (!threw) throw new Error(msg || "assert_throws_exactly: no error thrown");
     };
+    self.promise_rejects_js = function(test, constructor, promise, description) {
+        return promise.then(
+            function() { throw new Error(description + ": promise resolved, expected rejection"); },
+            function(e) {
+                if (!(e instanceof constructor)) {
+                    throw new Error(description + ": wrong rejection type: " + e);
+                }
+            }
+        );
+    };
+    self.promise_rejects_exactly = function(test, exception, promise, description) {
+        return promise.then(
+            function() { throw new Error(description + ": promise resolved, expected rejection"); },
+            function(e) {
+                if (e !== exception) {
+                    throw new Error(description + ": wrong rejection value");
+                }
+            }
+        );
+    };
     self.assert_unreached = function(msg) {
         throw new Error(msg || "assert_unreached");
     };
@@ -384,7 +404,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // createElementNS — now have proper namespace support (W2 un-skip)
         // ("createElementNS", "requires namespace support"),
         // ("getElementsByTagNameNS", "requires namespace support"),  // getElementsByTagNameNS now implemented
-        ("namespaced", "requires namespace support"),
+        // ("namespaced", "requires namespace support"),  // namespace support implemented (unskip)
         ("NamedNodeMap", "requires NamedNodeMap"),
         // CharacterData-appendChild requires HierarchyRequestError (DOMException)
         // CharacterData-appendChild — now have HierarchyRequestError (W2 un-skip)

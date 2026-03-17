@@ -166,7 +166,9 @@ pub(crate) fn ensure_iframe_content_doc(tree_ptr: usize, node_id: NodeId, ctx: &
     }
 
     // Check if the iframe has a `src` attribute with pre-fetched content
-    let prefetched_html: Option<String> = {
+    let prefetched_html: Option<String>;
+    let src_fragment: Option<String>;
+    {
         let dom_tree = realm_state::dom_tree(ctx);
         let t = dom_tree.borrow();
         let node = t.get_node(node_id);
@@ -178,15 +180,21 @@ pub(crate) fn ensure_iframe_content_doc(tree_ptr: usize, node_id: NodeId, ctx: &
             match src {
                 Some(src_val) => {
                     let src_no_fragment = src_val.split('#').next().unwrap_or(&src_val).to_string();
+                    // Extract fragment (part after #) for :target pseudo-class
+                    src_fragment = src_val.find('#').map(|idx| src_val[idx + 1..].to_string());
                     drop(t);
                     let src_content = realm_state::iframe_src_content(ctx);
                     let map = src_content.borrow();
-                    map.get(&src_no_fragment).cloned()
+                    prefetched_html = map.get(&src_no_fragment).cloned();
                 }
-                None => None,
+                None => {
+                    prefetched_html = None;
+                    src_fragment = None;
+                }
             }
         } else {
-            None
+            prefetched_html = None;
+            src_fragment = None;
         }
     };
 
@@ -209,6 +217,11 @@ pub(crate) fn ensure_iframe_content_doc(tree_ptr: usize, node_id: NodeId, ctx: &
         }
         tree
     };
+
+    // Set URL fragment on the iframe's tree for :target pseudo-class matching
+    if let Some(ref fragment) = src_fragment {
+        new_tree.borrow_mut().url_fragment = Some(fragment.clone());
+    }
 
     // Store in IFRAME_CONTENT_DOCS
     {
@@ -396,7 +409,7 @@ pub(crate) fn get_or_create_js_element(
                 }
             }
             NodeKind::NonHtmlElement => {
-                // Non-HTML namespace elements keep Element.prototype (default)
+                // Non-HTML namespace elements keep Element.prototype (default from ClassBuilder)
             }
             NodeKind::DocumentFragment => {
                 if let Some(ref proto) = p.document_fragment_proto {

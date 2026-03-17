@@ -1141,6 +1141,7 @@ pub(crate) fn add_document_properties_to_element(
 
     // createElement method — respects is_html_document for lowercasing and namespace
     let tree_for_ce = new_tree.clone();
+    let ct_for_ce = _content_type.clone();
     let create_element = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
             let tag = args
@@ -1163,8 +1164,13 @@ pub(crate) fn add_document_properties_to_element(
             let node_id = if is_html {
                 // HTML doc: lowercase tag, HTML namespace (create_element default)
                 tree_for_ce.borrow_mut().create_element(&tag.to_ascii_lowercase())
+            } else if ct_for_ce == "application/xhtml+xml" {
+                // XHTML doc: preserve case, XHTML namespace
+                tree_for_ce
+                    .borrow_mut()
+                    .create_element_ns(&tag, vec![], "http://www.w3.org/1999/xhtml")
             } else {
-                // XML/XHTML doc: preserve case, null namespace
+                // XML doc: preserve case, null namespace
                 tree_for_ce.borrow_mut().create_element_ns(&tag, vec![], "")
             };
             let js_el = get_or_create_js_element(node_id, tree_for_ce.clone(), ctx2)?;

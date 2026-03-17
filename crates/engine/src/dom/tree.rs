@@ -4,6 +4,7 @@ use super::node::{DomAttribute, Node, NodeData, NodeId};
 pub struct DomTree {
     nodes: Vec<Node>,
     is_html_document: bool,
+    pub url_fragment: Option<String>,
 }
 
 impl Default for DomTree {
@@ -27,6 +28,7 @@ impl DomTree {
         DomTree {
             nodes: vec![root],
             is_html_document: true,
+            url_fragment: None,
         }
     }
 
@@ -43,6 +45,7 @@ impl DomTree {
         DomTree {
             nodes: vec![root],
             is_html_document: false,
+            url_fragment: None,
         }
     }
 
