@@ -2134,38 +2134,100 @@ pub(crate) fn invoke_listeners_for_node(
 /// Report a listener error via window.onerror. Per spec, when a listener throws,
 /// the error is reported and dispatch continues to the next listener.
 pub(crate) fn report_listener_error(err: JsError, ctx: &mut Context) {
-    let message = err
+    let error_value = err
         .as_opaque()
-        .map(|v| {
-            v.to_string(ctx)
-                .map(|s| s.to_std_string_escaped())
-                .unwrap_or_else(|_| "unknown error".to_string())
-        })
-        .or_else(|| err.as_native().map(|n| n.message().to_string()))
-        .unwrap_or_else(|| "unknown error".to_string());
+        .cloned()
+        .unwrap_or_else(|| {
+            err.as_native()
+                .map(|_| {
+                    // Convert JsNativeError to a proper JS Error object
+                    err.to_opaque(ctx)
+                })
+                .unwrap_or(JsValue::undefined())
+        });
 
-    // Try to call window.onerror(message, filename, lineno, colno, error)
-    let onerror: Option<JsObject> = realm_state::window_object(ctx).and_then(|w| {
-        let val = match w.get(js_string!("onerror"), ctx) {
-            Ok(v) if !v.is_undefined() && !v.is_null() => v,
-            _ => return None,
+    let message = error_value
+        .to_string(ctx)
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_else(|_| "unknown error".to_string());
+
+    // Per spec, report the exception by firing an ErrorEvent on window.
+    // This allows addEventListener("error", ...) to catch it (used by EventWatcher in WPT).
+    if let Some(window) = realm_state::window_object(ctx) {
+        // First try calling window.onerror(message, filename, lineno, colno, error) for legacy support
+        let onerror: Option<JsObject> = {
+            let val = match window.get(js_string!("onerror"), ctx) {
+                Ok(v) if !v.is_undefined() && !v.is_null() => v,
+                _ => JsValue::undefined(),
+            };
+            #[allow(clippy::map_clone)]
+            val.as_object().filter(|o| o.is_callable()).map(|o| o.clone())
         };
-        #[allow(clippy::map_clone)]
-        val.as_object().filter(|o| o.is_callable()).map(|o| o.clone())
-    });
 
-    if let Some(onerror_fn) = onerror {
-        let _ = onerror_fn.call(
-            &JsValue::undefined(),
-            &[
-                JsValue::from(js_string!(message)),
-                JsValue::from(js_string!("")), // filename
-                JsValue::from(0),              // lineno
-                JsValue::from(0),              // colno
-                JsValue::undefined(),          // error object
-            ],
-            ctx,
-        );
+        if let Some(onerror_fn) = onerror {
+            let _ = onerror_fn.call(
+                &JsValue::undefined(),
+                &[
+                    JsValue::from(js_string!(message.clone())),
+                    JsValue::from(js_string!("")), // filename
+                    JsValue::from(0),              // lineno
+                    JsValue::from(0),              // colno
+                    error_value.clone(),           // error object
+                ],
+                ctx,
+            );
+        }
+
+        // Also dispatch an ErrorEvent on window so addEventListener("error") catches it
+        // Create a plain Event-like object with error/message properties
+        let event_obj = boa_engine::object::ObjectInitializer::new(ctx).build();
+        let _ = event_obj.set(js_string!("type"), JsValue::from(js_string!("error")), false, ctx);
+        let _ = event_obj.set(js_string!("message"), JsValue::from(js_string!(message)), false, ctx);
+        let _ = event_obj.set(js_string!("error"), error_value, false, ctx);
+        let _ = event_obj.set(js_string!("filename"), JsValue::from(js_string!("")), false, ctx);
+        let _ = event_obj.set(js_string!("lineno"), JsValue::from(0), false, ctx);
+        let _ = event_obj.set(js_string!("colno"), JsValue::from(0), false, ctx);
+        let _ = event_obj.set(js_string!("bubbles"), JsValue::from(false), false, ctx);
+        let _ = event_obj.set(js_string!("cancelable"), JsValue::from(true), false, ctx);
+
+        // Fire error event on window's listeners directly
+        let listeners = realm_state::event_listeners(ctx);
+        let window_listeners: Vec<(JsObject, bool)> = {
+            let map = listeners.borrow();
+            let window_key = (usize::MAX, WINDOW_LISTENER_ID);
+            map.get(&window_key)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter(|e| e.event_type == "error")
+                        .map(|e| (e.callback.clone(), e.once))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        for (callback, _once) in &window_listeners {
+            if callback.is_callable() {
+                let _ = callback.call(&JsValue::from(window.clone()), &[JsValue::from(event_obj.clone())], ctx);
+            } else if let Ok(handle) = callback.get(js_string!("handleEvent"), ctx) {
+                if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
+                    let _ = handle_fn.call(
+                        &JsValue::from(callback.clone()),
+                        &[JsValue::from(event_obj.clone())],
+                        ctx,
+                    );
+                }
+            }
+        }
+
+        // Remove once listeners
+        if window_listeners.iter().any(|(_, once)| *once) {
+            let mut map = listeners.borrow_mut();
+            let window_key = (usize::MAX, WINDOW_LISTENER_ID);
+            if let Some(entries) = map.get_mut(&window_key) {
+                entries.retain(|e| !(e.event_type == "error" && e.once));
+            }
+        }
     }
 }
 

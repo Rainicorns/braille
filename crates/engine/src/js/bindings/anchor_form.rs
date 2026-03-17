@@ -62,8 +62,16 @@ fn get_href(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<J
     match tree.get_attribute(el.node_id, "href") {
         Some(val) => {
             // Per WHATWG URL spec: parse through url::Url to get percent-encoded form
+            // For relative URLs (e.g. "#fragment"), resolve against "about:blank" base
             match url::Url::parse(&val) {
                 Ok(parsed) => Ok(JsValue::from(js_string!(parsed.to_string()))),
+                Err(url::ParseError::RelativeUrlWithoutBase) => {
+                    let base = url::Url::parse("about:blank").unwrap();
+                    match base.join(&val) {
+                        Ok(resolved) => Ok(JsValue::from(js_string!(resolved.to_string()))),
+                        Err(_) => Ok(JsValue::from(js_string!(val))),
+                    }
+                }
                 Err(_) => Ok(JsValue::from(js_string!(val))),
             }
         }

@@ -229,13 +229,15 @@ pub(crate) fn run_post_activation(tree: &Rc<RefCell<DomTree>>, node_id: NodeId, 
                     // Drop tree borrow before fire_simple_event (which re-enters dispatch)
                     let form_id = { find_ancestor_form(&tree.borrow(), node_id) };
                     if let Some(form_id) = form_id {
-                        fire_simple_event(tree, form_id, "submit", true, true, ctx);
+                        // Don't bubble submit from activation — prevents double activation
+                        // when forms are nested (child form + parent form).
+                        fire_simple_event(tree, form_id, "submit", false, true, ctx);
                     }
                 }
                 "reset" => {
                     let form_id = { find_ancestor_form(&tree.borrow(), node_id) };
                     if let Some(form_id) = form_id {
-                        fire_simple_event(tree, form_id, "reset", true, true, ctx);
+                        fire_simple_event(tree, form_id, "reset", false, true, ctx);
                     }
                 }
                 _ => {}
@@ -247,13 +249,13 @@ pub(crate) fn run_post_activation(tree: &Rc<RefCell<DomTree>>, node_id: NodeId, 
                 "submit" => {
                     let form_id = { find_ancestor_form(&tree.borrow(), node_id) };
                     if let Some(form_id) = form_id {
-                        fire_simple_event(tree, form_id, "submit", true, true, ctx);
+                        fire_simple_event(tree, form_id, "submit", false, true, ctx);
                     }
                 }
                 "reset" => {
                     let form_id = { find_ancestor_form(&tree.borrow(), node_id) };
                     if let Some(form_id) = form_id {
-                        fire_simple_event(tree, form_id, "reset", true, true, ctx);
+                        fire_simple_event(tree, form_id, "reset", false, true, ctx);
                     }
                 }
                 _ => {}
@@ -270,6 +272,27 @@ pub(crate) fn run_post_activation(tree: &Rc<RefCell<DomTree>>, node_id: NodeId, 
                         if let Some(click_obj) = click_val.as_object().filter(|o| o.is_callable()) {
                             let _ = click_obj.call(&JsValue::from(js_obj), &[], ctx);
                         }
+                    }
+                }
+            }
+        }
+        "a" | "area" => {
+            // Navigate to href — for fragment-only hrefs, set location.hash
+            let href = {
+                let t = tree.borrow();
+                t.get_attribute(node_id, "href").unwrap_or_default().to_string()
+            };
+            if let Some(fragment) = href.strip_prefix('#') {
+                // Set location.hash which fires hashchange
+                let global = ctx.global_object();
+                if let Ok(loc) = global.get(js_string!("location"), ctx) {
+                    if let Some(loc_obj) = loc.as_object() {
+                        let _ = loc_obj.set(
+                            js_string!("hash"),
+                            JsValue::from(js_string!(fragment)),
+                            false,
+                            ctx,
+                        );
                     }
                 }
             }

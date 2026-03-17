@@ -7,7 +7,7 @@ use boa_engine::{
     native_function::NativeFunction,
     object::JsObject,
     property::PropertyDescriptor,
-    Context, JsData, JsError, JsResult, JsValue,
+    Context, JsData, JsError, JsNativeError, JsResult, JsValue,
 };
 use boa_gc::{Finalize, Trace};
 
@@ -332,7 +332,10 @@ impl JsEventTarget {
                             if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
                                 handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx)
                             } else {
-                                Ok(JsValue::undefined())
+                                // Per spec: if handleEvent is not callable, throw TypeError
+                                Err(JsNativeError::typ()
+                                    .with_message("EventListener.handleEvent is not a function")
+                                    .into())
                             }
                         }
                         Err(e) => Err(e),
@@ -355,7 +358,10 @@ impl JsEventTarget {
                             if let Some(handle_fn) = handle.as_object().filter(|o| o.is_callable()) {
                                 handle_fn.call(&JsValue::from(callback.clone()), std::slice::from_ref(event_val), ctx)
                             } else {
-                                Ok(JsValue::undefined())
+                                // Per spec: if handleEvent is not callable, throw TypeError
+                                Err(JsNativeError::typ()
+                                    .with_message("EventListener.handleEvent is not a function")
+                                    .into())
                             }
                         }
                         Err(e) => Err(e),

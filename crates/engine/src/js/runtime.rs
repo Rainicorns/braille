@@ -1847,12 +1847,25 @@ pub(crate) fn register_performance_global(context: &mut Context) {
 /// Register a minimal `location` global object stub.
 /// The Node-properties WPT test uses `String(location)` to get the document URL.
 pub(crate) fn register_location_global(context: &mut Context) {
-    // Create a location object with toString() returning "about:blank"
     let location = ObjectInitializer::new(context).build();
-    // Make String(location) return "about:blank"
-    let to_string_fn =
-        unsafe { NativeFunction::from_closure(|_this, _args, _ctx| Ok(JsValue::from(js_string!("about:blank")))) };
     let realm = context.realm().clone();
+
+    // Shared hash state for getter/setter
+    let hash_state: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+
+    // toString returns full URL
+    let hash_for_tostring = hash_state.clone();
+    let to_string_fn = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let h = hash_for_tostring.borrow();
+            let url = if h.is_empty() {
+                "about:blank".to_string()
+            } else {
+                format!("about:blank#{}", h)
+            };
+            Ok(JsValue::from(js_string!(url)))
+        })
+    };
     location
         .define_property_or_throw(
             js_string!("toString"),
@@ -1865,18 +1878,110 @@ pub(crate) fn register_location_global(context: &mut Context) {
             context,
         )
         .expect("failed to define location.toString");
+
+    // href getter/setter
+    let hash_for_href_get = hash_state.clone();
+    let href_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let h = hash_for_href_get.borrow();
+            let url = if h.is_empty() {
+                "about:blank".to_string()
+            } else {
+                format!("about:blank#{}", h)
+            };
+            Ok(JsValue::from(js_string!(url)))
+        })
+    };
+    let hash_for_href_set = hash_state.clone();
+    let href_setter = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx2| {
+            let val = args
+                .first()
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+            // Extract fragment from href
+            if let Some(idx) = val.find('#') {
+                *hash_for_href_set.borrow_mut() = val[idx + 1..].to_string();
+            }
+            Ok(JsValue::undefined())
+        })
+    };
     location
         .define_property_or_throw(
             js_string!("href"),
             boa_engine::property::PropertyDescriptor::builder()
-                .value(JsValue::from(js_string!("about:blank")))
-                .writable(true)
+                .get(href_getter.to_js_function(&realm))
+                .set(href_setter.to_js_function(&realm))
                 .configurable(true)
-                .enumerable(false)
+                .enumerable(true)
                 .build(),
             context,
         )
         .expect("failed to define location.href");
+
+    // hash getter/setter — setter fires hashchange on window
+    let hash_for_get = hash_state.clone();
+    let hash_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let h = hash_for_get.borrow();
+            if h.is_empty() {
+                Ok(JsValue::from(js_string!("")))
+            } else {
+                Ok(JsValue::from(js_string!(format!("#{}", h))))
+            }
+        })
+    };
+    let hash_for_set = hash_state.clone();
+    let hash_setter = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx2| {
+            let new_hash = args
+                .first()
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+
+            // Strip leading # if present
+            let new_hash = new_hash.strip_prefix('#').unwrap_or(&new_hash).to_string();
+
+            let old_hash = hash_for_set.borrow().clone();
+            if old_hash == new_hash {
+                return Ok(JsValue::undefined());
+            }
+
+            let old_url = if old_hash.is_empty() {
+                "about:blank".to_string()
+            } else {
+                format!("about:blank#{}", old_hash)
+            };
+            let new_url = if new_hash.is_empty() {
+                "about:blank".to_string()
+            } else {
+                format!("about:blank#{}", new_hash)
+            };
+
+            *hash_for_set.borrow_mut() = new_hash;
+
+            // Fire hashchange event on window
+            fire_hashchange_event(ctx2, &old_url, &new_url);
+
+            Ok(JsValue::undefined())
+        })
+    };
+    location
+        .define_property_or_throw(
+            js_string!("hash"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .get(hash_getter.to_js_function(&realm))
+                .set(hash_setter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define location.hash");
 
     context
         .register_global_property(
@@ -1885,6 +1990,47 @@ pub(crate) fn register_location_global(context: &mut Context) {
             Attribute::WRITABLE | Attribute::CONFIGURABLE,
         )
         .expect("failed to register location global");
+}
+
+/// Fire a HashChangeEvent on window with oldURL and newURL.
+fn fire_hashchange_event(ctx: &mut Context, old_url: &str, new_url: &str) {
+    if let Some(window) = realm_state::window_object(ctx) {
+        // Create a plain object as the event with oldURL/newURL properties
+        let event_obj = boa_engine::object::ObjectInitializer::new(ctx).build();
+        let _ = event_obj.set(js_string!("type"), JsValue::from(js_string!("hashchange")), false, ctx);
+        let _ = event_obj.set(js_string!("oldURL"), JsValue::from(js_string!(old_url)), false, ctx);
+        let _ = event_obj.set(js_string!("newURL"), JsValue::from(js_string!(new_url)), false, ctx);
+        let _ = event_obj.set(js_string!("bubbles"), JsValue::from(false), false, ctx);
+        let _ = event_obj.set(js_string!("cancelable"), JsValue::from(false), false, ctx);
+
+        // Call window.onhashchange if set
+        if let Ok(handler) = window.get(js_string!("onhashchange"), ctx) {
+            if let Some(handler_fn) = handler.as_object().filter(|o| o.is_callable()) {
+                let _ = handler_fn.call(&JsValue::from(window.clone()), &[JsValue::from(event_obj.clone())], ctx);
+            }
+        }
+
+        // Also fire on window's addEventListener("hashchange") listeners
+        let listeners = realm_state::event_listeners(ctx);
+        let window_key = (usize::MAX, bindings::window::WINDOW_LISTENER_ID);
+        let hashchange_listeners: Vec<JsObject> = {
+            let map = listeners.borrow();
+            map.get(&window_key)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter(|e| e.event_type == "hashchange")
+                        .map(|e| e.callback.clone())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        for callback in &hashchange_listeners {
+            if callback.is_callable() {
+                let _ = callback.call(&JsValue::from(window.clone()), &[JsValue::from(event_obj.clone())], ctx);
+            }
+        }
+    }
 }
 
 /// Add composedPath() to Event.prototype and CustomEvent.prototype.

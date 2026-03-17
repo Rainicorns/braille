@@ -330,6 +330,40 @@ fn testharness_preamble() -> String {
         if (!Event.BUBBLING_PHASE) Event.BUBBLING_PHASE = 3;
     }
 
+    // EventWatcher — watches for events on a target, returns promises
+    self.EventWatcher = function(test, target, eventTypes, setup) {
+        if (typeof eventTypes === "string") eventTypes = [eventTypes];
+        var waitingFor = null; // { type, resolve }
+        var self_ew = this;
+
+        function listener(evt) {
+            if (waitingFor && evt.type === waitingFor.type) {
+                var resolve = waitingFor.resolve;
+                waitingFor = null;
+                resolve(evt);
+            }
+        }
+
+        for (var i = 0; i < eventTypes.length; i++) {
+            target.addEventListener(eventTypes[i], listener);
+        }
+
+        if (test && test.add_cleanup) {
+            test.add_cleanup(function() {
+                for (var i = 0; i < eventTypes.length; i++) {
+                    target.removeEventListener(eventTypes[i], listener);
+                }
+            });
+        }
+
+        this.wait_for = function(type) {
+            if (setup) setup();
+            return new Promise(function(resolve) {
+                waitingFor = { type: type, resolve: resolve };
+            });
+        };
+    };
+
     // Make results available
     self.__wpt_get_results = function() { return results; };
 })();
