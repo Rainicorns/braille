@@ -3,7 +3,7 @@ use boa_engine::{
     JsValue,
 };
 
-use super::element::{get_or_create_js_element, JsElement};
+use super::element::get_or_create_js_element;
 use crate::dom::NodeData;
 
 /// Register all attribute methods and properties on the Element class.
@@ -109,12 +109,7 @@ pub(crate) fn register_attributes(class: &mut ClassBuilder) -> JsResult<()> {
 
 /// Native implementation of element.getAttribute(name)
 fn get_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getAttribute: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getAttribute: `this` is not an Element").into()))?;
+    extract_element!(el, this, "getAttribute");
     let name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -137,12 +132,7 @@ fn get_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
 
 /// Native implementation of element.setAttribute(name, value)
 fn set_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("setAttribute: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("setAttribute: `this` is not an Element").into()))?;
+    extract_element!(el, this, "setAttribute");
     let name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -181,12 +171,7 @@ fn set_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
 
 /// Native implementation of element.removeAttribute(name)
 fn remove_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("removeAttribute: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("removeAttribute: `this` is not an Element").into()))?;
+    extract_element!(el, this, "removeAttribute");
     let name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -203,20 +188,17 @@ fn remove_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
     super::mutation_observer::remove_attribute_with_observer(ctx, &el.tree, el.node_id, &name);
     // Clear inline event handler if this is an on* attribute
     if name.starts_with("on") && name.len() > 2 {
-        let tree_ptr = std::rc::Rc::as_ptr(&el.tree) as usize;
-        super::on_event::set_on_event_handler(tree_ptr, el.node_id, &name[2..], None, ctx);
+        if let Some(interned) = super::on_event::intern_event_name(&name[2..]) {
+            let tree_ptr = std::rc::Rc::as_ptr(&el.tree) as usize;
+            super::on_event::set_on_event_handler(tree_ptr, el.node_id, interned, None, ctx);
+        }
     }
     Ok(JsValue::undefined())
 }
 
 /// Native implementation of element.hasAttribute(name)
 fn has_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttribute: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttribute: `this` is not an Element").into()))?;
+    extract_element!(el, this, "hasAttribute");
     let name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -238,12 +220,7 @@ fn has_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
 /// Native implementation of element.getAttributeNode(name)
 /// Returns an Attr node for the named attribute, or null if not found.
 fn get_attribute_node_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNode: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNode: `this` is not an Element").into()))?;
+    extract_element!(el, this, "getAttributeNode");
     let name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -280,12 +257,7 @@ fn get_attribute_node_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) ->
 /// Native implementation of element.getAttributeNodeNS(namespace, localName)
 /// Returns an Attr node for the named attribute, or null if not found.
 fn get_attribute_node_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNodeNS: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNodeNS: `this` is not an Element").into()))?;
+    extract_element!(el, this, "getAttributeNodeNS");
 
     let ns_val = args.first().cloned().unwrap_or(JsValue::null());
     let namespace = if ns_val.is_null() || ns_val.is_undefined() {
@@ -310,7 +282,7 @@ fn get_attribute_node_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context)
         match &node.data {
             NodeData::Element { attributes, .. } => attributes
                 .iter()
-                .find(|a| a.namespace == namespace && a.local_name == local_name)
+                .find(|a| a.matches_ns(&namespace, &local_name))
                 .map(|a| {
                     (
                         a.local_name.clone(),
@@ -338,12 +310,7 @@ fn get_attribute_node_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context)
 
 /// Native implementation of element.setAttributeNS(namespace, qualifiedName, value)
 fn set_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("setAttributeNS: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("setAttributeNS: `this` is not an Element").into()))?;
+    extract_element!(el, this, "setAttributeNS");
 
     let ns_val = args.first().cloned().unwrap_or(JsValue::null());
     let namespace = if ns_val.is_null() || ns_val.is_undefined() {
@@ -395,12 +362,7 @@ fn set_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
 
 /// Native implementation of element.getAttributeNS(namespace, localName)
 fn get_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNS: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getAttributeNS: `this` is not an Element").into()))?;
+    extract_element!(el, this, "getAttributeNS");
 
     let ns_val = args.first().cloned().unwrap_or(JsValue::null());
     let namespace = if ns_val.is_null() || ns_val.is_undefined() {
@@ -425,12 +387,7 @@ fn get_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
 
 /// Native implementation of element.removeAttributeNS(namespace, localName)
 fn remove_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("removeAttributeNS: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("removeAttributeNS: `this` is not an Element").into()))?;
+    extract_element!(el, this, "removeAttributeNS");
 
     let ns_val = args.first().cloned().unwrap_or(JsValue::null());
     let namespace = if ns_val.is_null() || ns_val.is_undefined() {
@@ -452,12 +409,7 @@ fn remove_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -
 
 /// Native implementation of element.hasAttributeNS(namespace, localName)
 fn has_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttributeNS: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttributeNS: `this` is not an Element").into()))?;
+    extract_element!(el, this, "hasAttributeNS");
 
     let ns_val = args.first().cloned().unwrap_or(JsValue::null());
     let namespace = if ns_val.is_null() || ns_val.is_undefined() {
@@ -480,12 +432,7 @@ fn has_attribute_ns_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
 
 /// Native implementation of element.hasAttributes()
 fn has_attributes_fn(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttributes: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hasAttributes: `this` is not an Element").into()))?;
+    extract_element!(el, this, "hasAttributes");
 
     let tree = el.tree.borrow();
     let has = tree.has_attributes(el.node_id);
@@ -494,12 +441,7 @@ fn has_attributes_fn(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> J
 
 /// Native implementation of element.toggleAttribute(qualifiedName, force?)
 fn toggle_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("toggleAttribute: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("toggleAttribute: `this` is not an Element").into()))?;
+    extract_element!(el, this, "toggleAttribute");
     let name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -548,12 +490,7 @@ fn toggle_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
 
 /// Native getter for element.id
 fn get_id(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("id getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("id getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "id getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "id") {
@@ -564,12 +501,7 @@ fn get_id(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsV
 
 /// Native setter for element.id
 fn set_id(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("id setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("id setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "id setter");
     let value = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -583,12 +515,7 @@ fn set_id(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
 
 /// Native getter for element.className
 fn get_class_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("className getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("className getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "className getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "class") {
@@ -599,12 +526,7 @@ fn get_class_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
 
 /// Native setter for element.className
 fn set_class_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("className setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("className setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "className setter");
     let value = args
         .first()
         .map(|v| v.to_string(ctx))

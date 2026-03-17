@@ -621,6 +621,7 @@ mod tests {
                 NodeData::Text { .. }
                 | NodeData::Comment { .. }
                 | NodeData::ProcessingInstruction { .. }
+                | NodeData::CDATASection { .. }
                 | NodeData::Document
                 | NodeData::Doctype { .. }
                 | NodeData::DocumentFragment

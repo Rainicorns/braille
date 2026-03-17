@@ -792,12 +792,7 @@ pub(crate) fn register_mutation(class: &mut ClassBuilder) -> JsResult<()> {
 }
 
 fn insert_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: this is not an object"))?;
-    let parent = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsNativeError::typ().with_message("insertBefore: this is not a Node"))?;
+    extract_element!(parent, this, "insertBefore");
     let parent_id = parent.node_id;
     let tree = parent.tree.clone();
 
@@ -880,12 +875,7 @@ fn insert_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
 }
 
 fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: this is not an object"))?;
-    let parent = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsNativeError::typ().with_message("replaceChild: this is not a Node"))?;
+    extract_element!(parent, this, "replaceChild");
     let parent_id = parent.node_id;
     let tree = parent.tree.clone();
 
@@ -1020,12 +1010,7 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
 }
 
 fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsNativeError::typ().with_message("removeChild: this is not an object"))?;
-    let parent = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsNativeError::typ().with_message("removeChild: this is not a Node"))?;
+    extract_element!(parent, this, "removeChild");
     let parent_id = parent.node_id;
     let tree = parent.tree.clone();
 
@@ -1080,12 +1065,7 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
 }
 
 fn clone_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("cloneNode: this is not an object").into()))?;
-    let el = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("cloneNode: this is not an Element").into()))?;
+    extract_element!(el, this, "cloneNode");
     let node_id = el.node_id;
     let tree = el.tree.clone();
 
@@ -1194,12 +1174,7 @@ fn convert_nodes_from_args(args: &[JsValue], tree: &Rc<RefCell<DomTree>>, ctx: &
 
 /// ParentNode.append(...nodes)
 fn append(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("append: this is not an object").into()))?;
-    let parent = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("append: this is not an Element").into()))?;
+    extract_element!(parent, this, "append");
     let parent_id = parent.node_id;
     let tree = parent.tree.clone();
 
@@ -1215,12 +1190,7 @@ fn append(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
 
 /// ParentNode.prepend(...nodes)
 fn prepend(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("prepend: this is not an object").into()))?;
-    let parent = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("prepend: this is not an Element").into()))?;
+    extract_element!(parent, this, "prepend");
     let parent_id = parent.node_id;
     let tree = parent.tree.clone();
 
@@ -1238,12 +1208,7 @@ fn prepend(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVa
 
 /// ParentNode.replaceChildren(...nodes)
 fn replace_children(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChildren: this is not an object").into()))?;
-    let parent = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceChildren: this is not an Element").into()))?;
+    extract_element!(parent, this, "replaceChildren");
     let parent_id = parent.node_id;
     let tree = parent.tree.clone();
 
@@ -1268,12 +1233,7 @@ fn replace_children(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
 
 /// ChildNode.before(...nodes)
 fn child_node_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("before: this is not an object").into()))?;
-    let el = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("before: this is not an Element").into()))?;
+    extract_element!(el, this, "before");
     let this_id = el.node_id;
     let tree = el.tree.clone();
 
@@ -1344,12 +1304,7 @@ fn child_node_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsR
 
 /// ChildNode.after(...nodes)
 fn child_node_after(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("after: this is not an object").into()))?;
-    let el = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("after: this is not an Element").into()))?;
+    extract_element!(el, this, "after");
     let this_id = el.node_id;
     let tree = el.tree.clone();
 
@@ -1416,12 +1371,7 @@ fn child_node_after(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
 
 /// ChildNode.replaceWith(...nodes)
 fn child_node_replace_with(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceWith: this is not an object").into()))?;
-    let el = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceWith: this is not an Element").into()))?;
+    extract_element!(el, this, "replaceWith");
     let this_id = el.node_id;
     let tree = el.tree.clone();
 
@@ -1567,12 +1517,7 @@ fn do_insert_adjacent(
 
 /// Element.insertAdjacentElement(position, element)
 fn insert_adjacent_element(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertAdjacentElement: this is not an object").into()))?;
-    let el = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertAdjacentElement: this is not an Element").into()))?;
+    extract_element!(el, this, "insertAdjacentElement");
     let this_id = el.node_id;
     let tree = el.tree.clone();
 
@@ -1616,12 +1561,7 @@ fn insert_adjacent_element(this: &JsValue, args: &[JsValue], ctx: &mut Context) 
 
 /// Element.insertAdjacentText(position, text)
 fn insert_adjacent_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertAdjacentText: this is not an object").into()))?;
-    let el = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertAdjacentText: this is not an Element").into()))?;
+    extract_element!(el, this, "insertAdjacentText");
     let this_id = el.node_id;
     let tree = el.tree.clone();
 
@@ -1647,12 +1587,7 @@ fn insert_adjacent_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> 
 
 /// Node.normalize()
 fn normalize(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("normalize: this is not an object").into()))?;
-    let el = this_obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("normalize: this is not an Element").into()))?;
+    extract_element!(el, this, "normalize");
     let node_id = el.node_id;
     let tree = el.tree.clone();
 

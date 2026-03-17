@@ -88,9 +88,102 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
         .expect("Event should be object")
         .get(js_string!("prototype"), context)
         .expect("Event.prototype should exist");
-
-    // Build replacement Event constructor
     let event_proto_obj = event_proto.as_object().expect("Event.prototype object").clone();
+
+    create_event_constructor(context, &event_proto_obj, event_proto);
+    create_custom_event_constructor(context, &event_proto_obj);
+    create_mouse_event_constructor(context, &event_proto_obj);
+
+    // --- UIEvent subclasses: KeyboardEvent, WheelEvent, FocusEvent ---
+    // All use unified JsEvent with EventKind variants. Prototypes inherit Event.prototype.
+    macro_rules! wrap_ui_event_subclass {
+            ($kind:expr, $name:expr) => {{
+                // Build SubclassEvent.prototype inheriting from Event.prototype
+                let proto = ObjectInitializer::new(context).build();
+                proto.set_prototype(Some(event_proto_obj.clone()));
+
+                let proto_for_closure = proto.clone();
+                let ctor_name: &'static str = $name;
+                let ctor = unsafe {
+                    NativeFunction::from_closure(move |_this, args, ctx| {
+                        if _this.is_undefined() {
+                            return Err(JsError::from_native(
+                                boa_engine::JsNativeError::typ()
+                                    .with_message(format!("Failed to construct '{}': Please use the 'new' operator, this DOM object constructor cannot be called as a function.", ctor_name))
+                            ));
+                        }
+                        let event_type = args
+                            .first()
+                            .map(|v| v.to_string(ctx))
+                            .transpose()?
+                            .map(|s| s.to_std_string_escaped())
+                            .unwrap_or_default();
+
+                        let mut bubbles = false;
+                        let mut cancelable = false;
+                        if let Some(opts_val) = args.get(1) {
+                            if let Some(opts_obj) = opts_val.as_object() {
+                                let b = opts_obj.get(js_string!("bubbles"), ctx)?;
+                                if !b.is_undefined() { bubbles = b.to_boolean(); }
+                                let c = opts_obj.get(js_string!("cancelable"), ctx)?;
+                                if !c.is_undefined() { cancelable = c.to_boolean(); }
+                            }
+                        }
+
+                        let event = JsEvent {
+                            event_type,
+                            bubbles,
+                            cancelable,
+                            default_prevented: false,
+                            propagation_stopped: false,
+                            immediate_propagation_stopped: false,
+                            target: None,
+                            current_target: None,
+                            phase: 0,
+                            dispatching: false,
+                            time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
+                            initialized: true,
+                            kind: $kind,
+                        };
+                        let js_obj = JsEvent::from_data(event, ctx)?;
+                        js_obj.set_prototype(Some(proto_for_closure.clone()));
+                        attach_is_trusted_own_property(&js_obj, ctx)?;
+                        Ok(JsValue::from(js_obj))
+                    })
+                };
+
+                let ctor_fn = FunctionObjectBuilder::new(context.realm(), ctor)
+                    .name(js_string!($name))
+                    .length(1)
+                    .constructor(true)
+                    .build();
+
+                ctor_fn.define_property_or_throw(
+                    js_string!("prototype"),
+                    boa_engine::property::PropertyDescriptor::builder()
+                        .value(proto)
+                        .writable(false)
+                        .configurable(false)
+                        .enumerable(false)
+                        .build(),
+                    context,
+                ).expect(concat!("failed to define ", $name, ".prototype on wrapper"));
+
+                context
+                    .register_global_property(js_string!($name), ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+                    .expect(concat!("failed to register ", $name, " wrapper"));
+            }};
+        }
+
+    wrap_ui_event_subclass!(EventKind::Keyboard, "KeyboardEvent");
+    wrap_ui_event_subclass!(EventKind::Wheel, "WheelEvent");
+    wrap_ui_event_subclass!(EventKind::Focus, "FocusEvent");
+}
+
+/// Build the replacement Event constructor and register it as the global `Event`.
+fn create_event_constructor(context: &mut Context, event_proto_obj: &JsObject, event_proto: JsValue) {
+    use bindings::event::{attach_is_trusted_own_property, EventKind, JsEvent};
+
     let event_proto_for_closure = event_proto_obj.clone();
     let event_ctor = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
@@ -176,12 +269,14 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
             Attribute::WRITABLE | Attribute::CONFIGURABLE,
         )
         .expect("failed to register Event wrapper");
+}
 
-    // --- CustomEvent ---
-    // Build CustomEvent.prototype inheriting from Event.prototype
-    let event_proto_for_custom = event_proto_obj.clone();
+/// Build the CustomEvent constructor (prototype inherits from Event.prototype) and register it.
+fn create_custom_event_constructor(context: &mut Context, event_proto_obj: &JsObject) {
+    use bindings::event::{attach_is_trusted_own_property, EventKind, JsEvent};
+
     let custom_proto = ObjectInitializer::new(context).build();
-    custom_proto.set_prototype(Some(event_proto_for_custom));
+    custom_proto.set_prototype(Some(event_proto_obj.clone()));
 
     // Add detail getter to CustomEvent.prototype
     let detail_getter = NativeFunction::from_fn_ptr(JsEvent::get_detail);
@@ -306,358 +401,247 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
             Attribute::WRITABLE | Attribute::CONFIGURABLE,
         )
         .expect("failed to register CustomEvent wrapper");
+}
 
-    // --- UIEvent subclasses: MouseEvent, KeyboardEvent, WheelEvent, FocusEvent ---
-    // All use unified JsEvent with EventKind variants. Prototypes inherit Event.prototype.
-    macro_rules! wrap_ui_event_subclass {
-            ($kind:expr, $name:expr) => {{
-                // Build SubclassEvent.prototype inheriting from Event.prototype
-                let proto = ObjectInitializer::new(context).build();
-                proto.set_prototype(Some(event_proto_obj.clone()));
+/// Build the MouseEvent constructor with all mouse-specific property getters and register it.
+fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObject) {
+    use bindings::event::{attach_is_trusted_own_property, EventKind, JsEvent};
 
-                let proto_for_closure = proto.clone();
-                let ctor_name: &'static str = $name;
-                let ctor = unsafe {
-                    NativeFunction::from_closure(move |_this, args, ctx| {
-                        if _this.is_undefined() {
-                            return Err(JsError::from_native(
-                                boa_engine::JsNativeError::typ()
-                                    .with_message(format!("Failed to construct '{}': Please use the 'new' operator, this DOM object constructor cannot be called as a function.", ctor_name))
-                            ));
-                        }
-                        let event_type = args
-                            .first()
-                            .map(|v| v.to_string(ctx))
-                            .transpose()?
-                            .map(|s| s.to_std_string_escaped())
-                            .unwrap_or_default();
+    let proto = ObjectInitializer::new(context).build();
+    proto.set_prototype(Some(event_proto_obj.clone()));
 
-                        let mut bubbles = false;
-                        let mut cancelable = false;
-                        if let Some(opts_val) = args.get(1) {
-                            if let Some(opts_obj) = opts_val.as_object() {
-                                let b = opts_obj.get(js_string!("bubbles"), ctx)?;
-                                if !b.is_undefined() { bubbles = b.to_boolean(); }
-                                let c = opts_obj.get(js_string!("cancelable"), ctx)?;
-                                if !c.is_undefined() { cancelable = c.to_boolean(); }
-                            }
-                        }
+    // Add mouse-specific property getters on prototype
+    let realm = context.realm().clone();
 
-                        let event = JsEvent {
-                            event_type,
-                            bubbles,
-                            cancelable,
-                            default_prevented: false,
-                            propagation_stopped: false,
-                            immediate_propagation_stopped: false,
-                            target: None,
-                            current_target: None,
-                            phase: 0,
-                            dispatching: false,
-                            time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
-                            initialized: true,
-                            kind: $kind,
-                        };
-                        let js_obj = JsEvent::from_data(event, ctx)?;
-                        js_obj.set_prototype(Some(proto_for_closure.clone()));
-                        attach_is_trusted_own_property(&js_obj, ctx)?;
-                        Ok(JsValue::from(js_obj))
-                    })
+    // Unified macro for mouse event property getters.
+    // - $field: the field name in EventKind::Mouse { $field, .. }
+    // - $js_name: the JavaScript property name string
+    // - $default: the default JsValue when not a Mouse event
+    // - optional `as $cast_ty`: cast the field value before wrapping in JsValue
+    macro_rules! mouse_getter {
+        ($field:ident, $js_name:expr, $default:expr, as $cast_ty:ty) => {{
+            let getter = NativeFunction::from_fn_ptr(|this, _args, _ctx| {
+                let obj = match this.as_object() {
+                    Some(o) => o,
+                    None => return Ok(JsValue::from($default)),
                 };
-
-                let ctor_fn = FunctionObjectBuilder::new(context.realm(), ctor)
-                    .name(js_string!($name))
-                    .length(1)
-                    .constructor(true)
-                    .build();
-
-                ctor_fn.define_property_or_throw(
-                    js_string!("prototype"),
+                let evt = match obj.downcast_ref::<JsEvent>() {
+                    Some(e) => e,
+                    None => return Ok(JsValue::from($default)),
+                };
+                match &evt.kind {
+                    EventKind::Mouse { $field, .. } => Ok(JsValue::from(*$field as $cast_ty)),
+                    _ => Ok(JsValue::from($default)),
+                }
+            });
+            proto
+                .define_property_or_throw(
+                    js_string!($js_name),
                     boa_engine::property::PropertyDescriptor::builder()
-                        .value(proto)
-                        .writable(false)
-                        .configurable(false)
-                        .enumerable(false)
+                        .get(getter.to_js_function(&realm))
+                        .configurable(true)
+                        .enumerable(true)
                         .build(),
                     context,
-                ).expect(concat!("failed to define ", $name, ".prototype on wrapper"));
-
-                context
-                    .register_global_property(js_string!($name), ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
-                    .expect(concat!("failed to register ", $name, " wrapper"));
-            }};
-        }
-
-    // MouseEvent — custom constructor that parses mouse-specific options
-    {
-        let proto = ObjectInitializer::new(context).build();
-        proto.set_prototype(Some(event_proto_obj.clone()));
-
-        // Add mouse-specific property getters on prototype
-        let realm = context.realm().clone();
-
-        macro_rules! mouse_getter_i16 {
-            ($field:ident, $js_name:expr) => {{
-                let getter = NativeFunction::from_fn_ptr(|this, _args, _ctx| {
-                    let obj = match this.as_object() {
-                        Some(o) => o,
-                        None => return Ok(JsValue::from(0)),
-                    };
-                    let evt = match obj.downcast_ref::<JsEvent>() {
-                        Some(e) => e,
-                        None => return Ok(JsValue::from(0)),
-                    };
-                    match &evt.kind {
-                        EventKind::Mouse { $field, .. } => Ok(JsValue::from(*$field as i32)),
-                        _ => Ok(JsValue::from(0)),
-                    }
-                });
-                proto
-                    .define_property_or_throw(
-                        js_string!($js_name),
-                        boa_engine::property::PropertyDescriptor::builder()
-                            .get(getter.to_js_function(&realm))
-                            .configurable(true)
-                            .enumerable(true)
-                            .build(),
-                        context,
-                    )
-                    .expect(concat!("failed to define MouseEvent.", $js_name));
-            }};
-        }
-
-        macro_rules! mouse_getter_f64 {
-            ($field:ident, $js_name:expr) => {{
-                let getter = NativeFunction::from_fn_ptr(|this, _args, _ctx| {
-                    let obj = match this.as_object() {
-                        Some(o) => o,
-                        None => return Ok(JsValue::from(0.0)),
-                    };
-                    let evt = match obj.downcast_ref::<JsEvent>() {
-                        Some(e) => e,
-                        None => return Ok(JsValue::from(0.0)),
-                    };
-                    match &evt.kind {
-                        EventKind::Mouse { $field, .. } => Ok(JsValue::from(*$field)),
-                        _ => Ok(JsValue::from(0.0)),
-                    }
-                });
-                proto
-                    .define_property_or_throw(
-                        js_string!($js_name),
-                        boa_engine::property::PropertyDescriptor::builder()
-                            .get(getter.to_js_function(&realm))
-                            .configurable(true)
-                            .enumerable(true)
-                            .build(),
-                        context,
-                    )
-                    .expect(concat!("failed to define MouseEvent.", $js_name));
-            }};
-        }
-
-        macro_rules! mouse_getter_bool {
-            ($field:ident, $js_name:expr) => {{
-                let getter = NativeFunction::from_fn_ptr(|this, _args, _ctx| {
-                    let obj = match this.as_object() {
-                        Some(o) => o,
-                        None => return Ok(JsValue::from(false)),
-                    };
-                    let evt = match obj.downcast_ref::<JsEvent>() {
-                        Some(e) => e,
-                        None => return Ok(JsValue::from(false)),
-                    };
-                    match &evt.kind {
-                        EventKind::Mouse { $field, .. } => Ok(JsValue::from(*$field)),
-                        _ => Ok(JsValue::from(false)),
-                    }
-                });
-                proto
-                    .define_property_or_throw(
-                        js_string!($js_name),
-                        boa_engine::property::PropertyDescriptor::builder()
-                            .get(getter.to_js_function(&realm))
-                            .configurable(true)
-                            .enumerable(true)
-                            .build(),
-                        context,
-                    )
-                    .expect(concat!("failed to define MouseEvent.", $js_name));
-            }};
-        }
-
-        mouse_getter_i16!(button, "button");
-        mouse_getter_i16!(buttons, "buttons");
-        mouse_getter_f64!(client_x, "clientX");
-        mouse_getter_f64!(client_y, "clientY");
-        mouse_getter_f64!(screen_x, "screenX");
-        mouse_getter_f64!(screen_y, "screenY");
-        mouse_getter_bool!(alt_key, "altKey");
-        mouse_getter_bool!(ctrl_key, "ctrlKey");
-        mouse_getter_bool!(meta_key, "metaKey");
-        mouse_getter_bool!(shift_key, "shiftKey");
-
-        // relatedTarget (always null for now)
-        let related_target_getter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::null()));
-        proto
-            .define_property_or_throw(
-                js_string!("relatedTarget"),
-                boa_engine::property::PropertyDescriptor::builder()
-                    .get(related_target_getter.to_js_function(&realm))
-                    .configurable(true)
-                    .enumerable(true)
-                    .build(),
-                context,
-            )
-            .expect("failed to define MouseEvent.relatedTarget");
-
-        let proto_for_closure = proto.clone();
-        let ctor = unsafe {
-            NativeFunction::from_closure(move |_this, args, ctx| {
-                if _this.is_undefined() {
-                    return Err(JsError::from_native(
-                            boa_engine::JsNativeError::typ()
-                                .with_message("Failed to construct 'MouseEvent': Please use the 'new' operator, this DOM object constructor cannot be called as a function.")
-                        ));
-                }
-                let event_type = args
-                    .first()
-                    .map(|v| v.to_string(ctx))
-                    .transpose()?
-                    .map(|s| s.to_std_string_escaped())
-                    .unwrap_or_default();
-
-                let mut bubbles = false;
-                let mut cancelable = false;
-                let mut button: i16 = 0;
-                let mut buttons: u16 = 0;
-                let mut client_x: f64 = 0.0;
-                let mut client_y: f64 = 0.0;
-                let mut screen_x: f64 = 0.0;
-                let mut screen_y: f64 = 0.0;
-                let mut alt_key = false;
-                let mut ctrl_key = false;
-                let mut meta_key = false;
-                let mut shift_key = false;
-
-                if let Some(opts_val) = args.get(1) {
-                    if let Some(opts_obj) = opts_val.as_object() {
-                        let b = opts_obj.get(js_string!("bubbles"), ctx)?;
-                        if !b.is_undefined() {
-                            bubbles = b.to_boolean();
-                        }
-                        let c = opts_obj.get(js_string!("cancelable"), ctx)?;
-                        if !c.is_undefined() {
-                            cancelable = c.to_boolean();
-                        }
-
-                        let v = opts_obj.get(js_string!("button"), ctx)?;
-                        if !v.is_undefined() {
-                            button = v.to_number(ctx)? as i16;
-                        }
-                        let v = opts_obj.get(js_string!("buttons"), ctx)?;
-                        if !v.is_undefined() {
-                            buttons = v.to_number(ctx)? as u16;
-                        }
-                        let v = opts_obj.get(js_string!("clientX"), ctx)?;
-                        if !v.is_undefined() {
-                            client_x = v.to_number(ctx)?;
-                        }
-                        let v = opts_obj.get(js_string!("clientY"), ctx)?;
-                        if !v.is_undefined() {
-                            client_y = v.to_number(ctx)?;
-                        }
-                        let v = opts_obj.get(js_string!("screenX"), ctx)?;
-                        if !v.is_undefined() {
-                            screen_x = v.to_number(ctx)?;
-                        }
-                        let v = opts_obj.get(js_string!("screenY"), ctx)?;
-                        if !v.is_undefined() {
-                            screen_y = v.to_number(ctx)?;
-                        }
-                        let v = opts_obj.get(js_string!("altKey"), ctx)?;
-                        if !v.is_undefined() {
-                            alt_key = v.to_boolean();
-                        }
-                        let v = opts_obj.get(js_string!("ctrlKey"), ctx)?;
-                        if !v.is_undefined() {
-                            ctrl_key = v.to_boolean();
-                        }
-                        let v = opts_obj.get(js_string!("metaKey"), ctx)?;
-                        if !v.is_undefined() {
-                            meta_key = v.to_boolean();
-                        }
-                        let v = opts_obj.get(js_string!("shiftKey"), ctx)?;
-                        if !v.is_undefined() {
-                            shift_key = v.to_boolean();
-                        }
-                    }
-                }
-
-                let event = JsEvent {
-                    event_type,
-                    bubbles,
-                    cancelable,
-                    default_prevented: false,
-                    propagation_stopped: false,
-                    immediate_propagation_stopped: false,
-                    target: None,
-                    current_target: None,
-                    phase: 0,
-                    dispatching: false,
-                    time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
-                    initialized: true,
-                    kind: EventKind::Mouse {
-                        button,
-                        buttons,
-                        client_x,
-                        client_y,
-                        screen_x,
-                        screen_y,
-                        alt_key,
-                        ctrl_key,
-                        meta_key,
-                        shift_key,
-                    },
+                )
+                .expect(concat!("failed to define MouseEvent.", $js_name));
+        }};
+        ($field:ident, $js_name:expr, $default:expr) => {{
+            let getter = NativeFunction::from_fn_ptr(|this, _args, _ctx| {
+                let obj = match this.as_object() {
+                    Some(o) => o,
+                    None => return Ok(JsValue::from($default)),
                 };
-                let js_obj = JsEvent::from_data(event, ctx)?;
-                js_obj.set_prototype(Some(proto_for_closure.clone()));
-                attach_is_trusted_own_property(&js_obj, ctx)?;
-                Ok(JsValue::from(js_obj))
-            })
-        };
-
-        let ctor_fn = FunctionObjectBuilder::new(context.realm(), ctor)
-            .name(js_string!("MouseEvent"))
-            .length(1)
-            .constructor(true)
-            .build();
-
-        ctor_fn
-            .define_property_or_throw(
-                js_string!("prototype"),
-                boa_engine::property::PropertyDescriptor::builder()
-                    .value(proto)
-                    .writable(false)
-                    .configurable(false)
-                    .enumerable(false)
-                    .build(),
-                context,
-            )
-            .expect("failed to define MouseEvent.prototype on wrapper");
-
-        context
-            .register_global_property(
-                js_string!("MouseEvent"),
-                ctor_fn,
-                Attribute::WRITABLE | Attribute::CONFIGURABLE,
-            )
-            .expect("failed to register MouseEvent wrapper");
+                let evt = match obj.downcast_ref::<JsEvent>() {
+                    Some(e) => e,
+                    None => return Ok(JsValue::from($default)),
+                };
+                match &evt.kind {
+                    EventKind::Mouse { $field, .. } => Ok(JsValue::from(*$field)),
+                    _ => Ok(JsValue::from($default)),
+                }
+            });
+            proto
+                .define_property_or_throw(
+                    js_string!($js_name),
+                    boa_engine::property::PropertyDescriptor::builder()
+                        .get(getter.to_js_function(&realm))
+                        .configurable(true)
+                        .enumerable(true)
+                        .build(),
+                    context,
+                )
+                .expect(concat!("failed to define MouseEvent.", $js_name));
+        }};
     }
 
-    wrap_ui_event_subclass!(EventKind::Keyboard, "KeyboardEvent");
-    wrap_ui_event_subclass!(EventKind::Wheel, "WheelEvent");
-    wrap_ui_event_subclass!(EventKind::Focus, "FocusEvent");
+    mouse_getter!(button, "button", 0, as i32);
+    mouse_getter!(buttons, "buttons", 0, as i32);
+    mouse_getter!(client_x, "clientX", 0.0);
+    mouse_getter!(client_y, "clientY", 0.0);
+    mouse_getter!(screen_x, "screenX", 0.0);
+    mouse_getter!(screen_y, "screenY", 0.0);
+    mouse_getter!(alt_key, "altKey", false);
+    mouse_getter!(ctrl_key, "ctrlKey", false);
+    mouse_getter!(meta_key, "metaKey", false);
+    mouse_getter!(shift_key, "shiftKey", false);
+
+    // relatedTarget (always null for now)
+    let related_target_getter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::null()));
+    proto
+        .define_property_or_throw(
+            js_string!("relatedTarget"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .get(related_target_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define MouseEvent.relatedTarget");
+
+    let proto_for_closure = proto.clone();
+    let ctor = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            if _this.is_undefined() {
+                return Err(JsError::from_native(
+                        boa_engine::JsNativeError::typ()
+                            .with_message("Failed to construct 'MouseEvent': Please use the 'new' operator, this DOM object constructor cannot be called as a function.")
+                    ));
+            }
+            let event_type = args
+                .first()
+                .map(|v| v.to_string(ctx))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+
+            let mut bubbles = false;
+            let mut cancelable = false;
+            let mut button: i16 = 0;
+            let mut buttons: u16 = 0;
+            let mut client_x: f64 = 0.0;
+            let mut client_y: f64 = 0.0;
+            let mut screen_x: f64 = 0.0;
+            let mut screen_y: f64 = 0.0;
+            let mut alt_key = false;
+            let mut ctrl_key = false;
+            let mut meta_key = false;
+            let mut shift_key = false;
+
+            if let Some(opts_val) = args.get(1) {
+                if let Some(opts_obj) = opts_val.as_object() {
+                    let b = opts_obj.get(js_string!("bubbles"), ctx)?;
+                    if !b.is_undefined() {
+                        bubbles = b.to_boolean();
+                    }
+                    let c = opts_obj.get(js_string!("cancelable"), ctx)?;
+                    if !c.is_undefined() {
+                        cancelable = c.to_boolean();
+                    }
+
+                    let v = opts_obj.get(js_string!("button"), ctx)?;
+                    if !v.is_undefined() {
+                        button = v.to_number(ctx)? as i16;
+                    }
+                    let v = opts_obj.get(js_string!("buttons"), ctx)?;
+                    if !v.is_undefined() {
+                        buttons = v.to_number(ctx)? as u16;
+                    }
+                    let v = opts_obj.get(js_string!("clientX"), ctx)?;
+                    if !v.is_undefined() {
+                        client_x = v.to_number(ctx)?;
+                    }
+                    let v = opts_obj.get(js_string!("clientY"), ctx)?;
+                    if !v.is_undefined() {
+                        client_y = v.to_number(ctx)?;
+                    }
+                    let v = opts_obj.get(js_string!("screenX"), ctx)?;
+                    if !v.is_undefined() {
+                        screen_x = v.to_number(ctx)?;
+                    }
+                    let v = opts_obj.get(js_string!("screenY"), ctx)?;
+                    if !v.is_undefined() {
+                        screen_y = v.to_number(ctx)?;
+                    }
+                    let v = opts_obj.get(js_string!("altKey"), ctx)?;
+                    if !v.is_undefined() {
+                        alt_key = v.to_boolean();
+                    }
+                    let v = opts_obj.get(js_string!("ctrlKey"), ctx)?;
+                    if !v.is_undefined() {
+                        ctrl_key = v.to_boolean();
+                    }
+                    let v = opts_obj.get(js_string!("metaKey"), ctx)?;
+                    if !v.is_undefined() {
+                        meta_key = v.to_boolean();
+                    }
+                    let v = opts_obj.get(js_string!("shiftKey"), ctx)?;
+                    if !v.is_undefined() {
+                        shift_key = v.to_boolean();
+                    }
+                }
+            }
+
+            let event = JsEvent {
+                event_type,
+                bubbles,
+                cancelable,
+                default_prevented: false,
+                propagation_stopped: false,
+                immediate_propagation_stopped: false,
+                target: None,
+                current_target: None,
+                phase: 0,
+                dispatching: false,
+                time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
+                initialized: true,
+                kind: EventKind::Mouse {
+                    button,
+                    buttons,
+                    client_x,
+                    client_y,
+                    screen_x,
+                    screen_y,
+                    alt_key,
+                    ctrl_key,
+                    meta_key,
+                    shift_key,
+                },
+            };
+            let js_obj = JsEvent::from_data(event, ctx)?;
+            js_obj.set_prototype(Some(proto_for_closure.clone()));
+            attach_is_trusted_own_property(&js_obj, ctx)?;
+            Ok(JsValue::from(js_obj))
+        })
+    };
+
+    let ctor_fn = FunctionObjectBuilder::new(context.realm(), ctor)
+        .name(js_string!("MouseEvent"))
+        .length(1)
+        .constructor(true)
+        .build();
+
+    ctor_fn
+        .define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(proto)
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define MouseEvent.prototype on wrapper");
+
+    context
+        .register_global_property(
+            js_string!("MouseEvent"),
+            ctor_fn,
+            Attribute::WRITABLE | Attribute::CONFIGURABLE,
+        )
+        .expect("failed to register MouseEvent wrapper");
 }
 
 /// Register the full DOM type hierarchy:

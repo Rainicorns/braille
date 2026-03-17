@@ -236,6 +236,9 @@ fn serialize_node(tree: &DomTree, node_id: NodeId, depth: usize, out: &mut Strin
         NodeData::Attr { .. } => {
             // Attr nodes don't appear in tree-construction serialization
         }
+        NodeData::CDATASection { content } => {
+            out.push_str(&format!("| {indent}\"{content}\"\n"));
+        }
     }
 }
 

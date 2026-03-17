@@ -535,6 +535,12 @@ pub struct IncrementalParser {
     tree: Rc<RefCell<DomTree>>,
 }
 
+impl Default for IncrementalParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IncrementalParser {
     /// Create a new incremental parser. The returned parser and tree share the same `Rc`.
     pub fn new() -> Self {

@@ -1,9 +1,9 @@
 use boa_engine::{
     class::ClassBuilder, js_string, native_function::NativeFunction, object::ObjectInitializer, property::Attribute,
-    Context, JsError, JsResult, JsValue,
+    Context, JsResult, JsValue,
 };
 
-use super::element::{get_or_create_js_element, JsElement};
+use super::element::get_or_create_js_element;
 use crate::dom::{NodeData, NodeId};
 use crate::js::realm_state;
 
@@ -14,12 +14,7 @@ use crate::js::realm_state;
 /// Native getter for element.nodeType
 /// Returns: 1 (ELEMENT_NODE), 3 (TEXT_NODE), 8 (COMMENT_NODE), 9 (DOCUMENT_NODE)
 fn get_node_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nodeType getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nodeType getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "nodeType getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -43,12 +38,7 @@ fn get_node_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
 /// Returns: tagName for elements (uppercase for HTML namespace, as-is for others),
 /// "#text" for text, "#comment" for comment, "#document" for document
 fn get_node_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nodeName getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nodeName getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "nodeName getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -87,12 +77,7 @@ fn get_node_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
 /// Native getter for element.tagName
 /// Returns: tag name (uppercase for HTML namespace, as-is for others) for elements, undefined for non-elements
 fn get_tag_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("tagName getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("tagName getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "tagName getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -115,12 +100,7 @@ fn get_tag_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResu
 /// Native getter for element.nodeValue
 /// Returns: text content for Text/Comment nodes, null for Element/Document
 fn get_node_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nodeValue getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nodeValue getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "nodeValue getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -143,12 +123,7 @@ fn get_node_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
 /// - Text, Comment: set data (null converts to "")
 /// - Element, Document, DocumentType, DocumentFragment: no-op
 fn set_node_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nodeValue setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nodeValue setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "nodeValue setter");
 
     {
         let tree = el.tree.borrow();
@@ -194,12 +169,7 @@ fn set_node_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
 /// Native getter for element.innerText
 /// Returns: the text content of the element (same as textContent for now)
 fn get_inner_text(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("innerText getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("innerText getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "innerText getter");
 
     let text = el.tree.borrow().get_text_content(el.node_id);
     Ok(JsValue::from(js_string!(text)))
@@ -210,12 +180,7 @@ fn get_inner_text(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
 /// For nodes in the global tree, returns window.document.
 /// For nodes in created documents, returns that document's node 0.
 fn get_owner_document(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("ownerDocument getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("ownerDocument getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "ownerDocument getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -247,12 +212,7 @@ fn get_owner_document(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> J
 /// Native getter for node.isConnected
 /// Returns true if the node is in the document tree (has a path to the Document root)
 fn get_is_connected(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("isConnected getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("isConnected getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "isConnected getter");
 
     let tree = el.tree.borrow();
     let mut current: NodeId = el.node_id;
@@ -271,12 +231,7 @@ fn get_is_connected(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> Js
 /// Native getter for element.namespaceURI
 /// Returns: the namespace URI for Element nodes, null for others
 fn get_namespace_uri(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("namespaceURI getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("namespaceURI getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "namespaceURI getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -296,12 +251,7 @@ fn get_namespace_uri(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> J
 /// Native getter for element.prefix
 /// Returns: the namespace prefix for Element nodes, null for others
 fn get_prefix(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("prefix getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("prefix getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "prefix getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -323,12 +273,7 @@ fn get_prefix(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult
 /// Native getter for element.localName
 /// Returns: the local name for Element nodes, null for others
 fn get_local_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("localName getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("localName getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "localName getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -350,12 +295,7 @@ fn get_local_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
 /// Native getter for element.attributes
 /// Returns: an array-like NamedNodeMap object with name/value/prefix/namespaceURI for each attribute
 fn get_attributes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("attributes getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("attributes getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "attributes getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);

@@ -12,7 +12,6 @@ use boa_gc::{Finalize, Trace};
 
 use crate::dom::{DomTree, NodeId};
 
-use super::element::JsElement;
 
 #[derive(Debug, Trace, Finalize, JsData)]
 pub(crate) struct JsStyleDeclaration {
@@ -300,12 +299,7 @@ pub(crate) fn register_style(class: &mut ClassBuilder) -> JsResult<()> {
 }
 
 fn get_style(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("style getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("style getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "style getter");
 
     let style_decl = JsStyleDeclaration::new(el.node_id, el.tree.clone());
     let js_obj = JsStyleDeclaration::from_data(style_decl, ctx)?;

@@ -78,7 +78,7 @@ impl DomTree {
         if let NodeData::Element { ref attributes, .. } = node.data {
             attributes
                 .iter()
-                .find(|a| a.namespace == namespace && a.local_name == local_name)
+                .find(|a| a.matches_ns(namespace, local_name))
                 .map(|a| a.value.clone())
         } else {
             None
@@ -98,7 +98,7 @@ impl DomTree {
         if let NodeData::Element { ref mut attributes, .. } = node.data {
             if let Some(existing) = attributes
                 .iter_mut()
-                .find(|a| a.namespace == namespace && a.local_name == local_name)
+                .find(|a| a.matches_ns(namespace, local_name))
             {
                 existing.value = value.to_string();
                 existing.prefix = prefix.to_string();
@@ -120,7 +120,7 @@ impl DomTree {
         let node = self.get_node_mut(node_id);
         if let NodeData::Element { ref mut attributes, .. } = node.data {
             let len_before = attributes.len();
-            attributes.retain(|a| !(a.namespace == namespace && a.local_name == local_name));
+            attributes.retain(|a| !a.matches_ns(namespace, local_name));
             attributes.len() < len_before
         } else {
             panic!("remove_attribute_ns: node {} is not an Element", node_id);
@@ -133,7 +133,7 @@ impl DomTree {
         if let NodeData::Element { ref attributes, .. } = node.data {
             attributes
                 .iter()
-                .any(|a| a.namespace == namespace && a.local_name == local_name)
+                .any(|a| a.matches_ns(namespace, local_name))
         } else {
             panic!("has_attribute_ns: node {} is not an Element", node_id);
         }

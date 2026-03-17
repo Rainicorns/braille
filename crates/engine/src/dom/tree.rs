@@ -113,6 +113,11 @@ impl DomTree {
         &mut self.nodes[id]
     }
 
+    /// Returns the index of `child` within `parent`'s children list, or None if not found.
+    fn find_child_index(&self, parent: NodeId, child: NodeId) -> Option<usize> {
+        self.nodes[parent].children.iter().position(|&c| c == child)
+    }
+
     /// Searches the entire tree for an Element whose "id" attribute matches `id`.
     pub fn get_element_by_id(&self, id: &str) -> Option<NodeId> {
         self.nodes.iter().find_map(|node| {
@@ -181,7 +186,7 @@ impl DomTree {
 
     /// Removes all children of the node and replaces them with a single Text child.
     pub fn set_text_content(&mut self, node_id: NodeId, text: &str) {
-        // Collect children to detach.
+        // Clone needed: loop mutates self.nodes[child_id] while iterating node_id's children
         let children: Vec<NodeId> = self.nodes[node_id].children.clone();
         for child_id in children {
             self.nodes[child_id].parent = None;
@@ -372,10 +377,8 @@ impl DomTree {
         }
 
         // Find sibling's position in parent's children list and insert before it.
-        let pos = self.nodes[parent]
-            .children
-            .iter()
-            .position(|&c| c == sibling)
+        let pos = self
+            .find_child_index(parent, sibling)
             .expect("insert_before: sibling not found in parent's children");
         self.nodes[parent].children.insert(pos, child);
         self.nodes[child].parent = Some(parent);
@@ -391,6 +394,7 @@ impl DomTree {
 
     /// Moves all children of `source` to become children of `new_parent`.
     pub fn reparent_children(&mut self, source: NodeId, new_parent: NodeId) {
+        // Clone needed: loop mutates source.children (cleared) and new_parent.children (pushed)
         let children: Vec<NodeId> = self.nodes[source].children.clone();
         self.nodes[source].children.clear();
         for child_id in children {
@@ -426,10 +430,8 @@ impl DomTree {
         }
 
         // Find reference_child position in parent's children list and insert before it.
-        let pos = self.nodes[parent]
-            .children
-            .iter()
-            .position(|&c| c == reference_child)
+        let pos = self
+            .find_child_index(parent, reference_child)
             .expect("insert_child_before: reference_child not found in parent's children");
         self.nodes[parent].children.insert(pos, new_child);
         self.nodes[new_child].parent = Some(parent);
@@ -445,10 +447,8 @@ impl DomTree {
         }
 
         // Find old_child position and replace it.
-        let pos = self.nodes[parent]
-            .children
-            .iter()
-            .position(|&c| c == old_child)
+        let pos = self
+            .find_child_index(parent, old_child)
             .expect("replace_child: old_child not found in parent's children");
         self.nodes[parent].children[pos] = new_child;
         self.nodes[new_child].parent = Some(parent);
@@ -471,6 +471,7 @@ impl DomTree {
         });
 
         if deep {
+            // Clone needed: clone_node/append_child mutate self.nodes
             let child_ids: Vec<NodeId> = self.nodes[node_id].children.clone();
             for child_id in child_ids {
                 let cloned_child = self.clone_node(child_id, true);
@@ -582,6 +583,7 @@ impl DomTree {
     }
 
     pub fn clear_children(&mut self, nid: NodeId) {
+        // Clone needed: loop mutates self.nodes[child_id] while iterating nid's children
         let children: Vec<NodeId> = self.nodes[nid].children.clone();
         for child_id in children {
             self.nodes[child_id].parent = None;
@@ -615,8 +617,7 @@ impl DomTree {
             NodeData::Document => panic!("cannot import Document node"),
             NodeData::DocumentFragment => self.create_document_fragment(),
         };
-        let src_children: Vec<NodeId> = src_node.children.clone();
-        for &child_id in &src_children {
+        for &child_id in &src_node.children {
             let new_child = self.import_subtree(source, child_id);
             self.append_child(new_id, new_child);
         }
@@ -628,61 +629,67 @@ impl DomTree {
     // All offsets and counts are in UTF-16 code units.
     // -----------------------------------------------------------------------
 
-    /// Returns the text content of a Text or Comment node, or None for other node types.
-    pub fn character_data_get(&self, id: NodeId) -> Option<String> {
+    /// Returns a reference to the character data content string for Text, CDATASection,
+    /// Comment, or ProcessingInstruction nodes. Returns None for other node types.
+    fn char_data_content(&self, id: NodeId) -> Option<&String> {
         match &self.nodes[id].data {
-            NodeData::Text { content } | NodeData::CDATASection { content } => Some(content.clone()),
-            NodeData::Comment { content } => Some(content.clone()),
-            NodeData::ProcessingInstruction { data, .. } => Some(data.clone()),
+            NodeData::Text { content } | NodeData::CDATASection { content } => Some(content),
+            NodeData::Comment { content } => Some(content),
+            NodeData::ProcessingInstruction { data, .. } => Some(data),
             _ => None,
         }
     }
 
+    /// Returns a mutable reference to the character data content string for Text,
+    /// CDATASection, Comment, or ProcessingInstruction nodes. Returns None for other types.
+    fn char_data_content_mut(&mut self, id: NodeId) -> Option<&mut String> {
+        match &mut self.nodes[id].data {
+            NodeData::Text { content } | NodeData::CDATASection { content } => Some(content),
+            NodeData::Comment { content } => Some(content),
+            NodeData::ProcessingInstruction { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Returns the text content of a Text or Comment node, or None for other node types.
+    pub fn character_data_get(&self, id: NodeId) -> Option<String> {
+        self.char_data_content(id).cloned()
+    }
+
     /// Sets the text content of a Text or Comment node.
     pub fn character_data_set(&mut self, id: NodeId, new_data: &str) {
-        match &mut self.nodes[id].data {
-            NodeData::Text { content } | NodeData::CDATASection { content } => *content = new_data.to_string(),
-            NodeData::Comment { content } => *content = new_data.to_string(),
-            NodeData::ProcessingInstruction { data, .. } => *data = new_data.to_string(),
-            _ => {}
+        if let Some(content) = self.char_data_content_mut(id) {
+            *content = new_data.to_string();
         }
     }
 
     /// Returns the length of the CharacterData in UTF-16 code units.
     pub fn character_data_length(&self, id: NodeId) -> usize {
-        match &self.nodes[id].data {
-            NodeData::Text { content } | NodeData::CDATASection { content } => content.encode_utf16().count(),
-            NodeData::Comment { content } => content.encode_utf16().count(),
-            NodeData::ProcessingInstruction { data, .. } => data.encode_utf16().count(),
-            _ => 0,
-        }
+        self.char_data_content(id)
+            .map(|c| c.encode_utf16().count())
+            .unwrap_or(0)
     }
 
     /// Appends data to a Text or Comment node.
     pub fn character_data_append(&mut self, id: NodeId, append_data: &str) {
-        match &mut self.nodes[id].data {
-            NodeData::Text { content } | NodeData::CDATASection { content } => content.push_str(append_data),
-            NodeData::Comment { content } => content.push_str(append_data),
-            NodeData::ProcessingInstruction { data, .. } => data.push_str(append_data),
-            _ => {}
+        if let Some(content) = self.char_data_content_mut(id) {
+            content.push_str(append_data);
         }
     }
 
     /// Deletes count UTF-16 code units starting at offset.
     /// Returns Err if offset > length.
     pub fn character_data_delete(&mut self, id: NodeId, offset: usize, count: usize) -> Result<(), &'static str> {
-        let content = match &self.nodes[id].data {
-            NodeData::Text { content } | NodeData::CDATASection { content } => content.clone(),
-            NodeData::Comment { content } => content.clone(),
-            NodeData::ProcessingInstruction { data, .. } => data.clone(),
-            _ => return Ok(()),
+        let content = match self.char_data_content(id) {
+            Some(c) => c.clone(),
+            None => return Ok(()),
         };
-        let utf16_len = content.encode_utf16().count();
-        if offset > utf16_len {
+        let utf16: Vec<u16> = content.encode_utf16().collect();
+        if offset > utf16.len() {
             return Err("IndexSizeError");
         }
-        let end = std::cmp::min(offset + count, utf16_len);
-        let new_content = Self::utf16_splice(&content, offset, end, "");
+        let end = std::cmp::min(offset + count, utf16.len());
+        let new_content = Self::utf16_splice_units(&utf16, offset, end, "");
         self.character_data_set(id, &new_content);
         Ok(())
     }
@@ -690,17 +697,15 @@ impl DomTree {
     /// Inserts data at offset (in UTF-16 code units).
     /// Returns Err if offset > length.
     pub fn character_data_insert(&mut self, id: NodeId, offset: usize, data: &str) -> Result<(), &'static str> {
-        let content = match &self.nodes[id].data {
-            NodeData::Text { content } | NodeData::CDATASection { content } => content.clone(),
-            NodeData::Comment { content } => content.clone(),
-            NodeData::ProcessingInstruction { data: pi_data, .. } => pi_data.clone(),
-            _ => return Ok(()),
+        let content = match self.char_data_content(id) {
+            Some(c) => c.clone(),
+            None => return Ok(()),
         };
-        let utf16_len = content.encode_utf16().count();
-        if offset > utf16_len {
+        let utf16: Vec<u16> = content.encode_utf16().collect();
+        if offset > utf16.len() {
             return Err("IndexSizeError");
         }
-        let new_content = Self::utf16_splice(&content, offset, offset, data);
+        let new_content = Self::utf16_splice_units(&utf16, offset, offset, data);
         self.character_data_set(id, &new_content);
         Ok(())
     }
@@ -714,18 +719,16 @@ impl DomTree {
         count: usize,
         data: &str,
     ) -> Result<(), &'static str> {
-        let content = match &self.nodes[id].data {
-            NodeData::Text { content } | NodeData::CDATASection { content } => content.clone(),
-            NodeData::Comment { content } => content.clone(),
-            NodeData::ProcessingInstruction { data: pi_data, .. } => pi_data.clone(),
-            _ => return Ok(()),
+        let content = match self.char_data_content(id) {
+            Some(c) => c.clone(),
+            None => return Ok(()),
         };
-        let utf16_len = content.encode_utf16().count();
-        if offset > utf16_len {
+        let utf16: Vec<u16> = content.encode_utf16().collect();
+        if offset > utf16.len() {
             return Err("IndexSizeError");
         }
-        let end = std::cmp::min(offset + count, utf16_len);
-        let new_content = Self::utf16_splice(&content, offset, end, data);
+        let end = std::cmp::min(offset + count, utf16.len());
+        let new_content = Self::utf16_splice_units(&utf16, offset, end, data);
         self.character_data_set(id, &new_content);
         Ok(())
     }
@@ -733,26 +736,22 @@ impl DomTree {
     /// Returns a substring of count UTF-16 code units starting at offset.
     /// Returns Err if offset > length.
     pub fn character_data_substring(&self, id: NodeId, offset: usize, count: usize) -> Result<String, &'static str> {
-        let content = match &self.nodes[id].data {
-            NodeData::Text { content } | NodeData::CDATASection { content } => content,
-            NodeData::Comment { content } => content,
-            NodeData::ProcessingInstruction { data, .. } => data,
-            _ => return Ok(String::new()),
+        let content = match self.char_data_content(id) {
+            Some(c) => c,
+            None => return Ok(String::new()),
         };
-        let utf16_len = content.encode_utf16().count();
-        if offset > utf16_len {
+        let utf16_units: Vec<u16> = content.encode_utf16().collect();
+        if offset > utf16_units.len() {
             return Err("IndexSizeError");
         }
-        let end = std::cmp::min(offset + count, utf16_len);
-        let utf16_units: Vec<u16> = content.encode_utf16().collect();
+        let end = std::cmp::min(offset + count, utf16_units.len());
         let slice = &utf16_units[offset..end];
         Ok(String::from_utf16_lossy(slice))
     }
 
-    /// Splices a UTF-8 string at UTF-16 code unit boundaries.
-    /// Replaces UTF-16 code units in range [start..end) with `replacement`.
-    fn utf16_splice(s: &str, start: usize, end: usize, replacement: &str) -> String {
-        let utf16_units: Vec<u16> = s.encode_utf16().collect();
+    /// Splices pre-encoded UTF-16 units at code unit boundaries.
+    /// Replaces units in range [start..end) with `replacement` (encoded from UTF-8).
+    fn utf16_splice_units(utf16_units: &[u16], start: usize, end: usize, replacement: &str) -> String {
         let mut result_utf16: Vec<u16> = Vec::with_capacity(utf16_units.len() + replacement.encode_utf16().count());
         result_utf16.extend_from_slice(&utf16_units[..start]);
         result_utf16.extend(replacement.encode_utf16());
@@ -843,7 +842,7 @@ impl DomTree {
         let siblings = &self.nodes[parent_id].children;
 
         // Find position of this node in parent's children
-        let pos = match siblings.iter().position(|&c| c == node_id) {
+        let pos = match self.find_child_index(parent_id, node_id) {
             Some(p) => p,
             None => {
                 return match &self.nodes[node_id].data {
@@ -891,10 +890,8 @@ impl DomTree {
         if let Some(old_parent) = self.nodes[child].parent {
             self.nodes[old_parent].children.retain(|&c| c != child);
         }
-        let pos = self.nodes[parent]
-            .children
-            .iter()
-            .position(|&c| c == sibling)
+        let pos = self
+            .find_child_index(parent, sibling)
             .expect("insert_after: sibling not found");
         self.nodes[parent].children.insert(pos + 1, child);
         self.nodes[child].parent = Some(parent);
@@ -1050,6 +1047,7 @@ impl DomTree {
 
         let mut i = 0;
         loop {
+            // Clone needed: remove_child/normalize below mutate self.nodes[node_id].children
             let children = self.nodes[node_id].children.clone();
             if i >= children.len() {
                 break;
@@ -1072,8 +1070,9 @@ impl DomTree {
 
                 // Merge with any following adjacent Text nodes
                 loop {
+                    // Clone needed: remove_child below mutates self.nodes[node_id].children
                     let children = self.nodes[node_id].children.clone();
-                    let next_idx = children.iter().position(|&c| c == child_id).map(|pos| pos + 1);
+                    let next_idx = self.find_child_index(node_id, child_id).map(|pos| pos + 1);
                     let next_id = next_idx.and_then(|idx| children.get(idx).copied());
 
                     match next_id {
@@ -1200,9 +1199,8 @@ impl DomTree {
                 } else {
                     return a < b;
                 };
-                let parent_children = &self.nodes[common_parent].children;
-                let pos_a = parent_children.iter().position(|&c| c == chain_a[i]);
-                let pos_b = parent_children.iter().position(|&c| c == chain_b[i]);
+                let pos_a = self.find_child_index(common_parent, chain_a[i]);
+                let pos_b = self.find_child_index(common_parent, chain_b[i]);
                 return pos_a < pos_b;
             }
         }

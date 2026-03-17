@@ -12,7 +12,7 @@ use crate::dom::node::NodeData;
 use crate::dom::{DomTree, NodeId};
 
 use super::collections;
-use super::element::{get_or_create_js_element, JsElement};
+use super::element::get_or_create_js_element;
 
 // ---------------------------------------------------------------------------
 // DocumentFragment.prototype.getElementById (NonElementParentNode mixin)
@@ -22,12 +22,7 @@ use super::element::{get_or_create_js_element, JsElement};
 /// first Element with a matching `id` attribute. Returns null if not found.
 /// Per spec, empty-string id never matches.
 pub(crate) fn fragment_get_element_by_id(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getElementById: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getElementById: this is not a node").into()))?;
+    extract_element!(el, this, "getElementById");
     let tree = el.tree.clone();
     let root_id = el.node_id;
 
@@ -75,12 +70,7 @@ fn find_by_id_in_subtree(tree: &DomTree, root: NodeId, id: &str) -> Option<NodeI
 // ---------------------------------------------------------------------------
 
 fn element_query_selector(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("querySelector: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("querySelector: `this` is not an Element").into()))?;
+    extract_element!(el, this, "querySelector");
     let selector = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -104,12 +94,7 @@ fn element_query_selector(this: &JsValue, args: &[JsValue], ctx: &mut Context) -
 }
 
 fn element_query_selector_all(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("querySelectorAll: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("querySelectorAll: `this` is not an Element").into()))?;
+    extract_element!(el, this, "querySelectorAll");
     let selector = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -128,12 +113,7 @@ fn element_query_selector_all(this: &JsValue, args: &[JsValue], ctx: &mut Contex
 }
 
 fn element_get_elements_by_class_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByClassName: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByClassName: `this` is not an Element").into()))?;
+    extract_element!(el, this, "getElementsByClassName");
     let class_name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -149,12 +129,7 @@ fn element_get_elements_by_class_name(this: &JsValue, args: &[JsValue], ctx: &mu
 }
 
 fn element_get_elements_by_tag_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByTagName: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByTagName: `this` is not an Element").into()))?;
+    extract_element!(el, this, "getElementsByTagName");
     let tag_name = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -312,12 +287,7 @@ pub(crate) fn document_get_elements_by_tag_name_ns(
 }
 
 fn element_get_elements_by_tag_name_ns(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByTagNameNS: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getElementsByTagNameNS: `this` is not an Element").into()))?;
+    extract_element!(el, this, "getElementsByTagNameNS");
 
     // First arg: namespace (null/undefined -> empty string)
     let namespace = match args.first() {
@@ -346,12 +316,7 @@ fn element_get_elements_by_tag_name_ns(this: &JsValue, args: &[JsValue], ctx: &m
 // ---------------------------------------------------------------------------
 
 fn element_matches(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("matches: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("matches: `this` is not an Element").into()))?;
+    extract_element!(el, this, "matches");
 
     // Per spec, matches() requires 1 argument — missing arg throws TypeError
     if args.is_empty() {
@@ -386,12 +351,7 @@ fn element_matches(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRes
 }
 
 fn element_closest(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("closest: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("closest: `this` is not an Element").into()))?;
+    extract_element!(el, this, "closest");
     let selector = args
         .first()
         .map(|v| v.to_string(ctx))

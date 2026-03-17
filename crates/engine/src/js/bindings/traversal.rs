@@ -1,14 +1,13 @@
 use std::rc::Rc;
 
 use boa_engine::{
-    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute, Context, JsError, JsResult,
-    JsValue,
+    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute, Context, JsResult, JsValue,
 };
 
 use crate::js::realm_state;
 
 use super::collections;
-use super::element::{get_or_create_js_element, JsElement};
+use super::element::get_or_create_js_element;
 
 /// Registers all traversal properties on the Element class.
 pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
@@ -149,12 +148,7 @@ pub(crate) fn register_traversal(class: &mut ClassBuilder) -> JsResult<()> {
 /// the global `document` object so that `node.parentNode === document` holds true.
 /// For foreign documents, returns the JsElement wrapper for that document node.
 fn get_parent_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("parentNode getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("parentNode getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "parentNode getter");
     let tree = el.tree.borrow();
     match tree.get_parent(el.node_id) {
         Some(parent_id) => {
@@ -188,12 +182,7 @@ fn get_parent_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
 /// Native getter for element.parentElement
 /// Returns the parent only if it's an Element (not Document)
 fn get_parent_element(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("parentElement getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("parentElement getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "parentElement getter");
     let tree = el.tree.borrow();
     match tree.dom_parent_element(el.node_id) {
         Some(parent_id) => {
@@ -208,12 +197,7 @@ fn get_parent_element(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> J
 
 /// Native getter for element.firstChild
 fn get_first_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("firstChild getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("firstChild getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "firstChild getter");
     let tree = el.tree.borrow();
     match tree.first_child(el.node_id) {
         Some(child_id) => {
@@ -228,12 +212,7 @@ fn get_first_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
 
 /// Native getter for element.lastChild
 fn get_last_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("lastChild getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("lastChild getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "lastChild getter");
     let tree = el.tree.borrow();
     match tree.last_child(el.node_id) {
         Some(child_id) => {
@@ -248,12 +227,7 @@ fn get_last_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
 
 /// Native getter for element.nextSibling
 fn get_next_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nextSibling getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nextSibling getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "nextSibling getter");
     let tree = el.tree.borrow();
     match tree.next_sibling(el.node_id) {
         Some(sibling_id) => {
@@ -268,12 +242,7 @@ fn get_next_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsR
 
 /// Native getter for element.previousSibling
 fn get_previous_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("previousSibling getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("previousSibling getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "previousSibling getter");
     let tree = el.tree.borrow();
     match tree.prev_sibling(el.node_id) {
         Some(sibling_id) => {
@@ -289,12 +258,7 @@ fn get_previous_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) ->
 /// Native getter for element.childNodes
 /// Returns a live NodeList of all child nodes (cached per element for identity)
 fn get_child_nodes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("childNodes getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("childNodes getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "childNodes getter");
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
     let tree_ptr = Rc::as_ptr(&tree_rc) as usize;
@@ -319,12 +283,7 @@ fn get_child_nodes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRe
 /// Native getter for element.children
 /// Returns a live HTMLCollection of Element-only children (cached per element for identity)
 fn get_children(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("children getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("children getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "children getter");
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
     let tree_ptr = Rc::as_ptr(&tree_rc) as usize;
@@ -349,12 +308,7 @@ fn get_children(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResul
 /// Native method for element.hasChildNodes()
 /// Returns a boolean indicating whether the element has children
 fn has_child_nodes(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hasChildNodes: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hasChildNodes: `this` is not an Element").into()))?;
+    extract_element!(el, this, "hasChildNodes");
     let tree = el.tree.borrow();
     let has_children = !tree.children(el.node_id).is_empty();
     Ok(JsValue::from(has_children))
@@ -364,12 +318,7 @@ fn has_child_nodes(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsR
 /// Walks parent chain to root. Options.composed is accepted but ignored (no Shadow DOM).
 /// When the root is the Document node, returns the global `document` object to preserve identity.
 fn get_root_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getRootNode: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("getRootNode: `this` is not an Element").into()))?;
+    extract_element!(el, this, "getRootNode");
     let tree_rc = el.tree.clone();
     let root_id = {
         let tree = tree_rc.borrow();
@@ -404,12 +353,7 @@ fn get_root_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResu
 
 /// Native getter for element.firstElementChild
 fn get_first_element_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("firstElementChild getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("firstElementChild getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "firstElementChild getter");
     let tree = el.tree.borrow();
     let element_kids = tree.element_children(el.node_id);
     match element_kids.first().copied() {
@@ -425,12 +369,7 @@ fn get_first_element_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context)
 
 /// Native getter for element.lastElementChild
 fn get_last_element_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("lastElementChild getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("lastElementChild getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "lastElementChild getter");
     let tree = el.tree.borrow();
     let element_kids = tree.element_children(el.node_id);
     match element_kids.last().copied() {
@@ -446,12 +385,7 @@ fn get_last_element_child(this: &JsValue, _args: &[JsValue], ctx: &mut Context) 
 
 /// Native getter for element.nextElementSibling
 fn get_next_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("nextElementSibling getter: `this` is not an object").into()))?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(js_string!("nextElementSibling getter: `this` is not an Element").into())
-    })?;
+    extract_element!(el, this, "nextElementSibling getter");
     let tree = el.tree.borrow();
     match tree.next_sibling_element(el.node_id) {
         Some(sibling_id) => {
@@ -466,12 +400,7 @@ fn get_next_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context
 
 /// Native getter for element.previousElementSibling
 fn get_previous_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this.as_object().ok_or_else(|| {
-        JsError::from_opaque(js_string!("previousElementSibling getter: `this` is not an object").into())
-    })?;
-    let el = obj.downcast_ref::<JsElement>().ok_or_else(|| {
-        JsError::from_opaque(js_string!("previousElementSibling getter: `this` is not an Element").into())
-    })?;
+    extract_element!(el, this, "previousElementSibling getter");
     let tree = el.tree.borrow();
     match tree.prev_sibling_element(el.node_id) {
         Some(sibling_id) => {
@@ -486,12 +415,7 @@ fn get_previous_element_sibling(this: &JsValue, _args: &[JsValue], ctx: &mut Con
 
 /// Native getter for element.childElementCount
 fn get_child_element_count(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("childElementCount getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("childElementCount getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "childElementCount getter");
     let tree = el.tree.borrow();
     let count = tree.element_children(el.node_id).len();
     Ok(JsValue::from(count as i32))

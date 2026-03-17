@@ -21,6 +21,14 @@ use super::event_target::ListenerEntry;
 use super::window::WINDOW_LISTENER_ID;
 use crate::js::realm_state;
 
+/// Shared event state passed through all dispatch phases to avoid too-many-arguments.
+struct DispatchEvent<'a> {
+    tree_scope: usize,
+    event_obj: &'a JsObject,
+    event_val: &'a JsValue,
+    event_type: &'a str,
+}
+
 /// Compare nodes from different DomTrees for equality (recursive).
 fn cross_tree_is_equal_node(tree_a: &DomTree, a: NodeId, tree_b: &DomTree, b: NodeId) -> bool {
     let node_a = tree_a.get_node(a);
@@ -296,6 +304,24 @@ pub(crate) fn get_or_create_js_element(
         return Ok(obj);
     }
 
+    // Cache miss — create and store
+    let js_obj = create_js_element(node_id, tree, ctx)?;
+
+    {
+        let cache = realm_state::node_cache(ctx);
+        cache.borrow_mut().insert(cache_key, js_obj.clone());
+    }
+
+    Ok(js_obj)
+}
+
+/// Creates a new JS object for a DOM node: determines its kind, assigns the correct prototype,
+/// sets up kind-specific properties, and compiles inline event handlers.
+fn create_js_element(
+    node_id: NodeId,
+    tree: Rc<RefCell<DomTree>>,
+    ctx: &mut Context,
+) -> JsResult<JsObject> {
     // Determine node kind before creating the object
     enum NodeKind {
         Text,
@@ -369,7 +395,6 @@ pub(crate) fn get_or_create_js_element(
         }
     };
 
-    // Cache miss — create and store
     let element = JsElement::new(node_id, tree.clone());
     let js_obj = JsElement::from_data(element, ctx)?;
 
@@ -443,143 +468,14 @@ pub(crate) fn get_or_create_js_element(
         )?;
     }
 
-    // Set own properties for Attr nodes (name, value, namespaceURI, prefix, localName, ownerElement, specified)
+    // Set own properties for Attr nodes
     if let NodeKind::Attr {
         local_name,
         namespace,
         prefix,
     } = &node_kind
     {
-        // name = qualified name (prefix:localName or just localName)
-        let qualified_name = if prefix.is_empty() {
-            local_name.clone()
-        } else {
-            format!("{}:{}", prefix, local_name)
-        };
-        js_obj.define_property_or_throw(
-            js_string!("name"),
-            PropertyDescriptor::builder()
-                .value(JsValue::from(js_string!(qualified_name)))
-                .writable(false)
-                .configurable(true)
-                .enumerable(true)
-                .build(),
-            ctx,
-        )?;
-
-        // value — read-write accessor (reads/writes from DomTree)
-        let tree_for_getter = tree.clone();
-        let nid_for_getter = node_id;
-        let value_getter = unsafe {
-            NativeFunction::from_closure(move |_this, _args, _ctx| {
-                let tree = tree_for_getter.borrow();
-                let node = tree.get_node(nid_for_getter);
-                if let NodeData::Attr { value: ref v, .. } = node.data {
-                    Ok(JsValue::from(js_string!(v.clone())))
-                } else {
-                    Ok(JsValue::from(js_string!("")))
-                }
-            })
-        };
-        let tree_for_setter = tree.clone();
-        let nid_for_setter = node_id;
-        let value_setter = unsafe {
-            NativeFunction::from_closure(move |_this, args, ctx2| {
-                let new_val = args
-                    .first()
-                    .map(|v| v.to_string(ctx2))
-                    .transpose()?
-                    .map(|s| s.to_std_string_escaped())
-                    .unwrap_or_default();
-                if let NodeData::Attr { ref mut value, .. } =
-                    tree_for_setter.borrow_mut().get_node_mut(nid_for_setter).data
-                {
-                    *value = new_val;
-                }
-                Ok(JsValue::undefined())
-            })
-        };
-        let realm = ctx.realm().clone();
-        js_obj.define_property_or_throw(
-            js_string!("value"),
-            PropertyDescriptor::builder()
-                .get(value_getter.to_js_function(&realm))
-                .set(value_setter.to_js_function(&realm))
-                .configurable(true)
-                .enumerable(true)
-                .build(),
-            ctx,
-        )?;
-
-        // namespaceURI — null if empty, else the namespace string
-        let ns_val = if namespace.is_empty() {
-            JsValue::null()
-        } else {
-            JsValue::from(js_string!(namespace.clone()))
-        };
-        js_obj.define_property_or_throw(
-            js_string!("namespaceURI"),
-            PropertyDescriptor::builder()
-                .value(ns_val)
-                .writable(false)
-                .configurable(true)
-                .enumerable(true)
-                .build(),
-            ctx,
-        )?;
-
-        // prefix — null if empty, else the prefix string
-        let pfx_val = if prefix.is_empty() {
-            JsValue::null()
-        } else {
-            JsValue::from(js_string!(prefix.clone()))
-        };
-        js_obj.define_property_or_throw(
-            js_string!("prefix"),
-            PropertyDescriptor::builder()
-                .value(pfx_val)
-                .writable(false)
-                .configurable(true)
-                .enumerable(true)
-                .build(),
-            ctx,
-        )?;
-
-        // localName
-        js_obj.define_property_or_throw(
-            js_string!("localName"),
-            PropertyDescriptor::builder()
-                .value(JsValue::from(js_string!(local_name.clone())))
-                .writable(false)
-                .configurable(true)
-                .enumerable(true)
-                .build(),
-            ctx,
-        )?;
-
-        // ownerElement — null for detached Attr nodes (created via createAttribute)
-        js_obj.define_property_or_throw(
-            js_string!("ownerElement"),
-            PropertyDescriptor::builder()
-                .value(JsValue::null())
-                .writable(false)
-                .configurable(true)
-                .enumerable(true)
-                .build(),
-            ctx,
-        )?;
-
-        // specified — always true per DOM4 spec
-        js_obj.define_property_or_throw(
-            js_string!("specified"),
-            PropertyDescriptor::builder()
-                .value(JsValue::from(true))
-                .writable(false)
-                .configurable(true)
-                .enumerable(true)
-                .build(),
-            ctx,
-        )?;
+        setup_attr_node_properties(&js_obj, tree.clone(), node_id, local_name, namespace, prefix, ctx)?;
     }
 
     // Set own properties for Doctype nodes (name, publicId, systemId)
@@ -624,204 +520,376 @@ pub(crate) fn get_or_create_js_element(
     // Set own property for <template> elements (content -> DocumentFragment)
     if let NodeKind::HtmlElement(ref tag) = node_kind {
         if tag == "template" {
-            let tree_for_content = tree.clone();
-            let nid_for_content = node_id;
-            let content_getter = unsafe {
-                NativeFunction::from_closure(move |_this, _args, ctx2| {
-                    let content_id = {
-                        let tree_ref = tree_for_content.borrow();
-                        tree_ref.get_node(nid_for_content).template_contents
-                    };
-                    match content_id {
-                        Some(cid) => {
-                            let obj = get_or_create_js_element(cid, tree_for_content.clone(), ctx2)?;
-                            Ok(JsValue::from(obj))
-                        }
-                        None => Ok(JsValue::null()),
-                    }
-                })
-            };
-            let realm = ctx.realm().clone();
-            js_obj.define_property_or_throw(
-                js_string!("content"),
-                PropertyDescriptor::builder()
-                    .get(content_getter.to_js_function(&realm))
-                    .configurable(true)
-                    .enumerable(true)
-                    .build(),
-                ctx,
-            )?;
+            setup_template_content_getter(&js_obj, tree.clone(), node_id, ctx)?;
         }
     }
 
-    // Set contentDocument/contentWindow for <iframe> elements
+    // Set contentDocument/contentWindow/src/onload for <iframe> elements
     if let NodeKind::HtmlElement(ref tag) = node_kind {
         if tag == "iframe" {
-            // contentDocument getter
-            let tree_for_cd = tree.clone();
-            let nid_for_cd = node_id;
-            let content_doc_getter = unsafe {
-                NativeFunction::from_closure(move |_this, _args, ctx2| {
-                    let tp = Rc::as_ptr(&tree_for_cd) as usize;
-                    let doc_obj = ensure_iframe_content_doc(tp, nid_for_cd, ctx2)?;
-                    Ok(JsValue::from(doc_obj))
-                })
-            };
-            let realm = ctx.realm().clone();
-            js_obj.define_property_or_throw(
-                js_string!("contentDocument"),
-                PropertyDescriptor::builder()
-                    .get(content_doc_getter.to_js_function(&realm))
-                    .configurable(true)
-                    .enumerable(true)
-                    .build(),
-                ctx,
-            )?;
-
-            // contentWindow getter -- returns a plain object with a document property
-            let tree_for_cw = tree.clone();
-            let nid_for_cw = node_id;
-            let content_window_getter = unsafe {
-                NativeFunction::from_closure(move |_this, _args, ctx2| {
-                    let tp = Rc::as_ptr(&tree_for_cw) as usize;
-                    let doc_obj = ensure_iframe_content_doc(tp, nid_for_cw, ctx2)?;
-                    let win = ObjectInitializer::new(ctx2).build();
-                    win.define_property_or_throw(
-                        js_string!("document"),
-                        PropertyDescriptor::builder()
-                            .value(JsValue::from(doc_obj))
-                            .writable(true)
-                            .configurable(true)
-                            .enumerable(true)
-                            .build(),
-                        ctx2,
-                    )?;
-                    Ok(JsValue::from(win))
-                })
-            };
-            let realm2 = ctx.realm().clone();
-            js_obj.define_property_or_throw(
-                js_string!("contentWindow"),
-                PropertyDescriptor::builder()
-                    .get(content_window_getter.to_js_function(&realm2))
-                    .configurable(true)
-                    .enumerable(true)
-                    .build(),
-                ctx,
-            )?;
-
-            // src getter/setter — reflects the `src` DOM attribute
-            let tree_for_src_get = tree.clone();
-            let nid_for_src_get = node_id;
-            let src_getter = unsafe {
-                NativeFunction::from_closure(move |_this, _args, _ctx2| {
-                    let t = tree_for_src_get.borrow();
-                    match t.get_attribute(nid_for_src_get, "src") {
-                        Some(val) => Ok(JsValue::from(js_string!(val))),
-                        None => Ok(JsValue::from(js_string!(""))),
-                    }
-                })
-            };
-            let tree_for_src_set = tree.clone();
-            let nid_for_src_set = node_id;
-            let src_setter = unsafe {
-                NativeFunction::from_closure(move |_this, args, ctx2| {
-                    let value = args
-                        .first()
-                        .map(|v| v.to_string(ctx2))
-                        .transpose()?
-                        .map(|s| s.to_std_string_escaped())
-                        .unwrap_or_default();
-                    super::mutation_observer::set_attribute_with_observer(
-                        ctx2,
-                        &tree_for_src_set,
-                        nid_for_src_set,
-                        "src",
-                        &value,
-                    );
-                    Ok(JsValue::undefined())
-                })
-            };
-            let realm3 = ctx.realm().clone();
-            js_obj.define_property_or_throw(
-                js_string!("src"),
-                PropertyDescriptor::builder()
-                    .get(src_getter.to_js_function(&realm3))
-                    .set(src_setter.to_js_function(&realm3))
-                    .configurable(true)
-                    .enumerable(true)
-                    .build(),
-                ctx,
-            )?;
-
-            // onload getter/setter — uses unified on_event system
-            let tree_for_onload_get = tree.clone();
-            let nid_for_onload_get = node_id;
-            let onload_getter = unsafe {
-                NativeFunction::from_closure(move |_this, _args, ctx2| {
-                    let tp = Rc::as_ptr(&tree_for_onload_get) as usize;
-                    match super::on_event::get_on_event_handler(tp, nid_for_onload_get, "load", ctx2) {
-                        Some(func) => Ok(JsValue::from(func)),
-                        None => Ok(JsValue::null()),
-                    }
-                })
-            };
-            let tree_for_onload_set = tree.clone();
-            let nid_for_onload_set = node_id;
-            let onload_setter = unsafe {
-                NativeFunction::from_closure(move |_this, args, ctx2| {
-                    let tp = Rc::as_ptr(&tree_for_onload_set) as usize;
-                    let val = args.first().cloned().unwrap_or(JsValue::null());
-                    if let Some(obj) = val.as_object().filter(|o| o.is_callable()) {
-                        super::on_event::set_on_event_handler(tp, nid_for_onload_set, "load", Some(obj.clone()), ctx2);
-                    } else {
-                        super::on_event::set_on_event_handler(tp, nid_for_onload_set, "load", None, ctx2);
-                    }
-                    Ok(JsValue::undefined())
-                })
-            };
-            let realm4 = ctx.realm().clone();
-            js_obj.define_property_or_throw(
-                js_string!("onload"),
-                PropertyDescriptor::builder()
-                    .get(onload_getter.to_js_function(&realm4))
-                    .set(onload_setter.to_js_function(&realm4))
-                    .configurable(true)
-                    .enumerable(true)
-                    .build(),
-                ctx,
-            )?;
+            setup_iframe_properties(&js_obj, tree.clone(), node_id, ctx)?;
         }
     }
 
     // Compile inline event handler attributes (e.g., onclick="...") into JS functions
-    {
-        let inline_handlers: Vec<(String, String)> = {
-            let t = tree.borrow();
-            let node = t.get_node(node_id);
-            match &node.data {
-                NodeData::Element { attributes, .. } => attributes
-                    .iter()
-                    .filter(|a| a.local_name.starts_with("on") && a.local_name.len() > 2)
-                    .map(|a| (a.local_name[2..].to_string(), a.value.clone()))
-                    .collect(),
-                _ => Vec::new(),
-            }
-        };
-        if !inline_handlers.is_empty() {
-            let tp = Rc::as_ptr(&tree) as usize;
-            for (event_name, attr_value) in inline_handlers {
-                super::on_event::compile_inline_event_handler(tp, node_id, &event_name, &attr_value, ctx);
-            }
-        }
-    }
-
-    {
-        let cache = realm_state::node_cache(ctx);
-        cache.borrow_mut().insert(cache_key, js_obj.clone());
-    }
+    compile_parsed_inline_handlers(tree, node_id, ctx);
 
     Ok(js_obj)
+}
+
+/// Defines name, value, namespaceURI, prefix, localName, ownerElement, and specified
+/// properties on an Attr node's JS object.
+fn setup_attr_node_properties(
+    js_obj: &JsObject,
+    tree: Rc<RefCell<DomTree>>,
+    node_id: NodeId,
+    local_name: &str,
+    namespace: &str,
+    prefix: &str,
+    ctx: &mut Context,
+) -> JsResult<()> {
+    // name = qualified name (prefix:localName or just localName)
+    let qualified_name = if prefix.is_empty() {
+        local_name.to_string()
+    } else {
+        format!("{}:{}", prefix, local_name)
+    };
+    js_obj.define_property_or_throw(
+        js_string!("name"),
+        PropertyDescriptor::builder()
+            .value(JsValue::from(js_string!(qualified_name)))
+            .writable(false)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // value — read-write accessor (reads/writes from DomTree)
+    let tree_for_getter = tree.clone();
+    let nid_for_getter = node_id;
+    let value_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let tree = tree_for_getter.borrow();
+            let node = tree.get_node(nid_for_getter);
+            if let NodeData::Attr { value: ref v, .. } = node.data {
+                Ok(JsValue::from(js_string!(v.clone())))
+            } else {
+                Ok(JsValue::from(js_string!("")))
+            }
+        })
+    };
+    let tree_for_setter = tree;
+    let nid_for_setter = node_id;
+    let value_setter = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx2| {
+            let new_val = args
+                .first()
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+            if let NodeData::Attr { ref mut value, .. } =
+                tree_for_setter.borrow_mut().get_node_mut(nid_for_setter).data
+            {
+                *value = new_val;
+            }
+            Ok(JsValue::undefined())
+        })
+    };
+    let realm = ctx.realm().clone();
+    js_obj.define_property_or_throw(
+        js_string!("value"),
+        PropertyDescriptor::builder()
+            .get(value_getter.to_js_function(&realm))
+            .set(value_setter.to_js_function(&realm))
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // namespaceURI — null if empty, else the namespace string
+    let ns_val = if namespace.is_empty() {
+        JsValue::null()
+    } else {
+        JsValue::from(js_string!(namespace.to_string()))
+    };
+    js_obj.define_property_or_throw(
+        js_string!("namespaceURI"),
+        PropertyDescriptor::builder()
+            .value(ns_val)
+            .writable(false)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // prefix — null if empty, else the prefix string
+    let pfx_val = if prefix.is_empty() {
+        JsValue::null()
+    } else {
+        JsValue::from(js_string!(prefix.to_string()))
+    };
+    js_obj.define_property_or_throw(
+        js_string!("prefix"),
+        PropertyDescriptor::builder()
+            .value(pfx_val)
+            .writable(false)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // localName
+    js_obj.define_property_or_throw(
+        js_string!("localName"),
+        PropertyDescriptor::builder()
+            .value(JsValue::from(js_string!(local_name.to_string())))
+            .writable(false)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // ownerElement — null for detached Attr nodes (created via createAttribute)
+    js_obj.define_property_or_throw(
+        js_string!("ownerElement"),
+        PropertyDescriptor::builder()
+            .value(JsValue::null())
+            .writable(false)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // specified — always true per DOM4 spec
+    js_obj.define_property_or_throw(
+        js_string!("specified"),
+        PropertyDescriptor::builder()
+            .value(JsValue::from(true))
+            .writable(false)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    Ok(())
+}
+
+/// Defines the .content getter on `<template>` elements that returns the template's
+/// DocumentFragment content node.
+fn setup_template_content_getter(
+    js_obj: &JsObject,
+    tree: Rc<RefCell<DomTree>>,
+    node_id: NodeId,
+    ctx: &mut Context,
+) -> JsResult<()> {
+    let tree_for_template_content = tree;
+    let node_id_for_template_content = node_id;
+    let content_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx2| {
+            let content_id = {
+                let tree_ref = tree_for_template_content.borrow();
+                tree_ref.get_node(node_id_for_template_content).template_contents
+            };
+            match content_id {
+                Some(cid) => {
+                    let obj = get_or_create_js_element(cid, tree_for_template_content.clone(), ctx2)?;
+                    Ok(JsValue::from(obj))
+                }
+                None => Ok(JsValue::null()),
+            }
+        })
+    };
+    let realm = ctx.realm().clone();
+    js_obj.define_property_or_throw(
+        js_string!("content"),
+        PropertyDescriptor::builder()
+            .get(content_getter.to_js_function(&realm))
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+    Ok(())
+}
+
+/// Defines contentDocument, contentWindow, src, and onload getters/setters on `<iframe>` elements.
+fn setup_iframe_properties(
+    js_obj: &JsObject,
+    tree: Rc<RefCell<DomTree>>,
+    node_id: NodeId,
+    ctx: &mut Context,
+) -> JsResult<()> {
+    // contentDocument getter
+    let tree_for_content_doc = tree.clone();
+    let node_id_for_content_doc = node_id;
+    let content_doc_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx2| {
+            let tp = Rc::as_ptr(&tree_for_content_doc) as usize;
+            let doc_obj = ensure_iframe_content_doc(tp, node_id_for_content_doc, ctx2)?;
+            Ok(JsValue::from(doc_obj))
+        })
+    };
+    let realm = ctx.realm().clone();
+    js_obj.define_property_or_throw(
+        js_string!("contentDocument"),
+        PropertyDescriptor::builder()
+            .get(content_doc_getter.to_js_function(&realm))
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // contentWindow getter -- returns a plain object with a document property
+    let tree_for_content_window = tree.clone();
+    let node_id_for_content_window = node_id;
+    let content_window_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx2| {
+            let tp = Rc::as_ptr(&tree_for_content_window) as usize;
+            let doc_obj = ensure_iframe_content_doc(tp, node_id_for_content_window, ctx2)?;
+            let win = ObjectInitializer::new(ctx2).build();
+            win.define_property_or_throw(
+                js_string!("document"),
+                PropertyDescriptor::builder()
+                    .value(JsValue::from(doc_obj))
+                    .writable(true)
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx2,
+            )?;
+            Ok(JsValue::from(win))
+        })
+    };
+    let realm2 = ctx.realm().clone();
+    js_obj.define_property_or_throw(
+        js_string!("contentWindow"),
+        PropertyDescriptor::builder()
+            .get(content_window_getter.to_js_function(&realm2))
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // src getter/setter — reflects the `src` DOM attribute
+    let tree_for_src_getter = tree.clone();
+    let node_id_for_src_getter = node_id;
+    let src_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx2| {
+            let t = tree_for_src_getter.borrow();
+            match t.get_attribute(node_id_for_src_getter, "src") {
+                Some(val) => Ok(JsValue::from(js_string!(val))),
+                None => Ok(JsValue::from(js_string!(""))),
+            }
+        })
+    };
+    let tree_for_src_setter = tree.clone();
+    let node_id_for_src_setter = node_id;
+    let src_setter = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx2| {
+            let value = args
+                .first()
+                .map(|v| v.to_string(ctx2))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+            super::mutation_observer::set_attribute_with_observer(
+                ctx2,
+                &tree_for_src_setter,
+                node_id_for_src_setter,
+                "src",
+                &value,
+            );
+            Ok(JsValue::undefined())
+        })
+    };
+    let realm3 = ctx.realm().clone();
+    js_obj.define_property_or_throw(
+        js_string!("src"),
+        PropertyDescriptor::builder()
+            .get(src_getter.to_js_function(&realm3))
+            .set(src_setter.to_js_function(&realm3))
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // onload getter/setter — uses unified on_event system
+    let tree_for_onload_getter = tree.clone();
+    let node_id_for_onload_getter = node_id;
+    let onload_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx2| {
+            let tp = Rc::as_ptr(&tree_for_onload_getter) as usize;
+            match super::on_event::get_on_event_handler(tp, node_id_for_onload_getter, "load", ctx2) {
+                Some(func) => Ok(JsValue::from(func)),
+                None => Ok(JsValue::null()),
+            }
+        })
+    };
+    let tree_for_onload_setter = tree;
+    let node_id_for_onload_setter = node_id;
+    let onload_setter = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx2| {
+            let tp = Rc::as_ptr(&tree_for_onload_setter) as usize;
+            let val = args.first().cloned().unwrap_or(JsValue::null());
+            if let Some(obj) = val.as_object().filter(|o| o.is_callable()) {
+                super::on_event::set_on_event_handler(tp, node_id_for_onload_setter, "load", Some(obj.clone()), ctx2);
+            } else {
+                super::on_event::set_on_event_handler(tp, node_id_for_onload_setter, "load", None, ctx2);
+            }
+            Ok(JsValue::undefined())
+        })
+    };
+    let realm4 = ctx.realm().clone();
+    js_obj.define_property_or_throw(
+        js_string!("onload"),
+        PropertyDescriptor::builder()
+            .get(onload_getter.to_js_function(&realm4))
+            .set(onload_setter.to_js_function(&realm4))
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    Ok(())
+}
+
+/// Compiles inline event handler attributes (e.g., onclick="...") found on the DOM node
+/// into JS functions via the on_event system.
+fn compile_parsed_inline_handlers(
+    tree: Rc<RefCell<DomTree>>,
+    node_id: NodeId,
+    ctx: &mut Context,
+) {
+    let inline_handlers: Vec<(String, String)> = {
+        let t = tree.borrow();
+        let node = t.get_node(node_id);
+        match &node.data {
+            NodeData::Element { attributes, .. } => attributes
+                .iter()
+                .filter(|a| a.local_name.starts_with("on") && a.local_name.len() > 2)
+                .map(|a| (a.local_name[2..].to_string(), a.value.clone()))
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    if !inline_handlers.is_empty() {
+        let tp = Rc::as_ptr(&tree) as usize;
+        for (event_name, attr_value) in inline_handlers {
+            super::on_event::compile_inline_event_handler(tp, node_id, &event_name, &attr_value, ctx);
+        }
+    }
 }
 
 /// Returns true if the given lowercase tag name is a known HTML element
@@ -1037,12 +1105,7 @@ impl JsElement {
     /// Native getter for element.textContent
     /// Per spec: Document and Doctype return null, others return text.
     fn get_text_content(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("textContent getter: `this` is not an object").into()))?;
-        let el = obj
-            .downcast_ref::<JsElement>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("textContent getter: `this` is not an Element").into()))?;
+        extract_element!(el, this, "textContent getter");
         let tree = el.tree.borrow();
         let node = tree.get_node(el.node_id);
         // Per DOM spec: Document and Doctype nodes return null for textContent
@@ -1062,12 +1125,7 @@ impl JsElement {
     /// - Element, DocumentFragment: remove all children, then if value is non-empty create Text child
     /// - Text, Comment: set data
     fn set_text_content(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("textContent setter: `this` is not an object").into()))?;
-        let el = obj
-            .downcast_ref::<JsElement>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("textContent setter: `this` is not an Element").into()))?;
+        extract_element!(el, this, "textContent setter");
 
         // Per spec: Document and Doctype nodes ignore textContent setter
         {
@@ -1261,12 +1319,7 @@ impl JsElement {
 
     /// Native setter for element.classList — sets the class attribute via value
     fn set_class_list(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("classList setter: `this` is not an object").into()))?;
-        let el = obj
-            .downcast_ref::<JsElement>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("classList setter: `this` is not an Element").into()))?;
+        extract_element!(el, this, "classList setter");
 
         let value = args
             .first()
@@ -1281,12 +1334,7 @@ impl JsElement {
 
     /// Native implementation of element.remove()
     fn remove(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        let this_obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("remove: `this` is not an object").into()))?;
-        let el = this_obj
-            .downcast_ref::<JsElement>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("remove: `this` is not an Element").into()))?;
+        extract_element!(el, this, "remove");
         let node_id = el.node_id;
         let tree = el.tree.clone();
 
@@ -1532,12 +1580,7 @@ impl JsElement {
 
     /// Native implementation of element.addEventListener(type, callback, options?)
     fn add_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        let this_obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: `this` is not an object").into()))?;
-        let el = this_obj
-            .downcast_ref::<JsElement>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: `this` is not an Element").into()))?;
+        extract_element!(el, this, "addEventListener");
         let node_id = el.node_id;
 
         // First arg: event type string
@@ -1593,12 +1636,7 @@ impl JsElement {
 
     /// Native implementation of element.removeEventListener(type, callback, options?)
     fn remove_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        let this_obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: `this` is not an object").into()))?;
-        let el = this_obj
-            .downcast_ref::<JsElement>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: `this` is not an Element").into()))?;
+        extract_element!(el, this, "removeEventListener");
         let node_id = el.node_id;
 
         // First arg: event type string
@@ -1711,17 +1749,7 @@ impl JsElement {
         }
 
         // 1. Build propagation path: [root, ..., grandparent, parent, target]
-        let propagation_path = {
-            let tree_ref = tree.borrow();
-            let mut path = vec![target_node_id];
-            let mut current = target_node_id;
-            while let Some(parent_id) = tree_ref.get_node(current).parent {
-                path.push(parent_id);
-                current = parent_id;
-            }
-            path.reverse();
-            path
-        };
+        let propagation_path = build_propagation_path(&tree.borrow(), target_node_id);
 
         // Activation behavior: find activation target and run pre-activation
         let (activation_target, saved_activation) = if is_click_mouse {
@@ -1768,190 +1796,27 @@ impl JsElement {
         Self::set_event_prop(&event_obj, "target", this.clone(), ctx)?;
         Self::set_event_prop(&event_obj, "srcElement", this.clone(), ctx)?;
 
-        // Helper: create a JsElement JS object for a given NodeId (uses cache)
-        let make_js_element = |node_id: NodeId, ctx: &mut Context| -> JsResult<JsObject> {
-            get_or_create_js_element(node_id, tree.clone(), ctx)
-        };
-
-        // Helper closure: set phase/current_target on the event
-        let set_phase = |event_obj: &JsObject, node_id: Option<NodeId>, phase: u8| {
-            let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
-            evt.current_target = node_id;
-            evt.phase = phase;
-        };
-
-        // 3. Capture phase (phase = 1): Walk from window (if included) -> root down to (but NOT including) the target
-        let mut dispatch_stopped = false;
-
-        // Window capture listeners first (if applicable)
-        if include_window && !dispatch_stopped {
-            // Set phase on native event data
-            set_phase(&event_obj, Some(WINDOW_LISTENER_ID), 1);
-            let window_val: JsValue = realm_state::window_object(ctx)
-                .map(JsValue::from)
-                .unwrap_or(JsValue::undefined());
-            Self::set_event_prop(&event_obj, "currentTarget", window_val.clone(), ctx)?;
-
-            let should_stop = invoke_listeners_for_node(
-                (usize::MAX, WINDOW_LISTENER_ID),
-                &event_type,
-                &event_obj,
-                &event_val,
-                true,
-                false,
-                ctx,
-            )?;
-
-            // Invoke on* handler for window (capture doesn't apply to on*, but we check at bubble/at-target)
-            if should_stop {
-                dispatch_stopped = true;
-            }
-        }
-
         let target_index = propagation_path.len() - 1;
-        if !dispatch_stopped {
-            for &node_id in &propagation_path[..target_index] {
-                set_phase(&event_obj, Some(node_id), 1);
-                let current_target_js = make_js_element(node_id, ctx)?;
-                Self::set_event_prop(&event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
 
-                let should_stop = Self::invoke_listeners_for_node(
-                    (tree_scope, node_id),
-                    &event_type,
-                    &event_obj,
-                    &event_val,
-                    true,
-                    false,
-                    ctx,
-                )?;
-                if should_stop {
-                    dispatch_stopped = true;
-                    break;
-                }
-            }
+        let evt = DispatchEvent {
+            tree_scope,
+            event_obj: &event_obj,
+            event_val: &event_val,
+            event_type: &event_type,
+        };
+
+        // 3. Capture phase
+        let mut dispatch_stopped =
+            run_capture_phase(&propagation_path, target_index, include_window, &tree, &evt, ctx)?;
+
+        // 4. At-target phase
+        if !dispatch_stopped {
+            dispatch_stopped = run_at_target_phase(target_node_id, this, &evt, ctx)?;
         }
 
-        // 4. At-target phase (phase = 2): capture listeners first, then non-capture
-        if !dispatch_stopped {
-            set_phase(&event_obj, Some(target_node_id), 2);
-            Self::set_event_prop(&event_obj, "currentTarget", this.clone(), ctx)?;
-
-            // First: capture listeners at target
-            let should_stop = Self::invoke_listeners_for_node(
-                (tree_scope, target_node_id),
-                &event_type,
-                &event_obj,
-                &event_val,
-                true,
-                false,
-                ctx,
-            )?;
-            if should_stop {
-                dispatch_stopped = true;
-            }
-        }
-
-        if !dispatch_stopped {
-            // Second: non-capture listeners at target
-            set_phase(&event_obj, Some(target_node_id), 2);
-            let should_stop = Self::invoke_listeners_for_node(
-                (tree_scope, target_node_id),
-                &event_type,
-                &event_obj,
-                &event_val,
-                false,
-                false,
-                ctx,
-            )?;
-
-            // Invoke on* handler at target
-            super::on_event::invoke_on_event_handler(
-                tree_scope,
-                target_node_id,
-                &event_type,
-                this,
-                &event_val,
-                &event_obj,
-                ctx,
-            );
-
-            if should_stop {
-                dispatch_stopped = true;
-            }
-        }
-
-        // 5. Bubble phase (phase = 3): Only if event.bubbles. Walk from parent up to root, then window.
+        // 5. Bubble phase
         if bubbles && !dispatch_stopped {
-            for i in (0..target_index).rev() {
-                let node_id = propagation_path[i];
-
-                set_phase(&event_obj, Some(node_id), 3);
-                let current_target_js = make_js_element(node_id, ctx)?;
-                Self::set_event_prop(
-                    &event_obj,
-                    "currentTarget",
-                    JsValue::from(current_target_js.clone()),
-                    ctx,
-                )?;
-
-                let should_stop = Self::invoke_listeners_for_node(
-                    (tree_scope, node_id),
-                    &event_type,
-                    &event_obj,
-                    &event_val,
-                    false,
-                    false,
-                    ctx,
-                )?;
-
-                // Invoke on* handler during bubble
-                super::on_event::invoke_on_event_handler(
-                    tree_scope,
-                    node_id,
-                    &event_type,
-                    &JsValue::from(current_target_js),
-                    &event_val,
-                    &event_obj,
-                    ctx,
-                );
-
-                if should_stop {
-                    dispatch_stopped = true;
-                    break;
-                }
-            }
-
-            // Window bubble listeners last (if applicable)
-            if include_window && !dispatch_stopped {
-                set_phase(&event_obj, Some(WINDOW_LISTENER_ID), 3);
-                let window_val: JsValue = realm_state::window_object(ctx)
-                    .map(JsValue::from)
-                    .unwrap_or(JsValue::undefined());
-                Self::set_event_prop(&event_obj, "currentTarget", window_val.clone(), ctx)?;
-
-                let should_stop = invoke_listeners_for_node(
-                    (usize::MAX, WINDOW_LISTENER_ID),
-                    &event_type,
-                    &event_obj,
-                    &event_val,
-                    false,
-                    false,
-                    ctx,
-                )?;
-
-                // Invoke on* handler for window during bubble
-                super::on_event::invoke_on_event_handler(
-                    usize::MAX,
-                    WINDOW_LISTENER_ID,
-                    &event_type,
-                    &window_val,
-                    &event_val,
-                    &event_obj,
-                    ctx,
-                );
-
-                let _ = should_stop;
-            }
+            run_bubble_phase(&propagation_path, target_index, include_window, &tree, &evt, ctx)?;
         }
 
         // 6. Finish dispatch — reset event state
@@ -1971,6 +1836,7 @@ impl JsElement {
     }
 
     /// Delegates to the standalone `invoke_listeners_for_node` function.
+    #[allow(dead_code)]
     fn invoke_listeners_for_node(
         listener_key: (usize, NodeId),
         event_type: &str,
@@ -2020,6 +1886,213 @@ impl JsElement {
         Self::set_event_prop(event_obj, "currentTarget", JsValue::null(), ctx)?;
         Ok(JsValue::from(!default_prevented))
     }
+}
+
+/// Build the event propagation path from target up to the root, returned as [root, ..., parent, target].
+fn build_propagation_path(tree: &DomTree, target_node_id: NodeId) -> Vec<NodeId> {
+    let mut path = vec![target_node_id];
+    let mut current = target_node_id;
+    while let Some(parent_id) = tree.get_node(current).parent {
+        path.push(parent_id);
+        current = parent_id;
+    }
+    path.reverse();
+    path
+}
+
+/// Set the native event phase and current_target fields on a JsEvent.
+fn set_event_phase(event_obj: &JsObject, node_id: Option<NodeId>, phase: u8) {
+    let mut evt = event_obj.downcast_mut::<JsEvent>().unwrap();
+    evt.current_target = node_id;
+    evt.phase = phase;
+}
+
+/// Run the capture phase (phase 1): window capture listeners (if included), then walk from root
+/// down to (but NOT including) the target. Returns whether dispatch was stopped.
+fn run_capture_phase(
+    propagation_path: &[NodeId],
+    target_index: usize,
+    include_window: bool,
+    tree: &Rc<RefCell<DomTree>>,
+    evt: &DispatchEvent<'_>,
+    ctx: &mut Context,
+) -> JsResult<bool> {
+    // Window capture listeners first (if applicable)
+    if include_window {
+        set_event_phase(evt.event_obj, Some(WINDOW_LISTENER_ID), 1);
+        let window_val: JsValue = realm_state::window_object(ctx)
+            .map(JsValue::from)
+            .unwrap_or(JsValue::undefined());
+        JsElement::set_event_prop(evt.event_obj, "currentTarget", window_val.clone(), ctx)?;
+
+        let should_stop = invoke_listeners_for_node(
+            (usize::MAX, WINDOW_LISTENER_ID),
+            evt.event_type,
+            evt.event_obj,
+            evt.event_val,
+            true,
+            false,
+            ctx,
+        )?;
+
+        if should_stop {
+            return Ok(true);
+        }
+    }
+
+    // Walk from root down to (but not including) the target
+    for &node_id in &propagation_path[..target_index] {
+        set_event_phase(evt.event_obj, Some(node_id), 1);
+        let current_target_js = get_or_create_js_element(node_id, tree.clone(), ctx)?;
+        JsElement::set_event_prop(evt.event_obj, "currentTarget", JsValue::from(current_target_js), ctx)?;
+
+        let should_stop = invoke_listeners_for_node(
+            (evt.tree_scope, node_id),
+            evt.event_type,
+            evt.event_obj,
+            evt.event_val,
+            true,
+            false,
+            ctx,
+        )?;
+        if should_stop {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+/// Run the at-target phase (phase 2): capture listeners first, then non-capture listeners,
+/// then on* handler invocation. Returns whether dispatch was stopped.
+fn run_at_target_phase(
+    target_node_id: NodeId,
+    this: &JsValue,
+    evt: &DispatchEvent<'_>,
+    ctx: &mut Context,
+) -> JsResult<bool> {
+    // First: capture listeners at target
+    set_event_phase(evt.event_obj, Some(target_node_id), 2);
+    JsElement::set_event_prop(evt.event_obj, "currentTarget", this.clone(), ctx)?;
+
+    let should_stop_capture = invoke_listeners_for_node(
+        (evt.tree_scope, target_node_id),
+        evt.event_type,
+        evt.event_obj,
+        evt.event_val,
+        true,
+        false,
+        ctx,
+    )?;
+    if should_stop_capture {
+        return Ok(true);
+    }
+
+    // Second: non-capture listeners at target
+    set_event_phase(evt.event_obj, Some(target_node_id), 2);
+    let should_stop_bubble = invoke_listeners_for_node(
+        (evt.tree_scope, target_node_id),
+        evt.event_type,
+        evt.event_obj,
+        evt.event_val,
+        false,
+        false,
+        ctx,
+    )?;
+
+    // Invoke on* handler at target
+    super::on_event::invoke_on_event_handler(
+        evt.tree_scope,
+        target_node_id,
+        evt.event_type,
+        this,
+        evt.event_val,
+        evt.event_obj,
+        ctx,
+    );
+
+    Ok(should_stop_bubble)
+}
+
+/// Run the bubble phase (phase 3): walk from parent of target up to root, then window bubble
+/// listeners (if included), invoking on* handlers at each step. Returns whether dispatch was stopped.
+fn run_bubble_phase(
+    propagation_path: &[NodeId],
+    target_index: usize,
+    include_window: bool,
+    tree: &Rc<RefCell<DomTree>>,
+    evt: &DispatchEvent<'_>,
+    ctx: &mut Context,
+) -> JsResult<bool> {
+    for i in (0..target_index).rev() {
+        let node_id = propagation_path[i];
+
+        set_event_phase(evt.event_obj, Some(node_id), 3);
+        let current_target_js = get_or_create_js_element(node_id, tree.clone(), ctx)?;
+        JsElement::set_event_prop(
+            evt.event_obj,
+            "currentTarget",
+            JsValue::from(current_target_js.clone()),
+            ctx,
+        )?;
+
+        let should_stop = invoke_listeners_for_node(
+            (evt.tree_scope, node_id),
+            evt.event_type,
+            evt.event_obj,
+            evt.event_val,
+            false,
+            false,
+            ctx,
+        )?;
+
+        // Invoke on* handler during bubble
+        super::on_event::invoke_on_event_handler(
+            evt.tree_scope,
+            node_id,
+            evt.event_type,
+            &JsValue::from(current_target_js),
+            evt.event_val,
+            evt.event_obj,
+            ctx,
+        );
+
+        if should_stop {
+            return Ok(true);
+        }
+    }
+
+    // Window bubble listeners last (if applicable)
+    if include_window {
+        set_event_phase(evt.event_obj, Some(WINDOW_LISTENER_ID), 3);
+        let window_val: JsValue = realm_state::window_object(ctx)
+            .map(JsValue::from)
+            .unwrap_or(JsValue::undefined());
+        JsElement::set_event_prop(evt.event_obj, "currentTarget", window_val.clone(), ctx)?;
+
+        let _should_stop = invoke_listeners_for_node(
+            (usize::MAX, WINDOW_LISTENER_ID),
+            evt.event_type,
+            evt.event_obj,
+            evt.event_val,
+            false,
+            false,
+            ctx,
+        )?;
+
+        // Invoke on* handler for window during bubble
+        super::on_event::invoke_on_event_handler(
+            super::on_event::WINDOW_TREE_PTR,
+            WINDOW_LISTENER_ID,
+            evt.event_type,
+            &window_val,
+            evt.event_val,
+            evt.event_obj,
+            ctx,
+        );
+    }
+
+    Ok(false)
 }
 
 /// Invoke matching listeners for a specific node during event dispatch.
@@ -2638,8 +2711,10 @@ mod tests {
     fn remove_with_capture_must_match() {
         let mut engine = Engine::new();
         engine.load_html("<html><body><div id='d'></div></body></html>");
-        let runtime = engine.runtime.as_mut().unwrap();
-        runtime
+        engine
+            .runtime
+            .as_mut()
+            .unwrap()
             .eval(
                 r#"
                 var d = document.getElementById('d');
@@ -2654,7 +2729,10 @@ mod tests {
         assert_eq!(listener_count(&engine), 1);
 
         // Now remove with matching capture
-        runtime
+        engine
+            .runtime
+            .as_mut()
+            .unwrap()
             .eval(
                 r#"
                 var d = document.getElementById('d');

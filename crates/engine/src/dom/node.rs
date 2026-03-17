@@ -24,6 +24,11 @@ impl DomAttribute {
         }
     }
 
+    /// Returns true if this attribute matches the given namespace and local name.
+    pub fn matches_ns(&self, namespace: &str, local_name: &str) -> bool {
+        self.namespace == namespace && self.local_name == local_name
+    }
+
     /// Returns the qualified name: "prefix:localName" if prefix is non-empty,
     /// otherwise just localName.
     pub fn qualified_name(&self) -> String {

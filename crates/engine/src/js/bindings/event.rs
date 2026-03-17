@@ -135,12 +135,7 @@ impl JsEvent {
     }
 
     fn get_time_stamp(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.timeStamp getter: not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.timeStamp getter: not an Event").into()))?;
+        extract_event!(evt, this, "Event.timeStamp getter");
         Ok(JsValue::from(evt.time_stamp))
     }
 
@@ -153,12 +148,7 @@ impl JsEvent {
     }
 
     fn get_cancel_bubble(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.cancelBubble getter: not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.cancelBubble getter: not an Event").into()))?;
+        extract_event!(evt, this, "Event.cancelBubble getter");
         Ok(JsValue::from(evt.propagation_stopped))
     }
 
@@ -177,12 +167,7 @@ impl JsEvent {
     }
 
     fn get_return_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.returnValue getter: not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.returnValue getter: not an Event").into()))?;
+        extract_event!(evt, this, "Event.returnValue getter");
         Ok(JsValue::from(!evt.default_prevented))
     }
 
@@ -237,12 +222,7 @@ impl JsEvent {
     }
 
     pub(crate) fn get_detail(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.detail getter: not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("CustomEvent.detail getter: not an Event").into()))?;
+        extract_event!(evt, this, "CustomEvent.detail getter");
         match &evt.kind {
             EventKind::Custom { detail } => Ok(detail.clone()),
             _ => Ok(JsValue::null()),
@@ -283,42 +263,22 @@ impl JsEvent {
     }
 
     fn get_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.type getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.type getter: `this` is not an Event").into()))?;
+        extract_event!(evt, this, "Event.type getter");
         Ok(JsValue::from(js_string!(evt.event_type.clone())))
     }
 
     fn get_bubbles(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.bubbles getter: `this` is not an object").into()))?;
-        let evt = obj
-            .downcast_ref::<JsEvent>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("Event.bubbles getter: `this` is not an Event").into()))?;
+        extract_event!(evt, this, "Event.bubbles getter");
         Ok(JsValue::from(evt.bubbles))
     }
 
     fn get_cancelable(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this.as_object().ok_or_else(|| {
-            JsError::from_opaque(js_string!("Event.cancelable getter: `this` is not an object").into())
-        })?;
-        let evt = obj.downcast_ref::<JsEvent>().ok_or_else(|| {
-            JsError::from_opaque(js_string!("Event.cancelable getter: `this` is not an Event").into())
-        })?;
+        extract_event!(evt, this, "Event.cancelable getter");
         Ok(JsValue::from(evt.cancelable))
     }
 
     fn get_default_prevented(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this.as_object().ok_or_else(|| {
-            JsError::from_opaque(js_string!("Event.defaultPrevented getter: `this` is not an object").into())
-        })?;
-        let evt = obj.downcast_ref::<JsEvent>().ok_or_else(|| {
-            JsError::from_opaque(js_string!("Event.defaultPrevented getter: `this` is not an Event").into())
-        })?;
+        extract_event!(evt, this, "Event.defaultPrevented getter");
         Ok(JsValue::from(evt.default_prevented))
     }
 
@@ -333,12 +293,7 @@ impl JsEvent {
     }
 
     fn get_event_phase(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        let obj = this.as_object().ok_or_else(|| {
-            JsError::from_opaque(js_string!("Event.eventPhase getter: `this` is not an object").into())
-        })?;
-        let evt = obj.downcast_ref::<JsEvent>().ok_or_else(|| {
-            JsError::from_opaque(js_string!("Event.eventPhase getter: `this` is not an Event").into())
-        })?;
+        extract_event!(evt, this, "Event.eventPhase getter");
         Ok(JsValue::from(evt.phase as i32))
     }
 

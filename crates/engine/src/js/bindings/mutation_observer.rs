@@ -57,6 +57,66 @@ pub(crate) struct RawMutationRecord {
     next_sibling_id: Option<NodeId>,
 }
 
+impl RawMutationRecord {
+    fn attributes(
+        tree: Rc<RefCell<DomTree>>,
+        node_id: NodeId,
+        name: String,
+        namespace: Option<String>,
+        old_value: Option<String>,
+    ) -> Self {
+        Self {
+            mutation_type: "attributes".to_string(),
+            target_tree: tree,
+            target_node_id: node_id,
+            attribute_name: Some(name),
+            attribute_namespace: namespace,
+            old_value,
+            added_node_ids: Vec::new(),
+            removed_node_ids: Vec::new(),
+            previous_sibling_id: None,
+            next_sibling_id: None,
+        }
+    }
+
+    fn character_data(tree: Rc<RefCell<DomTree>>, node_id: NodeId, old_value: Option<String>) -> Self {
+        Self {
+            mutation_type: "characterData".to_string(),
+            target_tree: tree,
+            target_node_id: node_id,
+            attribute_name: None,
+            attribute_namespace: None,
+            old_value,
+            added_node_ids: Vec::new(),
+            removed_node_ids: Vec::new(),
+            previous_sibling_id: None,
+            next_sibling_id: None,
+        }
+    }
+
+    fn child_list(
+        tree: Rc<RefCell<DomTree>>,
+        parent_id: NodeId,
+        added: Vec<NodeId>,
+        removed: Vec<NodeId>,
+        prev_sibling: Option<NodeId>,
+        next_sibling: Option<NodeId>,
+    ) -> Self {
+        Self {
+            mutation_type: "childList".to_string(),
+            target_tree: tree,
+            target_node_id: parent_id,
+            attribute_name: None,
+            attribute_namespace: None,
+            old_value: None,
+            added_node_ids: added,
+            removed_node_ids: removed,
+            previous_sibling_id: prev_sibling,
+            next_sibling_id: next_sibling,
+        }
+    }
+}
+
 /// One registered MutationObserver entry.
 struct ObserverEntry {
     callback: JsObject,
@@ -247,12 +307,7 @@ pub(crate) fn register_mutation_record_global(ctx: &mut Context) {
 // ---------------------------------------------------------------------------
 
 fn observe_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("observe: this is not an object").into()))?;
-    let mo = this_obj
-        .downcast_ref::<JsMutationObserver>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("observe: this is not a MutationObserver").into()))?;
+    extract_mutation_observer!(mo, this, "observe");
     let observer_index = mo.observer_index;
 
     // Get target node
@@ -390,12 +445,7 @@ fn observe_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
 // ---------------------------------------------------------------------------
 
 fn disconnect_fn(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("disconnect: this is not an object").into()))?;
-    let mo = this_obj
-        .downcast_ref::<JsMutationObserver>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("disconnect: not a MutationObserver").into()))?;
+    extract_mutation_observer!(mo, this, "disconnect");
     let observer_index = mo.observer_index;
 
     {
@@ -422,12 +472,7 @@ fn disconnect_fn(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResu
 // ---------------------------------------------------------------------------
 
 fn take_records_fn(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let this_obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("takeRecords: this is not an object").into()))?;
-    let mo = this_obj
-        .downcast_ref::<JsMutationObserver>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("takeRecords: not a MutationObserver").into()))?;
+    extract_mutation_observer!(mo, this, "takeRecords");
     let observer_index = mo.observer_index;
 
     let records = {
@@ -730,11 +775,11 @@ fn queue_attributes_mutation(
 ) {
     let tree_ptr = Rc::as_ptr(tree) as usize;
 
-    {
+    // Phase A: collect interested observers (immutable borrow)
+    let interested = {
         let state_rc = realm_state::mutation_observer_state(ctx);
-        let mut state = state_rc.borrow_mut();
-
-        let interested = collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
+        let state = state_rc.borrow();
+        collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| {
             if !opts.attributes {
                 return false;
             }
@@ -744,21 +789,21 @@ fn queue_attributes_mutation(
                 }
             }
             true
-        });
+        })
+    };
 
+    // Phase B: push records (mutable borrow)
+    if !interested.is_empty() {
+        let state_rc = realm_state::mutation_observer_state(ctx);
+        let mut state = state_rc.borrow_mut();
         for (obs_idx, capture_old) in interested {
-            let record = RawMutationRecord {
-                mutation_type: "attributes".to_string(),
-                target_tree: tree.clone(),
-                target_node_id: node_id,
-                attribute_name: Some(attr_name.to_string()),
-                attribute_namespace: attr_namespace.map(|s| s.to_string()),
-                old_value: if capture_old { old_value.clone() } else { None },
-                added_node_ids: Vec::new(),
-                removed_node_ids: Vec::new(),
-                previous_sibling_id: None,
-                next_sibling_id: None,
-            };
+            let record = RawMutationRecord::attributes(
+                tree.clone(),
+                node_id,
+                attr_name.to_string(),
+                attr_namespace.map(|s| s.to_string()),
+                if capture_old { old_value.clone() } else { None },
+            );
             state.observers[obs_idx].pending_records.push(record);
         }
     }
@@ -774,25 +819,23 @@ fn queue_character_data_mutation(
 ) {
     let tree_ptr = Rc::as_ptr(tree) as usize;
 
-    {
+    // Phase A: collect interested observers (immutable borrow)
+    let interested = {
+        let state_rc = realm_state::mutation_observer_state(ctx);
+        let state = state_rc.borrow();
+        collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| opts.character_data)
+    };
+
+    // Phase B: push records (mutable borrow)
+    if !interested.is_empty() {
         let state_rc = realm_state::mutation_observer_state(ctx);
         let mut state = state_rc.borrow_mut();
-
-        let interested = collect_interested_observers(&state, tree, node_id, tree_ptr, |opts| opts.character_data);
-
         for (obs_idx, capture_old) in interested {
-            let record = RawMutationRecord {
-                mutation_type: "characterData".to_string(),
-                target_tree: tree.clone(),
-                target_node_id: node_id,
-                attribute_name: None,
-                attribute_namespace: None,
-                old_value: if capture_old { old_value.clone() } else { None },
-                added_node_ids: Vec::new(),
-                removed_node_ids: Vec::new(),
-                previous_sibling_id: None,
-                next_sibling_id: None,
-            };
+            let record = RawMutationRecord::character_data(
+                tree.clone(),
+                node_id,
+                if capture_old { old_value.clone() } else { None },
+            );
             state.observers[obs_idx].pending_records.push(record);
         }
     }
@@ -812,25 +855,26 @@ pub(crate) fn queue_childlist_mutation(
 ) {
     let tree_ptr = Rc::as_ptr(tree) as usize;
 
-    {
+    // Phase A: collect interested observers (immutable borrow)
+    let interested = {
+        let state_rc = realm_state::mutation_observer_state(ctx);
+        let state = state_rc.borrow();
+        collect_interested_observers(&state, tree, parent_id, tree_ptr, |opts| opts.child_list)
+    };
+
+    // Phase B: push records (mutable borrow)
+    if !interested.is_empty() {
         let state_rc = realm_state::mutation_observer_state(ctx);
         let mut state = state_rc.borrow_mut();
-
-        let interested = collect_interested_observers(&state, tree, parent_id, tree_ptr, |opts| opts.child_list);
-
         for (obs_idx, _) in interested {
-            let record = RawMutationRecord {
-                mutation_type: "childList".to_string(),
-                target_tree: tree.clone(),
-                target_node_id: parent_id,
-                attribute_name: None,
-                attribute_namespace: None,
-                old_value: None,
-                added_node_ids: added_ids.clone(),
-                removed_node_ids: removed_ids.clone(),
-                previous_sibling_id: prev_sibling,
-                next_sibling_id: next_sibling,
-            };
+            let record = RawMutationRecord::child_list(
+                tree.clone(),
+                parent_id,
+                added_ids.clone(),
+                removed_ids.clone(),
+                prev_sibling,
+                next_sibling,
+            );
             state.observers[obs_idx].pending_records.push(record);
         }
     }
@@ -883,7 +927,7 @@ pub(crate) fn set_attribute_ns_with_observer(
         if let NodeData::Element { attributes, .. } = &node.data {
             attributes
                 .iter()
-                .find(|a| a.local_name == local_name && a.namespace == namespace)
+                .find(|a| a.matches_ns(namespace, local_name))
                 .map(|a| a.value.clone())
         } else {
             None
@@ -907,7 +951,7 @@ pub(crate) fn remove_attribute_ns_with_observer(
         if let NodeData::Element { attributes, .. } = &node.data {
             attributes
                 .iter()
-                .find(|a| a.local_name == local_name && a.namespace == namespace)
+                .find(|a| a.matches_ns(namespace, local_name))
                 .map(|a| a.value.clone())
         } else {
             None
@@ -1054,18 +1098,14 @@ pub(crate) fn synthesize_parser_mutations(
                 collect_interested_observers(&state, tree, rec.parent_id, tree_ptr, |opts| opts.child_list);
 
             for (obs_idx, _) in interested {
-                let record = RawMutationRecord {
-                    mutation_type: "childList".to_string(),
-                    target_tree: tree.clone(),
-                    target_node_id: rec.parent_id,
-                    attribute_name: None,
-                    attribute_namespace: None,
-                    old_value: None,
-                    added_node_ids: vec![rec.added_id],
-                    removed_node_ids: Vec::new(),
-                    previous_sibling_id: rec.prev_sibling,
-                    next_sibling_id: rec.next_sibling,
-                };
+                let record = RawMutationRecord::child_list(
+                    tree.clone(),
+                    rec.parent_id,
+                    vec![rec.added_id],
+                    Vec::new(),
+                    rec.prev_sibling,
+                    rec.next_sibling,
+                );
                 state.observers[obs_idx].pending_records.push(record);
                 any_queued = true;
             }

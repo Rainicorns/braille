@@ -1,9 +1,7 @@
 use boa_engine::{
-    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute, Context, JsError, JsResult,
-    JsValue,
+    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute, Context, JsResult, JsValue,
 };
 
-use super::element::JsElement;
 use crate::dom::{DomTree, NodeData, NodeId};
 
 // ---------------------------------------------------------------------------
@@ -13,12 +11,7 @@ use crate::dom::{DomTree, NodeData, NodeId};
 // ---------------------------------------------------------------------------
 
 fn get_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("value getter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("value getter: this is not an Element").into()))?;
+    extract_element!(el, this, "value getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -68,12 +61,7 @@ fn get_option_children(tree: &DomTree, parent_id: NodeId) -> Vec<NodeId> {
 }
 
 fn set_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("value setter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("value setter: this is not an Element").into()))?;
+    extract_element!(el, this, "value setter");
 
     let val = args
         .first()
@@ -118,12 +106,7 @@ fn set_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<Js
 // ---------------------------------------------------------------------------
 
 fn get_checked(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("checked getter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("checked getter: this is not an Element").into()))?;
+    extract_element!(el, this, "checked getter");
 
     let tree = el.tree.borrow();
     let has = tree.has_attribute(el.node_id, "checked");
@@ -131,12 +114,7 @@ fn get_checked(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResul
 }
 
 fn set_checked(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("checked setter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("checked setter: this is not an Element").into()))?;
+    extract_element!(el, this, "checked setter");
 
     let val = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
@@ -154,12 +132,7 @@ fn set_checked(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<
 // ---------------------------------------------------------------------------
 
 fn get_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("type getter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("type getter: this is not an Element").into()))?;
+    extract_element!(el, this, "type getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "type") {
@@ -169,12 +142,7 @@ fn get_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<J
 }
 
 fn set_type(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("type setter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("type setter: this is not an Element").into()))?;
+    extract_element!(el, this, "type setter");
 
     let val = args
         .first()
@@ -192,12 +160,7 @@ fn set_type(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
 // ---------------------------------------------------------------------------
 
 fn get_disabled(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("disabled getter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("disabled getter: this is not an Element").into()))?;
+    extract_element!(el, this, "disabled getter");
 
     let tree = el.tree.borrow();
     let has = tree.has_attribute(el.node_id, "disabled");
@@ -205,12 +168,7 @@ fn get_disabled(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResu
 }
 
 fn set_disabled(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("disabled setter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("disabled setter: this is not an Element").into()))?;
+    extract_element!(el, this, "disabled setter");
 
     let val = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
@@ -228,12 +186,7 @@ fn set_disabled(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
 // ---------------------------------------------------------------------------
 
 fn get_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("name getter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("name getter: this is not an Element").into()))?;
+    extract_element!(el, this, "name getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "name") {
@@ -243,12 +196,7 @@ fn get_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<J
 }
 
 fn set_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("name setter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("name setter: this is not an Element").into()))?;
+    extract_element!(el, this, "name setter");
 
     let val = args
         .first()
@@ -266,12 +214,7 @@ fn set_name(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
 // ---------------------------------------------------------------------------
 
 fn get_placeholder(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("placeholder getter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("placeholder getter: this is not an Element").into()))?;
+    extract_element!(el, this, "placeholder getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "placeholder") {
@@ -281,12 +224,7 @@ fn get_placeholder(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsR
 }
 
 fn set_placeholder(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("placeholder setter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("placeholder setter: this is not an Element").into()))?;
+    extract_element!(el, this, "placeholder setter");
 
     let val = args
         .first()

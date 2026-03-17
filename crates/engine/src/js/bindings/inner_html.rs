@@ -3,16 +3,10 @@ use boa_engine::{
     JsValue,
 };
 
-use super::element::JsElement;
 use crate::dom::NodeId;
 
 fn get_inner_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("innerHTML getter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("innerHTML getter: this is not an Element").into()))?;
+    extract_element!(el, this, "innerHTML getter");
 
     let tree = el.tree.borrow();
     let html = tree.serialize_children_html(el.node_id);
@@ -20,12 +14,7 @@ fn get_inner_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
 }
 
 fn set_inner_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("innerHTML setter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("innerHTML setter: this is not an Element").into()))?;
+    extract_element!(el, this, "innerHTML setter");
 
     let html_string = args
         .first()
@@ -73,12 +62,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
 }
 
 fn get_outer_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("outerHTML getter: this is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("outerHTML getter: this is not an Element").into()))?;
+    extract_element!(el, this, "outerHTML getter");
 
     let tree = el.tree.borrow();
     let html = tree.serialize_node_html(el.node_id);
@@ -86,12 +70,7 @@ fn get_outer_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
 }
 
 fn insert_adjacent_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("not object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("not Element").into()))?;
+    extract_element!(el, this, "insertAdjacentHTML");
     let pos = args
         .first()
         .map(|v| v.to_string(ctx))

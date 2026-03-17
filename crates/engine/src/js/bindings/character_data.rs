@@ -85,12 +85,7 @@ fn index_size_error() -> JsError {
 
 /// Native getter for .data
 fn get_data(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("data getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("data getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "data getter");
 
     if !is_character_data(&el) {
         return Ok(JsValue::undefined());
@@ -105,12 +100,7 @@ fn get_data(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<J
 
 /// Native setter for .data
 fn set_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("data setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("data setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "data setter");
 
     if !is_character_data(&el) {
         return Ok(JsValue::undefined());
@@ -131,12 +121,7 @@ fn set_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
 
 /// Native getter for .length (UTF-16 code unit count)
 fn get_length(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("length getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("length getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "length getter");
 
     if !is_character_data(&el) {
         return Ok(JsValue::undefined());
@@ -149,12 +134,7 @@ fn get_length(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult
 
 /// Native implementation of appendData(data)
 fn append_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("appendData: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("appendData: `this` is not an Element").into()))?;
+    extract_element!(el, this, "appendData");
 
     // Per spec: appendData requires exactly 1 argument — TypeError if missing
     let data_val = args
@@ -179,12 +159,7 @@ fn to_unsigned_long(val: &JsValue, ctx: &mut Context) -> JsResult<usize> {
 
 /// Native implementation of deleteData(offset, count)
 fn delete_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("deleteData: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("deleteData: `this` is not an Element").into()))?;
+    extract_element!(el, this, "deleteData");
 
     let offset_val = args
         .first()
@@ -204,12 +179,7 @@ fn delete_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<
 
 /// Native implementation of insertData(offset, data)
 fn insert_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertData: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("insertData: `this` is not an Element").into()))?;
+    extract_element!(el, this, "insertData");
 
     let offset_val = args
         .first()
@@ -229,12 +199,7 @@ fn insert_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<
 
 /// Native implementation of replaceData(offset, count, data)
 fn replace_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceData: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("replaceData: `this` is not an Element").into()))?;
+    extract_element!(el, this, "replaceData");
 
     let offset_val = args
         .first()
@@ -258,12 +223,7 @@ fn replace_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
 
 /// Native implementation of substringData(offset, count)
 fn substring_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("substringData: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("substringData: `this` is not an Element").into()))?;
+    extract_element!(el, this, "substringData");
 
     let offset_val = args
         .first()
@@ -286,12 +246,7 @@ fn substring_data(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
 /// Native implementation of Text.splitText(offset)
 /// Splits a Text node at the given UTF-16 offset, returning the new node.
 fn split_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("splitText: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("splitText: `this` is not an Element").into()))?;
+    extract_element!(el, this, "splitText");
 
     // splitText only works on Text nodes (nodeType 3)
     {
@@ -321,12 +276,7 @@ fn split_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
 /// Native getter for Text.wholeText
 /// Returns the concatenation of all contiguous Text node siblings' data.
 fn get_whole_text(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("wholeText getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("wholeText getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "wholeText getter");
 
     // wholeText only works on Text nodes (nodeType 3)
     let tree = el.tree.borrow();

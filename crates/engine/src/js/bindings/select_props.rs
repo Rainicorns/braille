@@ -1,9 +1,9 @@
 use boa_engine::{
     class::ClassBuilder, js_string, native_function::NativeFunction, object::builtins::JsArray, property::Attribute,
-    Context, JsError, JsResult, JsValue,
+    Context, JsResult, JsValue,
 };
 
-use super::element::{get_or_create_js_element, JsElement};
+use super::element::get_or_create_js_element;
 use crate::dom::{DomTree, NodeData, NodeId};
 
 // ---------------------------------------------------------------------------
@@ -48,12 +48,7 @@ fn is_option(tree: &DomTree, node_id: NodeId) -> bool {
 // ---------------------------------------------------------------------------
 
 fn get_selected_index(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("selectedIndex getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("selectedIndex getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "selectedIndex getter");
 
     let tree = el.tree.borrow();
 
@@ -72,12 +67,7 @@ fn get_selected_index(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> 
 }
 
 fn set_selected_index(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("selectedIndex setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("selectedIndex setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "selectedIndex setter");
 
     let index = args.first().map(|v| v.to_i32(ctx)).transpose()?.unwrap_or(-1);
 
@@ -107,12 +97,7 @@ fn set_selected_index(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> Js
 // ---------------------------------------------------------------------------
 
 fn get_options(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("options getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("options getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "options getter");
 
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
@@ -136,12 +121,7 @@ fn get_options(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult
 // ---------------------------------------------------------------------------
 
 fn get_option_selected(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("selected getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("selected getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "selected getter");
 
     let tree = el.tree.borrow();
 
@@ -154,12 +134,7 @@ fn get_option_selected(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) ->
 }
 
 fn set_option_selected(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("selected setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("selected setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "selected setter");
 
     let val = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
@@ -185,12 +160,7 @@ fn set_option_selected(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
 // ---------------------------------------------------------------------------
 
 fn get_option_text(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("text getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("text getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "text getter");
 
     let tree = el.tree.borrow();
 
@@ -203,12 +173,7 @@ fn get_option_text(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsR
 }
 
 fn set_option_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("text setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("text setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "text setter");
 
     let new_text = args
         .first()

@@ -54,6 +54,21 @@ pub struct CascadeDeclaration {
     pub important: bool,
 }
 
+/// Cascade priority levels for origin+importance combinations.
+///
+/// Ordering follows the CSS cascade specification (highest priority last):
+/// Normal UA < Normal Author < Normal Inline < Important Author < Important Inline < Important UA
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+enum CascadePriority {
+    NormalUA = 0,
+    NormalAuthor = 1,
+    NormalInline = 2,
+    ImportantAuthor = 3,
+    ImportantInline = 4,
+    ImportantUA = 5,
+}
+
 /// Cascade priority key used for comparing declarations.
 ///
 /// Higher values win. The derived Ord gives us lexicographic comparison
@@ -61,7 +76,7 @@ pub struct CascadeDeclaration {
 /// then source_order.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct CascadeKey {
-    origin_importance: u8,
+    origin_importance: CascadePriority,
     specificity: u32,
     source_order: u32,
 }
@@ -104,9 +119,9 @@ pub fn cascade_element(
     // Collect inline declarations (always apply, no selector matching needed)
     for (property, value, important) in inline_declarations {
         let origin_importance = if *important {
-            4 // Important inline
+            CascadePriority::ImportantInline
         } else {
-            2 // Normal inline
+            CascadePriority::NormalInline
         };
 
         let candidate = CascadeCandidate {
@@ -175,10 +190,10 @@ fn collect_matching_rules(
         if let Some(specificity) = best_specificity {
             for decl in &rule.declarations {
                 let origin_importance = match (origin, decl.important) {
-                    (Origin::UserAgent, false) => 0, // Normal UA (lowest)
-                    (Origin::Author, false) => 1,    // Normal author
-                    (Origin::Author, true) => 3,     // Important author
-                    (Origin::UserAgent, true) => 5,  // Important UA (highest)
+                    (Origin::UserAgent, false) => CascadePriority::NormalUA,
+                    (Origin::Author, false) => CascadePriority::NormalAuthor,
+                    (Origin::Author, true) => CascadePriority::ImportantAuthor,
+                    (Origin::UserAgent, true) => CascadePriority::ImportantUA,
                 };
 
                 let candidate = CascadeCandidate {

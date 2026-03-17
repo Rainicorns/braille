@@ -26,11 +26,26 @@ use super::runtime;
 // ---------------------------------------------------------------------------
 
 /// Key for on* IDL event handlers: (tree_ptr, node_id, event_name).
-type OnEventKey = (usize, NodeId, String);
+/// The event name is a `&'static str` — callers use `intern_event_name()` to map
+/// dynamically-computed names to the canonical static ref (avoiding per-lookup allocation).
+type OnEventKey = (usize, NodeId, &'static str);
 type OnEventMap = HashMap<OnEventKey, JsObject>;
 
 /// Key for collection caches: (tree_ptr, node_id).
 type CollectionCacheKey = (usize, NodeId);
+
+/// Content documents for loaded iframes, keyed by (tree_ptr, node_id).
+type IframeContentDocs = HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>;
+
+/// State shared between parent and iframe realms (MO, iframes, node cache).
+pub(crate) struct SharedRealmState {
+    pub(crate) mo_state: Rc<RefCell<MutationObserverState>>,
+    pub(crate) iframe_realms: Rc<RefCell<HashMap<(usize, NodeId), Realm>>>,
+    pub(crate) all_realms: Rc<RefCell<Vec<Realm>>>,
+    pub(crate) iframe_content_docs: Rc<RefCell<IframeContentDocs>>,
+    pub(crate) iframe_src_content: Rc<RefCell<HashMap<String, String>>>,
+    pub(crate) node_cache: Rc<RefCell<NodeCache>>,
+}
 
 // Re-export MutationObserverState so mutation_observer.rs can reference it.
 pub(crate) use super::bindings::mutation_observer::MutationObserverState;
@@ -61,8 +76,7 @@ pub(crate) struct RealmState {
     pub(crate) on_event_handlers: Rc<RefCell<OnEventMap>>,
 
     #[unsafe_ignore_trace]
-    #[allow(clippy::type_complexity)]
-    pub(crate) iframe_content_docs: Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>,
+    pub(crate) iframe_content_docs: Rc<RefCell<IframeContentDocs>>,
 
     #[unsafe_ignore_trace]
     pub(crate) iframe_src_content: Rc<RefCell<HashMap<String, String>>>,
@@ -158,22 +172,14 @@ impl RealmState {
     }
 
     /// Create a new `RealmState` for an iframe realm that shares MO state with the parent.
-    pub(crate) fn new_with_shared(
-        tree: Rc<RefCell<DomTree>>,
-        shared_mo_state: Rc<RefCell<MutationObserverState>>,
-        shared_iframe_realms: Rc<RefCell<HashMap<(usize, NodeId), Realm>>>,
-        shared_all_realms: Rc<RefCell<Vec<Realm>>>,
-        shared_iframe_content_docs: Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>,
-        shared_iframe_src_content: Rc<RefCell<HashMap<String, String>>>,
-        shared_node_cache: Rc<RefCell<NodeCache>>,
-    ) -> Self {
+    pub(crate) fn new_with_shared(tree: Rc<RefCell<DomTree>>, shared: SharedRealmState) -> Self {
         Self {
-            node_cache: shared_node_cache,
+            node_cache: shared.node_cache,
             event_listeners: Rc::new(RefCell::new(HashMap::new())),
             on_event_handlers: Rc::new(RefCell::new(HashMap::new())),
-            iframe_content_docs: shared_iframe_content_docs,
-            iframe_src_content: shared_iframe_src_content,
-            mutation_observer_state: shared_mo_state,
+            iframe_content_docs: shared.iframe_content_docs,
+            iframe_src_content: shared.iframe_src_content,
+            mutation_observer_state: shared.mo_state,
             child_nodes_cache: Rc::new(RefCell::new(HashMap::new())),
             children_cache: Rc::new(RefCell::new(HashMap::new())),
             dom_prototypes: RefCell::new(None),
@@ -189,8 +195,8 @@ impl RealmState {
             current_event: RefCell::new(None),
             dispatch_target: RefCell::new(None),
             creation_time: Instant::now(),
-            iframe_realms: shared_iframe_realms,
-            all_realms: shared_all_realms,
+            iframe_realms: shared.iframe_realms,
+            all_realms: shared.all_realms,
         }
     }
 }
@@ -406,26 +412,18 @@ pub(crate) fn register_iframe_realm_globals(
     context: &mut Context,
     tree: Rc<RefCell<DomTree>>,
     console_buffer: Rc<RefCell<Vec<String>>>,
-    shared_mo_state: Rc<RefCell<MutationObserverState>>,
-    shared_iframe_realms: Rc<RefCell<HashMap<(usize, NodeId), Realm>>>,
-    shared_all_realms: Rc<RefCell<Vec<Realm>>>,
-    shared_iframe_content_docs: Rc<RefCell<HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>>>,
-    shared_iframe_src_content: Rc<RefCell<HashMap<String, String>>>,
-    shared_node_cache: Rc<RefCell<NodeCache>>,
+    shared: SharedRealmState,
 ) {
+    let all_realms_ref = Rc::clone(&shared.all_realms);
+
     // 1. Insert RealmState with shared fields
-    context.realm().host_defined_mut().insert(RealmState::new_with_shared(
-        Rc::clone(&tree),
-        shared_mo_state,
-        shared_iframe_realms,
-        Rc::clone(&shared_all_realms),
-        shared_iframe_content_docs,
-        shared_iframe_src_content,
-        shared_node_cache,
-    ));
+    context
+        .realm()
+        .host_defined_mut()
+        .insert(RealmState::new_with_shared(Rc::clone(&tree), shared));
 
     // 1b. Register this realm in all_realms
-    shared_all_realms.borrow_mut().push(context.realm().clone());
+    all_realms_ref.borrow_mut().push(context.realm().clone());
 
     register_realm_globals_inner(context, tree, console_buffer);
 }
@@ -493,17 +491,16 @@ pub(crate) fn create_iframe_realm(
     iframe_node_id: NodeId,
 ) -> JsResult<(Realm, JsObject)> {
     // Collect shared state from parent realm before switching
-    let shared_mo_state = mutation_observer_state(ctx);
-    let shared_iframe_realms = iframe_realms(ctx);
-    let shared_all_realms = all_realms(ctx);
-    let shared_iframe_content_docs = iframe_content_docs(ctx);
-    let shared_iframe_src_content = iframe_src_content(ctx);
-    let shared_node_cache = node_cache(ctx);
-    let console_buffer = {
-        // Get console_buffer from current realm -- it's stored in the window/console closures
-        // For simplicity, create a new empty buffer for iframe realms
-        Rc::new(RefCell::new(Vec::new()))
+    let shared = SharedRealmState {
+        mo_state: mutation_observer_state(ctx),
+        iframe_realms: iframe_realms(ctx),
+        all_realms: all_realms(ctx),
+        iframe_content_docs: iframe_content_docs(ctx),
+        iframe_src_content: iframe_src_content(ctx),
+        node_cache: node_cache(ctx),
     };
+    let shared_iframe_realms = Rc::clone(&shared.iframe_realms);
+    let console_buffer = Rc::new(RefCell::new(Vec::new()));
     let parent_window = window_object(ctx);
 
     // Create new realm
@@ -511,17 +508,7 @@ pub(crate) fn create_iframe_realm(
 
     // Enter the new realm, init globals, restore
     let iframe_window = with_realm(ctx, &new_realm, |ctx| {
-        register_iframe_realm_globals(
-            ctx,
-            Rc::clone(&iframe_tree),
-            console_buffer,
-            shared_mo_state,
-            Rc::clone(&shared_iframe_realms),
-            shared_all_realms,
-            shared_iframe_content_docs,
-            shared_iframe_src_content,
-            shared_node_cache,
-        );
+        register_iframe_realm_globals(ctx, Rc::clone(&iframe_tree), console_buffer, shared);
 
         // Set `parent` property on iframe window → parent window object
         if let Some(parent_win) = parent_window {

@@ -4,12 +4,12 @@ use boa_engine::{
     native_function::NativeFunction,
     object::{builtins::JsArray, ObjectInitializer},
     property::Attribute,
-    Context, JsError, JsResult, JsValue,
+    Context, JsResult, JsValue,
 };
 
 use crate::dom::{NodeData, NodeId};
 
-use super::element::{get_or_create_js_element, JsElement};
+use super::element::get_or_create_js_element;
 
 // ---------------------------------------------------------------------------
 // Helper: kebab-case to camelCase
@@ -51,12 +51,7 @@ fn collect_descendants(tree: &crate::dom::DomTree, node_id: NodeId, results: &mu
 // ---------------------------------------------------------------------------
 
 fn get_href(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("href getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("href getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "href getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "href") {
@@ -80,12 +75,7 @@ fn get_href(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<J
 }
 
 fn set_href(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("href setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("href setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "href setter");
     let value = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -102,12 +92,7 @@ fn set_href(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
 // ---------------------------------------------------------------------------
 
 fn get_action(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("action getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("action getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "action getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "action") {
@@ -117,12 +102,7 @@ fn get_action(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult
 }
 
 fn set_action(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("action setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("action setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "action setter");
     let value = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -139,12 +119,7 @@ fn set_action(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
 // ---------------------------------------------------------------------------
 
 fn get_method(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("method getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("method getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "method getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "method") {
@@ -155,12 +130,7 @@ fn get_method(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult
 }
 
 fn set_method(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("method setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("method setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "method setter");
     let value = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -178,12 +148,7 @@ fn set_method(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
 // ---------------------------------------------------------------------------
 
 fn get_form_elements(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("elements getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("elements getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "elements getter");
 
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
@@ -225,12 +190,7 @@ fn get_form_elements(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> Js
 // ---------------------------------------------------------------------------
 
 fn get_hidden(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hidden getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hidden getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "hidden getter");
 
     let tree = el.tree.borrow();
     let has = tree.has_attribute(el.node_id, "hidden");
@@ -238,12 +198,7 @@ fn get_hidden(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult
 }
 
 fn set_hidden(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hidden setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("hidden setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "hidden setter");
 
     let value = args.first().map(|v| v.to_boolean()).unwrap_or(false);
 
@@ -264,12 +219,7 @@ fn set_hidden(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
 // ---------------------------------------------------------------------------
 
 fn get_dataset(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("dataset getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("dataset getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "dataset getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);

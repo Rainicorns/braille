@@ -25,12 +25,7 @@ const INTERACTIVE_ELEMENTS: &[&str] = &["input", "select", "textarea", "button",
 /// -1 for non-interactive elements, 0 for interactive elements
 /// (input, select, textarea, button, a).
 fn get_tab_index(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("tabIndex getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("tabIndex getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "tabIndex getter");
 
     let tree = el.tree.borrow();
     let node = tree.get_node(el.node_id);
@@ -68,12 +63,7 @@ fn get_tab_index(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
 ///
 /// Writes the numeric value as a string tabindex attribute.
 fn set_tab_index(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("tabIndex setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("tabIndex setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "tabIndex setter");
 
     let value = args.first().map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0) as i32;
 
@@ -83,12 +73,7 @@ fn set_tab_index(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
 
 /// Getter for element.title — reads the `title` attribute.
 fn get_title(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("title getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("title getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "title getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "title") {
@@ -99,12 +84,7 @@ fn get_title(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<
 
 /// Setter for element.title — writes the `title` attribute.
 fn set_title(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("title setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("title setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "title setter");
     let value = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -118,12 +98,7 @@ fn set_title(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<Js
 
 /// Getter for element.lang — reads the `lang` attribute.
 fn get_lang(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("lang getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("lang getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "lang getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "lang") {
@@ -134,12 +109,7 @@ fn get_lang(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<J
 
 /// Setter for element.lang — writes the `lang` attribute.
 fn set_lang(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("lang setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("lang setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "lang setter");
     let value = args
         .first()
         .map(|v| v.to_string(ctx))
@@ -153,12 +123,7 @@ fn set_lang(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsV
 
 /// Getter for element.dir — reads the `dir` attribute.
 fn get_dir(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("dir getter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("dir getter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "dir getter");
 
     let tree = el.tree.borrow();
     match tree.get_attribute(el.node_id, "dir") {
@@ -169,12 +134,7 @@ fn get_dir(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<Js
 
 /// Setter for element.dir — writes the `dir` attribute.
 fn set_dir(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let obj = this
-        .as_object()
-        .ok_or_else(|| JsError::from_opaque(js_string!("dir setter: `this` is not an object").into()))?;
-    let el = obj
-        .downcast_ref::<JsElement>()
-        .ok_or_else(|| JsError::from_opaque(js_string!("dir setter: `this` is not an Element").into()))?;
+    extract_element!(el, this, "dir setter");
     let value = args
         .first()
         .map(|v| v.to_string(ctx))
