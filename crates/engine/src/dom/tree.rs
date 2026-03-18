@@ -118,16 +118,29 @@ impl DomTree {
         self.nodes[parent].children.iter().position(|&c| c == child)
     }
 
-    /// Searches the entire tree for an Element whose "id" attribute matches `id`.
+    /// Searches the document tree in tree order (DFS) for the first Element whose
+    /// "id" attribute matches `id`. Only visits nodes connected to the document root,
+    /// so disconnected/detached nodes are excluded. Per spec, empty string never matches.
     pub fn get_element_by_id(&self, id: &str) -> Option<NodeId> {
-        self.nodes.iter().find_map(|node| {
+        if id.is_empty() {
+            return None;
+        }
+        // DFS walk starting from document root (node 0) gives tree order
+        // and automatically excludes disconnected nodes.
+        let mut stack = vec![0usize]; // document node
+        while let Some(node_id) = stack.pop() {
+            let node = &self.nodes[node_id];
             if let NodeData::Element { ref attributes, .. } = node.data {
                 if attributes.iter().any(|a| a.local_name == "id" && a.value == id) {
-                    return Some(node.id);
+                    return Some(node_id);
                 }
             }
-            None
-        })
+            // Push children in reverse order so first child is popped first (DFS pre-order)
+            for &child in node.children.iter().rev() {
+                stack.push(child);
+            }
+        }
+        None
     }
 
     /// Returns all Element nodes whose tag_name matches `tag` (case-insensitive).
@@ -761,7 +774,7 @@ impl DomTree {
 
     /// Converts a UTF-16 code unit offset to a byte offset in a UTF-8 string.
     /// Returns None if the offset is out of range.
-    fn utf16_offset_to_byte_offset(s: &str, utf16_offset: usize) -> Option<usize> {
+    pub(crate) fn utf16_offset_to_byte_offset(s: &str, utf16_offset: usize) -> Option<usize> {
         let mut utf16_pos = 0;
         for (byte_pos, ch) in s.char_indices() {
             if utf16_pos == utf16_offset {

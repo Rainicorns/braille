@@ -8,6 +8,19 @@ use std::collections::HashMap;
 use braille_engine::Engine;
 use braille_wire::{EngineAction, HttpMethod, SnapMode};
 
+fn snap(html: &str) -> String {
+    let mut engine = Engine::new();
+    engine.load_html(html);
+    engine.snapshot(SnapMode::Accessibility)
+}
+
+fn engine_with_snap(html: &str) -> (Engine, String) {
+    let mut engine = Engine::new();
+    engine.load_html(html);
+    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    (engine, snapshot)
+}
+
 // ---------------------------------------------------------------------------
 // 1. Link click flow
 // ---------------------------------------------------------------------------
@@ -19,9 +32,7 @@ fn link_click_returns_navigate_action_with_correct_url() {
       <a href="https://example.com/page">Visit Example</a>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, snapshot) = engine_with_snap(html);
 
     // The link should appear in the accessibility tree with a ref
     assert!(
@@ -55,9 +66,7 @@ fn link_click_with_relative_href() {
       <a href="/about">About Us</a>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     let action = engine.handle_click("@e1");
     match action {
@@ -86,9 +95,7 @@ fn button_click_inside_form_returns_none_action() {
       </form>
     </body></html>"##;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     // Click the button (should be @e2 since input is @e1)
     let action = engine.handle_click("@e2");
@@ -112,9 +119,7 @@ fn form_with_inputs_visible_in_snapshot() {
       </form>
     </body></html>"##;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    let snapshot = snap(html);
 
     // Verify all form controls are visible in the accessibility tree
     assert!(snapshot.contains("form"), "snapshot should contain form: {}", snapshot);
@@ -146,9 +151,7 @@ fn type_into_input_then_snapshot_shows_value() {
       <input type="text" id="name">
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     // Type into the input via @e1 ref
     engine.handle_type("@e1", "hello").unwrap();
@@ -169,9 +172,7 @@ fn type_into_textarea_then_snapshot_shows_text() {
       <textarea id="msg"></textarea>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     engine.handle_type("@e1", "world").unwrap();
 
@@ -190,9 +191,7 @@ fn type_overwrites_previous_value_in_snapshot() {
       <input type="text" value="old">
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap1 = engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, snap1) = engine_with_snap(html);
     assert!(
         snap1.contains("value=\"old\""),
         "initial snapshot should show old value: {}",
@@ -225,9 +224,7 @@ fn select_option_then_snapshot_shows_selected_value() {
       </select>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     // Select "Green" by value
     engine.handle_select("@e1", "g").unwrap();
@@ -251,9 +248,7 @@ fn select_changes_selected_option_in_snapshot() {
       </select>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap1 = engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, snap1) = engine_with_snap(html);
     assert!(
         snap1.contains("value=\"Medium\""),
         "initial snapshot should show Medium selected: {}",
@@ -291,9 +286,7 @@ fn inline_script_creates_nested_dom_structure() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    let snapshot = snap(html);
 
     assert!(
         snapshot.contains("navigation"),
@@ -329,9 +322,7 @@ fn script_creates_form_with_inputs() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    let snapshot = snap(html);
 
     assert!(snapshot.contains("form"), "snapshot should contain form: {}", snapshot);
     assert!(
@@ -484,9 +475,7 @@ fn focus_input_shows_focused_marker_in_snapshot() {
       <button>Go</button>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     engine.handle_focus("@e1").unwrap();
 
@@ -512,9 +501,7 @@ fn focus_moves_between_elements() {
       <button id="btn">Click</button>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     // Focus the first input
     engine.handle_focus("@e1").unwrap();
@@ -548,9 +535,7 @@ fn blur_clears_focused_marker() {
       <input type="text">
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     engine.handle_focus("@e1").unwrap();
     let snap1 = engine.snapshot(SnapMode::Accessibility);
@@ -578,9 +563,7 @@ fn refs_resolve_to_correct_elements_after_snapshot() {
       <input type="text">
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, snapshot) = engine_with_snap(html);
 
     // Verify refs exist
     assert!(snapshot.contains("@e1"), "should have @e1: {}", snapshot);
@@ -619,9 +602,7 @@ fn refs_reset_after_loading_new_html() {
       <a href="/old">Old Link</a>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html1);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html1);
 
     let old_e1 = engine.resolve_ref("@e1");
     assert!(old_e1.is_some(), "should resolve @e1 from first page");
@@ -673,9 +654,7 @@ fn all_interactive_elements_get_unique_sequential_refs() {
       <input type="email">
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    let (engine, snapshot) = engine_with_snap(html);
 
     // Verify all 8 interactive elements have unique refs in order
     assert!(
@@ -781,9 +760,7 @@ fn script_builds_complex_nested_structure_with_attributes() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, snapshot) = engine_with_snap(html);
 
     // Verify the full accessibility tree structure
     assert!(snapshot.contains("navigation"), "should have nav: {}", snapshot);
@@ -846,9 +823,7 @@ fn script_modifies_text_content_of_existing_elements() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    let snapshot = snap(html);
 
     assert!(
         snapshot.contains("Modified Title"),
@@ -883,9 +858,7 @@ fn click_on_nonexistent_ref_returns_error() {
       <a href="/home">Home</a>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     let action = engine.handle_click("@e999");
     match action {
@@ -907,9 +880,7 @@ fn click_on_nonexistent_id_returns_error() {
       <a href="/home">Home</a>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     let action = engine.handle_click("#does-not-exist");
     match action {
@@ -946,11 +917,7 @@ fn full_workflow_load_type_focus_snapshot() {
       </main>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-
-    // Step 1: Take initial snapshot to see the page
-    let snap1 = engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, snap1) = engine_with_snap(html);
     assert!(snap1.contains("navigation"), "should see nav: {}", snap1);
     assert!(snap1.contains("heading[1] \"Search\""), "should see heading: {}", snap1);
     assert!(
@@ -1000,9 +967,7 @@ fn type_and_select_then_verify_combined_state() {
       </form>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html);
 
     // Fill in the form
     engine.handle_type("@e1", "Alice").unwrap();
@@ -1030,8 +995,6 @@ fn type_and_select_then_verify_combined_state() {
 
 #[test]
 fn multiple_load_cycles_reset_state_cleanly() {
-    let mut engine = Engine::new();
-
     // First page
     let html1 = r#"
     <html><body>
@@ -1039,8 +1002,7 @@ fn multiple_load_cycles_reset_state_cleanly() {
       <input type="text" id="input1">
     </body></html>"#;
 
-    engine.load_html(html1);
-    engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, _) = engine_with_snap(html1);
     engine.handle_type("@e2", "typed on page 1").unwrap();
     engine.handle_focus("@e1").unwrap();
 
@@ -1195,9 +1157,7 @@ fn snapshot_with_deeply_nested_interactive_elements() {
       </main>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, snapshot) = engine_with_snap(html);
 
     // Even deeply nested elements should get refs and be interactable
     assert!(

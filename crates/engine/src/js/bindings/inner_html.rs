@@ -69,6 +69,52 @@ fn get_outer_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
     Ok(JsValue::from(js_string!(html)))
 }
 
+fn set_outer_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    extract_element!(el, this, "outerHTML setter");
+
+    let html_string = args
+        .first()
+        .map(|v| v.to_string(ctx))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+
+    let node_id = el.node_id;
+    let tree_rc = el.tree.clone();
+
+    // Per spec: if parent is null, return. If parent is a Document, throw.
+    let parent_id = match tree_rc.borrow().get_node(node_id).parent {
+        Some(p) => p,
+        None => return Ok(JsValue::undefined()),
+    };
+
+    // Parse the replacement HTML
+    let wrapper = format!("<html><body>{}</body></html>", html_string);
+    let temp_tree_rc = crate::html::parse_html(&wrapper);
+    let temp_tree = temp_tree_rc.borrow();
+
+    // Import new nodes
+    let mut new_ids: Vec<NodeId> = Vec::new();
+    if let Some(temp_body) = temp_tree.body() {
+        let temp_body_children: Vec<NodeId> = temp_tree.get_node(temp_body).children.clone();
+        for &child_id in &temp_body_children {
+            let new_id = tree_rc.borrow_mut().import_subtree(&temp_tree, child_id);
+            new_ids.push(new_id);
+        }
+    }
+
+    // Insert new nodes before the target element, then remove the target
+    for &new_id in &new_ids {
+        tree_rc.borrow_mut().insert_before(node_id, new_id);
+    }
+    tree_rc.borrow_mut().remove_child(parent_id, node_id);
+
+    // Queue MutationObserver childList record
+    super::mutation_observer::queue_childlist_mutation(ctx, &tree_rc, parent_id, new_ids, vec![node_id], None, None);
+
+    Ok(JsValue::undefined())
+}
+
 fn insert_adjacent_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     extract_element!(el, this, "insertAdjacentHTML");
     let pos = args
@@ -136,6 +182,7 @@ pub(crate) fn register_inner_html(c: &mut ClassBuilder) -> JsResult<()> {
     let g = NativeFunction::from_fn_ptr(get_inner_html);
     let s = NativeFunction::from_fn_ptr(set_inner_html);
     let o = NativeFunction::from_fn_ptr(get_outer_html);
+    let os = NativeFunction::from_fn_ptr(set_outer_html);
     let i = NativeFunction::from_fn_ptr(insert_adjacent_html);
     c.accessor(
         js_string!("innerHTML"),
@@ -146,7 +193,7 @@ pub(crate) fn register_inner_html(c: &mut ClassBuilder) -> JsResult<()> {
     c.accessor(
         js_string!("outerHTML"),
         Some(o.to_js_function(&r)),
-        None,
+        Some(os.to_js_function(&r)),
         Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
     );
     c.method(js_string!("insertAdjacentHTML"), 2, i);

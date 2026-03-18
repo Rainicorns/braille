@@ -15,6 +15,19 @@
 use braille_engine::Engine;
 use braille_wire::SnapMode;
 
+fn snap(html: &str) -> String {
+    let mut engine = Engine::new();
+    engine.load_html(html);
+    engine.snapshot(SnapMode::Accessibility)
+}
+
+fn engine_with_snap(html: &str) -> (Engine, String) {
+    let mut engine = Engine::new();
+    engine.load_html(html);
+    let snapshot = engine.snapshot(SnapMode::Accessibility);
+    (engine, snapshot)
+}
+
 // ---------------------------------------------------------------------------
 // 1. React-like reconciler: build initial DOM, "re-render" by clearing and
 //    rebuilding children, verify final state via snapshot
@@ -62,9 +75,7 @@ fn react_like_reconciler_simulation() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     // After final render, should see "Final Item"
     assert!(snap.contains("Final Item"), "should see final render: {}", snap);
@@ -142,9 +153,7 @@ fn svelte_like_direct_dom_manipulation() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("Count: 2"), "counter should show 2: {}", snap);
     assert!(
@@ -201,9 +210,7 @@ fn form_workflow_with_js_values() {
       </script>
     </body></html>"##;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     // Verify the snapshot shows set values
     assert!(snap.contains("value=\"alice\""), "username should be alice: {}", snap);
@@ -255,9 +262,7 @@ fn event_delegation_pattern() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(
         snap.contains("clicked=Second,First,Third"),
@@ -311,9 +316,7 @@ fn dynamic_styling_and_computed_style() {
       </script>
     </body></html>"##;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("color=red"), "inline color: {}", snap);
     assert!(snap.contains("fontSize=24px"), "inline font-size: {}", snap);
@@ -365,9 +368,7 @@ fn class_list_toggle_workflow() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("afterAdd=card active highlighted"), "after add: {}", snap);
     assert!(snap.contains("toggleOff=false:card active"), "toggle off: {}", snap);
@@ -413,9 +414,7 @@ fn inner_html_round_trip() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("Modified Welcome"), "modified heading: {}", snap);
     assert!(snap.contains("Modified paragraph"), "modified paragraph: {}", snap);
@@ -457,9 +456,7 @@ fn dataset_manipulation() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("productId=42"), "productId: {}", snap);
     assert!(snap.contains("category=electronics"), "category: {}", snap);
@@ -513,9 +510,7 @@ fn select_option_interaction() {
       </script>
     </body></html>"##;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("initVal=blue"), "initial value: {}", snap);
     assert!(snap.contains("initIdx=2"), "initial index: {}", snap);
@@ -580,9 +575,7 @@ fn dom_tree_walking() {
         document.body.appendChild(p);
       </script></body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("rootFirstId=a"), "root first child: {}", snap);
     assert!(snap.contains("aFirst=a1"), "#a first child: {}", snap);
@@ -635,9 +628,7 @@ fn event_listener_once_and_remove() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("first=once,regular"), "first dispatch: {}", snap);
     assert!(
@@ -682,9 +673,7 @@ fn query_selector_complex_workflow() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("first=card1"), "querySelector: {}", snap);
     assert!(snap.contains("all=3"), "querySelectorAll: {}", snap);
@@ -755,9 +744,7 @@ fn dom_mutation_methods() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("initial=First,Second,Third"), "initial: {}", snap);
     assert!(
@@ -826,9 +813,7 @@ fn html_element_properties() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("divTab=-1"), "div tabIndex: {}", snap);
     assert!(snap.contains("inputTab=0"), "input tabIndex: {}", snap);
@@ -890,9 +875,7 @@ fn anchor_form_hidden_and_text_node() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("href=https://example.com"), "initial href: {}", snap);
     assert!(
@@ -930,9 +913,7 @@ fn window_document_and_console() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(
         snap.contains("Created via window.document"),
@@ -966,10 +947,7 @@ fn full_page_lifecycle() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html1);
-
-    let snap1 = engine.snapshot(SnapMode::Accessibility);
+    let (mut engine, snap1) = engine_with_snap(html1);
     assert!(snap1.contains("Buy milk"), "todo 1: {}", snap1);
     assert!(snap1.contains("Walk the dog"), "todo 2: {}", snap1);
     assert!(snap1.contains("Write tests"), "todo 3: {}", snap1);
@@ -1021,9 +999,7 @@ fn css_display_none_hides_from_a11y_tree() {
       <p>Also visible</p>
     </body></html>"##;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("Visible Heading"), "visible heading: {}", snap);
     assert!(snap.contains("Visible paragraph"), "visible paragraph: {}", snap);
@@ -1082,9 +1058,7 @@ fn input_properties_comprehensive() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("defaultType=text"), "default type: {}", snap);
     assert!(snap.contains("newType=email"), "set type: {}", snap);
@@ -1125,9 +1099,7 @@ fn event_prevent_default_and_return_value() {
       </script>
     </body></html>"#;
 
-    let mut engine = Engine::new();
-    engine.load_html(html);
-    let snap = engine.snapshot(SnapMode::Accessibility);
+    let snap = snap(html);
 
     assert!(snap.contains("cancelable=false"), "cancelable+preventDefault: {}", snap);
     assert!(snap.contains("nonCancelable=true"), "non-cancelable: {}", snap);

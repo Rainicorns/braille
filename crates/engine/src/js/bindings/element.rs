@@ -589,11 +589,35 @@ fn setup_attr_node_properties(
                 .transpose()?
                 .map(|s| s.to_std_string_escaped())
                 .unwrap_or_default();
+
+            // 1. Update the Attr node's value in the tree
             if let NodeData::Attr { ref mut value, .. } =
                 tree_for_setter.borrow_mut().get_node_mut(nid_for_setter).data
             {
-                *value = new_val;
+                *value = new_val.clone();
             }
+
+            // 2. Sync to owning element: scan attr_node_cache for an entry where
+            //    cached NodeId matches this Attr's node_id → get (tree_ptr, element_id, qname)
+            let cache = crate::js::realm_state::attr_node_cache(ctx2);
+            let owner_info = {
+                let c = cache.borrow();
+                c.iter()
+                    .find(|(_, &nid)| nid == nid_for_setter)
+                    .map(|((tp, el_id, qname), _)| (*tp, *el_id, qname.clone()))
+            };
+
+            if let Some((_tree_ptr, element_id, qname)) = owner_info {
+                // Update the matching DomAttribute on the element via observer wrapper
+                super::mutation_observer::set_attribute_with_observer(
+                    ctx2,
+                    &tree_for_setter,
+                    element_id,
+                    &qname,
+                    &new_val,
+                );
+            }
+
             Ok(JsValue::undefined())
         })
     };
@@ -1492,8 +1516,25 @@ impl JsElement {
             }
         };
 
+        // For Attr nodes, the spec says delegate to ownerElement.
+        // Attr nodes in the tree don't have a parent, so check the shared attr_node_cache
+        // to find the owning element.
+        let effective_node_id = {
+            let t = tree.borrow();
+            if matches!(t.get_node(node_id).data, crate::dom::NodeData::Attr { .. }) {
+                let cache = crate::js::realm_state::attr_node_cache(ctx);
+                let c = cache.borrow();
+                c.iter()
+                    .find(|(_, &nid)| nid == node_id)
+                    .map(|((_, el_id, _), _)| *el_id)
+                    .unwrap_or(node_id)
+            } else {
+                node_id
+            }
+        };
+
         let tree_ref = tree.borrow();
-        let result = tree_ref.locate_namespace(node_id, prefix.as_deref());
+        let result = tree_ref.locate_namespace(effective_node_id, prefix.as_deref());
 
         match result {
             Some(ns) => Ok(JsValue::from(js_string!(ns))),

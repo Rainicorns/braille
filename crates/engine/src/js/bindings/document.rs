@@ -450,6 +450,20 @@ fn document_create_document_fragment(this: &JsValue, _args: &[JsValue], ctx: &mu
     Ok(js_obj.into())
 }
 
+/// Native implementation of document.createRange()
+fn document_create_range(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("createRange: `this` is not an object").into()))?;
+    let doc = obj
+        .downcast_ref::<JsDocument>()
+        .ok_or_else(|| JsError::from_opaque(js_string!("createRange: `this` is not document").into()))?;
+    let tree = doc.tree.clone();
+    let doc_id = tree.borrow().document();
+    let range_obj = super::range::create_range(tree, doc_id, ctx)?;
+    Ok(range_obj.into())
+}
+
 /// Native implementation of document.createAttribute(localName)
 fn document_create_attribute(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let obj = this
@@ -1243,6 +1257,17 @@ pub(crate) fn add_document_properties_to_element(
         false,
         ctx,
     )?;
+
+    // createRange method
+    let tree_for_cr = new_tree.clone();
+    let create_range = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx2| {
+            let doc_id = tree_for_cr.borrow().document();
+            let range_obj = super::range::create_range(tree_for_cr.clone(), doc_id, ctx2)?;
+            Ok(range_obj.into())
+        })
+    };
+    js_obj.set(js_string!("createRange"), create_range.to_js_function(&realm), false, ctx)?;
 
     // createProcessingInstruction method
     let tree_for_cpi = new_tree.clone();
@@ -2339,6 +2364,11 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
         .function(
             NativeFunction::from_fn_ptr(document_create_document_fragment),
             js_string!("createDocumentFragment"),
+            0,
+        )
+        .function(
+            NativeFunction::from_fn_ptr(document_create_range),
+            js_string!("createRange"),
             0,
         )
         .function(

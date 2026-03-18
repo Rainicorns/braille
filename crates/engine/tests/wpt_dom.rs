@@ -439,7 +439,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("createElementNS", "requires namespace support"),
         // ("getElementsByTagNameNS", "requires namespace support"),  // getElementsByTagNameNS now implemented
         // ("namespaced", "requires namespace support"),  // namespace support implemented (unskip)
-        ("NamedNodeMap", "requires NamedNodeMap"),
+        // ("NamedNodeMap", "requires NamedNodeMap"),  // NamedNodeMap now implemented
         // CharacterData-appendChild requires HierarchyRequestError (DOMException)
         // CharacterData-appendChild — now have HierarchyRequestError (W2 un-skip)
         // ("CharacterData-appendChild", "requires HierarchyRequestError DOMException"),
@@ -510,10 +510,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
             "requires SVG xlink namespace attributes",
         ),
         // ParentNode-querySelectors-exclusive — unskipped, querySelector now excludes root
-        (
-            "ParentNode-querySelector-scope",
-            "2/4 pass; sibling combinator (+) not yet supported",
-        ),
+        // ParentNode-querySelector-scope — now fully passing (4/4)
+        // ("ParentNode-querySelector-scope", "2/4 pass; sibling combinator (+) not yet supported"),
         (
             "query-target-in-load-event",
             "requires window.parent, postMessage, :target pseudo-class",
@@ -594,8 +592,11 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("NodeList-static-length", "requires NodeList interface"),
         // ("NodeList-live-mutations", "requires NodeList interface"),
         // NamedNodeMap / attributes interface
-        ("attributes-namednodemap", "requires NamedNodeMap"),
-        ("/attributes.html", "requires NamedNodeMap"),
+        // ("attributes-namednodemap", "requires NamedNodeMap"),  // NamedNodeMap now implemented (8/8)
+        (
+            "/attributes.html",
+            "61/67 pass; 6 remain: inline style toggle, setAttribute first-match, prefix preservation, non-HTML uppercase, own-property-names enumeration",
+        ),
         // Document-createAttribute — Attr interface implemented (unskip)
         // ("Document-createAttribute", "requires Attr interface"),
         // Document-createComment.html — now implemented
@@ -607,11 +608,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
             "Element-getElementsByTagName-change-document-HTMLNess",
             "requires iframes for document HTMLNess change",
         ),
-        // Document-getElementById — 6/18 pass; needs innerHTML/outerHTML, id-cache-on-insert semantics
-        (
-            "Document-getElementById",
-            "6/18 pass; needs innerHTML/outerHTML, in-document id-cache semantics",
-        ),
+        // Document-getElementById — 17/18 pass; 1 needs Attr.value sync (Step 10)
+        // ("Document-getElementById", "17/18 pass; needs Attr.value setter sync to owning element"),
         // DocumentFragment-getElementById — constructor implemented (unskip)
         // ("DocumentFragment-getElementById", "requires DocumentFragment constructor"),
         // Node-properties — unskipped, document.nextSibling/previousSibling/ownerDocument/hasChildNodes now defined

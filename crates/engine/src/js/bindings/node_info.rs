@@ -1,5 +1,5 @@
 use boa_engine::{
-    class::ClassBuilder, js_string, native_function::NativeFunction, object::ObjectInitializer, property::Attribute,
+    class::ClassBuilder, js_string, native_function::NativeFunction, property::Attribute,
     Context, JsResult, JsValue,
 };
 
@@ -293,7 +293,8 @@ fn get_local_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
 }
 
 /// Native getter for element.attributes
-/// Returns: an array-like NamedNodeMap object with name/value/prefix/namespaceURI for each attribute
+/// Returns: a live NamedNodeMap proxy backed by the element's attributes.
+/// The NamedNodeMap is cached per element so `el.attributes === el.attributes` holds.
 fn get_attributes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     extract_element!(el, this, "attributes getter");
 
@@ -301,105 +302,22 @@ fn get_attributes(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
     let node = tree.get_node(el.node_id);
 
     match &node.data {
-        NodeData::Element { attributes: _, .. } => {
+        NodeData::Element { .. } => {
             let el_tree = el.tree.clone();
+            let el_id = el.node_id;
+            let tree_ptr = std::rc::Rc::as_ptr(&el.tree) as usize;
             drop(tree);
 
-            // Compute ownerDocument for attrs (same as element's ownerDocument)
-            let owner_doc = {
-                let is_global = {
-                    let global_tree = realm_state::dom_tree(ctx);
-                    std::rc::Rc::ptr_eq(&el_tree, &global_tree)
-                };
-                if is_global {
-                    let global = ctx.global_object();
-                    global.get(js_string!("document"), ctx)?
-                } else {
-                    let doc_obj = get_or_create_js_element(0, el_tree.clone(), ctx)?;
-                    JsValue::from(doc_obj)
-                }
-            };
-
-            let tree = el_tree.borrow();
-            let node = tree.get_node(el.node_id);
-            let attributes = match &node.data {
-                NodeData::Element { attributes, .. } => attributes,
-                _ => unreachable!(),
-            };
-
-            // Build a NamedNodeMap-like object: { length: N, 0: Attr, 1: Attr, ... }
-            let attrs_obj = ObjectInitializer::new(ctx).build();
-            let len = attributes.len();
-
-            for (i, attr) in attributes.iter().enumerate() {
-                // Create an Attr-like object with name, value, prefix, namespaceURI, localName
-                let attr_obj = ObjectInitializer::new(ctx).build();
-
-                let qname = attr.qualified_name();
-
-                attr_obj.set(js_string!("name"), JsValue::from(js_string!(qname.clone())), false, ctx)?;
-                attr_obj.set(
-                    js_string!("value"),
-                    JsValue::from(js_string!(attr.value.clone())),
-                    false,
-                    ctx,
-                )?;
-                attr_obj.set(
-                    js_string!("nodeValue"),
-                    JsValue::from(js_string!(attr.value.clone())),
-                    false,
-                    ctx,
-                )?;
-                attr_obj.set(
-                    js_string!("textContent"),
-                    JsValue::from(js_string!(attr.value.clone())),
-                    false,
-                    ctx,
-                )?;
-                attr_obj.set(
-                    js_string!("localName"),
-                    JsValue::from(js_string!(attr.local_name.clone())),
-                    false,
-                    ctx,
-                )?;
-
-                if attr.prefix.is_empty() {
-                    attr_obj.set(js_string!("prefix"), JsValue::null(), false, ctx)?;
-                } else {
-                    attr_obj.set(
-                        js_string!("prefix"),
-                        JsValue::from(js_string!(attr.prefix.clone())),
-                        false,
-                        ctx,
-                    )?;
-                }
-
-                if attr.namespace.is_empty() {
-                    attr_obj.set(js_string!("namespaceURI"), JsValue::null(), false, ctx)?;
-                } else {
-                    attr_obj.set(
-                        js_string!("namespaceURI"),
-                        JsValue::from(js_string!(attr.namespace.clone())),
-                        false,
-                        ctx,
-                    )?;
-                }
-
-                // Set nodeType = 2 (ATTRIBUTE_NODE)
-                attr_obj.set(js_string!("nodeType"), JsValue::from(2), false, ctx)?;
-                // Set nodeName = qualified name
-                attr_obj.set(js_string!("nodeName"), JsValue::from(js_string!(qname)), false, ctx)?;
-                // Set specified = true (always for DOM4)
-                attr_obj.set(js_string!("specified"), JsValue::from(true), false, ctx)?;
-                // Set ownerDocument (same as the element's ownerDocument)
-                attr_obj.set(js_string!("ownerDocument"), owner_doc.clone(), false, ctx)?;
-
-                // Set by index
-                attrs_obj.set(js_string!(i.to_string()), JsValue::from(attr_obj), false, ctx)?;
+            // Check nnm_cache first for identity
+            let cache = crate::js::realm_state::nnm_cache(ctx);
+            let cache_key = (tree_ptr, el_id);
+            if let Some(cached) = cache.borrow().get(&cache_key) {
+                return Ok(JsValue::from(cached.clone()));
             }
 
-            attrs_obj.set(js_string!("length"), JsValue::from(len as i32), false, ctx)?;
-            Ok(JsValue::from(attrs_obj))
+            let nnm = super::collections::create_live_namednodemap(el_id, el_tree, ctx)?;
+            cache.borrow_mut().insert(cache_key, nnm.clone());
+            Ok(JsValue::from(nnm))
         }
         _ => {
             // Non-element nodes don't have attributes

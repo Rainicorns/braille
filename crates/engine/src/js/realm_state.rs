@@ -37,6 +37,11 @@ type CollectionCacheKey = (usize, NodeId);
 /// Content documents for loaded iframes, keyed by (tree_ptr, node_id).
 type IframeContentDocs = HashMap<(usize, NodeId), Rc<RefCell<DomTree>>>;
 
+/// Key for shared Attr identity cache: (tree_ptr, element_id, qualified_name).
+pub(crate) type AttrCacheKey = (usize, NodeId, String);
+/// Shared Attr identity cache: maps (tree_ptr, element_id, attr_qname) → Attr NodeId.
+pub(crate) type AttrNodeCache = HashMap<AttrCacheKey, NodeId>;
+
 /// State shared between parent and iframe realms (MO, iframes, node cache).
 pub(crate) struct SharedRealmState {
     pub(crate) mo_state: Rc<RefCell<MutationObserverState>>,
@@ -90,6 +95,12 @@ pub(crate) struct RealmState {
     #[unsafe_ignore_trace]
     pub(crate) children_cache: Rc<RefCell<HashMap<CollectionCacheKey, JsObject>>>,
 
+    #[unsafe_ignore_trace]
+    pub(crate) attr_node_cache: Rc<RefCell<AttrNodeCache>>,
+
+    #[unsafe_ignore_trace]
+    pub(crate) nnm_cache: Rc<RefCell<HashMap<CollectionCacheKey, JsObject>>>,
+
     // -- Prototype/factory caches (RefCell<Option<...>>) --
     #[unsafe_ignore_trace]
     pub(crate) dom_prototypes: RefCell<Option<DomPrototypes>>,
@@ -105,6 +116,12 @@ pub(crate) struct RealmState {
 
     #[unsafe_ignore_trace]
     pub(crate) hc_proxy_factory: RefCell<Option<JsObject>>,
+
+    #[unsafe_ignore_trace]
+    pub(crate) nnm_proto: RefCell<Option<JsObject>>,
+
+    #[unsafe_ignore_trace]
+    pub(crate) nnm_proxy_factory: RefCell<Option<JsObject>>,
 
     #[unsafe_ignore_trace]
     pub(crate) domimpl_proto: RefCell<Option<JsObject>>,
@@ -153,11 +170,15 @@ impl RealmState {
             mutation_observer_state: Rc::new(RefCell::new(MutationObserverState::new())),
             child_nodes_cache: Rc::new(RefCell::new(HashMap::new())),
             children_cache: Rc::new(RefCell::new(HashMap::new())),
+            attr_node_cache: Rc::new(RefCell::new(HashMap::new())),
+            nnm_cache: Rc::new(RefCell::new(HashMap::new())),
             dom_prototypes: RefCell::new(None),
             nodelist_proto: RefCell::new(None),
             htmlcollection_proto: RefCell::new(None),
             nl_proxy_factory: RefCell::new(None),
             hc_proxy_factory: RefCell::new(None),
+            nnm_proto: RefCell::new(None),
+            nnm_proxy_factory: RefCell::new(None),
             domimpl_proto: RefCell::new(None),
             mutation_record_proto: RefCell::new(None),
             is_trusted_getter: RefCell::new(None),
@@ -182,11 +203,15 @@ impl RealmState {
             mutation_observer_state: shared.mo_state,
             child_nodes_cache: Rc::new(RefCell::new(HashMap::new())),
             children_cache: Rc::new(RefCell::new(HashMap::new())),
+            attr_node_cache: Rc::new(RefCell::new(HashMap::new())),
+            nnm_cache: Rc::new(RefCell::new(HashMap::new())),
             dom_prototypes: RefCell::new(None),
             nodelist_proto: RefCell::new(None),
             htmlcollection_proto: RefCell::new(None),
             nl_proxy_factory: RefCell::new(None),
             hc_proxy_factory: RefCell::new(None),
+            nnm_proto: RefCell::new(None),
+            nnm_proxy_factory: RefCell::new(None),
             domimpl_proto: RefCell::new(None),
             mutation_record_proto: RefCell::new(None),
             is_trusted_getter: RefCell::new(None),
@@ -273,6 +298,12 @@ rc_accessor!(
     children_cache,
     Rc<RefCell<HashMap<CollectionCacheKey, JsObject>>>
 );
+rc_accessor!(attr_node_cache, attr_node_cache, Rc<RefCell<AttrNodeCache>>);
+rc_accessor!(
+    nnm_cache,
+    nnm_cache,
+    Rc<RefCell<HashMap<CollectionCacheKey, JsObject>>>
+);
 rc_accessor!(dom_tree, dom_tree, Rc<RefCell<DomTree>>);
 rc_accessor!(
     iframe_realms,
@@ -292,6 +323,8 @@ option_accessor!(
 );
 option_accessor!(nl_proxy_factory, set_nl_proxy_factory, nl_proxy_factory, JsObject);
 option_accessor!(hc_proxy_factory, set_hc_proxy_factory, hc_proxy_factory, JsObject);
+option_accessor!(nnm_proto, set_nnm_proto, nnm_proto, JsObject);
+option_accessor!(nnm_proxy_factory, set_nnm_proxy_factory, nnm_proxy_factory, JsObject);
 option_accessor!(domimpl_proto, set_domimpl_proto, domimpl_proto, JsObject);
 option_accessor!(
     mutation_record_proto,

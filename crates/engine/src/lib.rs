@@ -47,6 +47,27 @@ impl FetchedResources {
     }
 }
 
+/// The core browser engine. Parses HTML, executes JavaScript, and produces
+/// accessibility-tree snapshots for LLM agents to read and interact with.
+///
+/// # Loading HTML
+///
+/// | Method | Use when |
+/// |--------|----------|
+/// | [`load_html`](Self::load_html) | Inline scripts only, panics on JS errors |
+/// | [`load_html_with_scripts`](Self::load_html_with_scripts) | External `<script src>` files, panics on JS errors |
+/// | [`load_html_with_resources`](Self::load_html_with_resources) | External scripts + iframe content, panics on JS errors |
+/// | [`load_html_with_scripts_lossy`](Self::load_html_with_scripts_lossy) | External scripts, collects JS errors |
+/// | [`load_html_with_resources_lossy`](Self::load_html_with_resources_lossy) | External scripts + iframes, collects JS errors |
+/// | [`load_html_incremental_with_resources_lossy`](Self::load_html_incremental_with_resources_lossy) | MutationObserver tests needing parser-interleaved script execution |
+/// | [`parse_and_collect_scripts`](Self::parse_and_collect_scripts) + [`execute_scripts`](Self::execute_scripts) | Two-phase: parse first, fetch externals, then execute |
+///
+/// # Interaction
+///
+/// After loading, call [`snapshot`](Self::snapshot) to get a text representation,
+/// then use [`handle_click`](Self::handle_click), [`handle_type`](Self::handle_type),
+/// [`handle_select`](Self::handle_select), or [`handle_focus`](Self::handle_focus)
+/// with element refs (e.g. `@e1`) from the snapshot.
 pub struct Engine {
     pub(crate) tree: Rc<RefCell<DomTree>>,
     pub(crate) runtime: Option<JsRuntime>,
@@ -250,8 +271,8 @@ impl Engine {
         self.execute_scripts(&descriptors, fetched);
     }
 
-    /// Convenience: load HTML with external script support (scripts only, no iframes).
-    /// Combines parse_and_collect_scripts + execute_scripts.
+    /// Convenience wrapper around [`load_html_with_resources`](Self::load_html_with_resources)
+    /// for the common case of scripts-only (no iframes).
     /// `fetched` maps src URLs to their fetched JavaScript content.
     /// For pages with only inline scripts, pass an empty HashMap.
     pub fn load_html_with_scripts(&mut self, html: &str, fetched: &HashMap<String, String>) {
@@ -325,7 +346,8 @@ impl Engine {
         self.execute_scripts_lossy(&descriptors, fetched)
     }
 
-    /// Convenience: load HTML with external scripts, tolerating JS errors (scripts only, no iframes).
+    /// Convenience wrapper around [`load_html_with_resources_lossy`](Self::load_html_with_resources_lossy)
+    /// for the common case of scripts-only (no iframes).
     /// Returns any JS errors that occurred during script execution.
     pub fn load_html_with_scripts_lossy(&mut self, html: &str, fetched: &HashMap<String, String>) -> Vec<String> {
         self.load_html_with_resources_lossy(html, &FetchedResources::scripts_only(fetched.clone()))

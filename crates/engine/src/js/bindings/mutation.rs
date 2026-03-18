@@ -1812,8 +1812,8 @@ mod tests {
         let a_id = t.get_element_by_id("a").unwrap();
         let c_id = t.get_element_by_id("c").unwrap();
         assert_eq!(children, &vec![a_id, new_id, c_id]);
-        let b_id = t.get_element_by_id("b").unwrap();
-        assert!(t.get_node(b_id).parent.is_none());
+        // After replacement, "b" is disconnected and should not be found via getElementById
+        assert!(t.get_element_by_id("b").is_none());
     }
 
     #[test]
@@ -1857,8 +1857,8 @@ mod tests {
         let t = tree.borrow();
         let parent_id = t.get_element_by_id("parent").unwrap();
         assert_eq!(t.get_node(parent_id).children.len(), 2);
-        let b_id = t.get_element_by_id("b").unwrap();
-        assert!(t.get_node(b_id).parent.is_none());
+        // After removal, "b" is disconnected and should not be found via getElementById
+        assert!(t.get_element_by_id("b").is_none());
     }
 
     #[test]

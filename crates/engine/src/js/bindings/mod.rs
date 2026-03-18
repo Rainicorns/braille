@@ -18,6 +18,7 @@ pub(crate) mod mutation_observer;
 pub(crate) mod node_info;
 pub(crate) mod on_event;
 pub(crate) mod query;
+pub(crate) mod range;
 pub(crate) mod select_props;
 pub(crate) mod style;
 pub(crate) mod traversal;
