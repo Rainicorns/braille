@@ -29,16 +29,24 @@ pub fn resolve_tag(tree: &DomTree, tag: &str) -> Option<NodeId> {
 /// The main entry point. Tries resolution strategies in order:
 /// - If selector starts with `@` → try `resolve_ref`
 /// - If selector starts with `#` → try `resolve_id`
-/// - Otherwise → try `resolve_tag`
+/// - Simple tag name → try `resolve_tag`
+/// - Otherwise → CSS `querySelector` from document root
 ///   Returns None if nothing matches.
 pub fn resolve_selector(tree: &DomTree, ref_map: &HashMap<String, NodeId>, selector: &str) -> Option<NodeId> {
     if selector.starts_with('@') {
-        resolve_ref(ref_map, selector)
-    } else if selector.starts_with('#') {
-        resolve_id(tree, selector)
-    } else {
-        resolve_tag(tree, selector)
+        return resolve_ref(ref_map, selector);
     }
+    if selector.starts_with('#') {
+        return resolve_id(tree, selector);
+    }
+    // If it looks like a simple tag name (letters only), try tag resolution first
+    if selector.chars().all(|c| c.is_ascii_alphabetic()) {
+        if let Some(id) = resolve_tag(tree, selector) {
+            return Some(id);
+        }
+    }
+    // Fall back to CSS querySelector from the document root
+    crate::css::matching::query_selector(tree, tree.document(), selector, None)
 }
 
 #[cfg(test)]

@@ -53,6 +53,22 @@ impl JsRuntime {
         bindings::mutation_observer::notify_mutation_observers(&mut self.context);
     }
 
+    /// Run microtask queue (Promises). Returns true if any jobs were executed.
+    pub fn run_jobs(&mut self) -> bool {
+        // Boa's run_jobs returns JsResult<()>. We detect work by checking
+        // if there were any jobs queued. Since Boa doesn't expose a count,
+        // we rely on the settle loop's MO check for convergence detection.
+        let _ = self.context.run_jobs();
+        // Conservative: always report true to let caller check MO state.
+        // The settle loop uses MO pending-records count for real quiescence.
+        true
+    }
+
+    /// Returns true if there are pending MutationObserver records.
+    pub fn has_pending_mutation_observers(&self) -> bool {
+        bindings::mutation_observer::has_pending_records(&self.context)
+    }
+
     /// Returns a reference to the shared DomTree.
     pub fn tree(&self) -> &Rc<RefCell<DomTree>> {
         &self.tree
@@ -61,6 +77,89 @@ impl JsRuntime {
     /// Returns a clone of the console output buffer.
     pub fn console_output(&self) -> Vec<String> {
         self.console_buffer.borrow().clone()
+    }
+
+    /// Fire all timers whose deadline has passed. Returns true if any fired.
+    /// setTimeout entries are removed after firing; setInterval entries are re-queued.
+    pub fn fire_ready_timers(&mut self) -> bool {
+        let ts = realm_state::timer_state(&self.context);
+        let current_time = ts.borrow().current_time_ms;
+
+        // Collect ready timer IDs
+        let ready: Vec<(u32, bool)> = ts
+            .borrow()
+            .entries
+            .values()
+            .filter(|e| e.registered_at + e.delay_ms <= current_time)
+            .map(|e| (e.id, e.is_interval))
+            .collect();
+
+        if ready.is_empty() {
+            return false;
+        }
+
+        for (id, is_interval) in ready {
+            // Extract callback (and maybe remove entry)
+            let entry_data = {
+                let mut state = ts.borrow_mut();
+                if let Some(entry) = state.entries.get(&id) {
+                    let cb = entry.callback.clone();
+                    let delay = entry.delay_ms;
+                    if is_interval {
+                        // Re-queue with new registered_at
+                        let e = state.entries.get_mut(&id).unwrap();
+                        e.registered_at = current_time;
+                    } else {
+                        state.entries.remove(&id);
+                    }
+                    Some((cb, delay))
+                } else {
+                    None
+                }
+            };
+
+            if let Some((callback, _delay)) = entry_data {
+                if let Some(cb_obj) = callback.as_object() {
+                    let _ = cb_obj.call(&JsValue::undefined(), &[], &mut self.context);
+                    let _ = self.context.run_jobs();
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Advance the virtual timer clock to the next pending deadline.
+    /// Returns true if time was advanced, false if no timers are pending.
+    pub fn advance_timers_to_next_deadline(&mut self) -> bool {
+        let ts = realm_state::timer_state(&self.context);
+        let state = ts.borrow();
+        let current = state.current_time_ms;
+
+        let next_deadline = state
+            .entries
+            .values()
+            .map(|e| e.registered_at + e.delay_ms)
+            .filter(|&deadline| deadline > current)
+            .min();
+
+        drop(state);
+
+        if let Some(deadline) = next_deadline {
+            // Cap at 10000ms virtual advance to prevent infinite loops
+            let capped = deadline.min(current + 10000);
+            ts.borrow_mut().current_time_ms = capped;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns true if there are any pending timer entries.
+    pub fn has_pending_timers(&self) -> bool {
+        let ts = realm_state::timer_state(&self.context);
+        let empty = ts.borrow().entries.is_empty();
+        !empty
     }
 }
 

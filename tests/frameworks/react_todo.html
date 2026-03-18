@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head><title>React Todo</title></head>
+<body>
+<div id="root"></div>
+<script>
+// React-like framework with useState, component composition, list rendering with keys
+var React = (function() {
+  var hooks = [];
+  var hookIndex = 0;
+  var rootContainer = null;
+  var rootComponentFn = null;
+
+  function createElement(type, props) {
+    var children = [];
+    for (var i = 2; i < arguments.length; i++) {
+      if (Array.isArray(arguments[i])) {
+        for (var j = 0; j < arguments[i].length; j++) {
+          children.push(arguments[i][j]);
+        }
+      } else {
+        children.push(arguments[i]);
+      }
+    }
+    return { type: type, props: props || {}, children: children };
+  }
+
+  function useState(initial) {
+    var idx = hookIndex++;
+    if (hooks[idx] === undefined) {
+      hooks[idx] = initial;
+    }
+    var si = idx;
+    var setter = function(val) {
+      hooks[si] = typeof val === "function" ? val(hooks[si]) : val;
+      rerender();
+    };
+    return [hooks[idx], setter];
+  }
+
+  function renderElement(vnode) {
+    if (vnode == null || typeof vnode === "boolean") return null;
+    if (typeof vnode === "string" || typeof vnode === "number") {
+      return document.createTextNode(String(vnode));
+    }
+    if (Array.isArray(vnode)) {
+      var frag = document.createDocumentFragment();
+      for (var i = 0; i < vnode.length; i++) {
+        var c = renderElement(vnode[i]);
+        if (c) frag.appendChild(c);
+      }
+      return frag;
+    }
+    if (typeof vnode.type === "function") {
+      var result = vnode.type(Object.assign({}, vnode.props, { children: vnode.children }));
+      return renderElement(result);
+    }
+    var el = document.createElement(vnode.type);
+    for (var key in vnode.props) {
+      if (key === "className") {
+        el.setAttribute("class", vnode.props[key]);
+      } else if (key === "style" && typeof vnode.props[key] === "object") {
+        for (var s in vnode.props[key]) el.style[s] = vnode.props[key][s];
+      } else if (key.indexOf("on") === 0) {
+        el.addEventListener(key.substring(2).toLowerCase(), vnode.props[key]);
+      } else if (key !== "children" && key !== "key" && key !== "ref") {
+        el.setAttribute(key, String(vnode.props[key]));
+      }
+    }
+    for (var i = 0; i < vnode.children.length; i++) {
+      var c = renderElement(vnode.children[i]);
+      if (c) el.appendChild(c);
+    }
+    return el;
+  }
+
+  function render(fn, container) {
+    rootContainer = container;
+    rootComponentFn = fn;
+    rerender();
+  }
+
+  function rerender() {
+    hookIndex = 0;
+    var vdom = rootComponentFn();
+    rootContainer.innerHTML = "";
+    var dom = renderElement(vdom);
+    if (dom) rootContainer.appendChild(dom);
+  }
+
+  return { createElement: createElement, useState: useState, render: render };
+})();
+
+var h = React.createElement;
+
+// --- TodoItem component ---
+function TodoItem(props) {
+  return h("li", null,
+    h("input", { type: "checkbox", checked: props.todo.done ? "checked" : undefined,
+      onchange: function() { props.onToggle(props.todo.id); } }),
+    props.todo.done ? h("s", null, props.todo.text) : props.todo.text,
+    h("button", { onclick: function() { props.onRemove(props.todo.id); } }, "x")
+  );
+}
+
+// --- App component ---
+function App() {
+  var _todos = React.useState([]);
+  var todos = _todos[0];
+  var setTodos = _todos[1];
+
+  var _nextId = React.useState(1);
+  var nextId = _nextId[0];
+  var setNextId = _nextId[1];
+
+  function addTodo(text) {
+    setTodos(function(prev) {
+      return prev.concat([{ id: nextId, text: text, done: false }]);
+    });
+    setNextId(function(n) { return n + 1; });
+  }
+
+  function toggleTodo(id) {
+    setTodos(function(prev) {
+      return prev.map(function(t) {
+        return t.id === id ? { id: t.id, text: t.text, done: !t.done } : t;
+      });
+    });
+  }
+
+  function removeTodo(id) {
+    setTodos(function(prev) {
+      return prev.filter(function(t) { return t.id !== id; });
+    });
+  }
+
+  var doneCount = todos.filter(function(t) { return t.done; }).length;
+
+  return h("div", null,
+    h("h1", null, "React Todo"),
+    h("form", { onsubmit: function(e) {
+      e.preventDefault();
+      var input = document.getElementById("new-todo");
+      if (input.value.trim()) {
+        addTodo(input.value.trim());
+      }
+    }},
+      h("input", { type: "text", id: "new-todo", placeholder: "Add todo..." }),
+      h("button", { type: "submit" }, "Add")
+    ),
+    h("ul", null, todos.map(function(todo) {
+      return h(TodoItem, { key: todo.id, todo: todo, onToggle: toggleTodo, onRemove: removeTodo });
+    })),
+    h("p", null, doneCount + " of " + todos.length + " completed")
+  );
+}
+
+React.render(App, document.getElementById("root"));
+</script>
+</body>
+</html>

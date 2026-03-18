@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use boa_engine::{
@@ -12,9 +11,9 @@ use boa_engine::{
 
 use super::event_target::ListenerEntry;
 use crate::js::realm_state;
+use crate::js::realm_state::TimerEntry;
 
 type ConsoleBuffer = Rc<RefCell<Vec<String>>>;
-type TimerMap = Rc<RefCell<HashMap<u32, JsValue>>>;
 
 /// Well-known ID for window in the event listeners map.
 /// Uses usize::MAX - 1 to avoid collision with DOM NodeIds (start at 0)
@@ -43,25 +42,41 @@ fn make_console_method(buffer: ConsoleBuffer, prefix: Option<&'static str>) -> N
     }
 }
 
-fn make_set_timer(timers: TimerMap, next_id: Rc<RefCell<u32>>) -> NativeFunction {
+fn make_set_timer(is_interval: bool) -> NativeFunction {
     unsafe {
-        NativeFunction::from_closure(move |_this, args, _ctx| {
+        NativeFunction::from_closure(move |_this, args, ctx| {
             let callback = args.first().cloned().unwrap_or(JsValue::undefined());
-            let mut id_ref = next_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            timers.borrow_mut().insert(id, callback);
+            let delay_ms = args
+                .get(1)
+                .map(|v| v.to_u32(ctx).unwrap_or(0))
+                .unwrap_or(0);
+            let ts = realm_state::timer_state(ctx);
+            let mut state = ts.borrow_mut();
+            let id = state.next_id;
+            state.next_id += 1;
+            let registered_at = state.current_time_ms;
+            state.entries.insert(
+                id,
+                TimerEntry {
+                    id,
+                    callback,
+                    delay_ms,
+                    is_interval,
+                    registered_at,
+                },
+            );
             Ok(JsValue::from(id))
         })
     }
 }
 
-fn make_clear_timer(timers: TimerMap) -> NativeFunction {
+fn make_clear_timer() -> NativeFunction {
     unsafe {
         NativeFunction::from_closure(move |_this, args, ctx| {
             if let Some(id_val) = args.first() {
                 let id = id_val.to_u32(ctx)?;
-                timers.borrow_mut().remove(&id);
+                let ts = realm_state::timer_state(ctx);
+                ts.borrow_mut().entries.remove(&id);
             }
             Ok(JsValue::undefined())
         })
@@ -305,19 +320,16 @@ pub(crate) fn register_window(
         .register_global_property(js_string!("console"), console, Attribute::all())
         .expect("failed to register console global");
 
-    let timers: TimerMap = Rc::new(RefCell::new(HashMap::new()));
-    let next_timer_id: Rc<RefCell<u32>> = Rc::new(RefCell::new(1));
-
-    let set_timeout = make_set_timer(Rc::clone(&timers), Rc::clone(&next_timer_id));
-    let clear_timeout = make_clear_timer(Rc::clone(&timers));
-    let set_interval = make_set_timer(Rc::clone(&timers), Rc::clone(&next_timer_id));
-    let clear_interval = make_clear_timer(Rc::clone(&timers));
+    let set_timeout = make_set_timer(false);
+    let clear_timeout = make_clear_timer();
+    let set_interval = make_set_timer(true);
+    let clear_interval = make_clear_timer();
 
     // Register timer functions as globals (testharness.js calls them without window. prefix)
-    let g_set_timeout = make_set_timer(Rc::clone(&timers), Rc::clone(&next_timer_id));
-    let g_clear_timeout = make_clear_timer(Rc::clone(&timers));
-    let g_set_interval = make_set_timer(Rc::clone(&timers), Rc::clone(&next_timer_id));
-    let g_clear_interval = make_clear_timer(Rc::clone(&timers));
+    let g_set_timeout = make_set_timer(false);
+    let g_clear_timeout = make_clear_timer();
+    let g_set_interval = make_set_timer(true);
+    let g_clear_interval = make_clear_timer();
     context
         .register_global_property(
             js_string!("setTimeout"),

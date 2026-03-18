@@ -1,64 +1,73 @@
+use std::rc::Rc;
+
 use crate::dom::find::resolve_selector;
 use crate::dom::node::NodeData;
+use crate::js::bindings::element::get_or_create_js_element;
 use crate::Engine;
+use boa_engine::{js_string, JsValue};
 use braille_wire::{EngineAction, HttpMethod, NavigateRequest};
 
 impl Engine {
     /// Handle a click on an element identified by selector.
-    /// If the element is a link (<a> with href), returns Navigate action.
-    /// If the element is a submit button inside a form, delegates to form submission.
-    /// Otherwise returns None action.
+    ///
+    /// Dispatches a real DOM click event (with full capture/bubble propagation and
+    /// activation behavior) by calling `element.click()` through the JS runtime.
+    /// After the event has been dispatched and all listeners have run, checks
+    /// whether the target is an `<a>` with an href and returns a Navigate action
+    /// if so.
     pub fn handle_click(&mut self, selector: &str) -> EngineAction {
-        // 1. Resolve selector to NodeId using self.ref_map and self.tree
-        let tree = self.tree.borrow();
-        let node_id = match resolve_selector(&tree, &self.ref_map, selector) {
-            Some(id) => id,
-            None => return EngineAction::Error(format!("element not found: {}", selector)),
+        // 1. Resolve selector to NodeId
+        let node_id = {
+            let tree = self.tree.borrow();
+            match resolve_selector(&tree, &self.ref_map, selector) {
+                Some(id) => id,
+                None => return EngineAction::Error(format!("element not found: {}", selector)),
+            }
         };
 
-        // 2. Check the element type
-        let node = tree.get_node(node_id);
-        match &node.data {
-            NodeData::Element { tag_name, .. } => {
-                let tag_lower = tag_name.to_ascii_lowercase();
-
-                // 3. If it's an <a> element, read href attribute and return Navigate
-                if tag_lower == "a" {
-                    if let Some(href) = tree.get_attribute(node_id, "href") {
-                        return EngineAction::Navigate(NavigateRequest {
-                            url: href,
-                            method: HttpMethod::Get,
-                            body: None,
-                            content_type: None,
-                        });
-                    } else {
-                        // <a> without href is not a clickable link
-                        return EngineAction::None;
-                    }
-                }
-
-                // 4. If it's a <button> or <input type="submit">, return None for now
-                // (A-1C handles form submission)
-                if tag_lower == "button" {
-                    return EngineAction::None;
-                }
-
-                if tag_lower == "input" {
-                    if let Some(input_type) = tree.get_attribute(node_id, "type") {
-                        if input_type.eq_ignore_ascii_case("submit") {
-                            return EngineAction::None;
-                        }
-                    }
-                }
-
-                // 5. Otherwise return None - not a clickable element
-                EngineAction::None
-            }
-            _ => {
-                // Non-element nodes are not clickable
-                EngineAction::Error(format!("click target is not an element: {}", selector))
+        // 2. Verify it's an element
+        {
+            let tree = self.tree.borrow();
+            let node = tree.get_node(node_id);
+            if !matches!(node.data, NodeData::Element { .. }) {
+                return EngineAction::Error(format!("click target is not an element: {}", selector));
             }
         }
+
+        // 3. Dispatch a real click event via JS element.click()
+        if let Some(runtime) = self.runtime.as_mut() {
+            let tree = Rc::clone(&self.tree);
+            let ctx = &mut runtime.context;
+            let el_obj = get_or_create_js_element(node_id, tree, ctx)
+                .unwrap_or_else(|e| panic!("handle_click: failed to get JS element: {e}"));
+            let click_fn = el_obj
+                .get(js_string!("click"), ctx)
+                .unwrap_or_else(|e| panic!("handle_click: failed to get click method: {e}"));
+            if let Some(click_obj) = click_fn.as_object() {
+                let _ = click_obj.call(&JsValue::from(el_obj), &[], ctx);
+            }
+        }
+
+        // 3b. Settle: flush microtasks, MO records, recompute CSS
+        self.settle();
+
+        // 4. After event dispatch, check if this is a navigable <a> element
+        let tree = self.tree.borrow();
+        let node = tree.get_node(node_id);
+        if let NodeData::Element { tag_name, .. } = &node.data {
+            if tag_name.eq_ignore_ascii_case("a") {
+                if let Some(href) = tree.get_attribute(node_id, "href") {
+                    return EngineAction::Navigate(NavigateRequest {
+                        url: href,
+                        method: HttpMethod::Get,
+                        body: None,
+                        content_type: None,
+                    });
+                }
+            }
+        }
+
+        EngineAction::None
     }
 }
 

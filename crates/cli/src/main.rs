@@ -40,6 +40,12 @@ enum SessionAction {
         /// Output mode for the snapshot
         #[arg(long, default_value = "accessibility")]
         mode: SnapModeArg,
+        /// CSS selector for selector mode
+        #[arg(long)]
+        query: Option<String>,
+        /// Target element (@eN, #id, CSS selector) for region mode
+        #[arg(long)]
+        target: Option<String>,
     },
     /// Go back in history
     Back,
@@ -52,14 +58,28 @@ enum SessionAction {
 #[derive(Clone, ValueEnum)]
 enum SnapModeArg {
     Accessibility,
+    Interactive,
+    Links,
+    Forms,
+    Headings,
+    Text,
+    Selector,
+    Region,
     Dom,
     Markdown,
 }
 
-impl From<SnapModeArg> for SnapMode {
-    fn from(arg: SnapModeArg) -> Self {
-        match arg {
+impl SnapModeArg {
+    fn into_snap_mode(self, query: Option<String>, target: Option<String>) -> SnapMode {
+        match self {
             SnapModeArg::Accessibility => SnapMode::Accessibility,
+            SnapModeArg::Interactive => SnapMode::Interactive,
+            SnapModeArg::Links => SnapMode::Links,
+            SnapModeArg::Forms => SnapMode::Forms,
+            SnapModeArg::Headings => SnapMode::Headings,
+            SnapModeArg::Text => SnapMode::Text,
+            SnapModeArg::Selector => SnapMode::Selector(query.unwrap_or_default()),
+            SnapModeArg::Region => SnapMode::Region(target.unwrap_or_default()),
             SnapModeArg::Dom => SnapMode::Dom,
             SnapModeArg::Markdown => SnapMode::Markdown,
         }
@@ -188,11 +208,11 @@ fn run(cli: Cli) -> String {
                         Err(e) => format!("error: {e}"),
                     }
                 }
-                SessionAction::Snap { mode } => {
+                SessionAction::Snap { mode, query, target } => {
                     let mut manager = SessionManager::new();
                     let session_id = manager.new_session();
                     let session = manager.get_session(&session_id).unwrap();
-                    session.engine.snapshot(mode.into())
+                    session.engine.snapshot(mode.into_snap_mode(query, target))
                 }
                 SessionAction::Back => {
                     let mut manager = SessionManager::new();

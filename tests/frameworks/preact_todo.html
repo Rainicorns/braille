@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head><title>Preact Todo</title></head>
+<body>
+<div id="app"></div>
+<script>
+// Preact-like todo app
+// Tests: list rendering, input handling, form submit, conditional rendering, array manipulation
+var App = (function() {
+  var rootEl = document.getElementById("app");
+  var state = {
+    todos: [],
+    nextId: 1
+  };
+
+  function h(tag, props, children) {
+    return { tag: tag, props: props || {}, children: children || [] };
+  }
+
+  function render(vnode, container) {
+    container.innerHTML = "";
+    mount(vnode, container);
+  }
+
+  function mount(vnode, container) {
+    if (typeof vnode === "string" || typeof vnode === "number") {
+      container.appendChild(document.createTextNode(String(vnode)));
+      return;
+    }
+    var el = document.createElement(vnode.tag);
+    var props = vnode.props;
+    for (var key in props) {
+      if (key === "checked") {
+        el.checked = props[key];
+        if (props[key]) el.setAttribute("checked", "");
+      } else if (key === "value") {
+        el.value = props[key];
+      } else if (key.indexOf("on") === 0) {
+        var eventName = key.substring(2).toLowerCase();
+        el.addEventListener(eventName, props[key]);
+      } else {
+        el.setAttribute(key, props[key]);
+      }
+    }
+    var children = vnode.children;
+    for (var i = 0; i < children.length; i++) {
+      mount(children[i], el);
+    }
+    container.appendChild(el);
+  }
+
+  function addTodo(text) {
+    state.todos.push({ id: state.nextId++, text: text, done: false });
+    update();
+  }
+
+  function toggleTodo(id) {
+    for (var i = 0; i < state.todos.length; i++) {
+      if (state.todos[i].id === id) {
+        state.todos[i].done = !state.todos[i].done;
+        break;
+      }
+    }
+    update();
+  }
+
+  function removeTodo(id) {
+    state.todos = state.todos.filter(function(t) { return t.id !== id; });
+    update();
+  }
+
+  function update() {
+    var todoItems = state.todos.map(function(todo) {
+      return h("li", {}, [
+        h("input", { type: "checkbox", checked: todo.done, onchange: function() { toggleTodo(todo.id); } }, []),
+        todo.done ? h("s", {}, [todo.text]) : todo.text,
+        h("button", { class: "remove", onclick: function() { removeTodo(todo.id); } }, ["x"])
+      ]);
+    });
+
+    var doneCount = state.todos.filter(function(t) { return t.done; }).length;
+
+    var tree = h("div", {}, [
+      h("h1", {}, ["Todo App"]),
+      h("form", { id: "add-form", onsubmit: function(e) {
+        e.preventDefault();
+        var input = document.getElementById("new-todo");
+        if (input.value.trim()) {
+          addTodo(input.value.trim());
+          input.value = "";
+        }
+      }}, [
+        h("input", { type: "text", id: "new-todo", placeholder: "What needs doing?" }, []),
+        h("button", { type: "submit" }, ["Add"])
+      ]),
+      h("ul", { id: "todo-list" }, todoItems),
+      h("p", {}, [doneCount + " of " + state.todos.length + " done"])
+    ]);
+    render(tree, rootEl);
+  }
+
+  return { update: update, addTodo: addTodo, toggleTodo: toggleTodo, removeTodo: removeTodo, state: state };
+})();
+
+App.update();
+</script>
+</body>
+</html>

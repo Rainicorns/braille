@@ -42,6 +42,32 @@ pub(crate) type AttrCacheKey = (usize, NodeId, String);
 /// Shared Attr identity cache: maps (tree_ptr, element_id, attr_qname) → Attr NodeId.
 pub(crate) type AttrNodeCache = HashMap<AttrCacheKey, NodeId>;
 
+/// A pending timer (setTimeout or setInterval).
+pub(crate) struct TimerEntry {
+    pub(crate) id: u32,
+    pub(crate) callback: JsValue,
+    pub(crate) delay_ms: u32,
+    pub(crate) is_interval: bool,
+    pub(crate) registered_at: u32,
+}
+
+/// Timer state for a realm — stores pending timers and a virtual clock.
+pub(crate) struct TimerState {
+    pub(crate) entries: HashMap<u32, TimerEntry>,
+    pub(crate) next_id: u32,
+    pub(crate) current_time_ms: u32,
+}
+
+impl TimerState {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            next_id: 1,
+            current_time_ms: 0,
+        }
+    }
+}
+
 /// State shared between parent and iframe realms (MO, iframes, node cache).
 pub(crate) struct SharedRealmState {
     pub(crate) mo_state: Rc<RefCell<MutationObserverState>>,
@@ -156,6 +182,10 @@ pub(crate) struct RealmState {
     /// All realms (main + iframes) — used for callback realm detection in MutationObserver.
     #[unsafe_ignore_trace]
     pub(crate) all_realms: Rc<RefCell<Vec<Realm>>>,
+
+    // -- Timer state --
+    #[unsafe_ignore_trace]
+    pub(crate) timer_state: Rc<RefCell<TimerState>>,
 }
 
 impl RealmState {
@@ -189,6 +219,7 @@ impl RealmState {
             creation_time: Instant::now(),
             iframe_realms: Rc::new(RefCell::new(HashMap::new())),
             all_realms: Rc::new(RefCell::new(Vec::new())),
+            timer_state: Rc::new(RefCell::new(TimerState::new())),
         }
     }
 
@@ -222,6 +253,7 @@ impl RealmState {
             creation_time: Instant::now(),
             iframe_realms: shared.iframe_realms,
             all_realms: shared.all_realms,
+            timer_state: Rc::new(RefCell::new(TimerState::new())),
         }
     }
 }
@@ -311,6 +343,7 @@ rc_accessor!(
     Rc<RefCell<HashMap<(usize, NodeId), Realm>>>
 );
 rc_accessor!(all_realms, all_realms, Rc<RefCell<Vec<Realm>>>);
+rc_accessor!(timer_state, timer_state, Rc<RefCell<TimerState>>);
 
 // -- Prototype/factory cache accessors (clone Option<T> out) --
 

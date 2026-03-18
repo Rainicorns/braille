@@ -13,10 +13,17 @@ pub enum Command {
     Close,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub enum SnapMode {
     #[default]
     Accessibility,
+    Interactive,
+    Links,
+    Forms,
+    Headings,
+    Text,
+    Selector(String),
+    Region(String),
     Dom,
     Markdown,
 }

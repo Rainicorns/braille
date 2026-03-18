@@ -12,54 +12,115 @@ const TRANSPARENT_ELEMENTS: &[&str] = &["div", "span", "section", "article", "he
 /// Elements that receive interactive `@eN` references.
 const INTERACTIVE_ELEMENTS: &[&str] = &["a", "button", "input", "textarea", "select"];
 
+// ---------------------------------------------------------------------------
+// Phase V1: Ref assignment — always walks the full tree so @eN is stable
+// ---------------------------------------------------------------------------
+
+/// Assign `@eN` refs to all interactive elements in document order.
+/// Returns `(ref_map, reverse_ref_map)` where:
+/// - `ref_map`: "@eN" → NodeId  (for resolving user input)
+/// - `reverse_ref_map`: NodeId → "@eN"  (for emitting refs in views)
+pub fn assign_refs(tree: &DomTree) -> (HashMap<String, NodeId>, HashMap<NodeId, String>) {
+    let mut ref_counter: usize = 0;
+    let mut ref_map = HashMap::new();
+    let mut reverse = HashMap::new();
+    assign_refs_walk(tree, tree.document(), &mut ref_counter, &mut ref_map, &mut reverse);
+    (ref_map, reverse)
+}
+
+fn assign_refs_walk(
+    tree: &DomTree,
+    node_id: NodeId,
+    ref_counter: &mut usize,
+    ref_map: &mut HashMap<String, NodeId>,
+    reverse: &mut HashMap<NodeId, String>,
+) {
+    let node = tree.get_node(node_id);
+    match &node.data {
+        NodeData::Element { tag_name, .. } => {
+            let tag = tag_name.to_ascii_lowercase();
+
+            // Skip display:none subtrees — they don't get refs
+            if let Some(ref computed) = node.computed_style {
+                if computed.get("display").map(|v| v.as_str()) == Some("none") {
+                    return;
+                }
+            }
+
+            if SKIP_ELEMENTS.contains(&tag.as_str()) {
+                return;
+            }
+
+            if INTERACTIVE_ELEMENTS.contains(&tag.as_str()) {
+                *ref_counter += 1;
+                let ref_str = format!("@e{}", *ref_counter);
+                ref_map.insert(ref_str.clone(), node_id);
+                reverse.insert(node_id, ref_str);
+            }
+
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                assign_refs_walk(tree, child_id, ref_counter, ref_map, reverse);
+            }
+        }
+        NodeData::Document | NodeData::DocumentFragment => {
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                assign_refs_walk(tree, child_id, ref_counter, ref_map, reverse);
+            }
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Accessibility view (full tree)
+// ---------------------------------------------------------------------------
+
 /// Walk a `DomTree` and produce a compact accessibility-tree text
 /// representation suitable for LLM agents.
 /// Returns a tuple of (text_output, ref_map) where ref_map maps "@eN" strings to NodeIds.
 pub fn serialize_a11y(tree: &DomTree, focused: Option<NodeId>) -> (String, HashMap<String, NodeId>) {
+    let (ref_map, reverse) = assign_refs(tree);
     let mut output = String::new();
-    let mut ref_counter: usize = 0;
-    let mut ref_map = HashMap::new();
-    walk(
-        tree,
-        tree.document(),
-        0,
-        &mut ref_counter,
-        &mut output,
-        &mut ref_map,
-        focused,
-    );
-    // Trim trailing newline for cleaner output
-    while output.ends_with('\n') {
-        output.pop();
-    }
+    walk_a11y(tree, tree.document(), 0, &reverse, &mut output, focused);
+    trim_trailing_newlines(&mut output);
     (output, ref_map)
 }
 
-fn walk(
+/// Serialize a11y tree rooted at a specific node (for Region view).
+/// Uses the provided reverse_ref_map so refs remain stable.
+pub fn serialize_a11y_rooted(
+    tree: &DomTree,
+    root: NodeId,
+    reverse: &HashMap<NodeId, String>,
+    focused: Option<NodeId>,
+) -> String {
+    let mut output = String::new();
+    walk_a11y(tree, root, 0, reverse, &mut output, focused);
+    trim_trailing_newlines(&mut output);
+    output
+}
+
+fn walk_a11y(
     tree: &DomTree,
     node_id: NodeId,
     indent: usize,
-    ref_counter: &mut usize,
+    reverse: &HashMap<NodeId, String>,
     output: &mut String,
-    ref_map: &mut HashMap<String, NodeId>,
     focused: Option<NodeId>,
 ) {
     let node = tree.get_node(node_id);
 
     match &node.data {
-        NodeData::Document => {
-            // Document root: just recurse into children at same indent level.
+        NodeData::Document | NodeData::DocumentFragment => {
             let children: Vec<NodeId> = node.children.clone();
             for child_id in children {
-                walk(tree, child_id, indent, ref_counter, output, ref_map, focused);
+                walk_a11y(tree, child_id, indent, reverse, output, focused);
             }
         }
-        NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::CDATASection { .. } => {
-            // Text, Comment, and CDATASection nodes are never rendered on their own;
-            // text content is collected by the parent element's role line.
-        }
+        NodeData::Text { .. } | NodeData::Comment { .. } | NodeData::CDATASection { .. } => {}
         NodeData::Doctype { .. }
-        | NodeData::DocumentFragment
         | NodeData::ProcessingInstruction { .. }
         | NodeData::Attr { .. } => {}
         NodeData::Element {
@@ -67,41 +128,27 @@ fn walk(
         } => {
             let tag = tag_name.to_ascii_lowercase();
 
-            // Check CSS computed styles for display:none — skip element AND all descendants.
             if let Some(ref computed) = node.computed_style {
                 if computed.get("display").map(|v| v.as_str()) == Some("none") {
                     return;
                 }
             }
 
-            // Skip elements we should never render or recurse into.
             if SKIP_ELEMENTS.contains(&tag.as_str()) {
                 return;
             }
 
             if TRANSPARENT_ELEMENTS.contains(&tag.as_str()) {
-                // Transparent: no role line, recurse at same indent.
                 let children: Vec<NodeId> = node.children.clone();
                 for child_id in children {
-                    walk(tree, child_id, indent, ref_counter, output, ref_map, focused);
+                    walk_a11y(tree, child_id, indent, reverse, output, focused);
                 }
                 return;
             }
 
-            // This element has a role. Determine the role string.
             let role = element_role(&tag, attributes);
+            let is_visibility_hidden = is_visibility_hidden(node);
 
-            // Check if visibility is hidden — structure preserved but text suppressed.
-            let is_visibility_hidden = node
-                .computed_style
-                .as_ref()
-                .and_then(|cs| cs.get("visibility"))
-                .map(|v| v == "hidden")
-                .unwrap_or(false);
-
-            // Collect display text: suppress if visibility:hidden;
-            // for img elements, use alt attribute;
-            // for all other elements, use immediate Text children.
             let direct_text = if is_visibility_hidden {
                 String::new()
             } else if tag == "img" {
@@ -114,37 +161,21 @@ fn walk(
                 collect_direct_text(tree, node_id)
             };
 
-            // Determine if this is an interactive element that needs a ref.
-            let eref = if INTERACTIVE_ELEMENTS.contains(&tag.as_str()) {
-                *ref_counter += 1;
-                let ref_str = format!("@e{}", *ref_counter);
-                ref_map.insert(ref_str.clone(), node_id);
-                Some(ref_str)
-            } else {
-                None
-            };
-
-            // Check if this element has any interesting children
-            // (non-text element descendants that would produce output).
+            let eref = reverse.get(&node_id);
             let has_child_output = has_renderable_children(tree, node_id);
 
-            // Skip empty elements: no text and no interesting children.
-            // But keep the role line if visibility:hidden (structure preserved)
-            // or if the element is interactive (e.g., empty button).
             if direct_text.is_empty() && !has_child_output && eref.is_none() && !is_visibility_hidden {
                 return;
             }
 
-            // Build the role line.
             let indent_str = " ".repeat(indent);
             let mut line = format!("{}{}", indent_str, role);
 
-            if let Some(ref r) = eref {
+            if let Some(r) = eref {
                 line.push(' ');
                 line.push_str(r);
             }
 
-            // Show value for interactive input/select elements.
             if let Some(val) = get_interactive_value(tree, node_id, &tag, attributes) {
                 line.push_str(&format!(" value=\"{}\"", val));
             }
@@ -153,7 +184,6 @@ fn walk(
                 line.push_str(&format!(" \"{}\"", direct_text));
             }
 
-            // Add [focused] marker if this element is focused
             if focused == Some(node_id) {
                 line.push_str(" [focused]");
             }
@@ -161,10 +191,464 @@ fn walk(
             output.push_str(&line);
             output.push('\n');
 
-            // Recurse into children at increased indent.
             let children: Vec<NodeId> = node.children.clone();
             for child_id in children {
-                walk(tree, child_id, indent + 2, ref_counter, output, ref_map, focused);
+                walk_a11y(tree, child_id, indent + 2, reverse, output, focused);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Interactive view — just clickable/typeable elements
+// ---------------------------------------------------------------------------
+
+pub fn serialize_interactive(tree: &DomTree, reverse: &HashMap<NodeId, String>, focused: Option<NodeId>) -> String {
+    let mut output = String::new();
+    walk_interactive(tree, tree.document(), reverse, &mut output, focused);
+    trim_trailing_newlines(&mut output);
+    output
+}
+
+fn walk_interactive(
+    tree: &DomTree,
+    node_id: NodeId,
+    reverse: &HashMap<NodeId, String>,
+    output: &mut String,
+    focused: Option<NodeId>,
+) {
+    let node = tree.get_node(node_id);
+    match &node.data {
+        NodeData::Element { tag_name, attributes, .. } => {
+            let tag = tag_name.to_ascii_lowercase();
+
+            if is_display_none(node) {
+                return;
+            }
+            if SKIP_ELEMENTS.contains(&tag.as_str()) {
+                return;
+            }
+
+            if INTERACTIVE_ELEMENTS.contains(&tag.as_str()) {
+                if let Some(eref) = reverse.get(&node_id) {
+                    let role = element_role(&tag, attributes);
+                    let mut line = format!("{} {}", eref, role);
+
+                    if let Some(val) = get_interactive_value(tree, node_id, &tag, attributes) {
+                        line.push_str(&format!(" value=\"{}\"", val));
+                    }
+
+                    let text = collect_direct_text(tree, node_id);
+                    if !text.is_empty() {
+                        line.push_str(&format!(" \"{}\"", text));
+                    }
+
+                    if focused == Some(node_id) {
+                        line.push_str(" [focused]");
+                    }
+
+                    output.push_str(&line);
+                    output.push('\n');
+                }
+            }
+
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_interactive(tree, child_id, reverse, output, focused);
+            }
+        }
+        NodeData::Document | NodeData::DocumentFragment => {
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_interactive(tree, child_id, reverse, output, focused);
+            }
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Links view — just <a> elements with href
+// ---------------------------------------------------------------------------
+
+pub fn serialize_links(tree: &DomTree, reverse: &HashMap<NodeId, String>) -> String {
+    let mut output = String::new();
+    walk_links(tree, tree.document(), reverse, &mut output);
+    trim_trailing_newlines(&mut output);
+    output
+}
+
+fn walk_links(
+    tree: &DomTree,
+    node_id: NodeId,
+    reverse: &HashMap<NodeId, String>,
+    output: &mut String,
+) {
+    let node = tree.get_node(node_id);
+    match &node.data {
+        NodeData::Element { tag_name, attributes, .. } => {
+            let tag = tag_name.to_ascii_lowercase();
+
+            if is_display_none(node) {
+                return;
+            }
+            if SKIP_ELEMENTS.contains(&tag.as_str()) {
+                return;
+            }
+
+            if tag == "a" {
+                if let Some(href) = attributes.iter().find(|a| a.local_name == "href") {
+                    let eref = reverse.get(&node_id).map(|s| s.as_str()).unwrap_or("???");
+                    let text = collect_deep_text(tree, node_id);
+                    output.push_str(&format!("{} \"{}\" -> {}\n", eref, text.trim(), href.value));
+                }
+            }
+
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_links(tree, child_id, reverse, output);
+            }
+        }
+        NodeData::Document | NodeData::DocumentFragment => {
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_links(tree, child_id, reverse, output);
+            }
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Forms view — form structure with input values
+// ---------------------------------------------------------------------------
+
+pub fn serialize_forms(tree: &DomTree, reverse: &HashMap<NodeId, String>) -> String {
+    let mut output = String::new();
+    walk_forms(tree, tree.document(), reverse, &mut output);
+    trim_trailing_newlines(&mut output);
+    output
+}
+
+fn walk_forms(
+    tree: &DomTree,
+    node_id: NodeId,
+    reverse: &HashMap<NodeId, String>,
+    output: &mut String,
+) {
+    let node = tree.get_node(node_id);
+    match &node.data {
+        NodeData::Element { tag_name, attributes, .. } => {
+            let tag = tag_name.to_ascii_lowercase();
+
+            if is_display_none(node) {
+                return;
+            }
+            if SKIP_ELEMENTS.contains(&tag.as_str()) {
+                return;
+            }
+
+            if tag == "form" {
+                let action = attributes.iter().find(|a| a.local_name == "action").map(|a| a.value.as_str());
+                let method = attributes.iter().find(|a| a.local_name == "method").map(|a| a.value.as_str());
+                let mut header = "form".to_string();
+                if let Some(action) = action {
+                    header.push_str(&format!(" action=\"{}\"", action));
+                }
+                if let Some(method) = method {
+                    header.push_str(&format!(" method=\"{}\"", method));
+                }
+                output.push_str(&header);
+                output.push('\n');
+
+                // Emit form's interactive children
+                walk_form_inputs(tree, node_id, reverse, output);
+                return; // Don't recurse further for nested forms
+            }
+
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_forms(tree, child_id, reverse, output);
+            }
+        }
+        NodeData::Document | NodeData::DocumentFragment => {
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_forms(tree, child_id, reverse, output);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn walk_form_inputs(
+    tree: &DomTree,
+    node_id: NodeId,
+    reverse: &HashMap<NodeId, String>,
+    output: &mut String,
+) {
+    let node = tree.get_node(node_id);
+    match &node.data {
+        NodeData::Element { tag_name, attributes, .. } => {
+            let tag = tag_name.to_ascii_lowercase();
+
+            if is_display_none(node) {
+                return;
+            }
+
+            if INTERACTIVE_ELEMENTS.contains(&tag.as_str()) {
+                let eref = reverse.get(&node_id).map(|s| s.as_str()).unwrap_or("???");
+                let role = element_role(&tag, attributes);
+                let mut line = format!("  {} {}", eref, role);
+
+                if let Some(val) = get_interactive_value(tree, node_id, &tag, attributes) {
+                    line.push_str(&format!(" value=\"{}\"", val));
+                }
+
+                let text = collect_direct_text(tree, node_id);
+                if !text.is_empty() {
+                    line.push_str(&format!(" \"{}\"", text));
+                }
+
+                output.push_str(&line);
+                output.push('\n');
+            }
+
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_form_inputs(tree, child_id, reverse, output);
+            }
+        }
+        _ => {
+            let node = tree.get_node(node_id);
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_form_inputs(tree, child_id, reverse, output);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Headings view — h1-h6 outline
+// ---------------------------------------------------------------------------
+
+pub fn serialize_headings(tree: &DomTree) -> String {
+    let mut output = String::new();
+    walk_headings(tree, tree.document(), &mut output);
+    trim_trailing_newlines(&mut output);
+    output
+}
+
+fn walk_headings(tree: &DomTree, node_id: NodeId, output: &mut String) {
+    let node = tree.get_node(node_id);
+    match &node.data {
+        NodeData::Element { tag_name, .. } => {
+            let tag = tag_name.to_ascii_lowercase();
+
+            if is_display_none(node) {
+                return;
+            }
+            if SKIP_ELEMENTS.contains(&tag.as_str()) {
+                return;
+            }
+
+            if let Some(level) = heading_level(&tag) {
+                let indent = "  ".repeat(level - 1);
+                let text = collect_deep_text(tree, node_id);
+                output.push_str(&format!("{}h{} \"{}\"\n", indent, level, text.trim()));
+            }
+
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_headings(tree, child_id, output);
+            }
+        }
+        NodeData::Document | NodeData::DocumentFragment => {
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_headings(tree, child_id, output);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn heading_level(tag: &str) -> Option<usize> {
+    match tag {
+        "h1" => Some(1),
+        "h2" => Some(2),
+        "h3" => Some(3),
+        "h4" => Some(4),
+        "h5" => Some(5),
+        "h6" => Some(6),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Text view — readable content, no structure, no refs
+// ---------------------------------------------------------------------------
+
+pub fn serialize_text(tree: &DomTree) -> String {
+    let mut output = String::new();
+    walk_text(tree, tree.document(), &mut output);
+    // Normalize: collapse multiple newlines, trim
+    let normalized = collapse_whitespace(&output);
+    normalized.trim().to_string()
+}
+
+fn walk_text(tree: &DomTree, node_id: NodeId, output: &mut String) {
+    let node = tree.get_node(node_id);
+    match &node.data {
+        NodeData::Text { content } | NodeData::CDATASection { content } => {
+            output.push_str(content);
+        }
+        NodeData::Element { tag_name, .. } => {
+            let tag = tag_name.to_ascii_lowercase();
+
+            if is_display_none(node) || is_visibility_hidden(node) {
+                return;
+            }
+            if SKIP_ELEMENTS.contains(&tag.as_str()) {
+                return;
+            }
+
+            // Block-level elements get newlines for readability
+            let is_block = matches!(
+                tag.as_str(),
+                "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "tr" | "br" | "hr"
+                    | "section" | "article" | "header" | "footer" | "nav" | "main" | "blockquote"
+            );
+
+            if is_block {
+                output.push('\n');
+            }
+
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_text(tree, child_id, output);
+            }
+
+            if is_block {
+                output.push('\n');
+            }
+        }
+        NodeData::Document | NodeData::DocumentFragment => {
+            let children: Vec<NodeId> = node.children.clone();
+            for child_id in children {
+                walk_text(tree, child_id, output);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collapse_whitespace(s: &str) -> String {
+    let mut result = String::new();
+    let mut prev_was_newline = false;
+    for line in s.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !prev_was_newline && !result.is_empty() {
+                result.push('\n');
+                prev_was_newline = true;
+            }
+        } else {
+            if prev_was_newline {
+                // Already have a newline separator
+            } else if !result.is_empty() {
+                result.push('\n');
+            }
+            result.push_str(trimmed);
+            prev_was_newline = false;
+        }
+    }
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Selector view — CSS selector query
+// ---------------------------------------------------------------------------
+
+pub fn serialize_selector(
+    tree: &DomTree,
+    selector: &str,
+    reverse: &HashMap<NodeId, String>,
+) -> String {
+    let matches = crate::css::matching::query_selector_all(tree, tree.document(), selector, None);
+    let mut output = String::new();
+    for nid in matches {
+        let node = tree.get_node(nid);
+        if let NodeData::Element { tag_name, attributes, .. } = &node.data {
+            let tag = tag_name.to_ascii_lowercase();
+            let role = element_role(&tag, attributes);
+            let eref = reverse.get(&nid).map(|s| format!(" {}", s)).unwrap_or_default();
+            let text = collect_direct_text(tree, nid);
+            let text_part = if text.is_empty() { String::new() } else { format!(" \"{}\"", text) };
+            output.push_str(&format!("{}{}{}\n", role, eref, text_part));
+        }
+    }
+    trim_trailing_newlines(&mut output);
+    output
+}
+
+// ---------------------------------------------------------------------------
+// Region view — subtree snapshot rooted at target
+// ---------------------------------------------------------------------------
+
+pub fn serialize_region(
+    tree: &DomTree,
+    target: NodeId,
+    reverse: &HashMap<NodeId, String>,
+    focused: Option<NodeId>,
+) -> String {
+    serialize_a11y_rooted(tree, target, reverse, focused)
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+fn trim_trailing_newlines(s: &mut String) {
+    while s.ends_with('\n') {
+        s.pop();
+    }
+}
+
+fn is_display_none(node: &crate::dom::node::Node) -> bool {
+    node.computed_style
+        .as_ref()
+        .and_then(|cs| cs.get("display"))
+        .map(|v| v == "none")
+        .unwrap_or(false)
+}
+
+fn is_visibility_hidden(node: &crate::dom::node::Node) -> bool {
+    node.computed_style
+        .as_ref()
+        .and_then(|cs| cs.get("visibility"))
+        .map(|v| v == "hidden")
+        .unwrap_or(false)
+}
+
+/// Collect ALL text content recursively (deep), not just direct children.
+fn collect_deep_text(tree: &DomTree, node_id: NodeId) -> String {
+    let node = tree.get_node(node_id);
+    let mut text = String::new();
+    collect_deep_text_inner(tree, node, &mut text);
+    text
+}
+
+fn collect_deep_text_inner(tree: &DomTree, node: &crate::dom::node::Node, text: &mut String) {
+    match &node.data {
+        NodeData::Text { content } | NodeData::CDATASection { content } => {
+            text.push_str(content);
+        }
+        _ => {
+            for &child_id in &node.children {
+                let child = tree.get_node(child_id);
+                collect_deep_text_inner(tree, child, text);
             }
         }
     }

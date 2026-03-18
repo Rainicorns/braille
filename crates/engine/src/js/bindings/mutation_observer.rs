@@ -672,6 +672,13 @@ fn detect_callback_realm(callback: &JsObject, ctx: &mut Context) -> Option<Realm
     None // Callback is from the current realm
 }
 
+/// Returns true if any MutationObserver has pending (undelivered) records.
+pub(crate) fn has_pending_records(ctx: &Context) -> bool {
+    let state_rc = realm_state::mutation_observer_state(ctx);
+    let state = state_rc.borrow();
+    state.observers.iter().any(|entry| !entry.pending_records.is_empty())
+}
+
 pub(crate) fn notify_mutation_observers(ctx: &mut Context) {
     // Clear the microtask flag so new mutations can queue a fresh microtask
     {

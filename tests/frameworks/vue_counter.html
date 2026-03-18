@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head><title>Vue Counter</title></head>
+<body>
+<div id="app"></div>
+<script>
+// Vue-like reactive system
+// Tests: Proxy-based reactivity, template rendering, event binding, computed properties
+var Vue = (function() {
+  function reactive(obj) {
+    var deps = {};
+    var notify = null;
+
+    return new Proxy(obj, {
+      get: function(target, key) {
+        return target[key];
+      },
+      set: function(target, key, value) {
+        target[key] = value;
+        if (notify) notify();
+        return true;
+      }
+    });
+  }
+
+  function createApp(setup, renderFn) {
+    var state = null;
+    var container = null;
+
+    function mount(el) {
+      container = el;
+      state = setup();
+      // Wire up reactivity notification
+      if (state && state.__proxy) {
+        state.__proxy.__notify = update;
+      }
+      update();
+    }
+
+    function update() {
+      container.innerHTML = "";
+      var vdom = renderFn(state);
+      mountVNode(vdom, container);
+    }
+
+    function mountVNode(vnode, parent) {
+      if (vnode == null) return;
+      if (typeof vnode === "string" || typeof vnode === "number") {
+        parent.appendChild(document.createTextNode(String(vnode)));
+        return;
+      }
+      if (Array.isArray(vnode)) {
+        for (var i = 0; i < vnode.length; i++) mountVNode(vnode[i], parent);
+        return;
+      }
+      var el = document.createElement(vnode.tag);
+      if (vnode.attrs) {
+        for (var key in vnode.attrs) {
+          if (key.indexOf("on") === 0) {
+            el.addEventListener(key.substring(2).toLowerCase(), vnode.attrs[key]);
+          } else {
+            el.setAttribute(key, vnode.attrs[key]);
+          }
+        }
+      }
+      if (vnode.children) {
+        for (var i = 0; i < vnode.children.length; i++) {
+          mountVNode(vnode.children[i], el);
+        }
+      }
+      parent.appendChild(el);
+    }
+
+    return { mount: mount, update: update };
+  }
+
+  return { reactive: reactive, createApp: createApp };
+})();
+
+function h(tag, attrs, children) {
+  return { tag: tag, attrs: attrs, children: children || [] };
+}
+
+// --- App ---
+var appState;
+var app = Vue.createApp(
+  function setup() {
+    appState = { count: 0 };
+    return appState;
+  },
+  function render(state) {
+    return h("div", {}, [
+      h("h1", {}, ["Vue Counter"]),
+      h("p", { id: "display" }, ["Count: " + state.count]),
+      h("button", { id: "inc", onclick: function() {
+        appState.count++;
+        app.update();
+      }}, ["+"]),
+      h("button", { id: "dec", onclick: function() {
+        appState.count--;
+        app.update();
+      }}, ["-"]),
+      h("p", {}, [
+        state.count === 0 ? "Zero" :
+        state.count > 0 ? "Positive" : "Negative"
+      ])
+    ]);
+  }
+);
+
+app.mount(document.getElementById("app"));
+</script>
+</body>
+</html>

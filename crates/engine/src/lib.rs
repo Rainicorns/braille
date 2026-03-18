@@ -123,12 +123,75 @@ impl Engine {
         crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
     }
 
+    /// Flush microtasks, MutationObserver records, and recompute CSS styles.
+    /// Loops until quiescent (no pending MO records and no new microtasks)
+    /// or a maximum iteration count is reached.
+    pub fn settle(&mut self) {
+        if let Some(runtime) = self.runtime.as_mut() {
+            for _ in 0..100 {
+                // 1. Flush microtask queue (Promises from event handlers)
+                let _ = runtime.context.run_jobs();
+
+                // 2. Deliver pending MO records
+                let had_mo = runtime.has_pending_mutation_observers();
+                if had_mo {
+                    runtime.notify_mutation_observers();
+                    let _ = runtime.context.run_jobs();
+                }
+
+                // 3. Fire ready timers (delay <= current virtual time)
+                let fired_timers = runtime.fire_ready_timers();
+
+                if fired_timers {
+                    // Timer callbacks may have queued MO/microtasks — loop again
+                    continue;
+                }
+
+                // 4. No MO and no ready timers at current time — try advancing clock
+                if !had_mo && !fired_timers {
+                    if runtime.has_pending_timers() {
+                        // Advance virtual clock to next deadline and loop
+                        if runtime.advance_timers_to_next_deadline() {
+                            continue;
+                        }
+                    }
+                    // Truly quiescent
+                    break;
+                }
+            }
+        }
+
+        // Recompute CSS styles after all JS has settled
+        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+    }
+
     pub fn snapshot(&mut self, mode: SnapMode) -> String {
+        use crate::a11y::serialize;
+
+        // Always do a full ref assignment first so @eN is stable across views
+        let tree = self.tree.borrow();
+        let (ref_map, reverse) = serialize::assign_refs(&tree);
+        self.ref_map = ref_map;
+
         match mode {
             SnapMode::Accessibility => {
-                let (output, ref_map) = crate::a11y::serialize_a11y(&self.tree.borrow(), self.focused_element);
+                let (output, ref_map) = serialize::serialize_a11y(&tree, self.focused_element);
+                // serialize_a11y does its own assign_refs, update ref_map with its result
                 self.ref_map = ref_map;
                 output
+            }
+            SnapMode::Interactive => serialize::serialize_interactive(&tree, &reverse, self.focused_element),
+            SnapMode::Links => serialize::serialize_links(&tree, &reverse),
+            SnapMode::Forms => serialize::serialize_forms(&tree, &reverse),
+            SnapMode::Headings => serialize::serialize_headings(&tree),
+            SnapMode::Text => serialize::serialize_text(&tree),
+            SnapMode::Selector(ref selector) => serialize::serialize_selector(&tree, selector, &reverse),
+            SnapMode::Region(ref target) => {
+                let target_id = crate::dom::find::resolve_selector(&tree, &self.ref_map, target);
+                match target_id {
+                    Some(id) => serialize::serialize_region(&tree, id, &reverse, self.focused_element),
+                    None => format!("error: target not found: {}", target),
+                }
             }
             SnapMode::Dom => "[DOM mode not yet implemented]".to_string(),
             SnapMode::Markdown => "[Markdown mode not yet implemented]".to_string(),

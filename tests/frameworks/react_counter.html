@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head><title>React Counter</title></head>
+<body>
+<div id="root"></div>
+<script>
+// Simulates React's actual patterns: createElement, render tree, reconcile on state change
+// Uses the same createElement/component/setState patterns React uses internally,
+// but without the full React library (which would require JSX transform + bundler)
+
+var React = (function() {
+  var currentComponent = null;
+  var hookIndex = 0;
+  var hooks = [];
+  var rootContainer = null;
+  var rootComponentFn = null;
+
+  function createElement(type, props) {
+    var children = [];
+    for (var i = 2; i < arguments.length; i++) {
+      children.push(arguments[i]);
+    }
+    return { type: type, props: props || {}, children: children };
+  }
+
+  function useState(initial) {
+    var idx = hookIndex++;
+    if (hooks[idx] === undefined) {
+      hooks[idx] = initial;
+    }
+    var setterIdx = idx;
+    var setter = function(val) {
+      if (typeof val === "function") {
+        hooks[setterIdx] = val(hooks[setterIdx]);
+      } else {
+        hooks[setterIdx] = val;
+      }
+      rerender();
+    };
+    return [hooks[idx], setter];
+  }
+
+  function renderElement(vnode) {
+    if (vnode === null || vnode === undefined) return null;
+    if (typeof vnode === "string" || typeof vnode === "number") {
+      return document.createTextNode(String(vnode));
+    }
+    if (typeof vnode === "boolean") return null;
+    if (Array.isArray(vnode)) {
+      var frag = document.createDocumentFragment();
+      for (var i = 0; i < vnode.length; i++) {
+        var child = renderElement(vnode[i]);
+        if (child) frag.appendChild(child);
+      }
+      return frag;
+    }
+    if (typeof vnode.type === "function") {
+      hookIndex = 0;
+      currentComponent = vnode.type;
+      var result = vnode.type(Object.assign({}, vnode.props, { children: vnode.children }));
+      return renderElement(result);
+    }
+    var el = document.createElement(vnode.type);
+    var props = vnode.props;
+    for (var key in props) {
+      if (key === "className") {
+        el.setAttribute("class", props[key]);
+      } else if (key === "style" && typeof props[key] === "object") {
+        for (var s in props[key]) {
+          el.style[s] = props[key][s];
+        }
+      } else if (key.indexOf("on") === 0) {
+        var eventName = key.substring(2).toLowerCase();
+        el.addEventListener(eventName, props[key]);
+      } else if (key !== "children" && key !== "key" && key !== "ref") {
+        el.setAttribute(key, props[key]);
+      }
+    }
+    for (var i = 0; i < vnode.children.length; i++) {
+      var child = renderElement(vnode.children[i]);
+      if (child) el.appendChild(child);
+    }
+    return el;
+  }
+
+  function render(componentFn, container) {
+    rootContainer = container;
+    rootComponentFn = componentFn;
+    rerender();
+  }
+
+  function rerender() {
+    hookIndex = 0;
+    var vdom = rootComponentFn();
+    rootContainer.innerHTML = "";
+    var dom = renderElement(vdom);
+    if (dom) rootContainer.appendChild(dom);
+  }
+
+  return { createElement: createElement, useState: useState, render: render };
+})();
+
+// --- App component ---
+function Counter() {
+  var _count = React.useState(0);
+  var count = _count[0];
+  var setCount = _count[1];
+
+  return React.createElement("div", null,
+    React.createElement("h1", null, "React Counter"),
+    React.createElement("p", { id: "display" }, "Count: " + count),
+    React.createElement("button", { id: "inc", onclick: function() { setCount(function(c) { return c + 1; }); } }, "Increment"),
+    React.createElement("button", { id: "dec", onclick: function() { setCount(function(c) { return c - 1; }); } }, "Decrement"),
+    React.createElement("button", { id: "reset", onclick: function() { setCount(0); } }, "Reset")
+  );
+}
+
+React.render(Counter, document.getElementById("root"));
+</script>
+</body>
+</html>

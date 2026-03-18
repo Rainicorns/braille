@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head><title>Preact Counter</title></head>
+<body>
+<div id="app"></div>
+<script>
+// Minimal Preact-like VDOM implementation (no external deps)
+// Tests: createElement, text nodes, event listeners, re-rendering
+var App = (function() {
+  var rootEl = document.getElementById("app");
+  var state = { count: 0 };
+
+  function h(tag, props, children) {
+    return { tag: tag, props: props || {}, children: children || [] };
+  }
+
+  function render(vnode, container) {
+    container.innerHTML = "";
+    mount(vnode, container);
+  }
+
+  function mount(vnode, container) {
+    if (typeof vnode === "string" || typeof vnode === "number") {
+      container.appendChild(document.createTextNode(String(vnode)));
+      return;
+    }
+    var el = document.createElement(vnode.tag);
+    var props = vnode.props;
+    for (var key in props) {
+      if (key.indexOf("on") === 0) {
+        var eventName = key.substring(2).toLowerCase();
+        el.addEventListener(eventName, props[key]);
+      } else {
+        el.setAttribute(key, props[key]);
+      }
+    }
+    var children = vnode.children;
+    for (var i = 0; i < children.length; i++) {
+      mount(children[i], el);
+    }
+    container.appendChild(el);
+  }
+
+  function update() {
+    var tree = h("div", {}, [
+      h("h1", {}, ["Counter: " + state.count]),
+      h("button", { id: "inc", onclick: function() { state.count++; update(); } }, ["+"]),
+      h("button", { id: "dec", onclick: function() { state.count--; update(); } }, ["-"]),
+      h("p", {}, ["Current value: " + state.count])
+    ]);
+    render(tree, rootEl);
+  }
+
+  return { update: update, state: state };
+})();
+
+App.update();
+</script>
+</body>
+</html>
