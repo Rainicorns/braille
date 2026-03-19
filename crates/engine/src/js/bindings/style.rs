@@ -282,6 +282,167 @@ impl Class for JsStyleDeclaration {
             Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
         );
 
+        // Register camelCase getter/setter accessors for common CSS properties
+        let style_props: &[(&str, &str)] = &[
+            ("color", "color"),
+            ("display", "display"),
+            ("visibility", "visibility"),
+            ("fontSize", "font-size"),
+            ("fontFamily", "font-family"),
+            ("fontWeight", "font-weight"),
+            ("fontStyle", "font-style"),
+            ("backgroundColor", "background-color"),
+            ("margin", "margin"),
+            ("marginTop", "margin-top"),
+            ("marginRight", "margin-right"),
+            ("marginBottom", "margin-bottom"),
+            ("marginLeft", "margin-left"),
+            ("padding", "padding"),
+            ("paddingTop", "padding-top"),
+            ("paddingRight", "padding-right"),
+            ("paddingBottom", "padding-bottom"),
+            ("paddingLeft", "padding-left"),
+            ("width", "width"),
+            ("height", "height"),
+            ("border", "border"),
+            ("position", "position"),
+            ("top", "top"),
+            ("right", "right"),
+            ("bottom", "bottom"),
+            ("left", "left"),
+            ("textAlign", "text-align"),
+            ("textDecoration", "text-decoration"),
+            ("lineHeight", "line-height"),
+            ("overflow", "overflow"),
+            ("cursor", "cursor"),
+            ("opacity", "opacity"),
+            ("zIndex", "z-index"),
+            ("cssFloat", "float"),
+            ("maxWidth", "max-width"),
+            ("maxHeight", "max-height"),
+            ("minWidth", "min-width"),
+            ("minHeight", "min-height"),
+            ("borderRadius", "border-radius"),
+            ("boxSizing", "box-sizing"),
+            ("flexDirection", "flex-direction"),
+            ("justifyContent", "justify-content"),
+            ("alignItems", "align-items"),
+            ("flexWrap", "flex-wrap"),
+            ("gap", "gap"),
+            ("gridTemplateColumns", "grid-template-columns"),
+            ("gridTemplateRows", "grid-template-rows"),
+            ("transform", "transform"),
+            ("transition", "transition"),
+            ("pointerEvents", "pointer-events"),
+            ("whiteSpace", "white-space"),
+            ("textOverflow", "text-overflow"),
+            ("overflowX", "overflow-x"),
+            ("overflowY", "overflow-y"),
+            ("outline", "outline"),
+            ("boxShadow", "box-shadow"),
+            ("textTransform", "text-transform"),
+            ("letterSpacing", "letter-spacing"),
+            ("wordSpacing", "word-spacing"),
+            ("verticalAlign", "vertical-align"),
+            ("borderTop", "border-top"),
+            ("borderRight", "border-right"),
+            ("borderBottom", "border-bottom"),
+            ("borderLeft", "border-left"),
+            ("borderColor", "border-color"),
+            ("borderWidth", "border-width"),
+            ("borderStyle", "border-style"),
+            ("content", "content"),
+            ("listStyle", "list-style"),
+            ("listStyleType", "list-style-type"),
+            ("fontVariant", "font-variant"),
+            ("textIndent", "text-indent"),
+            ("userSelect", "user-select"),
+            ("objectFit", "object-fit"),
+            ("backgroundImage", "background-image"),
+            ("backgroundSize", "background-size"),
+            ("backgroundPosition", "background-position"),
+            ("backgroundRepeat", "background-repeat"),
+        ];
+
+        for &(camel, kebab) in style_props {
+            let kebab_getter = kebab.to_string();
+            let kebab_setter = kebab.to_string();
+
+            let getter = unsafe {
+                NativeFunction::from_closure(move |this, _args, _ctx| {
+                    let obj = this.as_object().ok_or_else(|| {
+                        JsError::from_opaque(js_string!("style getter: this is not an object").into())
+                    })?;
+                    let style = obj.downcast_ref::<JsStyleDeclaration>().ok_or_else(|| {
+                        JsError::from_opaque(
+                            js_string!("style getter: this is not a CSSStyleDeclaration").into(),
+                        )
+                    })?;
+                    let tree = style.tree.borrow();
+                    let style_attr = tree.get_attribute(style.node_id, "style").unwrap_or_default();
+                    let props = parse_style_attr(&style_attr);
+                    let val = props
+                        .iter()
+                        .find(|(n, _)| n == &kebab_getter)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    Ok(JsValue::from(js_string!(val)))
+                })
+            };
+
+            let setter = unsafe {
+                NativeFunction::from_closure(move |this, args, ctx| {
+                    let obj = this.as_object().ok_or_else(|| {
+                        JsError::from_opaque(js_string!("style setter: this is not an object").into())
+                    })?;
+                    let style = obj.downcast_ref::<JsStyleDeclaration>().ok_or_else(|| {
+                        JsError::from_opaque(
+                            js_string!("style setter: this is not a CSSStyleDeclaration").into(),
+                        )
+                    })?;
+                    let value = args
+                        .first()
+                        .map(|v| v.to_string(ctx))
+                        .transpose()?
+                        .map(|s| s.to_std_string_escaped())
+                        .unwrap_or_default();
+
+                    let node_id = style.node_id;
+                    let tree = style.tree.clone();
+
+                    let style_attr = tree.borrow().get_attribute(node_id, "style").unwrap_or_default();
+                    let mut props = parse_style_attr(&style_attr);
+
+                    if value.is_empty() {
+                        // Empty string removes the property (per spec)
+                        props.retain(|(n, _)| n != &kebab_setter);
+                    } else if let Some(existing) = props.iter_mut().find(|(n, _)| n == &kebab_setter) {
+                        existing.1 = value;
+                    } else {
+                        props.push((kebab_setter.clone(), value));
+                    }
+
+                    let serialized = serialize_style(&props);
+                    if serialized.is_empty() {
+                        super::mutation_observer::remove_attribute_with_observer(ctx, &tree, node_id, "style");
+                    } else {
+                        super::mutation_observer::set_attribute_with_observer(
+                            ctx, &tree, node_id, "style", &serialized,
+                        );
+                    }
+
+                    Ok(JsValue::undefined())
+                })
+            };
+
+            class.accessor(
+                js_string!(camel),
+                Some(getter.to_js_function(&realm)),
+                Some(setter.to_js_function(&realm)),
+                Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+            );
+        }
+
         Ok(())
     }
 }
