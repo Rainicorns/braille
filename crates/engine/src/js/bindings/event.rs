@@ -77,6 +77,7 @@ pub(crate) enum EventKind {
     Focus,
     Animation,
     Transition,
+    Composition,
 }
 
 impl EventKind {

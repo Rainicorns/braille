@@ -13,8 +13,62 @@ use boa_engine::{
 };
 use boa_gc::{Finalize, Trace};
 
-use crate::dom::NodeId;
+use crate::dom::{DomTree, NodeId};
 use crate::js::realm_state;
+
+// ---------------------------------------------------------------------------
+// resolve_event_target_key — identify listener key from any `this` value
+// ---------------------------------------------------------------------------
+
+type ListenerKeyResult = ((usize, NodeId), Option<Rc<std::cell::RefCell<DomTree>>>);
+
+/// Given a `this` value, resolve to a `(tree_ptr, node_id)` listener key.
+/// Handles JsEventTarget, JsElement, JsDocument, window object, and null/undefined (→ window).
+/// Returns the key and optionally the DomTree Rc (for passive default computation).
+fn resolve_event_target_key(
+    this: &JsValue,
+    ctx: &mut boa_engine::Context,
+) -> JsResult<ListenerKeyResult> {
+    // null/undefined → window
+    if this.is_null() || this.is_undefined() {
+        return Ok(((usize::MAX, super::window::WINDOW_LISTENER_ID), None));
+    }
+
+    let this_obj = match this.as_object() {
+        Some(obj) => obj,
+        None => return Ok(((usize::MAX, super::window::WINDOW_LISTENER_ID), None)),
+    };
+
+    // JsEventTarget (standalone)
+    if let Some(et) = this_obj.downcast_ref::<JsEventTarget>() {
+        return Ok(((0usize, et.id), None));
+    }
+
+    // JsElement (DOM node)
+    if let Some(el) = this_obj.downcast_ref::<super::element::JsElement>() {
+        let tree = el.tree.clone();
+        let key = (Rc::as_ptr(&tree) as usize, el.node_id);
+        return Ok((key, Some(tree)));
+    }
+
+    // JsDocument
+    if let Some(doc) = this_obj.downcast_ref::<super::document::JsDocument>() {
+        let tree = doc.tree.clone();
+        let node_id = tree.borrow().document();
+        let key = (Rc::as_ptr(&tree) as usize, node_id);
+        return Ok((key, Some(tree)));
+    }
+
+    // Check if this is the window object by comparing to realm_state::window_object
+    if let Some(window) = realm_state::window_object(ctx) {
+        if this_obj.clone() == window {
+            return Ok(((usize::MAX, super::window::WINDOW_LISTENER_ID), None));
+        }
+    }
+
+    // Fallback: treat as window
+    Ok(((usize::MAX, super::window::WINDOW_LISTENER_ID), None))
+}
 
 // ---------------------------------------------------------------------------
 // ListenerEntry — one registered event listener
@@ -90,13 +144,8 @@ impl JsEventTarget {
     }
 
     fn add_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        let this_obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: `this` is not an object").into()))?;
-        let et = this_obj
-            .downcast_ref::<JsEventTarget>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: `this` is not an EventTarget").into()))?;
-        let id = et.id;
+        // Resolve target: support JsEventTarget, JsElement, JsDocument, window, and null/undefined (fallback to window)
+        let (listener_key, tree_for_passive) = resolve_event_target_key(this, ctx)?;
 
         let event_type = args
             .first()
@@ -106,6 +155,25 @@ impl JsEventTarget {
 
         // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
         let (capture, once, passive) = Self::parse_listener_options(args, ctx)?;
+
+        // Compute default passive value
+        let passive = match passive {
+            Some(v) => Some(v),
+            None => {
+                if super::element::is_passive_default_event(&event_type) {
+                    let is_passive_target = if listener_key == (usize::MAX, super::window::WINDOW_LISTENER_ID) {
+                        true // window is always a passive-default target
+                    } else if let Some(ref tree) = tree_for_passive {
+                        super::element::is_passive_default_target(listener_key.1, &tree.borrow())
+                    } else {
+                        false
+                    };
+                    if is_passive_target { Some(true) } else { None }
+                } else {
+                    None
+                }
+            }
+        };
 
         let callback_val = args
             .get(1)
@@ -123,7 +191,7 @@ impl JsEventTarget {
         {
             let listeners = realm_state::event_listeners(ctx);
             let mut map = listeners.borrow_mut();
-            let entries = map.entry((0usize, id)).or_default();
+            let entries = map.entry(listener_key).or_default();
 
             let duplicate = entries
                 .iter()
@@ -145,13 +213,7 @@ impl JsEventTarget {
     }
 
     fn remove_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        let this_obj = this
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: `this` is not an object").into()))?;
-        let et = this_obj.downcast_ref::<JsEventTarget>().ok_or_else(|| {
-            JsError::from_opaque(js_string!("removeEventListener: `this` is not an EventTarget").into())
-        })?;
-        let id = et.id;
+        let (listener_key, _tree) = resolve_event_target_key(this, ctx)?;
 
         let event_type = args
             .first()
@@ -188,7 +250,7 @@ impl JsEventTarget {
         {
             let listeners = realm_state::event_listeners(ctx);
             let mut map = listeners.borrow_mut();
-            if let Some(entries) = map.get_mut(&(0usize, id)) {
+            if let Some(entries) = map.get_mut(&listener_key) {
                 entries.retain(|entry| {
                     if entry.event_type == event_type && entry.capture == capture && entry.callback == callback {
                         entry.removed.set(true);
@@ -198,7 +260,7 @@ impl JsEventTarget {
                     }
                 });
                 if entries.is_empty() {
-                    map.remove(&(0usize, id));
+                    map.remove(&listener_key);
                 }
             }
         }
@@ -206,9 +268,30 @@ impl JsEventTarget {
         Ok(JsValue::undefined())
     }
 
-    /// dispatchEvent for standalone EventTarget.
-    /// No DOM tree, so no capture/bubble phases — just at-target.
+    /// Universal dispatchEvent — handles standalone EventTarget, JsElement, JsDocument, and window.
     fn dispatch_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        // For JsElement or JsDocument, delegate to their own dispatch
+        if let Some(obj) = this.as_object() {
+            if obj.downcast_ref::<super::element::JsElement>().is_some() {
+                return super::element::JsElement::dispatch_event_public(this, args, ctx);
+            }
+            if obj.downcast_ref::<super::document::JsDocument>().is_some() {
+                return super::document::document_dispatch_event_public(this, args, ctx);
+            }
+        }
+        // Check for window or null/undefined → delegate to window dispatch
+        if this.is_null() || this.is_undefined() {
+            return super::window::window_dispatch_event(args, ctx);
+        }
+        if let Some(obj) = this.as_object() {
+            if let Some(window) = realm_state::window_object(ctx) {
+                if obj.clone() == window {
+                    return super::window::window_dispatch_event(args, ctx);
+                }
+            }
+        }
+
+        // Standalone EventTarget dispatch
         let this_obj = this
             .as_object()
             .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not an object").into()))?;

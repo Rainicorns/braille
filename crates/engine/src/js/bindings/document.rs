@@ -659,10 +659,11 @@ fn document_create_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) ->
 }
 
 /// Parse the third argument to addEventListener/removeEventListener.
-/// Returns (capture, once).
-fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, bool)> {
+/// Returns (capture, once, passive).
+fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, bool, Option<bool>)> {
     let mut capture = false;
     let mut once = false;
+    let mut passive = None;
 
     if let Some(opt_val) = args.get(2) {
         if let Some(opt_obj) = opt_val.as_object() {
@@ -674,13 +675,17 @@ fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool
             if !o.is_undefined() {
                 once = o.to_boolean();
             }
+            let p = opt_obj.get(js_string!("passive"), ctx)?;
+            if !p.is_undefined() {
+                passive = Some(p.to_boolean());
+            }
         } else {
             // Coerce non-object values to boolean (handles numbers, strings, null, undefined, etc.)
             capture = opt_val.to_boolean();
         }
     }
 
-    Ok((capture, once))
+    Ok((capture, once, passive))
 }
 
 /// Native implementation of document.addEventListener(type, callback, options?)
@@ -702,7 +707,19 @@ fn document_add_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Conte
         .to_std_string_escaped();
 
     // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
-    let (capture, once) = parse_listener_options(args, ctx)?;
+    let (capture, once, passive) = parse_listener_options(args, ctx)?;
+
+    // Compute default passive for document (always a passive-by-default target)
+    let passive = match passive {
+        Some(v) => Some(v),
+        None => {
+            if super::element::is_passive_default_event(&event_type) {
+                Some(true)
+            } else {
+                None
+            }
+        }
+    };
 
     let callback_val = args
         .get(1)
@@ -732,7 +749,7 @@ fn document_add_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Conte
                 callback,
                 capture,
                 once,
-                passive: None,
+                passive,
                 removed: std::rc::Rc::new(std::cell::Cell::new(false)),
             });
         }
@@ -760,7 +777,7 @@ fn document_remove_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Co
         .to_std_string_escaped();
 
     // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
-    let (capture, _once) = parse_listener_options(args, ctx)?;
+    let (capture, _once, _passive) = parse_listener_options(args, ctx)?;
 
     let callback_val = args
         .get(1)
@@ -794,6 +811,11 @@ fn document_remove_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Co
     }
 
     Ok(JsValue::undefined())
+}
+
+/// Public entry point for document.dispatchEvent — called from EventTarget.prototype.dispatchEvent
+pub(crate) fn document_dispatch_event_public(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    document_dispatch_event(this, args, ctx)
 }
 
 /// Native implementation of document.dispatchEvent(event)

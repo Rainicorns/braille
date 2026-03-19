@@ -1608,10 +1608,11 @@ impl JsElement {
     }
 
     /// Parse the third argument to addEventListener/removeEventListener.
-    /// Returns (capture, once). `once` only matters for addEventListener.
-    fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, bool)> {
+    /// Returns (capture, once, passive). `once` and `passive` only matter for addEventListener.
+    fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, bool, Option<bool>)> {
         let mut capture = false;
         let mut once = false;
+        let mut passive = None;
 
         if let Some(opt_val) = args.get(2) {
             if let Some(opt_obj) = opt_val.as_object() {
@@ -1623,13 +1624,17 @@ impl JsElement {
                 if !o.is_undefined() {
                     once = o.to_boolean();
                 }
+                let p = opt_obj.get(js_string!("passive"), ctx)?;
+                if !p.is_undefined() {
+                    passive = Some(p.to_boolean());
+                }
             } else {
                 // Coerce non-object values to boolean (handles numbers, strings, null, undefined, etc.)
                 capture = opt_val.to_boolean();
             }
         }
 
-        Ok((capture, once))
+        Ok((capture, once, passive))
     }
 
     /// Native implementation of element.addEventListener(type, callback, options?)
@@ -1645,7 +1650,19 @@ impl JsElement {
             .to_std_string_escaped();
 
         // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
-        let (capture, once) = Self::parse_listener_options(args, ctx)?;
+        let (capture, once, passive) = Self::parse_listener_options(args, ctx)?;
+
+        // Compute default passive value per spec §2.10 when not explicitly set
+        let passive = match passive {
+            Some(v) => Some(v),
+            None => {
+                if is_passive_default_event(&event_type) && is_passive_default_target(node_id, &el.tree.borrow()) {
+                    Some(true)
+                } else {
+                    None
+                }
+            }
+        };
 
         // Second arg: callback (must be callable)
         let callback_val = args
@@ -1680,7 +1697,7 @@ impl JsElement {
                     callback,
                     capture,
                     once,
-                    passive: None,
+                    passive,
                     removed: std::rc::Rc::new(std::cell::Cell::new(false)),
                 });
             }
@@ -1702,7 +1719,7 @@ impl JsElement {
             .to_std_string_escaped();
 
         // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
-        let (capture, _once) = Self::parse_listener_options(args, ctx)?;
+        let (capture, _once, _passive) = Self::parse_listener_options(args, ctx)?;
 
         // Second arg: callback
         let callback_val = args
@@ -1741,6 +1758,11 @@ impl JsElement {
         }
 
         Ok(JsValue::undefined())
+    }
+
+    /// Public entry point for element.dispatchEvent — called from EventTarget.prototype.dispatchEvent
+    pub(crate) fn dispatch_event_public(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        Self::dispatch_event(this, args, ctx)
     }
 
     /// Native implementation of element.dispatchEvent(event)
@@ -2155,6 +2177,40 @@ fn run_bubble_phase(
     Ok(false)
 }
 
+/// Returns true if the event type defaults to passive per spec §2.10.
+pub(crate) fn is_passive_default_event(event_type: &str) -> bool {
+    matches!(event_type, "touchstart" | "touchmove" | "wheel" | "mousewheel")
+}
+
+/// Returns true if the target node is one of: document, documentElement, or body.
+/// These are the targets where certain event types default to passive.
+pub(crate) fn is_passive_default_target(node_id: NodeId, tree: &crate::dom::DomTree) -> bool {
+    use crate::dom::NodeData;
+    // Document node
+    if matches!(tree.get_node(node_id).data, NodeData::Document) {
+        return true;
+    }
+    // documentElement: first element child of document (node 0)
+    let doc_id = 0;
+    for child_id in tree.children(doc_id) {
+        if matches!(tree.get_node(child_id).data, NodeData::Element { .. }) {
+            if child_id == node_id {
+                return true;
+            }
+            // body: first <body> child of documentElement
+            for grandchild_id in tree.children(child_id) {
+                if let NodeData::Element { ref tag_name, .. } = tree.get_node(grandchild_id).data {
+                    if tag_name.eq_ignore_ascii_case("body") && grandchild_id == node_id {
+                        return true;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    false
+}
+
 /// Invoke matching listeners for a specific node during event dispatch.
 ///
 /// - `capture_only`: if true, only invoke listeners with capture=true (capture phase)
@@ -2175,7 +2231,8 @@ pub(crate) fn invoke_listeners_for_node(
 ) -> JsResult<bool> {
     // Collect matching listeners (snapshot to avoid borrow issues during callback invocation)
     // Include the `removed` flag so we can detect mid-dispatch removal.
-    let matching: Vec<(JsObject, bool, std::rc::Rc<std::cell::Cell<bool>>)> = {
+    type ListenerSnapshot = (JsObject, bool, std::rc::Rc<std::cell::Cell<bool>>, Option<bool>);
+    let matching: Vec<ListenerSnapshot> = {
         let listeners = realm_state::event_listeners(ctx);
         let map = listeners.borrow();
         match map.get(&listener_key) {
@@ -2193,7 +2250,7 @@ pub(crate) fn invoke_listeners_for_node(
                         !entry.capture
                     }
                 })
-                .map(|entry| (entry.callback.clone(), entry.once, entry.removed.clone()))
+                .map(|entry| (entry.callback.clone(), entry.once, entry.removed.clone(), entry.passive))
                 .collect(),
             None => Vec::new(),
         }
@@ -2203,7 +2260,7 @@ pub(crate) fn invoke_listeners_for_node(
     let prev_event = realm_state::current_event(ctx);
     realm_state::set_current_event(ctx, Some(event_obj.clone()));
 
-    for (callback, once, removed_flag) in &matching {
+    for (callback, once, removed_flag, passive) in &matching {
         // Skip listeners that were removed during dispatch
         if removed_flag.get() {
             continue;
@@ -2228,6 +2285,16 @@ pub(crate) fn invoke_listeners_for_node(
             }
         }
 
+        // Per spec: if listener is passive, temporarily clear cancelable so preventDefault is a no-op
+        let is_passive = passive.unwrap_or(false);
+        let saved_cancelable = if is_passive {
+            let saved = event_obj.downcast_ref::<JsEvent>().unwrap().cancelable;
+            event_obj.downcast_mut::<JsEvent>().unwrap().cancelable = false;
+            Some(saved)
+        } else {
+            None
+        };
+
         // Per spec: if callback is callable, call with this=currentTarget.
         // If callback is an object with handleEvent method, look it up fresh and call with this=object.
         // Per spec: if a listener throws, report the error and continue to the next listener.
@@ -2251,6 +2318,11 @@ pub(crate) fn invoke_listeners_for_node(
                 Err(e) => Err(e),
             }
         };
+
+        // Restore cancelable if we cleared it for passive listener
+        if let Some(saved) = saved_cancelable {
+            event_obj.downcast_mut::<JsEvent>().unwrap().cancelable = saved;
+        }
 
         // If the listener threw, report via window.onerror and continue
         if let Err(err) = call_result {

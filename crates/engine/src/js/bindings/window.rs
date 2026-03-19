@@ -20,6 +20,96 @@ type ConsoleBuffer = Rc<RefCell<Vec<String>>>;
 /// and standalone EventTarget IDs (start at usize::MAX / 2).
 pub(crate) const WINDOW_LISTENER_ID: usize = usize::MAX - 1;
 
+/// Public window dispatchEvent — called from EventTarget.prototype.dispatchEvent for window `this`.
+pub(crate) fn window_dispatch_event(args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let event_val = args.first().cloned().unwrap_or(JsValue::undefined());
+    if event_val.is_null() || event_val.is_undefined() {
+        return Ok(JsValue::from(true));
+    }
+    let event_obj = match event_val.as_object() {
+        Some(o) => o.clone(),
+        None => return Ok(JsValue::from(true)),
+    };
+
+    let event_type = match event_obj.downcast_ref::<super::event::JsEvent>() {
+        Some(evt) => evt.event_type.clone(),
+        None => return Ok(JsValue::from(true)),
+    };
+
+    {
+        let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
+        evt.dispatching = true;
+        evt.phase = 2;
+    }
+
+    let window_val: JsValue = realm_state::window_object(ctx)
+        .map(JsValue::from)
+        .unwrap_or(JsValue::undefined());
+
+    event_obj.define_property_or_throw(
+        js_string!("target"),
+        PropertyDescriptor::builder()
+            .value(window_val.clone())
+            .writable(true)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+    event_obj.define_property_or_throw(
+        js_string!("srcElement"),
+        PropertyDescriptor::builder()
+            .value(window_val.clone())
+            .writable(true)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+    event_obj.define_property_or_throw(
+        js_string!("currentTarget"),
+        PropertyDescriptor::builder()
+            .value(window_val)
+            .writable(true)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    super::element::invoke_listeners_for_node(
+        (usize::MAX, WINDOW_LISTENER_ID),
+        &event_type,
+        &event_obj,
+        &event_val,
+        false,
+        true,
+        ctx,
+    )?;
+
+    let default_prevented = {
+        let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
+        evt.phase = 0;
+        evt.dispatching = false;
+        evt.propagation_stopped = false;
+        evt.immediate_propagation_stopped = false;
+        evt.default_prevented
+    };
+
+    event_obj.define_property_or_throw(
+        js_string!("currentTarget"),
+        PropertyDescriptor::builder()
+            .value(JsValue::null())
+            .writable(true)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    Ok(JsValue::from(!default_prevented))
+}
+
 fn console_format_args(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
     let parts: Vec<String> = args
         .iter()
@@ -393,6 +483,18 @@ pub(crate) fn register_window(
                     }
                 }
             }
+
+            // Compute default passive for window (always a passive-by-default target)
+            let passive = match passive {
+                Some(v) => Some(v),
+                None => {
+                    if super::element::is_passive_default_event(&event_type) {
+                        Some(true)
+                    } else {
+                        None
+                    }
+                }
+            };
 
             let callback_val = match args.get(1) {
                 Some(v) => v,

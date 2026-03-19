@@ -645,6 +645,8 @@ fn copy_globals_to_window(context: &mut Context) {
         "FocusEvent",
         "AnimationEvent",
         "TransitionEvent",
+        "UIEvent",
+        "CompositionEvent",
         "Event",
         "CustomEvent",
         "MutationObserver",
@@ -693,20 +695,42 @@ fn copy_globals_to_window(context: &mut Context) {
         }
     }
 
-    // Copy addEventListener, removeEventListener, dispatchEvent from window to global
-    for method_name in &["addEventListener", "removeEventListener", "dispatchEvent"] {
-        if let Ok(method_val) = window_obj.get(js_string!(*method_name), context) {
-            if !method_val.is_undefined() {
-                let _ = global.define_property_or_throw(
-                    js_string!(*method_name),
-                    PropertyDescriptor::builder()
-                        .value(method_val)
-                        .writable(true)
-                        .configurable(true)
-                        .enumerable(false)
-                        .build(),
-                    context,
-                );
+    // Replace window's event methods with EventTarget.prototype methods (for identity:
+    // window.addEventListener === EventTarget.prototype.addEventListener)
+    let et_val = global
+        .get(js_string!("EventTarget"), context)
+        .expect("EventTarget should be registered");
+    if let Some(et_obj) = et_val.as_object() {
+        if let Ok(et_proto_val) = et_obj.get(js_string!("prototype"), context) {
+            if let Some(et_proto) = et_proto_val.as_object() {
+                for method_name in &["addEventListener", "removeEventListener", "dispatchEvent"] {
+                    if let Ok(method_val) = et_proto.get(js_string!(*method_name), context) {
+                        if !method_val.is_undefined() {
+                            // Set on window object
+                            let _ = window_obj.define_property_or_throw(
+                                js_string!(*method_name),
+                                PropertyDescriptor::builder()
+                                    .value(method_val.clone())
+                                    .writable(true)
+                                    .configurable(true)
+                                    .enumerable(false)
+                                    .build(),
+                                context,
+                            );
+                            // Also set on global
+                            let _ = global.define_property_or_throw(
+                                js_string!(*method_name),
+                                PropertyDescriptor::builder()
+                                    .value(method_val)
+                                    .writable(true)
+                                    .configurable(true)
+                                    .enumerable(false)
+                                    .build(),
+                                context,
+                            );
+                        }
+                    }
+                }
             }
         }
     }

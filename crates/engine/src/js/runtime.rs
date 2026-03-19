@@ -193,13 +193,145 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
     create_custom_event_constructor(context, &event_proto_obj);
     create_mouse_event_constructor(context, &event_proto_obj);
 
+    // --- UIEvent: prototype inherits Event.prototype, has view + detail ---
+    let ui_event_proto = ObjectInitializer::new(context).build();
+    ui_event_proto.set_prototype(Some(event_proto_obj.clone()));
+
+    // Add view getter to UIEvent.prototype
+    let view_getter = NativeFunction::from_fn_ptr(|this: &JsValue, _args: &[JsValue], _ctx: &mut Context| {
+        if let Some(obj) = this.as_object() {
+            if let Ok(v) = obj.get(js_string!("__view"), _ctx) {
+                if !v.is_undefined() {
+                    return Ok(v);
+                }
+            }
+        }
+        Ok(JsValue::null())
+    });
+    let realm = context.realm().clone();
+    ui_event_proto
+        .define_property_or_throw(
+            js_string!("view"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .get(view_getter.to_js_function(&realm))
+                .set(JsValue::undefined())
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define UIEvent.prototype.view");
+
+    // Add detail getter to UIEvent.prototype
+    let detail_getter = NativeFunction::from_fn_ptr(|this: &JsValue, _args: &[JsValue], _ctx: &mut Context| {
+        if let Some(obj) = this.as_object() {
+            if let Ok(v) = obj.get(js_string!("__detail"), _ctx) {
+                if !v.is_undefined() {
+                    return Ok(v);
+                }
+            }
+        }
+        Ok(JsValue::from(0))
+    });
+    ui_event_proto
+        .define_property_or_throw(
+            js_string!("detail"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .get(detail_getter.to_js_function(&realm))
+                .set(JsValue::undefined())
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define UIEvent.prototype.detail");
+
+    // UIEvent constructor
+    let ui_event_proto_for_ctor = ui_event_proto.clone();
+    let ui_event_ctor = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            if _this.is_undefined() {
+                return Err(JsError::from_native(
+                    JsNativeError::typ().with_message("Failed to construct 'UIEvent': Please use the 'new' operator, this DOM object constructor cannot be called as a function.")
+                ));
+            }
+            let event_type = args
+                .first()
+                .map(|v| v.to_string(ctx))
+                .transpose()?
+                .map(|s| s.to_std_string_escaped())
+                .unwrap_or_default();
+
+            let mut bubbles = false;
+            let mut cancelable = false;
+            let mut view = JsValue::null();
+            let mut detail_val = JsValue::from(0);
+            if let Some(opts_val) = args.get(1) {
+                if let Some(opts_obj) = opts_val.as_object() {
+                    let b = opts_obj.get(js_string!("bubbles"), ctx)?;
+                    if !b.is_undefined() { bubbles = b.to_boolean(); }
+                    let c = opts_obj.get(js_string!("cancelable"), ctx)?;
+                    if !c.is_undefined() { cancelable = c.to_boolean(); }
+                    let v = opts_obj.get(js_string!("view"), ctx)?;
+                    if !v.is_undefined() && !v.is_null() {
+                        // Per spec: view must be a Window or null
+                        if !v.is_object() {
+                            return Err(JsError::from_native(
+                                JsNativeError::typ().with_message("Failed to construct 'UIEvent': member view is not of type Window.")
+                            ));
+                        }
+                        view = v;
+                    }
+                    let d = opts_obj.get(js_string!("detail"), ctx)?;
+                    if !d.is_undefined() { detail_val = d; }
+                }
+            }
+
+            let event = JsEvent {
+                event_type, bubbles, cancelable,
+                default_prevented: false, propagation_stopped: false, immediate_propagation_stopped: false,
+                target: None, current_target: None, phase: 0, dispatching: false,
+                time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
+                initialized: true, kind: EventKind::Standard,
+            };
+            let js_obj = JsEvent::from_data(event, ctx)?;
+            js_obj.set_prototype(Some(ui_event_proto_for_ctor.clone()));
+            attach_is_trusted_own_property(&js_obj, ctx)?;
+            // Store view and detail as hidden properties
+            js_obj.set(js_string!("__view"), view, false, ctx)?;
+            js_obj.set(js_string!("__detail"), detail_val, false, ctx)?;
+            Ok(JsValue::from(js_obj))
+        })
+    };
+
+    let ui_event_ctor_fn = FunctionObjectBuilder::new(context.realm(), ui_event_ctor)
+        .name(js_string!("UIEvent"))
+        .length(1)
+        .constructor(true)
+        .build();
+    ui_event_ctor_fn
+        .define_property_or_throw(
+            js_string!("prototype"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(ui_event_proto.clone())
+                .writable(false)
+                .configurable(false)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define UIEvent.prototype on wrapper");
+    context
+        .register_global_property(js_string!("UIEvent"), ui_event_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+        .expect("failed to register UIEvent wrapper");
+
     // --- UIEvent subclasses: KeyboardEvent, WheelEvent, FocusEvent ---
-    // All use unified JsEvent with EventKind variants. Prototypes inherit Event.prototype.
+    // All use unified JsEvent with EventKind variants. Prototypes inherit UIEvent.prototype.
     macro_rules! wrap_ui_event_subclass {
             ($kind:expr, $name:expr) => {{
-                // Build SubclassEvent.prototype inheriting from Event.prototype
+                // Build SubclassEvent.prototype inheriting from UIEvent.prototype
                 let proto = ObjectInitializer::new(context).build();
-                proto.set_prototype(Some(event_proto_obj.clone()));
+                proto.set_prototype(Some(ui_event_proto.clone()));
 
                 let proto_for_closure = proto.clone();
                 let ctor_name: &'static str = $name;
@@ -220,12 +352,18 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
 
                         let mut bubbles = false;
                         let mut cancelable = false;
+                        let mut view = JsValue::null();
+                        let mut detail_val = JsValue::from(0);
                         if let Some(opts_val) = args.get(1) {
                             if let Some(opts_obj) = opts_val.as_object() {
                                 let b = opts_obj.get(js_string!("bubbles"), ctx)?;
                                 if !b.is_undefined() { bubbles = b.to_boolean(); }
                                 let c = opts_obj.get(js_string!("cancelable"), ctx)?;
                                 if !c.is_undefined() { cancelable = c.to_boolean(); }
+                                let v = opts_obj.get(js_string!("view"), ctx)?;
+                                if !v.is_undefined() { view = v; }
+                                let d = opts_obj.get(js_string!("detail"), ctx)?;
+                                if !d.is_undefined() { detail_val = d; }
                             }
                         }
 
@@ -247,6 +385,9 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
                         let js_obj = JsEvent::from_data(event, ctx)?;
                         js_obj.set_prototype(Some(proto_for_closure.clone()));
                         attach_is_trusted_own_property(&js_obj, ctx)?;
+                        // Store view and detail as hidden properties
+                        js_obj.set(js_string!("__view"), view, false, ctx)?;
+                        js_obj.set(js_string!("__detail"), detail_val, false, ctx)?;
                         Ok(JsValue::from(js_obj))
                     })
                 };
@@ -279,6 +420,109 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
     wrap_ui_event_subclass!(EventKind::Focus, "FocusEvent");
     wrap_ui_event_subclass!(EventKind::Animation, "AnimationEvent");
     wrap_ui_event_subclass!(EventKind::Transition, "TransitionEvent");
+
+    // --- CompositionEvent: inherits UIEvent.prototype, has data ---
+    {
+        let comp_proto = ObjectInitializer::new(context).build();
+        comp_proto.set_prototype(Some(ui_event_proto.clone()));
+
+        // Add data getter
+        let data_getter = NativeFunction::from_fn_ptr(|this: &JsValue, _args: &[JsValue], _ctx: &mut Context| {
+            if let Some(obj) = this.as_object() {
+                if let Ok(v) = obj.get(js_string!("__composition_data"), _ctx) {
+                    if !v.is_undefined() {
+                        return Ok(v);
+                    }
+                }
+            }
+            Ok(JsValue::from(js_string!("")))
+        });
+        comp_proto
+            .define_property_or_throw(
+                js_string!("data"),
+                boa_engine::property::PropertyDescriptor::builder()
+                    .get(data_getter.to_js_function(&realm))
+                    .set(JsValue::undefined())
+                    .configurable(true)
+                    .enumerable(false)
+                    .build(),
+                context,
+            )
+            .expect("failed to define CompositionEvent.prototype.data");
+
+        let comp_proto_for_ctor = comp_proto.clone();
+        let comp_ctor = unsafe {
+            NativeFunction::from_closure(move |_this, args, ctx| {
+                if _this.is_undefined() {
+                    return Err(JsError::from_native(
+                        JsNativeError::typ().with_message("Failed to construct 'CompositionEvent': Please use the 'new' operator.")
+                    ));
+                }
+                let event_type = args
+                    .first()
+                    .map(|v| v.to_string(ctx))
+                    .transpose()?
+                    .map(|s| s.to_std_string_escaped())
+                    .unwrap_or_default();
+
+                let mut bubbles = false;
+                let mut cancelable = false;
+                let mut view = JsValue::null();
+                let mut detail_val = JsValue::from(0);
+                let mut data = JsValue::from(js_string!(""));
+                if let Some(opts_val) = args.get(1) {
+                    if let Some(opts_obj) = opts_val.as_object() {
+                        let b = opts_obj.get(js_string!("bubbles"), ctx)?;
+                        if !b.is_undefined() { bubbles = b.to_boolean(); }
+                        let c = opts_obj.get(js_string!("cancelable"), ctx)?;
+                        if !c.is_undefined() { cancelable = c.to_boolean(); }
+                        let v = opts_obj.get(js_string!("view"), ctx)?;
+                        if !v.is_undefined() { view = v; }
+                        let d = opts_obj.get(js_string!("detail"), ctx)?;
+                        if !d.is_undefined() { detail_val = d; }
+                        let da = opts_obj.get(js_string!("data"), ctx)?;
+                        if !da.is_undefined() { data = da; }
+                    }
+                }
+
+                let event = JsEvent {
+                    event_type, bubbles, cancelable,
+                    default_prevented: false, propagation_stopped: false, immediate_propagation_stopped: false,
+                    target: None, current_target: None, phase: 0, dispatching: false,
+                    time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
+                    initialized: true, kind: EventKind::Composition,
+                };
+                let js_obj = JsEvent::from_data(event, ctx)?;
+                js_obj.set_prototype(Some(comp_proto_for_ctor.clone()));
+                attach_is_trusted_own_property(&js_obj, ctx)?;
+                js_obj.set(js_string!("__view"), view, false, ctx)?;
+                js_obj.set(js_string!("__detail"), detail_val, false, ctx)?;
+                js_obj.set(js_string!("__composition_data"), data, false, ctx)?;
+                Ok(JsValue::from(js_obj))
+            })
+        };
+
+        let comp_ctor_fn = FunctionObjectBuilder::new(context.realm(), comp_ctor)
+            .name(js_string!("CompositionEvent"))
+            .length(1)
+            .constructor(true)
+            .build();
+        comp_ctor_fn
+            .define_property_or_throw(
+                js_string!("prototype"),
+                boa_engine::property::PropertyDescriptor::builder()
+                    .value(comp_proto)
+                    .writable(false)
+                    .configurable(false)
+                    .enumerable(false)
+                    .build(),
+                context,
+            )
+            .expect("failed to define CompositionEvent.prototype on wrapper");
+        context
+            .register_global_property(js_string!("CompositionEvent"), comp_ctor_fn, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+            .expect("failed to register CompositionEvent wrapper");
+    }
 }
 
 /// Register the `NodeFilter` global with its constants (SHOW_ALL, SHOW_ELEMENT, FILTER_ACCEPT, etc.).

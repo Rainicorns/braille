@@ -390,6 +390,14 @@ fn expected_failures(rel_path: &str) -> usize {
         ("historical.html", 5),
         // 1 failure: "Real clicks on disabled elements" needs test_driver browser automation
         ("Event-dispatch-on-disabled-elements", 1),
+        // 6 failures: inline style toggle, setAttribute first-match, prefix preservation,
+        // non-HTML uppercase, own-property-names enumeration
+        ("/attributes.html", 6),
+        // 4 failures: Shadow DOM window.event + XMLHttpRequest
+        ("event-global.html", 4),
+        // 30 failures: FocusEvent relatedTarget, MouseEvent instanceof, WheelEvent delta*,
+        // KeyboardEvent modifier keys, SubclassedEvent class extends
+        ("Event-subclasses", 30),
     ];
     for (pattern, count) in known {
         if rel_path.contains(pattern) {
@@ -462,7 +470,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("slot-recalc", "visual ref test, not testharness"),
         ("xpath-result", "requires XPathResult/document.evaluate"),
         // ("attributes-are-nodes", "requires Attr global constructor on window"),  // Attr pre-insertion validation fixed
-        ("window-extends-event-target", "requires window.addEventListener === EventTarget.prototype.addEventListener"),
+        // window-extends-event-target — now passing (window methods === EventTarget.prototype methods)
+        // ("window-extends-event-target", "requires window.addEventListener === EventTarget.prototype.addEventListener"),
         // DOMTokenList — classList fully implemented (1420/1420) (unskip)
         // ("DOMTokenList-coverage", "requires full DOMTokenList"),
         // Namespace-heavy tests
@@ -560,12 +569,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("EventListener-handleEvent", "requires handleEvent protocol"),
         // Body/FrameSet event handlers
         ("Body-FrameSet", "requires body/frameset event forwarding"),
-        // Event global — window.event now implemented
-        // event-global.html: 4/8 pass, 4 fail (Shadow DOM + XMLHttpRequest)
-        (
-            "event-global.html",
-            "4/8 pass; 4 fail requiring Shadow DOM and XMLHttpRequest",
-        ),
+        // event-global.html — 4/8 pass, 4 expected failures (Shadow DOM + XMLHttpRequest)
+        // ("event-global.html", "4/8 pass; 4 fail requiring Shadow DOM and XMLHttpRequest"),
         ("event-global-extra", "requires contentWindow with own globals"),
         (
             "event-global-is-still-set-when-coercing-beforeunload-result",
@@ -594,10 +599,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Full createEvent spec (hundreds of event types)
         ("Document-createEvent.https", "requires full createEvent spec"),
         // Event subclasses (UIEvent, MouseEvent, etc.)
-        (
-            "Event-subclasses",
-            "missing CompositionEvent, UIEvent not on global, no class inheritance support",
-        ),
+        // Event-subclasses — UIEvent + CompositionEvent constructors now implemented
+        // ("Event-subclasses", "missing CompositionEvent, UIEvent not on global, no class inheritance support"),
         // Document.implementation
         // Document-implementation — now have document.implementation (W2 un-skip)
         // ("Document-implementation", "requires DOMImplementation"),
@@ -624,10 +627,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("NodeList-live-mutations", "requires NodeList interface"),
         // NamedNodeMap / attributes interface
         // ("attributes-namednodemap", "requires NamedNodeMap"),  // NamedNodeMap now implemented (8/8)
-        (
-            "/attributes.html",
-            "61/67 pass; 6 remain: inline style toggle, setAttribute first-match, prefix preservation, non-HTML uppercase, own-property-names enumeration",
-        ),
+        // /attributes.html — 61/67 pass, 6 expected failures
+        // ("attributes.html", "61/67 pass; 6 remain: inline style toggle, setAttribute first-match, prefix preservation, non-HTML uppercase, own-property-names enumeration"),
         // Document-createAttribute — Attr interface implemented (unskip)
         // ("Document-createAttribute", "requires Attr interface"),
         // Document-createComment.html — now implemented
@@ -650,8 +651,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Element-children.html", "requires HTMLCollection"),
         // name-validation — 5/5 pass
         // ("name-validation", "all subtests pass"),
-        // remove-unscopable (@@unscopables added, test requires onclick attribute handlers)
-        ("remove-unscopable", "requires onclick attribute handlers"),
+        // remove-unscopable — requires window===global identity for window[name] to be accessible as bare identifier
+        ("remove-unscopable", "requires window===global identity and with-scope inline handlers"),
         // Element-webkitMatchesSelector — unskipped (dynamic iframe loading now supported)
         // KeyEvent-initKeyEvent — now passing (createEvent("KeyboardEvent") sets correct prototype)
         // ("KeyEvent-initKeyEvent", "requires KeyEvent"),
@@ -706,8 +707,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("replace-event-listener-null-browsing-context", "requires browsing context"),
         // remove-all-listeners — now passing (removed flag tracks mid-dispatch removal)
         // ("remove-all-listeners", "requires full listener removal"),
-        // passive-by-default
-        ("passive-by-default", "requires passive event handling"),
+        // passive-by-default — now passing (default passive value computation implemented)
+        // ("passive-by-default", "requires passive event handling"),
         // no-focus-events-at-clicking-editable
         ("no-focus-events", "requires focus events"),
         // keypress-dispatch-crash — unskipped: unified JsEvent handles all event types
