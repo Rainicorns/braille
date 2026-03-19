@@ -398,6 +398,14 @@ fn expected_failures(rel_path: &str) -> usize {
         // 30 failures: FocusEvent relatedTarget, MouseEvent instanceof, WheelEvent delta*,
         // KeyboardEvent modifier keys, SubclassedEvent class extends
         ("Event-subclasses", 30),
+        // Range tests with cross-document failures (xmlDoc/foreignDoc ranges)
+        ("Range-collapse.html", 9),
+        ("Range-cloneRange.html", 3),
+        ("Range-commonAncestorContainer.html", 3),
+        ("Range-compareBoundaryPoints.html", 938),
+        ("Range-isPointInRange.html", 11),
+        ("Range-intersectsNode.html", 310),
+        ("Range-set.html", 470),
     ];
     for (pattern, count) in known {
         if rel_path.contains(pattern) {
@@ -432,9 +440,19 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // MutationObserver — specific tests that need features beyond basic MutationObserver
         // MutationObserver-cross-realm — now supported (per-iframe realms with shared MO state)
         ("mutation-observer", "requires moveBefore"),
-        // Range / Selection
-        ("Range", "requires Range API"),
-        ("range", "requires Range API"),
+        // Range — targeted skips for tests needing features we don't implement
+        ("Range-mutations", "requires live range mutation tracking"),
+        ("Range-adopt", "requires cross-document range adoption"),
+        ("Range-in-shadow", "requires Shadow DOM range behavior"),
+        ("Range-intersectsNode-shadow", "requires Shadow DOM range behavior"),
+        ("Range-compareBoundaryPoints-crash", "requires Selection API"),
+        ("Range-extractContents-dynamic-end", "requires iframe unload"),
+        ("Range-test-iframe", "helper file, not a test"),
+        ("Range-selectNode", "requires createDocument to return full document"),
+        ("Range-comparePoint", "requires createDocument + doctype validation"),
+        ("Range-intersectsNode-binding", "requires TypeError for non-node args"),
+        ("StaticRange", "requires StaticRange"),
+        // Selection
         ("Selection", "requires Selection API"),
         // Shadow DOM — core APIs implemented (attachShadow, shadowRoot, getRootNode composed)
         // Unskipped: Node-isConnected-shadow-dom.html, rootNode.html
@@ -1162,6 +1180,7 @@ fn main() {
     let dom_root = wpt.join("dom");
     let dom_nodes = wpt.join("dom/nodes");
     let dom_events = wpt.join("dom/events");
+    let dom_ranges = wpt.join("dom/ranges");
 
     let mut trials = Vec::new();
 
@@ -1169,6 +1188,7 @@ fn main() {
         ("dom", &dom_root),
         ("dom/nodes", &dom_nodes),
         ("dom/events", &dom_events),
+        ("dom/ranges", &dom_ranges),
     ];
 
     for (prefix, dir) in &test_dirs {

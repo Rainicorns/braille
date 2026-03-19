@@ -158,6 +158,9 @@ pub(crate) struct RealmState {
     #[unsafe_ignore_trace]
     pub(crate) is_trusted_getter: RefCell<Option<JsObject>>,
 
+    #[unsafe_ignore_trace]
+    pub(crate) range_proto: RefCell<Option<JsObject>>,
+
     // -- Singleton state --
     #[unsafe_ignore_trace]
     pub(crate) dom_tree: Rc<RefCell<DomTree>>,
@@ -212,6 +215,7 @@ impl RealmState {
             domimpl_proto: RefCell::new(None),
             mutation_record_proto: RefCell::new(None),
             is_trusted_getter: RefCell::new(None),
+            range_proto: RefCell::new(None),
             dom_tree: tree,
             window_object: RefCell::new(None),
             current_event: RefCell::new(None),
@@ -246,6 +250,7 @@ impl RealmState {
             domimpl_proto: RefCell::new(None),
             mutation_record_proto: RefCell::new(None),
             is_trusted_getter: RefCell::new(None),
+            range_proto: RefCell::new(None),
             dom_tree: tree,
             window_object: RefCell::new(None),
             current_event: RefCell::new(None),
@@ -366,6 +371,7 @@ option_accessor!(
     JsObject
 );
 option_accessor!(is_trusted_getter, set_is_trusted_getter, is_trusted_getter, JsObject);
+option_accessor!(range_proto, set_range_proto, range_proto, JsObject);
 option_accessor!(window_object, set_window_object, window_object, JsObject);
 
 // -- DomPrototypes (special: clone returns the whole struct) --
@@ -546,7 +552,10 @@ fn register_realm_globals_inner(
     // 13. NodeFilter global with constants
     runtime::register_node_filter(context);
 
-    // 14. Copy globals to window (EventTarget, constructors, event methods)
+    // 14. Range global constructor
+    bindings::range::register_range_global(context);
+
+    // 15. Copy globals to window (EventTarget, constructors, event methods)
     copy_globals_to_window(context);
 }
 
@@ -647,6 +656,17 @@ fn copy_globals_to_window(context: &mut Context) {
             prop_desc::data_prop(ctor_val),
             context,
         );
+    }
+
+    // Copy Range constructor to window
+    if let Ok(range_val) = global.get(js_string!("Range"), context) {
+        if !range_val.is_undefined() {
+            let _ = window_obj.define_property_or_throw(
+                js_string!("Range"),
+                prop_desc::data_prop(range_val),
+                context,
+            );
+        }
     }
 
     // Copy JS built-in constructors to window (needed by WPT tests that do
