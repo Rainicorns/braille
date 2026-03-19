@@ -398,6 +398,12 @@ fn expected_failures(rel_path: &str) -> usize {
         // 30 failures: FocusEvent relatedTarget, MouseEvent instanceof, WheelEvent delta*,
         // KeyboardEvent modifier keys, SubclassedEvent class extends
         ("Event-subclasses", 30),
+        // HTMLCollection edge cases — Proxy set strictness
+        ("HTMLCollection-own-props", 2),
+        // DOMTokenList — classList is Object not DOMTokenList class
+        ("DOMTokenList-coverage-for-attributes", 42),
+        // NodeFilter — missing SHOW_ENTITY_REFERENCE (deprecated constant)
+        ("NodeFilter-constants", 1),
         // Range tests with cross-document failures (xmlDoc/foreignDoc ranges)
         ("Range-collapse.html", 9),
         ("Range-cloneRange.html", 3),
@@ -469,8 +475,48 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("xhtml", "requires XHTML"),
         // NodeIterator / TreeWalker
         ("NodeIterator", "requires NodeIterator"),
-        // TreeWalker — createTreeWalker now implemented
+        // TreeWalker — createTreeWalker now implemented but traversal stubs
         // ("TreeWalker", "requires TreeWalker"),
+        // DOMStringMap (dataset proxy)
+        ("domstringmap", "requires DOMStringMap proxy"),
+        // HTMLCollection edge cases needing stricter Proxy behavior
+        ("HTMLCollection-as-prototype", "requires Proxy prototype chain strictness"),
+        ("HTMLCollection-delete", "requires Proxy deleteProperty trap"),
+        ("HTMLCollection-empty-name", "requires named property visibility"),
+        (
+            "HTMLCollection-supported-property-indices",
+            "requires getOwnPropertyDescriptor on indices",
+        ),
+        (
+            "HTMLCollection-supported-property-names",
+            "requires getOwnPropertyDescriptor on names",
+        ),
+        // DOMTokenList edge cases
+        ("DOMTokenList-Iterable", "requires DOMTokenList Symbol.iterator"),
+        ("DOMTokenList-iteration", "requires DOMTokenList Symbol.iterator"),
+        ("DOMTokenList-stringifier", "requires DOMTokenList toString/valueOf"),
+        ("DOMTokenList-value", "requires DOMTokenList.value getter"),
+        // TreeWalker traversal (stub methods only)
+        ("TreeWalker-basic", "requires TreeWalker traversal methods"),
+        ("TreeWalker-currentNode", "requires TreeWalker traversal methods"),
+        (
+            "TreeWalker-previousNodeLastChildReject",
+            "requires TreeWalker traversal methods",
+        ),
+        (
+            "TreeWalker-previousSiblingLastChildSkip",
+            "requires TreeWalker traversal methods",
+        ),
+        ("TreeWalker-traversal-reject", "requires TreeWalker traversal methods"),
+        ("TreeWalker-traversal-skip-most", "requires TreeWalker traversal methods"),
+        ("TreeWalker-traversal-skip.html", "requires TreeWalker traversal methods"),
+        (
+            "TreeWalker-walking-outside-a-tree",
+            "requires TreeWalker traversal methods",
+        ),
+        ("TreeWalker-acceptNode-filter.html", "requires TreeWalker traversal methods"),
+        ("TreeWalker-realm", "requires TreeWalker traversal methods"),
+        ("TreeWalker.html", "requires TreeWalker full implementation"),
         // Attr node — now implemented (unskip)
         // ("Attr-", "requires Attr node interface"),
         // Workers
@@ -1181,6 +1227,10 @@ fn main() {
     let dom_nodes = wpt.join("dom/nodes");
     let dom_events = wpt.join("dom/events");
     let dom_ranges = wpt.join("dom/ranges");
+    let dom_abort = wpt.join("dom/abort");
+    let dom_collections = wpt.join("dom/collections");
+    let dom_lists = wpt.join("dom/lists");
+    let dom_traversal = wpt.join("dom/traversal");
 
     let mut trials = Vec::new();
 
@@ -1189,6 +1239,10 @@ fn main() {
         ("dom/nodes", &dom_nodes),
         ("dom/events", &dom_events),
         ("dom/ranges", &dom_ranges),
+        ("dom/abort", &dom_abort),
+        ("dom/collections", &dom_collections),
+        ("dom/lists", &dom_lists),
+        ("dom/traversal", &dom_traversal),
     ];
 
     for (prefix, dir) in &test_dirs {
