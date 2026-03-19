@@ -104,6 +104,192 @@ fn next_event_target_id() -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// Shared addEventListener/removeEventListener implementation
+// ---------------------------------------------------------------------------
+
+/// Parse the third argument to addEventListener/removeEventListener.
+/// Returns (capture, once, passive).
+///
+/// Handles both boolean shorthand and EventListenerOptions dictionary.
+/// Non-object, non-boolean values are coerced via `to_boolean()` per spec
+/// (e.g., `addEventListener("click", fn, 1)` → capture=true).
+pub(crate) fn unified_parse_listener_options(
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<(bool, bool, Option<bool>)> {
+    let mut capture = false;
+    let mut once = false;
+    let mut passive = None;
+
+    if let Some(opt_val) = args.get(2) {
+        if let Some(opt_obj) = opt_val.as_object() {
+            let c = opt_obj.get(js_string!("capture"), ctx)?;
+            if !c.is_undefined() {
+                capture = c.to_boolean();
+            }
+            let o = opt_obj.get(js_string!("once"), ctx)?;
+            if !o.is_undefined() {
+                once = o.to_boolean();
+            }
+            let p = opt_obj.get(js_string!("passive"), ctx)?;
+            if !p.is_undefined() {
+                passive = Some(p.to_boolean());
+            }
+        } else {
+            // Coerce non-object values to boolean (handles booleans, numbers, strings, null, undefined)
+            capture = opt_val.to_boolean();
+        }
+    }
+
+    Ok((capture, once, passive))
+}
+
+/// Shared body of addEventListener for all target types.
+///
+/// `listener_key`: the `(tree_ptr, node_id)` identifying this target.
+/// `tree_for_passive`: if Some, used to check `is_passive_default_target`.
+pub(crate) fn add_event_listener_impl(
+    listener_key: (usize, NodeId),
+    tree_for_passive: Option<&std::cell::RefCell<crate::dom::DomTree>>,
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let event_type = args
+        .first()
+        .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: missing type argument").into()))?
+        .to_string(ctx)?
+        .to_std_string_escaped();
+
+    // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
+    let (capture, once, passive) = unified_parse_listener_options(args, ctx)?;
+
+    // Compute default passive value per spec §2.10 when not explicitly set
+    let passive = match passive {
+        Some(v) => Some(v),
+        None => {
+            if super::element::is_passive_default_event(&event_type) {
+                let is_passive_target =
+                    if listener_key == (usize::MAX, super::window::WINDOW_LISTENER_ID) {
+                        true // window is always a passive-default target
+                    } else if let Some(tree_ref) = tree_for_passive {
+                        super::element::is_passive_default_target(listener_key.1, &tree_ref.borrow())
+                    } else {
+                        false
+                    };
+                if is_passive_target {
+                    Some(true)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    };
+
+    let callback_val = args
+        .get(1)
+        .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: missing callback argument").into()))?;
+
+    if callback_val.is_null() || callback_val.is_undefined() {
+        return Ok(JsValue::undefined());
+    }
+
+    let callback = callback_val
+        .as_object()
+        .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
+        .clone();
+
+    {
+        let listeners = realm_state::event_listeners(ctx);
+        let mut map = listeners.borrow_mut();
+        let entries = map.entry(listener_key).or_default();
+
+        let duplicate = entries
+            .iter()
+            .any(|entry| entry.event_type == event_type && entry.capture == capture && entry.callback == callback);
+
+        if !duplicate {
+            entries.push(ListenerEntry {
+                event_type,
+                callback,
+                capture,
+                once,
+                passive,
+                removed: Rc::new(Cell::new(false)),
+            });
+        }
+    }
+
+    Ok(JsValue::undefined())
+}
+
+/// Shared body of removeEventListener for all target types.
+pub(crate) fn remove_event_listener_impl(
+    listener_key: (usize, NodeId),
+    args: &[JsValue],
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let event_type = args
+        .first()
+        .ok_or_else(|| {
+            JsError::from_opaque(js_string!("removeEventListener: missing type argument").into())
+        })?
+        .to_string(ctx)?
+        .to_std_string_escaped();
+
+    // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
+    let mut capture = false;
+    if let Some(opt_val) = args.get(2) {
+        if let Some(opt_obj) = opt_val.as_object() {
+            let c = opt_obj.get(js_string!("capture"), ctx)?;
+            if !c.is_undefined() {
+                capture = c.to_boolean();
+            }
+        } else {
+            capture = opt_val.to_boolean();
+        }
+    }
+
+    let callback_val = args
+        .get(1)
+        .ok_or_else(|| {
+            JsError::from_opaque(js_string!("removeEventListener: missing callback argument").into())
+        })?;
+
+    if callback_val.is_null() || callback_val.is_undefined() {
+        return Ok(JsValue::undefined());
+    }
+
+    let callback = callback_val
+        .as_object()
+        .ok_or_else(|| {
+            JsError::from_opaque(js_string!("removeEventListener: callback is not an object").into())
+        })?
+        .clone();
+
+    {
+        let listeners = realm_state::event_listeners(ctx);
+        let mut map = listeners.borrow_mut();
+        if let Some(entries) = map.get_mut(&listener_key) {
+            entries.retain(|entry| {
+                if entry.event_type == event_type && entry.capture == capture && entry.callback == callback {
+                    entry.removed.set(true);
+                    false
+                } else {
+                    true
+                }
+            });
+            if entries.is_empty() {
+                map.remove(&listener_key);
+            }
+        }
+    }
+
+    Ok(JsValue::undefined())
+}
+
+// ---------------------------------------------------------------------------
 // JsEventTarget — standalone EventTarget constructor
 // ---------------------------------------------------------------------------
 
@@ -114,158 +300,14 @@ pub(crate) struct JsEventTarget {
 }
 
 impl JsEventTarget {
-    /// Parse the third argument to addEventListener/removeEventListener.
-    /// Returns (capture, once, passive).
-    fn parse_listener_options(args: &[JsValue], ctx: &mut Context) -> JsResult<(bool, bool, Option<bool>)> {
-        let mut capture = false;
-        let mut once = false;
-        let mut passive = None;
-
-        if let Some(opt_val) = args.get(2) {
-            if let Some(b) = opt_val.as_boolean() {
-                capture = b;
-            } else if let Some(opt_obj) = opt_val.as_object() {
-                let c = opt_obj.get(js_string!("capture"), ctx)?;
-                if !c.is_undefined() {
-                    capture = c.to_boolean();
-                }
-                let o = opt_obj.get(js_string!("once"), ctx)?;
-                if !o.is_undefined() {
-                    once = o.to_boolean();
-                }
-                let p = opt_obj.get(js_string!("passive"), ctx)?;
-                if !p.is_undefined() {
-                    passive = Some(p.to_boolean());
-                }
-            }
-        }
-
-        Ok((capture, once, passive))
-    }
-
     fn add_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-        // Resolve target: support JsEventTarget, JsElement, JsDocument, window, and null/undefined (fallback to window)
         let (listener_key, tree_for_passive) = resolve_event_target_key(this, ctx)?;
-
-        let event_type = args
-            .first()
-            .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: missing type argument").into()))?
-            .to_string(ctx)?
-            .to_std_string_escaped();
-
-        // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
-        let (capture, once, passive) = Self::parse_listener_options(args, ctx)?;
-
-        // Compute default passive value
-        let passive = match passive {
-            Some(v) => Some(v),
-            None => {
-                if super::element::is_passive_default_event(&event_type) {
-                    let is_passive_target = if listener_key == (usize::MAX, super::window::WINDOW_LISTENER_ID) {
-                        true // window is always a passive-default target
-                    } else if let Some(ref tree) = tree_for_passive {
-                        super::element::is_passive_default_target(listener_key.1, &tree.borrow())
-                    } else {
-                        false
-                    };
-                    if is_passive_target { Some(true) } else { None }
-                } else {
-                    None
-                }
-            }
-        };
-
-        let callback_val = args
-            .get(1)
-            .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: missing callback argument").into()))?;
-
-        if callback_val.is_null() || callback_val.is_undefined() {
-            return Ok(JsValue::undefined());
-        }
-
-        let callback = callback_val
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("addEventListener: callback is not an object").into()))?
-            .clone();
-
-        {
-            let listeners = realm_state::event_listeners(ctx);
-            let mut map = listeners.borrow_mut();
-            let entries = map.entry(listener_key).or_default();
-
-            let duplicate = entries
-                .iter()
-                .any(|entry| entry.event_type == event_type && entry.capture == capture && entry.callback == callback);
-
-            if !duplicate {
-                entries.push(ListenerEntry {
-                    event_type,
-                    callback,
-                    capture,
-                    once,
-                    passive,
-                    removed: Rc::new(Cell::new(false)),
-                });
-            }
-        }
-
-        Ok(JsValue::undefined())
+        add_event_listener_impl(listener_key, tree_for_passive.as_deref(), args, ctx)
     }
 
     fn remove_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
         let (listener_key, _tree) = resolve_event_target_key(this, ctx)?;
-
-        let event_type = args
-            .first()
-            .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: missing type argument").into()))?
-            .to_string(ctx)?
-            .to_std_string_escaped();
-
-        let callback_val = args
-            .get(1)
-            .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: missing callback argument").into()))?;
-
-        if callback_val.is_null() || callback_val.is_undefined() {
-            return Ok(JsValue::undefined());
-        }
-
-        let callback = callback_val
-            .as_object()
-            .ok_or_else(|| JsError::from_opaque(js_string!("removeEventListener: callback is not an object").into()))?
-            .clone();
-
-        // For removeEventListener, only capture matters — passive is not considered
-        let mut capture = false;
-        if let Some(opt_val) = args.get(2) {
-            if let Some(b) = opt_val.as_boolean() {
-                capture = b;
-            } else if let Some(opt_obj) = opt_val.as_object() {
-                let c = opt_obj.get(js_string!("capture"), ctx)?;
-                if !c.is_undefined() {
-                    capture = c.to_boolean();
-                }
-            }
-        }
-
-        {
-            let listeners = realm_state::event_listeners(ctx);
-            let mut map = listeners.borrow_mut();
-            if let Some(entries) = map.get_mut(&listener_key) {
-                entries.retain(|entry| {
-                    if entry.event_type == event_type && entry.capture == capture && entry.callback == callback {
-                        entry.removed.set(true);
-                        false
-                    } else {
-                        true
-                    }
-                });
-                if entries.is_empty() {
-                    map.remove(&listener_key);
-                }
-            }
-        }
-
-        Ok(JsValue::undefined())
+        remove_event_listener_impl(listener_key, args, ctx)
     }
 
     /// Universal dispatchEvent — handles standalone EventTarget, JsElement, JsDocument, and window.

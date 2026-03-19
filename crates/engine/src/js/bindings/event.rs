@@ -54,7 +54,7 @@ pub(crate) fn attach_is_trusted_own_property(event_obj: &JsObject, ctx: &mut Con
 // EventKind — discriminant for event subclass type
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Trace, Finalize)]
+#[derive(Debug, Clone, Trace, Finalize)]
 pub(crate) enum EventKind {
     Standard,
     Custom {

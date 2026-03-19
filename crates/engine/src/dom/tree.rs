@@ -17,38 +17,24 @@ impl DomTree {
     /// Creates a new DomTree with a Document root node at index 0.
     /// Defaults to HTML document (is_html_document = true).
     pub fn new() -> Self {
-        let root = Node {
-            id: 0,
-            data: NodeData::Document,
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        };
-        DomTree {
-            nodes: vec![root],
+        let mut tree = DomTree {
+            nodes: Vec::new(),
             is_html_document: true,
             url_fragment: None,
-        }
+        };
+        tree.alloc_node(NodeData::Document);
+        tree
     }
 
     /// Creates a new DomTree for an XML document (is_html_document = false).
     pub fn new_xml() -> Self {
-        let root = Node {
-            id: 0,
-            data: NodeData::Document,
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        };
-        DomTree {
-            nodes: vec![root],
+        let mut tree = DomTree {
+            nodes: Vec::new(),
             is_html_document: false,
             url_fragment: None,
-        }
+        };
+        tree.alloc_node(NodeData::Document);
+        tree
     }
 
     /// Returns true if this is an HTML document, false for XML documents.
@@ -56,16 +42,13 @@ impl DomTree {
         self.is_html_document
     }
 
-    /// Allocates a new Element node (unattached) and returns its NodeId.
-    pub fn create_element(&mut self, tag_name: &str) -> NodeId {
+    /// Allocates a new node with the given data, no parent, no children, and no styles.
+    /// Returns the NodeId of the newly created node.
+    fn alloc_node(&mut self, data: NodeData) -> NodeId {
         let id = self.nodes.len();
         self.nodes.push(Node {
             id,
-            data: NodeData::Element {
-                tag_name: tag_name.to_string(),
-                attributes: Vec::new(),
-                namespace: "http://www.w3.org/1999/xhtml".to_string(),
-            },
+            data,
             parent: None,
             children: Vec::new(),
             computed_style: None,
@@ -75,21 +58,20 @@ impl DomTree {
         id
     }
 
+    /// Allocates a new Element node (unattached) and returns its NodeId.
+    pub fn create_element(&mut self, tag_name: &str) -> NodeId {
+        self.alloc_node(NodeData::Element {
+            tag_name: tag_name.to_string(),
+            attributes: Vec::new(),
+            namespace: "http://www.w3.org/1999/xhtml".to_string(),
+        })
+    }
+
     /// Allocates a new Text node (unattached) and returns its NodeId.
     pub fn create_text(&mut self, content: &str) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::Text {
-                content: content.to_string(),
-            },
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::Text {
+            content: content.to_string(),
+        })
     }
 
     /// Appends `child` as the last child of `parent`.
@@ -118,6 +100,9 @@ impl DomTree {
     }
 
     /// Returns the index of `child` within `parent`'s children list, or None if not found.
+    ///
+    /// O(n) linear scan over siblings, which is acceptable for typical DOM sizes
+    /// (most parent nodes have tens, not thousands, of children).
     fn find_child_index(&self, parent: NodeId, child: NodeId) -> Option<usize> {
         self.nodes[parent].children.iter().position(|&c| c == child)
     }
@@ -232,105 +217,46 @@ impl DomTree {
 
     /// Allocates a new Comment node (unattached) and returns its NodeId.
     pub fn create_comment(&mut self, content: &str) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::Comment {
-                content: content.to_string(),
-            },
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::Comment {
+            content: content.to_string(),
+        })
     }
 
     /// Allocates a new ProcessingInstruction node (unattached) and returns its NodeId.
     pub fn create_processing_instruction(&mut self, target: &str, data: &str) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::ProcessingInstruction {
-                target: target.to_string(),
-                data: data.to_string(),
-            },
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::ProcessingInstruction {
+            target: target.to_string(),
+            data: data.to_string(),
+        })
     }
 
     /// Allocates a new Attr node (unattached) and returns its NodeId.
     pub fn create_attr(&mut self, local_name: &str, namespace: &str, prefix: &str, value: &str) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::Attr {
-                local_name: local_name.to_string(),
-                namespace: namespace.to_string(),
-                prefix: prefix.to_string(),
-                value: value.to_string(),
-            },
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::Attr {
+            local_name: local_name.to_string(),
+            namespace: namespace.to_string(),
+            prefix: prefix.to_string(),
+            value: value.to_string(),
+        })
     }
 
     /// Allocates a new CDATASection node (unattached) and returns its NodeId.
     pub fn create_cdata_section(&mut self, content: &str) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::CDATASection {
-                content: content.to_string(),
-            },
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::CDATASection {
+            content: content.to_string(),
+        })
     }
 
     /// Allocates a new DocumentFragment node (unattached) and returns its NodeId.
     pub fn create_document_fragment(&mut self) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::DocumentFragment,
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::DocumentFragment)
     }
 
     /// Allocates a new ShadowRoot node for the given host element.
     /// The ShadowRoot is NOT a child of the host — it is referenced only via `Node.shadow_root`.
     /// The ShadowRoot's parent is None (it is a separate tree root).
     pub fn create_shadow_root(&mut self, mode: ShadowRootMode, host: NodeId) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::ShadowRoot { mode, host },
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
+        let id = self.alloc_node(NodeData::ShadowRoot { mode, host });
         self.nodes[host].shadow_root = Some(id);
         id
     }
@@ -355,75 +281,35 @@ impl DomTree {
 
     /// Allocates a new Element node with attributes (unattached) and returns its NodeId.
     pub fn create_element_with_attrs(&mut self, tag_name: &str, attributes: Vec<DomAttribute>) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::Element {
-                tag_name: tag_name.to_string(),
-                attributes,
-                namespace: "http://www.w3.org/1999/xhtml".to_string(),
-            },
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::Element {
+            tag_name: tag_name.to_string(),
+            attributes,
+            namespace: "http://www.w3.org/1999/xhtml".to_string(),
+        })
     }
 
     /// Allocates a new Doctype node (unattached) and returns its NodeId.
     pub fn create_doctype(&mut self, name: &str, public_id: &str, system_id: &str) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::Doctype {
-                name: name.to_string(),
-                public_id: public_id.to_string(),
-                system_id: system_id.to_string(),
-            },
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::Doctype {
+            name: name.to_string(),
+            public_id: public_id.to_string(),
+            system_id: system_id.to_string(),
+        })
     }
 
     /// Allocates a new Element node with namespace (unattached) and returns its NodeId.
     pub fn create_element_ns(&mut self, tag_name: &str, attributes: Vec<DomAttribute>, namespace: &str) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::Element {
-                tag_name: tag_name.to_string(),
-                attributes,
-                namespace: namespace.to_string(),
-            },
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::Element {
+            tag_name: tag_name.to_string(),
+            attributes,
+            namespace: namespace.to_string(),
+        })
     }
 
     /// Creates a template content fragment node (Document-like container).
     /// Returns the NodeId of the new fragment.
     pub fn create_template_contents(&mut self) -> NodeId {
-        let id = self.nodes.len();
-        self.nodes.push(Node {
-            id,
-            data: NodeData::DocumentFragment, // template content is a DocumentFragment per spec
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
-        id
+        self.alloc_node(NodeData::DocumentFragment) // template content is a DocumentFragment per spec
     }
 
     /// Inserts `child` as a sibling immediately before `sibling`.
@@ -522,16 +408,7 @@ impl DomTree {
     /// If deep is true, all children are recursively cloned and attached to the clone.
     pub fn clone_node(&mut self, node_id: NodeId, deep: bool) -> NodeId {
         let data = self.nodes[node_id].data.clone();
-        let new_id = self.nodes.len();
-        self.nodes.push(Node {
-            id: new_id,
-            data,
-            parent: None,
-            children: Vec::new(),
-            computed_style: None,
-            template_contents: None,
-            shadow_root: None,
-        });
+        let new_id = self.alloc_node(data);
 
         if deep {
             // Clone needed: clone_node/append_child mutate self.nodes

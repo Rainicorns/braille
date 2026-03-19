@@ -622,48 +622,29 @@ fn copy_globals_to_window(context: &mut Context) {
         None => return,
     };
 
+    use super::prop_desc;
+
     // Copy EventTarget constructor to window
     let et_val = global
         .get(js_string!("EventTarget"), context)
         .expect("EventTarget should be registered");
     let _ = window_obj.define_property_or_throw(
         js_string!("EventTarget"),
-        PropertyDescriptor::builder()
-            .value(et_val)
-            .writable(true)
-            .configurable(true)
-            .enumerable(false)
-            .build(),
+        prop_desc::data_prop(et_val),
         context,
     );
 
     // Copy event/UI subclass constructors and MutationObserver to window
-    for ctor_name in &[
-        "MouseEvent",
-        "KeyboardEvent",
-        "WheelEvent",
-        "FocusEvent",
-        "AnimationEvent",
-        "TransitionEvent",
-        "UIEvent",
-        "CompositionEvent",
-        "Event",
-        "CustomEvent",
-        "MutationObserver",
-        "MutationRecord",
-        "NodeFilter",
-    ] {
+    for ctor_name in super::runtime::EVENT_CONSTRUCTOR_NAMES
+        .iter()
+        .chain(super::runtime::DOM_UTILITY_NAMES.iter())
+    {
         let ctor_val = global
             .get(js_string!(*ctor_name), context)
             .expect("event constructor should be registered");
         let _ = window_obj.define_property_or_throw(
             js_string!(*ctor_name),
-            PropertyDescriptor::builder()
-                .value(ctor_val)
-                .writable(true)
-                .configurable(true)
-                .enumerable(false)
-                .build(),
+            prop_desc::data_prop(ctor_val),
             context,
         );
     }
@@ -683,12 +664,7 @@ fn copy_globals_to_window(context: &mut Context) {
             if !val.is_undefined() {
                 let _ = window_obj.define_property_or_throw(
                     js_string!(*builtin_name),
-                    PropertyDescriptor::builder()
-                        .value(val)
-                        .writable(true)
-                        .configurable(true)
-                        .enumerable(false)
-                        .build(),
+                    prop_desc::data_prop(val),
                     context,
                 );
             }
@@ -706,26 +682,14 @@ fn copy_globals_to_window(context: &mut Context) {
                 for method_name in &["addEventListener", "removeEventListener", "dispatchEvent"] {
                     if let Ok(method_val) = et_proto.get(js_string!(*method_name), context) {
                         if !method_val.is_undefined() {
-                            // Set on window object
                             let _ = window_obj.define_property_or_throw(
                                 js_string!(*method_name),
-                                PropertyDescriptor::builder()
-                                    .value(method_val.clone())
-                                    .writable(true)
-                                    .configurable(true)
-                                    .enumerable(false)
-                                    .build(),
+                                prop_desc::data_prop(method_val.clone()),
                                 context,
                             );
-                            // Also set on global
                             let _ = global.define_property_or_throw(
                                 js_string!(*method_name),
-                                PropertyDescriptor::builder()
-                                    .value(method_val)
-                                    .writable(true)
-                                    .configurable(true)
-                                    .enumerable(false)
-                                    .build(),
+                                prop_desc::data_prop(method_val),
                                 context,
                             );
                         }

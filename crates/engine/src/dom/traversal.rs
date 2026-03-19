@@ -86,6 +86,12 @@ impl DomTree {
     pub fn children(&self, node_id: NodeId) -> Vec<NodeId> {
         self.get_node(node_id).children.clone()
     }
+
+    /// Returns a borrowed slice of the children, avoiding a clone.
+    /// Use this when you only need to iterate or check `.len()`.
+    pub fn children_ref(&self, node_id: NodeId) -> &[NodeId] {
+        &self.get_node(node_id).children
+    }
 }
 
 #[cfg(test)]

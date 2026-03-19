@@ -310,7 +310,7 @@ fn get_children(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResul
 fn has_child_nodes(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     extract_element!(el, this, "hasChildNodes");
     let tree = el.tree.borrow();
-    let has_children = !tree.children(el.node_id).is_empty();
+    let has_children = !tree.children_ref(el.node_id).is_empty();
     Ok(JsValue::from(has_children))
 }
 

@@ -17,7 +17,11 @@ impl DomTree {
     }
 
     /// Sets the attribute on an Element node. If the attribute already exists, updates it.
-    /// If not, adds it. Panics if node is not an Element.
+    /// If not, adds it.
+    ///
+    /// # Panics
+    /// Panics if `node_id` is not an Element. Callers always validate the node type
+    /// before calling, so the panic is by design to catch programming errors.
     pub fn set_attribute(&mut self, node_id: NodeId, name: &str, value: &str) {
         let node = self.get_node_mut(node_id);
         if let NodeData::Element { ref mut attributes, .. } = node.data {
@@ -38,7 +42,10 @@ impl DomTree {
 
     /// Removes the first attribute matching the given name. Returns true if it was removed.
     /// Per spec, only the first match is removed (not all).
-    /// Panics if node is not an Element.
+    ///
+    /// # Panics
+    /// Panics if `node_id` is not an Element. Callers always validate the node type
+    /// before calling, so the panic is by design to catch programming errors.
     pub fn remove_attribute(&mut self, node_id: NodeId, name: &str) -> bool {
         let node = self.get_node_mut(node_id);
         if let NodeData::Element { ref mut attributes, .. } = node.data {
@@ -56,7 +63,11 @@ impl DomTree {
         }
     }
 
-    /// Returns true if the Element has that attribute. Panics if node is not an Element.
+    /// Returns true if the Element has that attribute.
+    ///
+    /// # Panics
+    /// Panics if `node_id` is not an Element. Callers always validate the node type
+    /// before calling, so the panic is by design to catch programming errors.
     pub fn has_attribute(&self, node_id: NodeId, name: &str) -> bool {
         let node = self.get_node(node_id);
         if let NodeData::Element { ref attributes, .. } = node.data {
