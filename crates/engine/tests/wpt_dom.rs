@@ -378,6 +378,28 @@ fn testharnessreport_shim() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Expected failures — tests that partially pass with known unfixable subtests
+// ---------------------------------------------------------------------------
+
+/// Returns the number of expected failing subtests for a given test file.
+/// These are subtests that fail due to missing features we intentionally don't implement.
+fn expected_failures(rel_path: &str) -> usize {
+    let known: &[(&str, usize)] = &[
+        // 5 failures: Node.prototype has hasAttributes/attributes/namespaceURI/prefix/localName
+        // which spec moved to Element — we expose them on Node for compatibility
+        ("historical.html", 5),
+        // 1 failure: "Real clicks on disabled elements" needs test_driver browser automation
+        ("Event-dispatch-on-disabled-elements", 1),
+    ];
+    for (pattern, count) in known {
+        if rel_path.contains(pattern) {
+            return *count;
+        }
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
 // Skip list — tests that need features we don't support
 // ---------------------------------------------------------------------------
 
@@ -434,12 +456,12 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("abort", "requires AbortController"),
         ("Abort", "requires AbortController"),
         // Historical features
-        ("historical.html", "tests removed features"),
+        // ("historical.html", "tests removed features"),  // 75/80 subtests pass
         ("interface-objects", "requires many unimplemented interface globals"),
         ("idlharness", "requires full IDL harness infrastructure"),
         ("slot-recalc", "visual ref test, not testharness"),
         ("xpath-result", "requires XPathResult/document.evaluate"),
-        ("attributes-are-nodes", "requires Attr global constructor on window"),
+        // ("attributes-are-nodes", "requires Attr global constructor on window"),  // Attr pre-insertion validation fixed
         ("window-extends-event-target", "requires window.addEventListener === EventTarget.prototype.addEventListener"),
         // DOMTokenList — classList fully implemented (1420/1420) (unskip)
         // ("DOMTokenList-coverage", "requires full DOMTokenList"),
@@ -478,7 +500,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Node-cloneNode — now implemented (main test enabled)
         // These specific cloneNode tests need features we don't have:
         ("Node-cloneNode-XMLDocument", "requires XML Document support"),
-        ("Node-cloneNode-svg", "requires SVG namespace support"),
+        // ("Node-cloneNode-svg", "requires SVG namespace support"),  // namespace support sufficient
         (
             "Node-cloneNode-external-stylesheet",
             "requires external stylesheet loading",
@@ -677,8 +699,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("webkit-transition", "requires TransitionEvent"),
         // event-src-element-nullable — now passing (srcElement set during dispatch)
         // ("event-src-element-nullable", "requires srcElement on window"),
-        // Event-dispatch-redispatch
-        ("Event-dispatch-redispatch", "requires re-dispatch semantics"),
+        // Event-dispatch-redispatch — re-dispatch semantics already work
+        // ("Event-dispatch-redispatch", "requires re-dispatch semantics"),
         // replace-event-listener-null-browsing-context-crash
         // unskipped: basic iframe support added
         // ("replace-event-listener-null-browsing-context", "requires browsing context"),
@@ -703,16 +725,16 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("AddEventListenerOptions-once.any", "requires EventTarget constructor"),
         // ("AddEventListenerOptions-passive.any", "requires EventTarget constructor"),
         // ("EventListenerOptions-capture", "requires truthy-value capture handling and options parsing for null callback in Element dispatch"),
-        // Event-dispatch-on-disabled-elements — promise_test works, but CSS animations still missing
-        (
-            "Event-dispatch-on-disabled-elements",
-            "requires CSS animations for promise_test subtests",
-        ),
-        // EventListener-invoke-legacy — requires TransitionEvent/AnimationEvent constructors (keep skipped)
-        (
-            "EventListener-invoke-legacy",
-            "requires TransitionEvent/AnimationEvent constructors",
-        ),
+        // Event-dispatch-on-disabled-elements — 8/9 pass (1 needs test_driver browser automation)
+        // (
+        //     "Event-dispatch-on-disabled-elements",
+        //     "requires CSS animations for promise_test subtests",
+        // ),
+        // EventListener-invoke-legacy — TransitionEvent/AnimationEvent constructors added in Phase 13
+        // (
+        //     "EventListener-invoke-legacy",
+        //     "requires TransitionEvent/AnimationEvent constructors",
+        // ),
         // Event-dispatch-bubbles-true/false — now supported (cross-document listener isolation + window check)
         // ("Event-dispatch-bubbles-true", "requires window event target and cross-document dispatch"),
         // ("Event-dispatch-bubbles-false", "requires window event target and cross-document dispatch"),
@@ -1055,7 +1077,9 @@ fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> Result<(
     let pass_count = results.iter().filter(|r| r.status == 0).count();
     let total = results.len();
 
-    if failures.is_empty() {
+    let rel = html_path.to_string_lossy();
+    let allowed = expected_failures(&rel);
+    if failures.len() <= allowed {
         Ok(())
     } else {
         Err(Failed::from(format!(

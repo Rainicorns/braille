@@ -275,8 +275,10 @@ pub(crate) fn validate_pre_insert(
         | NodeData::Text { .. }
         | NodeData::Comment { .. }
         | NodeData::ProcessingInstruction { .. }
-        | NodeData::Attr { .. }
         | NodeData::CDATASection { .. } => {}
+        NodeData::Attr { .. } => {
+            return Err(hierarchy_request_error("Cannot insert an Attr node"));
+        }
         NodeData::Document => {
             return Err(hierarchy_request_error("Cannot insert a Document node"));
         }
@@ -460,8 +462,10 @@ fn validate_pre_replace(
         | NodeData::Text { .. }
         | NodeData::Comment { .. }
         | NodeData::ProcessingInstruction { .. }
-        | NodeData::Attr { .. }
         | NodeData::CDATASection { .. } => {}
+        NodeData::Attr { .. } => {
+            return Err(hierarchy_request_error("Cannot insert an Attr node"));
+        }
         NodeData::Document => {
             return Err(hierarchy_request_error("Cannot insert a Document node"));
         }
