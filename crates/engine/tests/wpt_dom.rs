@@ -144,6 +144,7 @@ fn testharness_preamble() -> String {
                     return function() { throw new Error(msg || "unreached"); };
                 },
                 add_cleanup: function() {},
+                step_timeout: function(fn, timeout) { fn(); },
                 _done: false
             };
             var p = fn(t);
@@ -433,7 +434,13 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("abort", "requires AbortController"),
         ("Abort", "requires AbortController"),
         // Historical features
-        ("historical", "tests removed features"),
+        ("historical.html", "tests removed features"),
+        ("interface-objects", "requires many unimplemented interface globals"),
+        ("idlharness", "requires full IDL harness infrastructure"),
+        ("slot-recalc", "visual ref test, not testharness"),
+        ("xpath-result", "requires XPathResult/document.evaluate"),
+        ("attributes-are-nodes", "requires Attr global constructor on window"),
+        ("window-extends-event-target", "requires window.addEventListener === EventTarget.prototype.addEventListener"),
         // DOMTokenList — classList fully implemented (1420/1420) (unskip)
         // ("DOMTokenList-coverage", "requires full DOMTokenList"),
         // Namespace-heavy tests
@@ -1127,12 +1134,17 @@ fn main() {
     let report_shim = testharnessreport_shim();
 
     let wpt = wpt_root();
+    let dom_root = wpt.join("dom");
     let dom_nodes = wpt.join("dom/nodes");
     let dom_events = wpt.join("dom/events");
 
     let mut trials = Vec::new();
 
-    let test_dirs = [("dom/nodes", &dom_nodes), ("dom/events", &dom_events)];
+    let test_dirs = [
+        ("dom", &dom_root),
+        ("dom/nodes", &dom_nodes),
+        ("dom/events", &dom_events),
+    ];
 
     for (prefix, dir) in &test_dirs {
         let test_files = discover_tests(dir);
