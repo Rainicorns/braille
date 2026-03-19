@@ -161,7 +161,7 @@ fn adopt_node_recursive(
             drop(src);
             dst_tree.borrow_mut().create_doctype(&n, &p, &s)
         }
-        NodeData::DocumentFragment => {
+        NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
             let child_ids: Vec<NodeId> = node.children.clone();
             drop(src);
             let id = dst_tree.borrow_mut().create_document_fragment();
@@ -237,7 +237,7 @@ pub(crate) fn validate_pre_insert(
 
     // Step 1: parent must be Document, DocumentFragment, or Element
     match parent_data {
-        NodeData::Document | NodeData::DocumentFragment | NodeData::Element { .. } => {}
+        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } | NodeData::Element { .. } => {}
         _ => {
             return Err(hierarchy_request_error(
                 "parent is not a Document, DocumentFragment, or Element",
@@ -269,6 +269,7 @@ pub(crate) fn validate_pre_insert(
     // Step 4: node must be DocumentFragment, DocumentType, Element, Text, Comment, PI, CDATASection, or Attr
     match node_data {
         NodeData::DocumentFragment
+        | NodeData::ShadowRoot { .. }
         | NodeData::Doctype { .. }
         | NodeData::Element { .. }
         | NodeData::Text { .. }
@@ -315,7 +316,7 @@ fn validate_document_insert(
     let node_data = &nt.get_node(node_id).data;
 
     match node_data {
-        NodeData::DocumentFragment => {
+        NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
             // Count element children in the fragment
             let frag_children = &nt.get_node(node_id).children;
             let elem_count = frag_children
@@ -427,7 +428,7 @@ fn validate_pre_replace(
 
     // Step 1: parent must be Document, DocumentFragment, or Element
     match parent_data {
-        NodeData::Document | NodeData::DocumentFragment | NodeData::Element { .. } => {}
+        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } | NodeData::Element { .. } => {}
         _ => {
             return Err(hierarchy_request_error(
                 "parent is not a Document, DocumentFragment, or Element",
@@ -453,6 +454,7 @@ fn validate_pre_replace(
     // Step 4/5: node must be valid insertion type
     match node_data {
         NodeData::DocumentFragment
+        | NodeData::ShadowRoot { .. }
         | NodeData::Doctype { .. }
         | NodeData::Element { .. }
         | NodeData::Text { .. }
@@ -620,7 +622,7 @@ fn capture_insert_state(
     child_ref: Option<NodeId>,
 ) -> (Vec<NodeId>, RemovalInfo, Option<NodeId>, Option<NodeId>) {
     let t = tree.borrow();
-    let is_fragment = matches!(t.get_node(node_id).data, NodeData::DocumentFragment);
+    let is_fragment = matches!(t.get_node(node_id).data, NodeData::DocumentFragment | NodeData::ShadowRoot { .. });
     let added = if is_fragment {
         t.get_node(node_id).children.clone()
     } else {
@@ -700,7 +702,7 @@ fn fire_insert_records(
 }
 
 pub(crate) fn do_insert(tree: &Rc<RefCell<DomTree>>, parent_id: NodeId, node_id: NodeId, child_ref: Option<NodeId>) {
-    let is_fragment = matches!(tree.borrow().get_node(node_id).data, NodeData::DocumentFragment);
+    let is_fragment = matches!(tree.borrow().get_node(node_id).data, NodeData::DocumentFragment | NodeData::ShadowRoot { .. });
 
     if is_fragment {
         let children: Vec<NodeId> = tree.borrow().get_node(node_id).children.clone();
@@ -723,7 +725,7 @@ pub(crate) fn do_insert(tree: &Rc<RefCell<DomTree>>, parent_id: NodeId, node_id:
 }
 
 fn do_replace(tree: &Rc<RefCell<DomTree>>, parent_id: NodeId, node_id: NodeId, old_child_id: NodeId) {
-    let is_fragment = matches!(tree.borrow().get_node(node_id).data, NodeData::DocumentFragment);
+    let is_fragment = matches!(tree.borrow().get_node(node_id).data, NodeData::DocumentFragment | NodeData::ShadowRoot { .. });
 
     if node_id == old_child_id {
         // Replacing a node with itself is a no-op
@@ -947,7 +949,7 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
     // Capture pre-state for MutationObserver
     let (added_ids, removal_info, prev_sib, next_sib) = {
         let t = tree.borrow();
-        let is_fragment = matches!(t.get_node(new_child_id).data, NodeData::DocumentFragment);
+        let is_fragment = matches!(t.get_node(new_child_id).data, NodeData::DocumentFragment | NodeData::ShadowRoot { .. });
         let added = if is_fragment {
             t.get_node(new_child_id).children.clone()
         } else {
@@ -1130,7 +1132,7 @@ pub(crate) fn clone_node_cross_tree(src: &DomTree, src_id: NodeId, dst: &mut Dom
             system_id,
         } => dst.create_doctype(name, public_id, system_id),
         NodeData::ProcessingInstruction { target, data } => dst.create_processing_instruction(target, data),
-        NodeData::DocumentFragment => dst.create_document_fragment(),
+        NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => dst.create_document_fragment(),
         NodeData::Document => unreachable!("nested Document nodes not supported"),
         NodeData::Attr { .. } => unreachable!("Attr nodes should not be children"),
     };

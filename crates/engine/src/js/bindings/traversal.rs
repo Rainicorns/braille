@@ -315,14 +315,31 @@ fn has_child_nodes(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsR
 }
 
 /// Native method for node.getRootNode(options?)
-/// Walks parent chain to root. Options.composed is accepted but ignored (no Shadow DOM).
+/// Walks parent chain to root. If options.composed is true, traverses through shadow boundaries.
 /// When the root is the Document node, returns the global `document` object to preserve identity.
-fn get_root_node(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+fn get_root_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     extract_element!(el, this, "getRootNode");
     let tree_rc = el.tree.clone();
+
+    // Parse composed option
+    let composed = args
+        .first()
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.get(js_string!("composed"), ctx)
+                .ok()
+                .and_then(|v| v.as_boolean())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
     let root_id = {
         let tree = tree_rc.borrow();
-        tree.root_of(el.node_id)
+        if composed {
+            tree.shadow_including_root_of(el.node_id)
+        } else {
+            tree.root_of(el.node_id)
+        }
     };
 
     // If the root is the Document node and this is the main tree, return the

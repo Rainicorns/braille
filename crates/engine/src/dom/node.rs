@@ -73,6 +73,17 @@ pub enum NodeData {
     CDATASection {
         content: String,
     },
+    ShadowRoot {
+        mode: ShadowRootMode,
+        host: NodeId,
+    },
+}
+
+/// The mode of a shadow root: open (accessible via element.shadowRoot) or closed (hidden).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShadowRootMode {
+    Open,
+    Closed,
 }
 
 #[derive(Debug, Clone)]
@@ -84,4 +95,6 @@ pub struct Node {
     pub computed_style: Option<ComputedStyles>,
     /// For `<template>` elements: the NodeId of the associated content fragment.
     pub template_contents: Option<NodeId>,
+    /// For elements with an attached shadow root: the NodeId of the ShadowRoot node.
+    pub shadow_root: Option<NodeId>,
 }

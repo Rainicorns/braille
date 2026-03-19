@@ -63,7 +63,7 @@ fn assign_refs_walk(
                 assign_refs_walk(tree, child_id, ref_counter, ref_map, reverse);
             }
         }
-        NodeData::Document | NodeData::DocumentFragment => {
+        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
             let children: Vec<NodeId> = node.children.clone();
             for child_id in children {
                 assign_refs_walk(tree, child_id, ref_counter, ref_map, reverse);
@@ -113,7 +113,7 @@ fn walk_a11y(
     let node = tree.get_node(node_id);
 
     match &node.data {
-        NodeData::Document | NodeData::DocumentFragment => {
+        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
             let children: Vec<NodeId> = node.children.clone();
             for child_id in children {
                 walk_a11y(tree, child_id, indent, reverse, output, focused);
@@ -257,7 +257,7 @@ fn walk_interactive(
                 walk_interactive(tree, child_id, reverse, output, focused);
             }
         }
-        NodeData::Document | NodeData::DocumentFragment => {
+        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
             let children: Vec<NodeId> = node.children.clone();
             for child_id in children {
                 walk_interactive(tree, child_id, reverse, output, focused);
@@ -309,7 +309,7 @@ fn walk_links(
                 walk_links(tree, child_id, reverse, output);
             }
         }
-        NodeData::Document | NodeData::DocumentFragment => {
+        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
             let children: Vec<NodeId> = node.children.clone();
             for child_id in children {
                 walk_links(tree, child_id, reverse, output);
@@ -371,7 +371,7 @@ fn walk_forms(
                 walk_forms(tree, child_id, reverse, output);
             }
         }
-        NodeData::Document | NodeData::DocumentFragment => {
+        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
             let children: Vec<NodeId> = node.children.clone();
             for child_id in children {
                 walk_forms(tree, child_id, reverse, output);
@@ -464,7 +464,7 @@ fn walk_headings(tree: &DomTree, node_id: NodeId, output: &mut String) {
                 walk_headings(tree, child_id, output);
             }
         }
-        NodeData::Document | NodeData::DocumentFragment => {
+        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
             let children: Vec<NodeId> = node.children.clone();
             for child_id in children {
                 walk_headings(tree, child_id, output);
@@ -534,7 +534,7 @@ fn walk_text(tree: &DomTree, node_id: NodeId, output: &mut String) {
                 output.push('\n');
             }
         }
-        NodeData::Document | NodeData::DocumentFragment => {
+        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
             let children: Vec<NodeId> = node.children.clone();
             for child_id in children {
                 walk_text(tree, child_id, output);

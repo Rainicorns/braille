@@ -1507,7 +1507,7 @@ pub(crate) fn add_document_properties_to_element(
                         public_id,
                         system_id,
                     } => t.create_doctype(name, public_id, system_id),
-                    NodeData::DocumentFragment => t.create_document_fragment(),
+                    NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => t.create_document_fragment(),
                     NodeData::ProcessingInstruction { target, data } => t.create_processing_instruction(target, data),
                     NodeData::Attr {
                         local_name,
@@ -2006,7 +2006,7 @@ fn document_import_node(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> 
                 public_id,
                 system_id,
             } => t.create_doctype(name, public_id, system_id),
-            NodeData::DocumentFragment => t.create_document_fragment(),
+            NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => t.create_document_fragment(),
             NodeData::ProcessingInstruction { target, data } => t.create_processing_instruction(target, data),
             NodeData::Attr {
                 local_name,
@@ -2096,7 +2096,7 @@ fn document_append_child(this: &JsValue, args: &[JsValue], _ctx: &mut Context) -
         .ok_or_else(|| JsError::from_opaque(js_string!("appendChild: argument is not a Node").into()))?;
     let child_id = child.node_id;
 
-    let is_fragment = matches!(doc.tree.borrow().get_node(child_id).data, NodeData::DocumentFragment);
+    let is_fragment = matches!(doc.tree.borrow().get_node(child_id).data, NodeData::DocumentFragment | NodeData::ShadowRoot { .. });
     if is_fragment {
         let children: Vec<crate::dom::NodeId> = doc.tree.borrow().get_node(child_id).children.clone();
         for frag_child in children {

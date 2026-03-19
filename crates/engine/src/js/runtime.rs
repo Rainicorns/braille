@@ -1233,6 +1233,7 @@ pub(crate) fn register_dom_type_hierarchy(context: &mut Context) {
             html_element_proto: None,
             html_unknown_proto: None,
             document_fragment_proto: None,
+            shadow_root_proto: None,
             document_type_proto: None,
             document_proto: None,
             xml_document_proto: None,
@@ -1279,6 +1280,7 @@ pub(crate) fn register_dom_type_hierarchy(context: &mut Context) {
     // Register DocumentFragment and DocumentType constructors
     // ---------------------------------------------------------------
     register_document_fragment_type(context, &node_proto);
+    register_shadow_root_type(context);
     register_document_type_type(context, &element_proto_obj);
     register_document_constructor(context, &element_proto_obj);
     register_xml_document_global(context);
@@ -1302,6 +1304,7 @@ pub(crate) fn register_dom_type_hierarchy(context: &mut Context) {
             "ProcessingInstruction",
             "Attr",
             "DocumentFragment",
+            "ShadowRoot",
             "DocumentType",
             "Document",
             "Element",
@@ -1608,6 +1611,131 @@ fn register_document_fragment_type(context: &mut Context, node_proto: &JsObject)
         .expect("failed to register DocumentFragment global");
 }
 
+/// Register ShadowRoot constructor (illegal) and prototype inheriting from DocumentFragment.
+fn register_shadow_root_type(context: &mut Context) {
+    // ShadowRoot.prototype inherits from DocumentFragment.prototype.
+    // ShadowRoot.prototype inherits from DocumentFragment.prototype.
+    let proto = ObjectInitializer::new(context).build();
+    if let Ok(df_ctor_val) = context.global_object().get(js_string!("DocumentFragment"), context) {
+        if let Some(df_ctor) = df_ctor_val.as_object() {
+            if let Ok(df_proto_val) = df_ctor.get(js_string!("prototype"), context) {
+                if let Some(df_proto) = df_proto_val.as_object() {
+                    proto.set_prototype(Some(df_proto.clone()));
+                }
+            }
+        }
+    }
+
+    // mode getter
+    let mode_getter = NativeFunction::from_fn_ptr(|this, _args, _ctx| {
+        extract_element!(el, this, "ShadowRoot.mode getter");
+        let tree = el.tree.borrow();
+        let node = tree.get_node(el.node_id);
+        match &node.data {
+            crate::dom::NodeData::ShadowRoot { mode, .. } => {
+                let s = match mode {
+                    crate::dom::node::ShadowRootMode::Open => "open",
+                    crate::dom::node::ShadowRootMode::Closed => "closed",
+                };
+                Ok(JsValue::from(js_string!(s)))
+            }
+            _ => Ok(JsValue::undefined()),
+        }
+    });
+
+    // host getter
+    let host_getter = NativeFunction::from_fn_ptr(|this, _args, ctx| {
+        extract_element!(el, this, "ShadowRoot.host getter");
+        let tree_rc = el.tree.clone();
+        let tree = tree_rc.borrow();
+        let node = tree.get_node(el.node_id);
+        match node.data {
+            crate::dom::NodeData::ShadowRoot { host, .. } => {
+                drop(tree);
+                let js_obj = bindings::element::get_or_create_js_element(host, tree_rc, ctx)?;
+                Ok(js_obj.into())
+            }
+            _ => Ok(JsValue::null()),
+        }
+    });
+
+    let realm = context.realm().clone();
+    proto
+        .define_property_or_throw(
+            js_string!("mode"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .get(mode_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define ShadowRoot.prototype.mode");
+
+    proto
+        .define_property_or_throw(
+            js_string!("host"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .get(host_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define ShadowRoot.prototype.host");
+
+    // innerHTML getter/setter on ShadowRoot.prototype — delegates to the existing Element innerHTML implementation
+    // (ShadowRoot already inherits querySelector/appendChild from DocumentFragment.prototype)
+    let inner_html_getter = NativeFunction::from_fn_ptr(bindings::inner_html::get_inner_html);
+    let inner_html_setter = NativeFunction::from_fn_ptr(bindings::inner_html::set_inner_html);
+    proto
+        .define_property_or_throw(
+            js_string!("innerHTML"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .get(inner_html_getter.to_js_function(&realm))
+                .set(inner_html_setter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define ShadowRoot.prototype.innerHTML");
+
+    let ctor = make_illegal_constructor(context, "ShadowRoot");
+    ctor.define_property_or_throw(
+        js_string!("prototype"),
+        boa_engine::property::PropertyDescriptor::builder()
+            .value(proto.clone())
+            .writable(false)
+            .configurable(false)
+            .enumerable(false)
+            .build(),
+        context,
+    )
+    .expect("failed to define ShadowRoot.prototype");
+
+    proto
+        .define_property_or_throw(
+            js_string!("constructor"),
+            boa_engine::property::PropertyDescriptor::builder()
+                .value(ctor.clone())
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to set ShadowRoot.prototype.constructor");
+
+    context
+        .register_global_property(
+            js_string!("ShadowRoot"),
+            ctor,
+            Attribute::WRITABLE | Attribute::CONFIGURABLE,
+        )
+        .expect("failed to register ShadowRoot global");
+}
+
 /// Register DocumentType constructor
 fn register_document_type_type(context: &mut Context, element_proto: &JsObject) {
     let proto = ObjectInitializer::new(context).build();
@@ -1891,6 +2019,7 @@ fn populate_dom_prototypes(context: &mut Context) {
     let html_element_proto = get_proto("HTMLElement");
     let html_unknown_proto = get_proto("HTMLUnknownElement");
     let document_fragment_proto = get_proto("DocumentFragment");
+    let shadow_root_proto = get_proto("ShadowRoot");
     let document_type_proto = get_proto("DocumentType");
     let document_proto = get_proto("Document");
     let xml_document_proto = get_proto("XMLDocument");
@@ -1900,6 +2029,7 @@ fn populate_dom_prototypes(context: &mut Context) {
         p.html_element_proto = html_element_proto;
         p.html_unknown_proto = html_unknown_proto;
         p.document_fragment_proto = document_fragment_proto;
+        p.shadow_root_proto = shadow_root_proto;
         p.document_type_proto = document_type_proto;
         p.document_proto = document_proto;
         p.xml_document_proto = xml_document_proto;

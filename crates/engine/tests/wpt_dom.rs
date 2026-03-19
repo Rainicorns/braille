@@ -405,9 +405,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Range", "requires Range API"),
         ("range", "requires Range API"),
         ("Selection", "requires Selection API"),
-        // Shadow DOM
-        ("shadow", "requires Shadow DOM"),
-        ("Shadow", "requires Shadow DOM"),
+        // Shadow DOM — core APIs implemented (attachShadow, shadowRoot, getRootNode composed)
+        // Unskipped: Node-isConnected-shadow-dom.html, rootNode.html
+        ("shadow-relatedTarget", "requires Shadow DOM event retargeting"),
+        ("remove-from-shadow-host", "requires Shadow DOM adoption + iframe"),
         ("slot", "requires Shadow DOM slots"),
         // DOMImplementation — now have document.implementation (W2 un-skip)
         // ("DOMImplementation", "requires DOMImplementation"),

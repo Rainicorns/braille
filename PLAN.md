@@ -15,7 +15,9 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 **RealmState Architecture (Phases 1-4) COMPLETE.** All 22 thread-local variables migrated to per-realm state stored in Boa's `Realm::host_defined()`. `RealmState` struct in `realm_state.rs` with 21 fields (data stores as `Rc<RefCell<...>>`, prototype caches as `RefCell<Option<...>>`, singletons). Accessor functions via `rc_accessor!`/`option_accessor!` macros clone Rc/value out, releasing the `GcRef` borrow immediately. Zero `thread_local!` declarations remain. Only `NEXT_EVENT_TARGET_ID` (AtomicUsize) kept as truly global. `with_realm()` function ready for Phase 5 (iframe realm creation). **Phase 4: `register_realm_globals()` extracted** — 13 helper methods moved from `impl JsRuntime` to free functions in `runtime.rs` (5 `pub(crate)`, 8 private). `register_realm_globals()` in `realm_state.rs` orchestrates the full 13-step initialization sequence; `copy_globals_to_window()` mirrors constructors/event methods onto `window`. `JsRuntime::new()` reduced to ~5 lines delegating to `register_realm_globals()`. Phase 5 (iframe realm creation) deferred.
 
-**Phase 11 — Range API COMPLETE.** `range.rs` (~500 lines): `JsRange` struct with `Cell`-based interior mutability, `document.createRange()` registered on both main document (via `from_fn_ptr`) and secondary documents (via closure). Range methods: `setStart/End`, `setStart/EndBefore/After`, `deleteContents`, `extractContents`, `insertNode`, `surroundContents` with full MutationObserver integration (characterData + childList records). Getters: `startContainer`, `startOffset`, `endContainer`, `endOffset`. MutationObserver-characterData 16/16 PASS, MutationObserver-childList 26/26 PASS. **190/263 WPT tests passing (1 fail, 72 skip).**
+**Phase 12 — Shadow DOM (Core APIs) COMPLETE.** `ShadowRoot` variant added to `NodeData` with `ShadowRootMode` enum (Open/Closed). `Node.shadow_root` field links host elements to their shadow roots. Tree helpers: `create_shadow_root(mode, host)`, `shadow_including_root_of(id)` traverses through shadow boundaries. `ShadowRoot.prototype` inherits from `DocumentFragment.prototype` with `mode`/`host`/`innerHTML` accessors. `element.attachShadow({mode})` validates host tag per spec (article, aside, blockquote, body, div, footer, h1-h6, header, main, nav, p, section, span, or custom elements). `element.shadowRoot` getter returns ShadowRoot for open mode, null for closed. `getRootNode({composed: true})` traverses shadow boundaries. `isConnected` works for nodes inside shadow trees. rootNode.html 5/5 (was 4/5 FAIL), Node-isConnected-shadow-dom.html 2/2 (new PASS). **192/263 WPT tests passing (0 fail, 71 skip).**
+
+**Phase 11 — Range API COMPLETE.** `range.rs` (~500 lines): `JsRange` struct with `Cell`-based interior mutability, `document.createRange()` registered on both main document (via `from_fn_ptr`) and secondary documents (via closure). Range methods: `setStart/End`, `setStart/EndBefore/After`, `deleteContents`, `extractContents`, `insertNode`, `surroundContents` with full MutationObserver integration (characterData + childList records). Getters: `startContainer`, `startOffset`, `endContainer`, `endOffset`. MutationObserver-characterData 16/16 PASS, MutationObserver-childList 26/26 PASS.
 
 **Phase 10 — WPT Quick Wins COMPLETE.** Shared Attr identity cache (`attr_node_cache` in RealmState) ensures `getAttributeNode()`, `setAttributeNode()`, `attributes.getNamedItem()` all return same Attr object. NamedNodeMap caching (`nnm_cache`) ensures `el.attributes === el.attributes`. DFS-based `get_element_by_id()` (tree walk from document root, only finds connected nodes). `Attr.value` setter syncs to owning element. `setAttributeNS` namespace validation (5 NAMESPACE_ERR rules). `outerHTML` setter. Document-getElementById 18/18, ParentNode-querySelector-scope 4/4 unskipped. attributes.html verified 61/67 (re-skipped, 6 remain).
 
@@ -355,7 +357,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | relatedTarget.window.js | SKIP | requires relatedTarget |
 | remove-all-listeners.html | SKIP | requires full listener removal |
 | replace-event-listener-null-browsing-context-crash.html | PASS | |
-| shadow-relatedTarget.html | SKIP | requires Shadow DOM |
+| shadow-relatedTarget.html | SKIP | requires Shadow DOM event retargeting |
 | webkit-animation-end-event.html | SKIP | requires AnimationEvent |
 | webkit-animation-iteration-event.html | SKIP | requires AnimationEvent |
 | webkit-animation-start-event.html | SKIP | requires AnimationEvent |
@@ -474,7 +476,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | Node-constants.html | PASS | |
 | Node-contains.html | PASS | |
 | Node-insertBefore.html | PASS | |
-| Node-isConnected-shadow-dom.html | SKIP | requires Shadow DOM |
+| Node-isConnected-shadow-dom.html | PASS | 2/2 (Shadow DOM core APIs implemented) |
 | Node-isConnected.html | PASS | 2/2 |
 | Node-isEqualNode.html | PASS | 9/9 |
 | Node-isSameNode.html | PASS | |
@@ -531,18 +533,18 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | query-target-in-load-event.part.html | SKIP | content file for query-target-in-load-event |
 | querySelector-mixed-case.html | SKIP | requires SVG/MathML foreignObject namespace |
 | remove-and-adopt-thcrash.html | SKIP | requires window.open |
-| remove-from-shadow-host-and-adopt-into-iframe-ref.html | SKIP | requires Shadow DOM |
-| remove-from-shadow-host-and-adopt-into-iframe.html | SKIP | requires Shadow DOM |
+| remove-from-shadow-host-and-adopt-into-iframe-ref.html | SKIP | requires Shadow DOM adoption + iframe |
+| remove-from-shadow-host-and-adopt-into-iframe.html | SKIP | requires Shadow DOM adoption + iframe |
 | remove-unscopable.html | SKIP | requires onclick attribute handlers (@@unscopables added) |
-| rootNode.html | FAIL | 4/5; 1 Shadow DOM subtest (accepted — no Shadow DOM, only remaining FAIL) |
+| rootNode.html | PASS | 5/5 (Shadow DOM subtest now passing) |
 | svg-template-querySelector.html | PASS | unskipped — template.content works |
 
-#### Skip reasons summary (72 skipped tests)
+#### Skip reasons summary (71 skipped tests)
 
 | Category | Count | Tests |
 |----------|-------|-------|
 | Iframes / cross-document | 10 | Node-parentNode-iframe (content file), adoption.window.js, query-target-*, Element-getElementsByTagName-change-* (XML iframe), event-global-extra, etc. Basic iframe src loading + cross-realm iframes implemented; remaining need XML docs, requestAnimationFrame. |
-| Shadow DOM | 5 | Node-isConnected-shadow-dom, shadow-relatedTarget, remove-from-shadow-host-* |
+| Shadow DOM | 3 | shadow-relatedTarget (event retargeting), remove-from-shadow-host-* (adoption + iframe) |
 | Server-side substitution (.sub.) | 7 | EventListener-incumbent-global-*, Node-cloneNode-external-stylesheet, EventListener-addEventListener.sub |
 | window.event / window.onerror | 4 | event-global.html (Shadow DOM/XHR), event-global-extra (iframes), event-global-is-still-set-* (iframes) |
 | Activation behavior (remaining) | 1 | Event-dispatch-on-disabled-elements (CSS animations) |
@@ -558,7 +560,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 
 ### WPT Phases 5–6 — Implementation Targets
 
-Prioritized by tests-unblocked and cascading dependencies. Started at 147, now at 190 passing (Phase 5: MutationObserver + quick wins, Phase 6: click activation + on* handlers + MouseEvent, Phase 7: inline event handlers + promise_test, MO unskip A-C: microtask + incremental parsing + cross-realm iframes, Phase 8: location.hash + fragment activation + handleEvent TypeError + ErrorEvent dispatch, Phase 9: NamedNodeMap, Phase 10: shared Attr cache + DFS getElementById + namespace validation, Phase 11: Range API).
+Prioritized by tests-unblocked and cascading dependencies. Started at 147, now at 192 passing (Phase 5: MutationObserver + quick wins, Phase 6: click activation + on* handlers + MouseEvent, Phase 7: inline event handlers + promise_test, MO unskip A-C: microtask + incremental parsing + cross-realm iframes, Phase 8: location.hash + fragment activation + handleEvent TypeError + ErrorEvent dispatch, Phase 9: NamedNodeMap, Phase 10: shared Attr cache + DFS getElementById + namespace validation, Phase 11: Range API, Phase 12: Shadow DOM core APIs).
 
 **Tier 1: MutationObserver (3 agents, parallel) — DONE (+8 pass, +2 fail)**
 
@@ -593,7 +595,7 @@ Architecture: `mutation_observer.rs` (~940 lines). `MutationObserverState` in `R
 
 | Feature | Tests | Why deferred |
 |---------|-------|--------------|
-| Shadow DOM | 5 | Large feature, only 5 direct skips |
+| Shadow DOM (advanced) | 3 | Core APIs done (Phase 12); remaining need event retargeting, adoption+iframe |
 | XML documents | 9 | Niche, most tests also need other features |
 | Advanced iframes (XML docs, requestAnimationFrame) | 10 | Basic iframe src loading + cross-realm iframes done; remaining need XML iframe documents, requestAnimationFrame, HTTP redirects |
 | Server-side substitution (.sub.) | 7 | Most .sub. tests also need iframes/subframes |

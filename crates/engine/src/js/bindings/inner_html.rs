@@ -5,7 +5,7 @@ use boa_engine::{
 
 use crate::dom::NodeId;
 
-fn get_inner_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+pub(crate) fn get_inner_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     extract_element!(el, this, "innerHTML getter");
 
     let tree = el.tree.borrow();
@@ -13,7 +13,7 @@ fn get_inner_html(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
     Ok(JsValue::from(js_string!(html)))
 }
 
-fn set_inner_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+pub(crate) fn set_inner_html(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     extract_element!(el, this, "innerHTML setter");
 
     let html_string = args

@@ -625,6 +625,7 @@ mod tests {
                 | NodeData::Document
                 | NodeData::Doctype { .. }
                 | NodeData::DocumentFragment
+                | NodeData::ShadowRoot { .. }
                 | NodeData::Attr { .. } => {
                     assert!(
                         node.computed_style.is_none(),

@@ -1,4 +1,4 @@
-use super::node::{DomAttribute, Node, NodeData, NodeId};
+use super::node::{DomAttribute, Node, NodeData, NodeId, ShadowRootMode};
 
 #[derive(Debug)]
 pub struct DomTree {
@@ -24,6 +24,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         };
         DomTree {
             nodes: vec![root],
@@ -41,6 +42,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         };
         DomTree {
             nodes: vec![root],
@@ -68,6 +70,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -84,6 +87,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -170,7 +174,7 @@ impl DomTree {
             NodeData::Comment { content } => content.clone(),
             NodeData::ProcessingInstruction { data, .. } => data.clone(),
             NodeData::Attr { value, .. } => value.clone(),
-            NodeData::Element { .. } | NodeData::DocumentFragment => {
+            NodeData::Element { .. } | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
                 let mut result = String::new();
                 self.collect_descendant_text(node_id, &mut result);
                 result
@@ -188,7 +192,7 @@ impl DomTree {
         for &child_id in &self.nodes[node_id].children {
             match &self.nodes[child_id].data {
                 NodeData::Text { content } | NodeData::CDATASection { content } => result.push_str(content),
-                NodeData::Element { .. } | NodeData::DocumentFragment => {
+                NodeData::Element { .. } | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
                     self.collect_descendant_text(child_id, result);
                 }
                 // Skip Comment, Doctype, Document
@@ -238,6 +242,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -255,6 +260,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -274,6 +280,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -290,6 +297,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -304,8 +312,45 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
+    }
+
+    /// Allocates a new ShadowRoot node for the given host element.
+    /// The ShadowRoot is NOT a child of the host — it is referenced only via `Node.shadow_root`.
+    /// The ShadowRoot's parent is None (it is a separate tree root).
+    pub fn create_shadow_root(&mut self, mode: ShadowRootMode, host: NodeId) -> NodeId {
+        let id = self.nodes.len();
+        self.nodes.push(Node {
+            id,
+            data: NodeData::ShadowRoot { mode, host },
+            parent: None,
+            children: Vec::new(),
+            computed_style: None,
+            template_contents: None,
+            shadow_root: None,
+        });
+        self.nodes[host].shadow_root = Some(id);
+        id
+    }
+
+    /// Walk to the shadow-including root: like `root_of()` but when it reaches a ShadowRoot,
+    /// jumps to the host element and continues walking up.
+    pub fn shadow_including_root_of(&self, id: NodeId) -> NodeId {
+        let mut current = id;
+        loop {
+            // Walk to the root of the current tree
+            while let Some(parent) = self.nodes[current].parent {
+                current = parent;
+            }
+            // If we landed on a ShadowRoot, jump to its host and continue
+            if let NodeData::ShadowRoot { host, .. } = self.nodes[current].data {
+                current = host;
+            } else {
+                return current;
+            }
+        }
     }
 
     /// Allocates a new Element node with attributes (unattached) and returns its NodeId.
@@ -322,6 +367,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -340,6 +386,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -358,6 +405,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -373,6 +421,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
         id
     }
@@ -481,6 +530,7 @@ impl DomTree {
             children: Vec::new(),
             computed_style: None,
             template_contents: None,
+            shadow_root: None,
         });
 
         if deep {
@@ -591,7 +641,9 @@ impl DomTree {
             ),
             NodeData::CDATASection { content } => format!("<![CDATA[{}]]>", content),
             NodeData::Attr { .. } => String::new(), // Attr nodes are not serialized as children
-            NodeData::Document | NodeData::DocumentFragment => self.serialize_children_html(nid),
+            NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
+                self.serialize_children_html(nid)
+            }
         }
     }
 
@@ -628,7 +680,7 @@ impl DomTree {
             } => self.create_doctype(name, public_id, system_id),
             NodeData::CDATASection { content } => self.create_cdata_section(content),
             NodeData::Document => panic!("cannot import Document node"),
-            NodeData::DocumentFragment => self.create_document_fragment(),
+            NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => self.create_document_fragment(),
         };
         for &child_id in &src_node.children {
             let new_child = self.import_subtree(source, child_id);
@@ -925,7 +977,7 @@ impl DomTree {
             NodeData::Comment { .. } => 8,
             NodeData::Document => 9,
             NodeData::Doctype { .. } => 10,
-            NodeData::DocumentFragment => 11,
+            NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => 11,
         }
     }
 
@@ -1249,7 +1301,7 @@ impl DomTree {
                 }
                 None
             }
-            NodeData::Doctype { .. } | NodeData::DocumentFragment => None,
+            NodeData::Doctype { .. } | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => None,
             NodeData::Attr { .. } => {
                 // Attr nodes: delegate to ownerElement.
                 // In this implementation, Attr nodes don't track their ownerElement,
@@ -1362,7 +1414,7 @@ impl DomTree {
                 }
                 None
             }
-            NodeData::Doctype { .. } | NodeData::DocumentFragment => None,
+            NodeData::Doctype { .. } | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => None,
             NodeData::Attr { .. } => {
                 // Delegate to ownerElement if known (currently always None)
                 if let Some(parent_id) = node.parent {

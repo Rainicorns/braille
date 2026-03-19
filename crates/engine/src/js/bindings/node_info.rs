@@ -4,7 +4,7 @@ use boa_engine::{
 };
 
 use super::element::get_or_create_js_element;
-use crate::dom::{NodeData, NodeId};
+use crate::dom::NodeData;
 use crate::js::realm_state;
 
 // ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@ fn get_node_type(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
         NodeData::Comment { .. } => 8,
         NodeData::Document => 9,
         NodeData::Doctype { .. } => 10,
-        NodeData::DocumentFragment => 11,
+        NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => 11,
     };
 
     Ok(JsValue::from(node_type))
@@ -68,7 +68,7 @@ fn get_node_name(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRes
         NodeData::Document => "#document".to_string(),
         NodeData::Doctype { name, .. } => name.clone(),
         NodeData::ProcessingInstruction { target, .. } => target.clone(),
-        NodeData::DocumentFragment => "#document-fragment".to_string(),
+        NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => "#document-fragment".to_string(),
     };
 
     Ok(JsValue::from(js_string!(node_name)))
@@ -112,9 +112,11 @@ fn get_node_value(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsRe
         NodeData::Comment { content } => Ok(JsValue::from(js_string!(content.clone()))),
         NodeData::ProcessingInstruction { data, .. } => Ok(JsValue::from(js_string!(data.clone()))),
         NodeData::Attr { value, .. } => Ok(JsValue::from(js_string!(value.clone()))),
-        NodeData::Element { .. } | NodeData::Document | NodeData::Doctype { .. } | NodeData::DocumentFragment => {
-            Ok(JsValue::null())
-        }
+        NodeData::Element { .. }
+        | NodeData::Document
+        | NodeData::Doctype { .. }
+        | NodeData::DocumentFragment
+        | NodeData::ShadowRoot { .. } => Ok(JsValue::null()),
     }
 }
 
@@ -215,17 +217,9 @@ fn get_is_connected(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> Js
     extract_element!(el, this, "isConnected getter");
 
     let tree = el.tree.borrow();
-    let mut current: NodeId = el.node_id;
-    loop {
-        let node = tree.get_node(current);
-        if matches!(node.data, NodeData::Document) {
-            return Ok(JsValue::from(true));
-        }
-        match node.parent {
-            Some(parent_id) => current = parent_id,
-            None => return Ok(JsValue::from(false)),
-        }
-    }
+    // Use shadow_including_root_of to traverse through shadow boundaries
+    let root = tree.shadow_including_root_of(el.node_id);
+    Ok(JsValue::from(matches!(tree.get_node(root).data, NodeData::Document)))
 }
 
 /// Native getter for element.namespaceURI
