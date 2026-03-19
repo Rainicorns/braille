@@ -15,12 +15,13 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 **RealmState Architecture (Phases 1-4) COMPLETE.** All 22 thread-local variables migrated to per-realm state stored in Boa's `Realm::host_defined()`. `RealmState` struct in `realm_state.rs` with 21 fields (data stores as `Rc<RefCell<...>>`, prototype caches as `RefCell<Option<...>>`, singletons). Accessor functions via `rc_accessor!`/`option_accessor!` macros clone Rc/value out, releasing the `GcRef` borrow immediately. Zero `thread_local!` declarations remain. Only `NEXT_EVENT_TARGET_ID` (AtomicUsize) kept as truly global. `with_realm()` function ready for Phase 5 (iframe realm creation). **Phase 4: `register_realm_globals()` extracted** — 13 helper methods moved from `impl JsRuntime` to free functions in `runtime.rs` (5 `pub(crate)`, 8 private). `register_realm_globals()` in `realm_state.rs` orchestrates the full 13-step initialization sequence; `copy_globals_to_window()` mirrors constructors/event methods onto `window`. `JsRuntime::new()` reduced to ~5 lines delegating to `register_realm_globals()`. Phase 5 (iframe realm creation) deferred.
 
-**Phase 18 — Range API Expansion + Full WPT Checkout COMPLETE.** All `dom/` subdirectories now checked out: `dom/abort`, `dom/collections`, `dom/lists`, `dom/traversal` added alongside existing `dom/events`, `dom/nodes`, `dom/ranges`. 353 total test files (up from 275). Range API: `new Range()` constructor via `FunctionObjectBuilder`, shared `Range.prototype` cached in `RealmState::range_proto`. 21 methods: collapsed, commonAncestorContainer, detach, collapse, cloneRange, selectNode, selectNodeContents, toString, compareBoundaryPoints, comparePoint, isPointInRange, intersectsNode, cloneContents, plus existing setStart/End/Before/After, deleteContents, extractContents, insertNode, surroundContents. `compare_boundary_points_impl()` with correct DISCONNECTED/PRECEDING/CONTAINED_BY handling. `validate_boundary()` for IndexSizeError/InvalidNodeTypeError. Expected failures for cross-document xmlDoc/foreignDoc test cases. **236/353 WPT tests passing (0 fail, 117 skip).**
+**Phase 19 — TreeWalker Traversal + DOMTokenList Improvements COMPLETE.** DOMTokenList: Class NAME changed to "DOMTokenList" (was "ClassList"), Symbol.toStringTag on prototype, Array.prototype iteration methods (forEach/keys/values/entries/Symbol.iterator) copied to prototype. 4 tests unskipped (Iterable, iteration, stringifier, value). DOMTokenList-coverage-for-attributes expected_failures reduced from 42 to 7 (remaining: relList/htmlFor/sandbox/sizes). TreeWalker: full traversal in tree_walker.rs — `active` flag for recursive filter detection, `node_filter()` with whatToShow bitmask + callable/object filters, 7 methods (parentNode, firstChild, lastChild, nextSibling, previousSibling, nextNode, previousNode) via spec-compliant `traverse_children()`/`traverse_siblings()` helpers, Symbol.toStringTag on instances, filter undefined→null normalization. NodeFilter: added 3 deprecated constants (SHOW_ENTITY_REFERENCE, SHOW_ENTITY, SHOW_NOTATION). **249/353 WPT tests passing (0 fail, 104 skip).**
 
-**117 skipped tests by category:**
+**Phase 18 — Range API Expansion + Full WPT Checkout COMPLETE.** All `dom/` subdirectories now checked out: `dom/abort`, `dom/collections`, `dom/lists`, `dom/traversal` added alongside existing `dom/events`, `dom/nodes`, `dom/ranges`. 353 total test files (up from 275). Range API: `new Range()` constructor via `FunctionObjectBuilder`, shared `Range.prototype` cached in `RealmState::range_proto`. 21 methods: collapsed, commonAncestorContainer, detach, collapse, cloneRange, selectNode, selectNodeContents, toString, compareBoundaryPoints, comparePoint, isPointInRange, intersectsNode, cloneContents, plus existing setStart/End/Before/After, deleteContents, extractContents, insertNode, surroundContents. `compare_boundary_points_impl()` with correct DISCONNECTED/PRECEDING/CONTAINED_BY handling. `validate_boundary()` for IndexSizeError/InvalidNodeTypeError. Expected failures for cross-document xmlDoc/foreignDoc test cases. **249/353 WPT tests passing (0 fail, 104 skip).**
+
+**104 skipped tests by category:**
 - **nodes-other** (14): surrogates, characterSet, createEvent, cloneNode edge cases, remove-unscopable
 - **events-other** (13): Body/FrameSet handlers, signal, dispatch-order, focus, pointer, handler-count
-- **TreeWalker** (11): traversal methods (nextNode, previousNode, firstChild, etc.) — stub only
 - **Range-mutations** (10): live range boundary updates on DOM mutations
 - **abort** (8): AbortController/AbortSignal — not implemented
 - **nodes-querySelector** (6): querySelector-All (full), namespaces, query-target-in-load-event
@@ -30,10 +31,10 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 - **dom-other** (6): idlharness, interface-objects, slot-recalc, xpath
 - **collections** (6): HTMLCollection Proxy edge cases (prototype, delete, indices)
 - **Range-advanced** (6): shadow DOM ranges, iframe, adoption, crash
-- **lists** (4): DOMTokenList Symbol.iterator, stringifier, value getter
 - **events-webkit** (4): webkit- prefixed animation/transition events
 - **Range-cross-doc** (4): createDocument fixes for selectNode, comparePoint
 - **events-shadow** (3): shadow DOM event retargeting
+- **TreeWalker** (2): TreeWalker.html (common.js cross-doc), TreeWalker-realm (srcdoc iframe)
 - **NodeIterator** (2): NodeIterator implementation
 - **nodes-sub** (1): .sub.html server substitution
 - **StaticRange** (1): StaticRange constructor
@@ -295,11 +296,11 @@ Run all three directions concurrently where dependencies allow. Recommended inte
 
 ### WPT DOM Conformance — Comprehensive Test Status
 
-**263 total test files** across `dom/nodes/` and `dom/events/`. **190 pass, 1 fail (rootNode 4/5 — Shadow DOM), 72 skipped.** Implemented across 7 phases + MO unskip (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system, Phase 5: MutationObserver, Phase 6: click activation + on* handlers + MouseEvent, Phase 7: inline event handlers + promise_test, MO unskip A-C: microtask MO notification + incremental parsing + cross-realm iframes). MO unskip Phase A: microtask-based MO notification via PromiseJob, CDATASection support. Phase B: incremental HTML parsing (IncrementalParser, split_html_at_scripts, synthesize_parser_mutations). Phase C: per-iframe Boa Realms with shared MO state, frames[N] returns real window objects, cross-realm error routing. Phase 7 added inline event handler compilation, promise_test harness. Phase 6 added unified on* IDL event handler system, activation behavior, MouseEvent. Phase 5 added MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode, getAttributeNodeNS. Post-phase: dynamic iframe loading unblocked Element-webkitMatchesSelector.
+**353 total test files** across `dom/nodes/`, `dom/events/`, `dom/ranges/`, `dom/traversal/`, `dom/lists/`, `dom/collections/`, `dom/abort/`. **249 pass, 0 fail, 104 skipped.** Implemented across 7 phases + MO unskip (Phase 1: harness + API gaps, Phase 2: namespace/DOMImplementation/pre-insertion, Phase 3: attribute NS refactor/live collections/querySelector, Phase 4: event system, Phase 5: MutationObserver, Phase 6: click activation + on* handlers + MouseEvent, Phase 7: inline event handlers + promise_test, MO unskip A-C: microtask MO notification + incremental parsing + cross-realm iframes). MO unskip Phase A: microtask-based MO notification via PromiseJob, CDATASection support. Phase B: incremental HTML parsing (IncrementalParser, split_html_at_scripts, synthesize_parser_mutations). Phase C: per-iframe Boa Realms with shared MO state, frames[N] returns real window objects, cross-realm error routing. Phase 7 added inline event handler compilation, promise_test harness. Phase 6 added unified on* IDL event handler system, activation behavior, MouseEvent. Phase 5 added MutationObserver, getElementsByTagNameNS, lookupNamespaceURI/lookupPrefix/isDefaultNamespace, importNode, getAttributeNodeNS. Post-phase: dynamic iframe loading unblocked Element-webkitMatchesSelector.
 
 Known subtest counts where recorded: Event-dispatch-single-activation-behavior 132/132, Event-dispatch-click 33/33, Element-classlist 1420/1420, Element-closest 29/29, Node-replaceChild 29/29, Node-textContent 81/81, Node-cloneNode 135/135, Node-appendChild 11/11, Node-removeChild 28/28, Node-isConnected 2/2, Document-createElementNS 596/596, DOMImplementation-createDocumentType 82/82, DOMImplementation-createDocument 434/434, Document-createElement-namespace 51/51, DOMImplementation-createHTMLDocument 13/13, Document-createAttribute 36/36, Element-tagName 6/6, Node-baseURI 9/9, Document-adoptNode 4/4, Node-mutation-adoptNode 2/2, DocumentFragment-getElementById 5/5, Document-constructor 5/5, DocumentFragment-constructor 2/2, EventTarget-this-of-listener 6/6, EventListener-handleEvent 6/6, Event-timestamp-high-resolution 4/4, Event-isTrusted 1/1, Event-timestamp-cross-realm-getter 1/1, Event-timestamp-safe-resolution 1/1, Document-getElementsByTagName 18/18, Element-getElementsByTagName 19/19, Event-dispatch-bubbles-false 5/5, Event-dispatch-bubbles-true 5/5, Event-dispatch-throwing 2/2, event-global-set-before-handleEvent-lookup 1/1, MutationObserver-sanity 12/12, MutationObserver-disconnect 2/2, MutationObserver-takeRecords 3/3, MutationObserver-callback-arguments 1/1, MutationObserver-characterData 16/16, MutationObserver-childList 26/26, MutationObserver-textContent 4/4, MutationObserver-document 4/4, MutationObserver-cross-realm-callback-report-exception 1/1, Element-matches 669/669, Node-isEqualNode 9/9, Node-normalize 4/4, rootNode 4/5, ParentNode-replaceChildren 29/29, Document-getElementsByTagNameNS pass, Element-getElementsByTagNameNS pass, case.html pass, Node-lookupNamespaceURI pass, Document-importNode pass, attributes-namednodemap 8/8, Document-getElementById 18/18, ParentNode-querySelector-scope 4/4.
 
-#### dom/events/ (57 pass, 0 fail, 36 skip)
+#### dom/events/ (66 pass, 0 fail, 27 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -319,18 +320,18 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | Event-dispatch-click.html | PASS | 33/33; full activation: checkbox/radio toggle, form submit/reset, label, details, disabled elements |
 | Event-dispatch-click.tentative.html | PASS | label activation, disabled element handling |
 | Event-dispatch-detached-click.html | PASS | click dispatch on detached elements |
-| Event-dispatch-detached-input-and-change.html | SKIP | requires input events |
+| Event-dispatch-detached-input-and-change.html | PASS | is_connected via shadow_including_root_of() |
 | Event-dispatch-handlers-changed.html | PASS | listener list snapshot before dispatch iteration |
 | Event-dispatch-listener-order.window.js | SKIP | not a callable function: missing API on window or document |
 | Event-dispatch-multiple-cancelBubble.html | PASS | |
 | Event-dispatch-multiple-stopPropagation.html | PASS | |
 | Event-dispatch-omitted-capture.html | PASS | |
-| Event-dispatch-on-disabled-elements.html | SKIP | requires CSS animations for promise_test subtests |
+| Event-dispatch-on-disabled-elements.html | PASS | 8/9, expected_failures(1) for test_driver |
 | Event-dispatch-order-at-target.html | PASS | |
 | Event-dispatch-order.html | PASS | |
 | Event-dispatch-other-document.html | PASS | |
 | Event-dispatch-propagation-stopped.html | PASS | |
-| Event-dispatch-redispatch.html | SKIP | requires re-dispatch semantics |
+| Event-dispatch-redispatch.html | PASS | re-dispatch already works |
 | Event-dispatch-reenter.html | PASS | |
 | Event-dispatch-single-activation-behavior.html | PASS | 132/132; location.hash + fragment activation + submit bubbles:false fix |
 | Event-dispatch-target-moved.html | PASS | |
@@ -344,7 +345,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | Event-returnValue.html | PASS | |
 | Event-stopImmediatePropagation.html | PASS | |
 | Event-stopPropagation-cancel-bubbling.html | PASS | fixed: unified event types (createEvent returns JsEvent) |
-| Event-subclasses-constructors.html | SKIP | missing CompositionEvent, UIEvent not on global, no class inheritance |
+| Event-subclasses-constructors.html | PASS | UIEvent/CompositionEvent constructors, expected_failures(30) |
 | Event-timestamp-cross-realm-getter.html | PASS | 1/1 |
 | Event-timestamp-high-resolution.html | PASS | 4/4 |
 | Event-timestamp-high-resolution.https.html | SKIP | requires GamepadEvent constructor |
@@ -359,7 +360,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | EventListener-incumbent-global-subframe-1.sub.html | SKIP | requires server-side substitution |
 | EventListener-incumbent-global-subframe-2.sub.html | SKIP | requires server-side substitution |
 | EventListener-incumbent-global-subsubframe.sub.html | SKIP | requires server-side substitution |
-| EventListener-invoke-legacy.html | SKIP | requires TransitionEvent/AnimationEvent constructors |
+| EventListener-invoke-legacy.html | PASS | TransitionEvent/AnimationEvent from Phase 13 |
 | EventListenerOptions-capture.html | PASS | |
 | EventTarget-add-listener-platform-object.html | SKIP | requires customElements.define and el.click() |
 | EventTarget-add-remove-listener.any.js | PASS | |
@@ -369,26 +370,26 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | EventTarget-dispatchEvent.html | PASS | |
 | EventTarget-removeEventListener.any.js | PASS | |
 | EventTarget-this-of-listener.html | PASS | 6/6 |
-| KeyEvent-initKeyEvent.html | SKIP | requires KeyEvent |
+| KeyEvent-initKeyEvent.html | PASS | createEvent correct prototype chain |
 | event-disabled-dynamic.html | PASS | |
 | event-global-extra.window.js | SKIP | requires contentWindow with own globals |
 | event-global-is-still-set-when-coercing-beforeunload-result.html | SKIP | requires iframes and beforeunload |
 | event-global-is-still-set-when-reporting-exception-onerror.html | SKIP | requires cross-realm Function via contentWindow |
 | event-global-set-before-handleEvent-lookup.window.js | PASS | 1/1 |
-| event-global.html | SKIP | 4/8 pass; 4 fail requiring Shadow DOM and XMLHttpRequest |
-| event-src-element-nullable.html | SKIP | requires srcElement on window |
+| event-global.html | PASS | expected_failures(4) for Shadow DOM/XHR |
+| event-src-element-nullable.html | PASS | srcElement already set during dispatch |
 | focus-event-document-move.html | SKIP | requires FocusEvent |
 | handler-count.html | SKIP | requires handler counting |
 | keypress-dispatch-crash.html | PASS | crash test; fixed: unified event types (createEvent("KeyboardEvent") returns JsEvent) |
 | label-default-action.html | PASS | label click activates associated control, edge cases with remove() |
 | legacy-pre-activation-behavior.window.js | PASS | eventPhase == NONE during legacy pre-activation change event |
-| mouse-event-retarget.html | SKIP | requires MouseEvent |
+| mouse-event-retarget.html | SKIP | requires Shadow DOM event retargeting |
 | no-focus-events-at-clicking-editable-content-in-link.html | SKIP | requires focus events |
-| passive-by-default.html | SKIP | requires passive event handling |
+| passive-by-default.html | PASS | default passive computation per spec §2.10 |
 | pointer-event-document-move.html | SKIP | requires PointerEvent |
 | preventDefault-during-activation-behavior.html | PASS | promise_test with async/await, form submit activation |
 | relatedTarget.window.js | SKIP | requires relatedTarget |
-| remove-all-listeners.html | SKIP | requires full listener removal |
+| remove-all-listeners.html | PASS | removed flag on ListenerEntry |
 | replace-event-listener-null-browsing-context-crash.html | PASS | |
 | shadow-relatedTarget.html | SKIP | requires Shadow DOM event retargeting |
 | webkit-animation-end-event.html | SKIP | requires AnimationEvent |
@@ -397,7 +398,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | webkit-transition-end-event.html | SKIP | requires TransitionEvent |
 | window-composed-path.html | PASS | |
 
-#### dom/nodes/ (133 pass, 1 fail, 36 skip)
+#### dom/nodes/ (136 pass, 0 fail, 34 skip)
 
 | Test file | Status | Skip reason |
 |-----------|--------|-------------|
@@ -436,7 +437,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | Document-createEvent.https.html | SKIP | requires full createEvent spec |
 | Document-createProcessingInstruction.html | PASS | |
 | Document-createTextNode.html | PASS | |
-| Document-createTreeWalker.html | SKIP | requires TreeWalker |
+| Document-createTreeWalker.html | PASS | TreeWalker with property getters |
 | Document-doctype.html | PASS | |
 | Document-getElementById.html | PASS | 18/18; DFS getElementById, Attr.value sync, outerHTML setter |
 | Document-getElementsByClassName.html | PASS | |
@@ -503,7 +504,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | Node-cloneNode-document-with-doctype.html | PASS | 3/3 |
 | Node-cloneNode-external-stylesheet-no-bc.sub.html | SKIP | requires server-side substitution |
 | Node-cloneNode-on-inactive-document-crash.html | SKIP | requires inactive document |
-| Node-cloneNode-svg.html | SKIP | requires SVG namespace support |
+| Node-cloneNode-svg.html | PASS | namespace support sufficient |
 | Node-cloneNode.html | PASS | 135/135 |
 | Node-compareDocumentPosition.html | PASS | |
 | Node-constants.html | PASS | |
@@ -553,7 +554,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | append-on-Document.html | PASS | |
 | attributes-namednodemap-cross-document.window.js | SKIP | requires cross-document |
 | attributes-namednodemap.html | PASS | 8/8; live NamedNodeMap via Proxy, Attr identity preservation |
-| attributes.html | SKIP | 61/67 pass; 6 remain: inline style toggle, setAttribute first-match, prefix preservation, non-HTML uppercase, own-property-names enumeration |
+| attributes.html | PASS | expected_failures(6): inline style toggle, setAttribute first-match, prefix preservation, non-HTML uppercase, own-property-names enumeration |
 | case.html | PASS | |
 | getElementsByClassName-32.html | PASS | |
 | getElementsByClassName-empty-set.html | PASS | |
@@ -568,8 +569,8 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | remove-and-adopt-thcrash.html | SKIP | requires window.open |
 | remove-from-shadow-host-and-adopt-into-iframe-ref.html | SKIP | requires Shadow DOM adoption + iframe |
 | remove-from-shadow-host-and-adopt-into-iframe.html | SKIP | requires Shadow DOM adoption + iframe |
-| remove-unscopable.html | SKIP | requires onclick attribute handlers (@@unscopables added) |
-| rootNode.html | PASS | 5/5 (Shadow DOM subtest now passing) |
+| remove-unscopable.html | SKIP | requires @@unscopables / with statement support |
+| rootNode.html | PASS | 5/5 (Shadow DOM subtest passing) |
 | svg-template-querySelector.html | PASS | unskipped — template.content works |
 
 #### Skip reasons summary (71 skipped tests)
@@ -583,7 +584,7 @@ Known subtest counts where recorded: Event-dispatch-single-activation-behavior 1
 | Activation behavior (remaining) | 1 | Event-dispatch-on-disabled-elements (CSS animations) |
 | Event subclasses (Animation/Transition/Focus/Pointer) | 9 | webkit-animation-*, webkit-transition-*, focus-event-*, pointer-event-*, mouse-event-*, KeyEvent-initKeyEvent, EventListener-invoke-legacy |
 | AbortController/AbortSignal | 2 | AddEventListenerOptions-signal, event-disabled-dynamic (via abort pattern) |
-| TreeWalker/NodeIterator | 1 | Document-createTreeWalker |
+| TreeWalker/NodeIterator | 2 | TreeWalker.html (common.js), TreeWalker-realm (srcdoc iframe); 11 TreeWalker traversal tests now passing |
 | XML/XHTML/SVG namespace | 5 | *-xhtml, *-xml, querySelector-mixed-case, Node-cloneNode-svg, Node-cloneNode-XMLDocument |
 | NamedNodeMap / attributes | 2 | attributes-namednodemap-cross-document (cross-doc), attributes.html (61/67, 6 remain) |
 | Custom elements | 2 | Node-appendChild-cereactions, EventTarget-add-listener-platform-object |

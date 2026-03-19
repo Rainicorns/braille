@@ -400,10 +400,8 @@ fn expected_failures(rel_path: &str) -> usize {
         ("Event-subclasses", 30),
         // HTMLCollection edge cases — Proxy set strictness
         ("HTMLCollection-own-props", 2),
-        // DOMTokenList — classList is Object not DOMTokenList class
-        ("DOMTokenList-coverage-for-attributes", 42),
-        // NodeFilter — missing SHOW_ENTITY_REFERENCE (deprecated constant)
-        ("NodeFilter-constants", 1),
+        // DOMTokenList — 7 failures: relList, htmlFor, sandbox, sizes not implemented
+        ("DOMTokenList-coverage-for-attributes", 7),
         // Range tests with cross-document failures (xmlDoc/foreignDoc ranges)
         ("Range-collapse.html", 9),
         ("Range-cloneRange.html", 3),
@@ -491,32 +489,9 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
             "HTMLCollection-supported-property-names",
             "requires getOwnPropertyDescriptor on names",
         ),
-        // DOMTokenList edge cases
-        ("DOMTokenList-Iterable", "requires DOMTokenList Symbol.iterator"),
-        ("DOMTokenList-iteration", "requires DOMTokenList Symbol.iterator"),
-        ("DOMTokenList-stringifier", "requires DOMTokenList toString/valueOf"),
-        ("DOMTokenList-value", "requires DOMTokenList.value getter"),
-        // TreeWalker traversal (stub methods only)
-        ("TreeWalker-basic", "requires TreeWalker traversal methods"),
-        ("TreeWalker-currentNode", "requires TreeWalker traversal methods"),
-        (
-            "TreeWalker-previousNodeLastChildReject",
-            "requires TreeWalker traversal methods",
-        ),
-        (
-            "TreeWalker-previousSiblingLastChildSkip",
-            "requires TreeWalker traversal methods",
-        ),
-        ("TreeWalker-traversal-reject", "requires TreeWalker traversal methods"),
-        ("TreeWalker-traversal-skip-most", "requires TreeWalker traversal methods"),
-        ("TreeWalker-traversal-skip.html", "requires TreeWalker traversal methods"),
-        (
-            "TreeWalker-walking-outside-a-tree",
-            "requires TreeWalker traversal methods",
-        ),
-        ("TreeWalker-acceptNode-filter.html", "requires TreeWalker traversal methods"),
-        ("TreeWalker-realm", "requires TreeWalker traversal methods"),
-        ("TreeWalker.html", "requires TreeWalker full implementation"),
+        // TreeWalker — requires common.js cross-document or srcdoc iframes
+        ("TreeWalker-realm", "requires srcdoc iframe support"),
+        ("TreeWalker.html", "requires common.js cross-document nodes"),
         // Attr node — now implemented (unskip)
         // ("Attr-", "requires Attr node interface"),
         // Workers

@@ -379,7 +379,7 @@ impl JsClassList {
 }
 
 impl Class for JsClassList {
-    const NAME: &'static str = "ClassList";
+    const NAME: &'static str = "DOMTokenList";
     const LENGTH: usize = 0;
 
     fn data_constructor(_new_target: &JsValue, _args: &[JsValue], _context: &mut Context) -> JsResult<Self> {
@@ -443,4 +443,42 @@ impl Class for JsClassList {
 /// you register the other DOM classes (e.g., in document.rs).
 pub(crate) fn register_class_list_class(context: &mut Context) {
     context.register_global_class::<JsClassList>().unwrap();
+
+    // Copy Array.prototype iteration methods onto DOMTokenList.prototype
+    // per spec: DOMTokenList.prototype.forEach === Array.prototype.forEach, etc.
+    let dtl_proto = context
+        .global_object()
+        .get(js_string!("DOMTokenList"), context)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .get(js_string!("prototype"), context)
+        .unwrap();
+    context
+        .register_global_property(js_string!("__braille_dtl_proto"), dtl_proto, Attribute::all())
+        .expect("failed to register temp dtl proto");
+
+    context
+        .eval(boa_engine::Source::from_bytes(
+            r#"
+            (function() {
+                var proto = __braille_dtl_proto;
+                proto.forEach = Array.prototype.forEach;
+                proto.keys = Array.prototype.keys;
+                if (Array.prototype.values) {
+                    proto.values = Array.prototype.values;
+                }
+                proto.entries = Array.prototype.entries;
+                proto[Symbol.iterator] = Array.prototype[Symbol.iterator];
+                Object.defineProperty(proto, Symbol.toStringTag, {
+                    value: "DOMTokenList",
+                    writable: false,
+                    enumerable: false,
+                    configurable: true
+                });
+                delete globalThis.__braille_dtl_proto;
+            })();
+            "#,
+        ))
+        .expect("failed to set up DOMTokenList.prototype iteration methods");
 }
