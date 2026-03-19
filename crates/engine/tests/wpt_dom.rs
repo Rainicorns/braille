@@ -420,7 +420,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("xhtml", "requires XHTML"),
         // NodeIterator / TreeWalker
         ("NodeIterator", "requires NodeIterator"),
-        ("TreeWalker", "requires TreeWalker"),
+        // TreeWalker — createTreeWalker now implemented
+        // ("TreeWalker", "requires TreeWalker"),
         // Attr node — now implemented (unskip)
         // ("Attr-", "requires Attr node interface"),
         // Workers
@@ -623,8 +624,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // remove-unscopable (@@unscopables added, test requires onclick attribute handlers)
         ("remove-unscopable", "requires onclick attribute handlers"),
         // Element-webkitMatchesSelector — unskipped (dynamic iframe loading now supported)
-        // KeyEvent-initKeyEvent (legacy)
-        ("KeyEvent-initKeyEvent", "requires KeyEvent"),
+        // KeyEvent-initKeyEvent — now passing (createEvent("KeyboardEvent") sets correct prototype)
+        // ("KeyEvent-initKeyEvent", "requires KeyEvent"),
         // node-appendchild-crash — now passing (window.onload implemented)
         // append-on-Document, prepend-on-Document — now enabled (DOMImplementation available)
         // rootNode — now implemented
@@ -650,8 +651,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Event-dispatch-target-moved", "requires live dispatch mutation"),
         // ("Event-dispatch-target-removed", "requires live dispatch mutation"),
         // Event-dispatch-handlers-changed — fixed: scoped downcast_ref in dispatch_event to drop borrow before callbacks
-        // Event-dispatch-detached-input-and-change
-        ("Event-dispatch-detached-input-and-change", "requires input events"),
+        // Event-dispatch-detached-input-and-change — now passing (is_connected check in activation)
+        // ("Event-dispatch-detached-input-and-change", "requires input events"),
         // focus/pointer/mouse events (need specific event types)
         ("focus-event", "requires FocusEvent"),
         ("pointer-event", "requires PointerEvent"),
@@ -667,15 +668,15 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // webkit animation/transition events
         ("webkit-animation", "requires AnimationEvent"),
         ("webkit-transition", "requires TransitionEvent"),
-        // event-src-element-nullable
-        ("event-src-element-nullable", "requires srcElement on window"),
+        // event-src-element-nullable — now passing (srcElement set during dispatch)
+        // ("event-src-element-nullable", "requires srcElement on window"),
         // Event-dispatch-redispatch
         ("Event-dispatch-redispatch", "requires re-dispatch semantics"),
         // replace-event-listener-null-browsing-context-crash
         // unskipped: basic iframe support added
         // ("replace-event-listener-null-browsing-context", "requires browsing context"),
-        // remove-all-listeners
-        ("remove-all-listeners", "requires full listener removal"),
+        // remove-all-listeners — now passing (removed flag tracks mid-dispatch removal)
+        // ("remove-all-listeners", "requires full listener removal"),
         // passive-by-default
         ("passive-by-default", "requires passive event handling"),
         // no-focus-events-at-clicking-editable

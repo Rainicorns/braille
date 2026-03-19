@@ -221,9 +221,11 @@ pub(crate) fn run_post_activation(tree: &Rc<RefCell<DomTree>>, node_id: NodeId, 
         "input" => {
             match input_type.as_str() {
                 "checkbox" | "radio" => {
-                    // Fire 'input' and 'change' events
-                    fire_simple_event(tree, node_id, "input", true, false, ctx);
-                    fire_simple_event(tree, node_id, "change", true, false, ctx);
+                    // Fire 'input' and 'change' events only if connected (per spec)
+                    if is_connected(&tree.borrow(), node_id) {
+                        fire_simple_event(tree, node_id, "input", true, false, ctx);
+                        fire_simple_event(tree, node_id, "change", true, false, ctx);
+                    }
                 }
                 "submit" | "image" => {
                     // Drop tree borrow before fire_simple_event (which re-enters dispatch)
@@ -354,17 +356,10 @@ fn fire_simple_event(
     }
 }
 
-/// Check if a node is connected to the document (has a Document ancestor).
+/// Check if a node is connected to the document (shadow-including root is Document).
 fn is_connected(tree: &DomTree, node_id: NodeId) -> bool {
-    let mut current = Some(node_id);
-    while let Some(nid) = current {
-        let node = tree.get_node(nid);
-        if matches!(node.data, NodeData::Document) {
-            return true;
-        }
-        current = node.parent;
-    }
-    false
+    let root = tree.shadow_including_root_of(node_id);
+    matches!(tree.get_node(root).data, NodeData::Document)
 }
 
 /// Find an ancestor `<form>` element that is connected to the document.

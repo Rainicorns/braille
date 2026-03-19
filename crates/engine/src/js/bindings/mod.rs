@@ -22,6 +22,7 @@ pub(crate) mod range;
 pub(crate) mod select_props;
 pub(crate) mod style;
 pub(crate) mod traversal;
+pub(crate) mod tree_walker;
 pub(crate) mod window;
 
 pub(crate) use document::register_document;

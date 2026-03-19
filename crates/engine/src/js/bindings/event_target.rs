@@ -1,4 +1,6 @@
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use boa_engine::{
@@ -25,6 +27,9 @@ pub(crate) struct ListenerEntry {
     pub(crate) capture: bool,
     pub(crate) once: bool,
     pub(crate) passive: Option<bool>,
+    /// Set to true when removeEventListener removes this entry during dispatch.
+    /// Snapshot-based dispatch loops check this flag before invoking.
+    pub(crate) removed: Rc<Cell<bool>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +136,7 @@ impl JsEventTarget {
                     capture,
                     once,
                     passive,
+                    removed: Rc::new(Cell::new(false)),
                 });
             }
         }
@@ -184,7 +190,12 @@ impl JsEventTarget {
             let mut map = listeners.borrow_mut();
             if let Some(entries) = map.get_mut(&(0usize, id)) {
                 entries.retain(|entry| {
-                    !(entry.event_type == event_type && entry.capture == capture && entry.callback == callback)
+                    if entry.event_type == event_type && entry.capture == capture && entry.callback == callback {
+                        entry.removed.set(true);
+                        false
+                    } else {
+                        true
+                    }
                 });
                 if entries.is_empty() {
                     map.remove(&(0usize, id));

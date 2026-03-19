@@ -543,7 +543,10 @@ fn register_realm_globals_inner(
     // 12. composedPath on Event.prototype and CustomEvent.prototype
     runtime::register_composed_path(context);
 
-    // 13. Copy globals to window (EventTarget, constructors, event methods)
+    // 13. NodeFilter global with constants
+    runtime::register_node_filter(context);
+
+    // 14. Copy globals to window (EventTarget, constructors, event methods)
     copy_globals_to_window(context);
 }
 
@@ -640,10 +643,13 @@ fn copy_globals_to_window(context: &mut Context) {
         "KeyboardEvent",
         "WheelEvent",
         "FocusEvent",
+        "AnimationEvent",
+        "TransitionEvent",
         "Event",
         "CustomEvent",
         "MutationObserver",
         "MutationRecord",
+        "NodeFilter",
     ] {
         let ctor_val = global
             .get(js_string!(*ctor_name), context)

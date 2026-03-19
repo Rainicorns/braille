@@ -1681,6 +1681,7 @@ impl JsElement {
                     capture,
                     once,
                     passive: None,
+                    removed: std::rc::Rc::new(std::cell::Cell::new(false)),
                 });
             }
         }
@@ -1725,7 +1726,12 @@ impl JsElement {
             let mut map = listeners.borrow_mut();
             if let Some(entries) = map.get_mut(&listener_key) {
                 entries.retain(|entry| {
-                    !(entry.event_type == event_type && entry.capture == capture && entry.callback == callback)
+                    if entry.event_type == event_type && entry.capture == capture && entry.callback == callback {
+                        entry.removed.set(true);
+                        false
+                    } else {
+                        true
+                    }
                 });
                 // Clean up empty vec
                 if entries.is_empty() {
@@ -2168,7 +2174,8 @@ pub(crate) fn invoke_listeners_for_node(
     ctx: &mut Context,
 ) -> JsResult<bool> {
     // Collect matching listeners (snapshot to avoid borrow issues during callback invocation)
-    let matching: Vec<(JsObject, bool)> = {
+    // Include the `removed` flag so we can detect mid-dispatch removal.
+    let matching: Vec<(JsObject, bool, std::rc::Rc<std::cell::Cell<bool>>)> = {
         let listeners = realm_state::event_listeners(ctx);
         let map = listeners.borrow();
         match map.get(&listener_key) {
@@ -2186,7 +2193,7 @@ pub(crate) fn invoke_listeners_for_node(
                         !entry.capture
                     }
                 })
-                .map(|entry| (entry.callback.clone(), entry.once))
+                .map(|entry| (entry.callback.clone(), entry.once, entry.removed.clone()))
                 .collect(),
             None => Vec::new(),
         }
@@ -2196,12 +2203,25 @@ pub(crate) fn invoke_listeners_for_node(
     let prev_event = realm_state::current_event(ctx);
     realm_state::set_current_event(ctx, Some(event_obj.clone()));
 
-    for (callback, once) in &matching {
+    for (callback, once, removed_flag) in &matching {
+        // Skip listeners that were removed during dispatch
+        if removed_flag.get() {
+            continue;
+        }
+
         if *once {
+            removed_flag.set(true);
             let listeners = realm_state::event_listeners(ctx);
             let mut map = listeners.borrow_mut();
             if let Some(entries) = map.get_mut(&listener_key) {
-                entries.retain(|entry| !(entry.event_type == event_type && entry.callback == *callback && entry.once));
+                entries.retain(|entry| {
+                    if entry.event_type == event_type && entry.callback == *callback && entry.once {
+                        entry.removed.set(true);
+                        false
+                    } else {
+                        true
+                    }
+                });
                 if entries.is_empty() {
                     map.remove(&listener_key);
                 }

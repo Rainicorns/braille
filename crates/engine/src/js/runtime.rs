@@ -277,6 +277,31 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
     wrap_ui_event_subclass!(EventKind::Keyboard, "KeyboardEvent");
     wrap_ui_event_subclass!(EventKind::Wheel, "WheelEvent");
     wrap_ui_event_subclass!(EventKind::Focus, "FocusEvent");
+    wrap_ui_event_subclass!(EventKind::Animation, "AnimationEvent");
+    wrap_ui_event_subclass!(EventKind::Transition, "TransitionEvent");
+}
+
+/// Register the `NodeFilter` global with its constants (SHOW_ALL, SHOW_ELEMENT, FILTER_ACCEPT, etc.).
+pub(crate) fn register_node_filter(context: &mut Context) {
+    let nf = ObjectInitializer::new(context)
+        .property(js_string!("FILTER_ACCEPT"), 1u32, Attribute::all())
+        .property(js_string!("FILTER_REJECT"), 2u32, Attribute::all())
+        .property(js_string!("FILTER_SKIP"), 3u32, Attribute::all())
+        .property(js_string!("SHOW_ALL"), 0xFFFFFFFFu32, Attribute::all())
+        .property(js_string!("SHOW_ELEMENT"), 0x1u32, Attribute::all())
+        .property(js_string!("SHOW_ATTRIBUTE"), 0x2u32, Attribute::all())
+        .property(js_string!("SHOW_TEXT"), 0x4u32, Attribute::all())
+        .property(js_string!("SHOW_CDATA_SECTION"), 0x8u32, Attribute::all())
+        .property(js_string!("SHOW_PROCESSING_INSTRUCTION"), 0x40u32, Attribute::all())
+        .property(js_string!("SHOW_COMMENT"), 0x80u32, Attribute::all())
+        .property(js_string!("SHOW_DOCUMENT"), 0x100u32, Attribute::all())
+        .property(js_string!("SHOW_DOCUMENT_TYPE"), 0x200u32, Attribute::all())
+        .property(js_string!("SHOW_DOCUMENT_FRAGMENT"), 0x400u32, Attribute::all())
+        .build();
+
+    context
+        .register_global_property(js_string!("NodeFilter"), nf, Attribute::WRITABLE | Attribute::CONFIGURABLE)
+        .expect("failed to register NodeFilter global");
 }
 
 /// Build the replacement Event constructor and register it as the global `Event`.

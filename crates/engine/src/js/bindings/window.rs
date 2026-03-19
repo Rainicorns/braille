@@ -424,6 +424,7 @@ pub(crate) fn register_window(
                         capture,
                         once,
                         passive,
+                        removed: std::rc::Rc::new(std::cell::Cell::new(false)),
                     });
                 }
             }
@@ -473,7 +474,12 @@ pub(crate) fn register_window(
                 let mut map = listeners.borrow_mut();
                 if let Some(entries) = map.get_mut(&(usize::MAX, WINDOW_LISTENER_ID)) {
                     entries.retain(|entry| {
-                        !(entry.event_type == event_type && entry.capture == capture && entry.callback == callback)
+                        if entry.event_type == event_type && entry.capture == capture && entry.callback == callback {
+                            entry.removed.set(true);
+                            false
+                        } else {
+                            true
+                        }
                     });
                     if entries.is_empty() {
                         map.remove(&(usize::MAX, WINDOW_LISTENER_ID));

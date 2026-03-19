@@ -609,6 +609,10 @@ fn document_create_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) ->
         EventKind::Custom {
             detail: JsValue::null(),
         }
+    } else if event_interface.eq_ignore_ascii_case("keyboardevent") {
+        EventKind::Keyboard
+    } else if event_interface.eq_ignore_ascii_case("mouseevent") || event_interface.eq_ignore_ascii_case("mouseevents") {
+        EventKind::mouse_default()
     } else {
         EventKind::Standard
     };
@@ -628,12 +632,21 @@ fn document_create_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) ->
         kind,
     };
     let js_obj = JsEvent::from_data(event, ctx)?;
-    // Set correct prototype for CustomEvent instances
-    if event_interface.eq_ignore_ascii_case("customevent") {
+    // Set correct prototype for subclass instances
+    let proto_ctor_name = if event_interface.eq_ignore_ascii_case("customevent") {
+        Some("CustomEvent")
+    } else if event_interface.eq_ignore_ascii_case("keyboardevent") {
+        Some("KeyboardEvent")
+    } else if event_interface.eq_ignore_ascii_case("mouseevent") || event_interface.eq_ignore_ascii_case("mouseevents") {
+        Some("MouseEvent")
+    } else {
+        None
+    };
+    if let Some(ctor_name) = proto_ctor_name {
         let global = ctx.global_object();
-        if let Ok(custom_ctor) = global.get(js_string!("CustomEvent"), ctx) {
-            if let Some(custom_obj) = custom_ctor.as_object() {
-                if let Ok(proto) = custom_obj.get(js_string!("prototype"), ctx) {
+        if let Ok(ctor_val) = global.get(js_string!(ctor_name), ctx) {
+            if let Some(ctor_obj) = ctor_val.as_object() {
+                if let Ok(proto) = ctor_obj.get(js_string!("prototype"), ctx) {
                     if let Some(proto_obj) = proto.as_object() {
                         js_obj.set_prototype(Some(proto_obj.clone()));
                     }
@@ -720,6 +733,7 @@ fn document_add_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Conte
                 capture,
                 once,
                 passive: None,
+                removed: std::rc::Rc::new(std::cell::Cell::new(false)),
             });
         }
     }
@@ -766,7 +780,12 @@ fn document_remove_event_listener(this: &JsValue, args: &[JsValue], ctx: &mut Co
         let mut map = listeners.borrow_mut();
         if let Some(entries) = map.get_mut(&listener_key) {
             entries.retain(|entry| {
-                !(entry.event_type == event_type && entry.capture == capture && entry.callback == callback)
+                if entry.event_type == event_type && entry.capture == capture && entry.callback == callback {
+                    entry.removed.set(true);
+                    false
+                } else {
+                    true
+                }
             });
             if entries.is_empty() {
                 map.remove(&listener_key);
@@ -1268,6 +1287,9 @@ pub(crate) fn add_document_properties_to_element(
         })
     };
     js_obj.set(js_string!("createRange"), create_range.to_js_function(&realm), false, ctx)?;
+
+    // createTreeWalker method
+    super::tree_walker::register_create_tree_walker(js_obj, new_tree.clone(), ctx);
 
     // createProcessingInstruction method
     let tree_for_cpi = new_tree.clone();
@@ -2303,6 +2325,7 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
     let tree_ptr = Rc::as_ptr(&tree) as usize;
     let doc_id = tree.borrow().document();
 
+    let tree_for_tw = tree.clone();
     let doc_data = JsDocument { tree };
 
     let document: JsObject = ObjectInitializer::with_native_data(doc_data, context)
@@ -2497,6 +2520,9 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
             1,
         )
         .build();
+
+    // createTreeWalker
+    super::tree_walker::register_create_tree_walker(&document, tree_for_tw, context);
 
     // Add accessor properties (body, head, title)
     let realm = context.realm().clone();

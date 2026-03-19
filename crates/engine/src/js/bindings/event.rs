@@ -75,6 +75,8 @@ pub(crate) enum EventKind {
     Keyboard,
     Wheel,
     Focus,
+    Animation,
+    Transition,
 }
 
 impl EventKind {
