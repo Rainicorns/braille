@@ -36,7 +36,13 @@ pub(crate) const EVENT_CONSTRUCTOR_NAMES: &[&str] = &[
 ];
 
 /// DOM utility constructor names (MutationObserver, etc.).
-pub(crate) const DOM_UTILITY_NAMES: &[&str] = &["MutationObserver", "MutationRecord", "NodeFilter"];
+pub(crate) const DOM_UTILITY_NAMES: &[&str] = &[
+    "MutationObserver",
+    "MutationRecord",
+    "NodeFilter",
+    "AbortController",
+    "AbortSignal",
+];
 
 /// Core DOM type constructor names.
 pub(crate) const CORE_DOM_TYPE_NAMES: &[&str] = &[
@@ -294,11 +300,53 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
         },
     );
 
-    // --- UIEvent subclasses: KeyboardEvent, WheelEvent, FocusEvent, AnimationEvent, TransitionEvent ---
+    // --- FocusEvent (separate from loop — needs relatedTarget) ---
+    register_event_type(
+        context,
+        "FocusEvent",
+        &ui_event_proto,
+        |proto, ctx| {
+            let related_target_getter =
+                NativeFunction::from_fn_ptr(|this: &JsValue, _args: &[JsValue], ctx: &mut Context| {
+                    if let Some(obj) = this.as_object() {
+                        if let Ok(v) = obj.get(js_string!("__relatedTarget"), ctx) {
+                            if !v.is_undefined() {
+                                return Ok(v);
+                            }
+                        }
+                    }
+                    Ok(JsValue::null())
+                });
+            let realm = ctx.realm().clone();
+            proto
+                .define_property_or_throw(
+                    js_string!("relatedTarget"),
+                    prop_desc::readonly_accessor(related_target_getter.to_js_function(&realm)),
+                    ctx,
+                )
+                .expect("failed to define FocusEvent.prototype.relatedTarget");
+        },
+        |opts, ctx| {
+            let (view, detail_val) = parse_ui_event_options(opts, ctx, false)?;
+            let mut related_target = JsValue::null();
+            if let Some(obj) = opts {
+                let rt = obj.get(js_string!("relatedTarget"), ctx)?;
+                if !rt.is_undefined() {
+                    related_target = rt;
+                }
+            }
+            Ok((EventKind::Focus, vec![
+                (js_string!("__view"), view),
+                (js_string!("__detail"), detail_val),
+                (js_string!("__relatedTarget"), related_target),
+            ]))
+        },
+    );
+
+    // --- UIEvent subclasses: KeyboardEvent, WheelEvent, AnimationEvent, TransitionEvent ---
     for (name, kind) in &[
         ("KeyboardEvent", EventKind::Keyboard),
         ("WheelEvent", EventKind::Wheel),
-        ("FocusEvent", EventKind::Focus),
         ("AnimationEvent", EventKind::Animation),
         ("TransitionEvent", EventKind::Transition),
     ] {
@@ -827,7 +875,9 @@ pub(crate) fn register_dom_type_hierarchy(context: &mut Context) {
         &[
             "click", "change", "input", "submit", "reset", "toggle", "load", "error", "mousedown",
             "mouseup", "mouseover", "mouseout", "mousemove", "keydown", "keyup", "keypress", "focus",
-            "blur",
+            "blur", "animationstart", "animationend", "animationiteration", "transitionend",
+            "transitionstart", "transitionrun", "webkitanimationstart", "webkitanimationend",
+            "webkitanimationiteration", "webkittransitionend",
         ],
         context,
     );

@@ -510,6 +510,16 @@ pub(crate) fn register_window(
             "popstate",
             "unload",
             "beforeunload",
+            "animationstart",
+            "animationend",
+            "animationiteration",
+            "transitionend",
+            "transitionstart",
+            "transitionrun",
+            "webkitanimationstart",
+            "webkitanimationend",
+            "webkitanimationiteration",
+            "webkittransitionend",
         ],
         context,
     );
@@ -651,6 +661,85 @@ pub(crate) fn register_window(
             context,
         )
         .expect("failed to define window.DOMParser");
+
+    // requestAnimationFrame — call callback synchronously with timestamp 0.0, return 1
+    let raf = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+        let callback = args.first().cloned().unwrap_or(JsValue::undefined());
+        if let Some(cb) = callback.as_callable() {
+            cb.call(&JsValue::undefined(), &[JsValue::from(0.0)], ctx)?;
+        }
+        Ok(JsValue::from(1))
+    });
+    let cancel_raf = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::undefined()));
+
+    let raf_fn = raf.to_js_function(context.realm());
+    let cancel_raf_fn = cancel_raf.to_js_function(context.realm());
+
+    context
+        .register_global_property(js_string!("requestAnimationFrame"), raf_fn.clone(), Attribute::all())
+        .expect("failed to register requestAnimationFrame global");
+    context
+        .register_global_property(js_string!("cancelAnimationFrame"), cancel_raf_fn.clone(), Attribute::all())
+        .expect("failed to register cancelAnimationFrame global");
+
+    window
+        .define_property_or_throw(
+            js_string!("requestAnimationFrame"),
+            PropertyDescriptor::builder()
+                .value(raf_fn)
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define window.requestAnimationFrame");
+    window
+        .define_property_or_throw(
+            js_string!("cancelAnimationFrame"),
+            PropertyDescriptor::builder()
+                .value(cancel_raf_fn)
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define window.cancelAnimationFrame");
+
+    // getSelection — stub returning object with rangeCount: 0
+    let get_selection = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
+        let obj = boa_engine::object::ObjectInitializer::new(ctx)
+            .property(js_string!("rangeCount"), 0, Attribute::all())
+            .function(
+                NativeFunction::from_fn_ptr(|_, _, _| Ok(JsValue::undefined())),
+                js_string!("removeAllRanges"),
+                0,
+            )
+            .function(
+                NativeFunction::from_fn_ptr(|_, _, _| Ok(JsValue::undefined())),
+                js_string!("addRange"),
+                1,
+            )
+            .build();
+        Ok(obj.into())
+    });
+    let get_selection_fn = get_selection.to_js_function(context.realm());
+    context
+        .register_global_property(js_string!("getSelection"), get_selection_fn.clone(), Attribute::all())
+        .expect("failed to register getSelection global");
+    window
+        .define_property_or_throw(
+            js_string!("getSelection"),
+            PropertyDescriptor::builder()
+                .value(get_selection_fn)
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("failed to define window.getSelection");
 
     // getComputedStyle — register on window and as global
     let gcs = super::computed_style::make_get_computed_style(Rc::clone(&tree));
@@ -1009,5 +1098,45 @@ mod tests {
         let output = rt.console_output();
         assert_eq!(output.len(), 1);
         assert_eq!(output[0], "from runtime");
+    }
+
+    #[test]
+    fn on_animation_end_returns_null() {
+        let mut rt = make_runtime();
+        let result = rt
+            .eval("var d = document.createElement('div'); d.onanimationend === null")
+            .unwrap();
+        assert_eq!(result.as_boolean(), Some(true), "onanimationend should be null on fresh div");
+    }
+
+    #[test]
+    fn on_animation_end_after_setting_prefixed() {
+        let mut rt = make_runtime();
+        let result = rt
+            .eval(
+                r#"
+                var d = document.createElement('div');
+                d.onwebkitanimationend = function(){};
+                d.onanimationend === null
+                "#,
+            )
+            .unwrap();
+        assert_eq!(
+            result.as_boolean(),
+            Some(true),
+            "onanimationend should still be null after setting onwebkitanimationend"
+        );
+    }
+
+    #[test]
+    fn style_sheet_insert_rule_works() {
+        let mut rt = make_runtime();
+        let result = rt.eval(r#"
+            var style = document.createElement('style');
+            document.body.appendChild(style);
+            var sheet = style.sheet;
+            typeof sheet === 'object' && sheet !== null && typeof sheet.insertRule === 'function'
+        "#).unwrap();
+        assert_eq!(result.as_boolean(), Some(true), "style.sheet.insertRule should be a function");
     }
 }

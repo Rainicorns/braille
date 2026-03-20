@@ -536,6 +536,13 @@ fn create_js_element(
         }
     }
 
+    // Set sheet property for <style> elements (CSSStyleSheet stub)
+    if let NodeKind::HtmlElement(ref tag) = node_kind {
+        if tag == "style" {
+            setup_style_sheet(&js_obj, ctx)?;
+        }
+    }
+
     // Set contentDocument/contentWindow/src/onload for <iframe> elements
     if let NodeKind::HtmlElement(ref tag) = node_kind {
         if tag == "iframe" {
@@ -709,6 +716,73 @@ fn setup_attr_node_properties(
         PropertyDescriptor::builder()
             .value(JsValue::from(true))
             .writable(false)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    Ok(())
+}
+
+/// Sets up a stub `sheet` property on `<style>` elements, returning a CSSStyleSheet-like
+/// object with `insertRule()` (returns 0), `deleteRule()` (no-op), and `cssRules` (empty).
+fn setup_style_sheet(js_obj: &JsObject, ctx: &mut Context) -> JsResult<()> {
+    let sheet_getter = unsafe {
+        NativeFunction::from_closure(|_this, _args, ctx2| {
+            let insert_rule =
+                NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::from(0)));
+            let delete_rule =
+                NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::undefined()));
+
+            let css_rules = ObjectInitializer::new(ctx2).build();
+            css_rules.define_property_or_throw(
+                js_string!("length"),
+                PropertyDescriptor::builder()
+                    .value(JsValue::from(0))
+                    .writable(false)
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx2,
+            )?;
+
+            let sheet = ObjectInitializer::new(ctx2)
+                .function(insert_rule, js_string!("insertRule"), 1)
+                .function(delete_rule, js_string!("deleteRule"), 1)
+                .build();
+            sheet.define_property_or_throw(
+                js_string!("cssRules"),
+                PropertyDescriptor::builder()
+                    .value(JsValue::from(css_rules))
+                    .writable(false)
+                    .configurable(true)
+                    .enumerable(true)
+                    .build(),
+                ctx2,
+            )?;
+
+            // Also expose Symbol.toStringTag
+            sheet.define_property_or_throw(
+                JsSymbol::to_string_tag(),
+                PropertyDescriptor::builder()
+                    .value(JsValue::from(js_string!("CSSStyleSheet")))
+                    .writable(false)
+                    .configurable(true)
+                    .enumerable(false)
+                    .build(),
+                ctx2,
+            )?;
+
+            Ok(JsValue::from(sheet))
+        })
+    };
+
+    let realm = ctx.realm().clone();
+    js_obj.define_property_or_throw(
+        js_string!("sheet"),
+        PropertyDescriptor::builder()
+            .get(sheet_getter.to_js_function(&realm))
             .configurable(true)
             .enumerable(true)
             .build(),
@@ -1131,8 +1205,18 @@ impl JsElement {
         // Pre-insertion validation (appendChild is insertBefore with null ref child)
         super::mutation::validate_pre_insert(&tree.borrow(), parent_id, child_id, None, None)?;
 
+        // Capture pre-state for live range updates and MutationObserver
+        let (added_ids, removal_info, prev_sib, next_sib) =
+            super::mutation::capture_insert_state(&tree, parent_id, child_id, None);
+
+        // Update live ranges for removal from old parent (before the move)
+        super::mutation::fire_range_removal_for_move(ctx, &tree, &removal_info, child_id);
+
         // Perform the insertion (handles DocumentFragment children)
         super::mutation::do_insert(&tree, parent_id, child_id, None);
+
+        // Update live ranges for insertion + queue MutationObserver records
+        super::mutation::fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
 
         // appendChild returns the appended child (or fragment)
         Ok(child_arg.clone())

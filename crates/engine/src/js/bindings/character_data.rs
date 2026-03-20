@@ -264,10 +264,33 @@ fn split_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
     let offset = to_unsigned_long(offset_val, ctx)?;
 
     let tree_rc = el.tree.clone();
+    let node_id = el.node_id;
+
+    // Capture original length for range update
+    let original_len = tree_rc.borrow().character_data_length(node_id);
+
     let new_node_id = tree_rc
         .borrow_mut()
-        .split_text(el.node_id, offset)
+        .split_text(node_id, offset)
         .map_err(|_| index_size_error())?;
+
+    // Update live ranges per spec "split a Text node" steps:
+    // Step 1: replaceData on old node (offset, originalLength - offset, "")
+    let count = original_len - offset;
+    super::range::update_ranges_for_char_data(ctx, node_id, offset, count, 0);
+
+    // Step 2+3: adjust boundaries referencing old_node or parent
+    let parent_id = tree_rc.borrow().get_parent(node_id);
+    let new_index = parent_id.map(|pid| {
+        tree_rc
+            .borrow()
+            .get_node(pid)
+            .children
+            .iter()
+            .position(|&c| c == new_node_id)
+            .unwrap()
+    });
+    super::range::update_ranges_for_split_text(ctx, node_id, new_node_id, offset, parent_id, new_index);
 
     let js_obj = get_or_create_js_element(new_node_id, tree_rc, ctx)?;
     Ok(js_obj.into())

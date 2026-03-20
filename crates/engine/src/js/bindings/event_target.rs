@@ -39,6 +39,11 @@ fn resolve_event_target_key(
         None => return Ok(((usize::MAX, super::window::WINDOW_LISTENER_ID), None)),
     };
 
+    // JsAbortSignal (inherits EventTarget behavior)
+    if let Some(sig) = this_obj.downcast_ref::<super::abort::JsAbortSignal>() {
+        return Ok(((0usize, sig.event_target_id), None));
+    }
+
     // JsEventTarget (standalone)
     if let Some(et) = this_obj.downcast_ref::<JsEventTarget>() {
         return Ok(((0usize, et.id), None));
@@ -97,7 +102,7 @@ pub(crate) type ListenerMap = HashMap<(usize, NodeId), Vec<ListenerEntry>>;
 // Start at usize::MAX / 2 to avoid collisions with DOM NodeIds (which start at 0).
 // ---------------------------------------------------------------------------
 
-static NEXT_EVENT_TARGET_ID: AtomicUsize = AtomicUsize::new(usize::MAX / 2);
+pub(crate) static NEXT_EVENT_TARGET_ID: AtomicUsize = AtomicUsize::new(usize::MAX / 2);
 
 fn next_event_target_id() -> usize {
     NEXT_EVENT_TARGET_ID.fetch_add(1, Ordering::Relaxed)
@@ -108,7 +113,7 @@ fn next_event_target_id() -> usize {
 // ---------------------------------------------------------------------------
 
 /// Parse the third argument to addEventListener/removeEventListener.
-/// Returns (capture, once, passive).
+/// Returns (capture, once, passive, signal).
 ///
 /// Handles both boolean shorthand and EventListenerOptions dictionary.
 /// Non-object, non-boolean values are coerced via `to_boolean()` per spec
@@ -116,10 +121,11 @@ fn next_event_target_id() -> usize {
 pub(crate) fn unified_parse_listener_options(
     args: &[JsValue],
     ctx: &mut Context,
-) -> JsResult<(bool, bool, Option<bool>)> {
+) -> JsResult<(bool, bool, Option<bool>, Option<JsObject>)> {
     let mut capture = false;
     let mut once = false;
     let mut passive = None;
+    let mut signal = None;
 
     if let Some(opt_val) = args.get(2) {
         if let Some(opt_obj) = opt_val.as_object() {
@@ -135,13 +141,26 @@ pub(crate) fn unified_parse_listener_options(
             if !p.is_undefined() {
                 passive = Some(p.to_boolean());
             }
+            let s = opt_obj.get(js_string!("signal"), ctx)?;
+            if !s.is_undefined() {
+                if s.is_null() {
+                    return Err(JsNativeError::typ()
+                        .with_message(
+                            "Failed to execute 'addEventListener' on 'EventTarget': member signal is not of type AbortSignal.",
+                        )
+                        .into());
+                }
+                if let Some(sig_obj) = s.as_object() {
+                    signal = Some(sig_obj.clone());
+                }
+            }
         } else {
             // Coerce non-object values to boolean (handles booleans, numbers, strings, null, undefined)
             capture = opt_val.to_boolean();
         }
     }
 
-    Ok((capture, once, passive))
+    Ok((capture, once, passive, signal))
 }
 
 /// Shared body of addEventListener for all target types.
@@ -161,7 +180,16 @@ pub(crate) fn add_event_listener_impl(
         .to_std_string_escaped();
 
     // Parse options BEFORE checking for null callback (spec: options getters must be invoked)
-    let (capture, once, passive) = unified_parse_listener_options(args, ctx)?;
+    let (capture, once, passive, signal) = unified_parse_listener_options(args, ctx)?;
+
+    // If signal is already aborted, return early without adding the listener
+    if let Some(ref sig_obj) = signal {
+        if let Some(sig) = sig_obj.downcast_ref::<super::abort::JsAbortSignal>() {
+            if sig.aborted.get() {
+                return Ok(JsValue::undefined());
+            }
+        }
+    }
 
     // Compute default passive value per spec §2.10 when not explicitly set
     let passive = match passive {
@@ -211,11 +239,51 @@ pub(crate) fn add_event_listener_impl(
 
         if !duplicate {
             entries.push(ListenerEntry {
-                event_type,
-                callback,
+                event_type: event_type.clone(),
+                callback: callback.clone(),
                 capture,
                 once,
                 passive,
+                removed: Rc::new(Cell::new(false)),
+            });
+        } else {
+            return Ok(JsValue::undefined());
+        }
+    }
+
+    // If signal was provided, register an abort listener that removes this listener
+    if let Some(sig_obj) = signal {
+        if let Some(sig) = sig_obj.downcast_ref::<super::abort::JsAbortSignal>() {
+            let sig_id = sig.event_target_id;
+            let removal_key = listener_key;
+            let removal_type = event_type;
+            let removal_callback = callback;
+            let removal_capture = capture;
+
+            let removal_fn = unsafe {
+                boa_engine::native_function::NativeFunction::from_closure(move |_this, _args, ctx| {
+                    remove_event_listener_impl(
+                        removal_key,
+                        &[
+                            JsValue::from(js_string!(removal_type.as_str())),
+                            JsValue::from(removal_callback.clone()),
+                            JsValue::from(removal_capture),
+                        ],
+                        ctx,
+                    )
+                })
+            };
+
+            let handler_fn = removal_fn.to_js_function(ctx.realm());
+            let listeners = realm_state::event_listeners(ctx);
+            let mut map = listeners.borrow_mut();
+            let entries = map.entry((0usize, sig_id)).or_default();
+            entries.push(ListenerEntry {
+                event_type: "abort".to_string(),
+                callback: handler_fn.into(),
+                capture: false,
+                once: true,
+                passive: None,
                 removed: Rc::new(Cell::new(false)),
             });
         }

@@ -41,6 +41,17 @@ pub(crate) fn intern_event_name(name: &str) -> Option<&'static str> {
         "popstate" => Some("popstate"),
         "unload" => Some("unload"),
         "beforeunload" => Some("beforeunload"),
+        "abort" => Some("abort"),
+        "animationstart" => Some("animationstart"),
+        "animationend" => Some("animationend"),
+        "animationiteration" => Some("animationiteration"),
+        "transitionend" => Some("transitionend"),
+        "transitionstart" => Some("transitionstart"),
+        "transitionrun" => Some("transitionrun"),
+        "webkitanimationstart" | "webkitAnimationStart" => Some("webkitanimationstart"),
+        "webkitanimationend" | "webkitAnimationEnd" => Some("webkitanimationend"),
+        "webkitanimationiteration" | "webkitAnimationIteration" => Some("webkitanimationiteration"),
+        "webkittransitionend" | "webkitTransitionEnd" => Some("webkittransitionend"),
         _ => None,
     }
 }

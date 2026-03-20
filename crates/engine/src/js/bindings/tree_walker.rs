@@ -14,9 +14,9 @@ use crate::dom::{DomTree, NodeData, NodeId};
 
 use super::element::get_or_create_js_element;
 
-const FILTER_ACCEPT: u16 = 1;
-const FILTER_REJECT: u16 = 2;
-const FILTER_SKIP: u16 = 3;
+pub(crate) const FILTER_ACCEPT: u16 = 1;
+pub(crate) const FILTER_REJECT: u16 = 2;
+pub(crate) const FILTER_SKIP: u16 = 3;
 
 /// Native data for TreeWalker instances.
 #[derive(Debug, Trace, Finalize, JsData)]
@@ -37,7 +37,7 @@ pub(crate) struct JsTreeWalker {
 // Helper: compute DOM nodeType from NodeData
 // ---------------------------------------------------------------------------
 
-fn dom_node_type(data: &NodeData) -> u32 {
+pub(crate) fn dom_node_type(data: &NodeData) -> u32 {
     match data {
         NodeData::Element { .. } => 1,
         NodeData::Attr { .. } => 2,

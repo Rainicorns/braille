@@ -1,3 +1,4 @@
+pub(crate) mod abort;
 pub(crate) mod activation;
 pub(crate) mod anchor_form;
 pub(crate) mod attributes;
@@ -14,6 +15,7 @@ pub(crate) mod html_element;
 pub(crate) mod inner_html;
 pub(crate) mod input_props;
 pub(crate) mod mutation;
+pub(crate) mod node_iterator;
 pub(crate) mod mutation_observer;
 pub(crate) mod node_info;
 pub(crate) mod on_event;
@@ -79,10 +81,15 @@ pub(crate) fn register_dom_exception(ctx: &mut Context) {
 
     let proto = ObjectInitializer::new(ctx).build();
 
-    let ctor = ObjectInitializer::new(ctx)
-        .function(dom_exception_constructor, js_string!("DOMException"), 2)
-        .property(js_string!("prototype"), proto.clone(), Attribute::empty())
-        .build();
+    let ctor: JsObject = boa_engine::object::FunctionObjectBuilder::new(ctx.realm(), dom_exception_constructor)
+        .name(js_string!("DOMException"))
+        .length(2)
+        .constructor(true)
+        .build()
+        .into();
+
+    ctor.set(js_string!("prototype"), proto.clone(), false, ctx)
+        .expect("set DOMException.prototype");
 
     // Set constructor on prototype
     proto

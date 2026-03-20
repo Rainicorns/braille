@@ -613,13 +613,13 @@ fn has_element_before(tree: &DomTree, parent_id: NodeId, ref_id: NodeId) -> bool
 // ---------------------------------------------------------------------------
 
 /// Info about removal from old parent: (parent_id, prev_sibling, next_sibling).
-type RemovalInfo = Option<(NodeId, Option<NodeId>, Option<NodeId>)>;
+pub(crate) type RemovalInfo = Option<(NodeId, Option<NodeId>, Option<NodeId>)>;
 
 /// Capture the pre-state needed to fire MutationObserver childList records
 /// for an insertion (insertBefore, appendChild, append, prepend, etc.).
 ///
 /// Returns (added_ids, removal_info, prev_sibling, next_sibling).
-fn capture_insert_state(
+pub(crate) fn capture_insert_state(
     tree: &Rc<RefCell<DomTree>>,
     parent_id: NodeId,
     node_id: NodeId,
@@ -668,8 +668,9 @@ fn capture_insert_state(
     (added, removal_info, ps, ns)
 }
 
-/// Fire MutationObserver childList records after an insertion.
-fn fire_insert_records(
+/// Fire MutationObserver childList records after an insertion,
+/// and update live range boundaries.
+pub(crate) fn fire_insert_records(
     ctx: &mut Context,
     tree: &Rc<RefCell<DomTree>>,
     parent_id: NodeId,
@@ -691,6 +692,17 @@ fn fire_insert_records(
         );
     }
 
+    // Update live range boundaries for the insertion
+    if !added_ids.is_empty() {
+        let t = tree.borrow();
+        let parent_children = &t.get_node(parent_id).children;
+        // Find the index of the first added node in the parent's children
+        if let Some(first_idx) = parent_children.iter().position(|&c| c == added_ids[0]) {
+            drop(t);
+            super::range::update_ranges_for_insert(ctx, parent_id, first_idx, added_ids.len());
+        }
+    }
+
     // Queue addition to new parent
     if !added_ids.is_empty() {
         super::mutation_observer::queue_childlist_mutation(
@@ -702,6 +714,23 @@ fn fire_insert_records(
             prev_sib,
             next_sib,
         );
+    }
+}
+
+/// Update live range boundaries for the removal of a node from its old parent
+/// (called BEFORE `do_insert` when moving a node).
+pub(crate) fn fire_range_removal_for_move(
+    ctx: &mut Context,
+    tree: &Rc<RefCell<DomTree>>,
+    removal_info: &RemovalInfo,
+    moved_node_id: NodeId,
+) {
+    if let Some((old_pid, _, _)) = *removal_info {
+        let t = tree.borrow();
+        let old_children = &t.get_node(old_pid).children;
+        if let Some(old_idx) = old_children.iter().position(|&c| c == moved_node_id) {
+            super::range::update_ranges_for_remove(ctx, old_pid, old_idx, moved_node_id, &t);
+        }
     }
 }
 
@@ -872,9 +901,12 @@ fn insert_before(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
     // Capture pre-state for MutationObserver
     let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, new_node_id, ref_id);
 
+    // Update live ranges for removal from old parent (before the move)
+    fire_range_removal_for_move(ctx, &tree, &removal_info, new_node_id);
+
     do_insert(&tree, parent_id, new_node_id, ref_id);
 
-    // Queue MutationObserver records
+    // Queue MutationObserver records + update live ranges for insertion
     fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
 
     Ok(new_node_arg.clone())
@@ -985,7 +1017,26 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
         (added, removal, ps, ns)
     };
 
+    // Update live ranges for the removal of old_child (must happen before do_replace)
+    {
+        let t = tree.borrow();
+        let parent_children = &t.get_node(parent_id).children;
+        if let Some(old_idx) = parent_children.iter().position(|&c| c == old_child_id) {
+            super::range::update_ranges_for_remove(ctx, parent_id, old_idx, old_child_id, &t);
+        }
+    }
+
     do_replace(&tree, parent_id, new_child_id, old_child_id);
+
+    // Update live ranges for the insertion of new child(ren)
+    if !added_ids.is_empty() {
+        let t = tree.borrow();
+        let parent_children = &t.get_node(parent_id).children;
+        if let Some(first_idx) = parent_children.iter().position(|&c| c == added_ids[0]) {
+            drop(t);
+            super::range::update_ranges_for_insert(ctx, parent_id, first_idx, added_ids.len());
+        }
+    }
 
     // Queue removal of new_child from old parent (if moved)
     if let Some((old_pid, old_prev, old_next)) = removal_info {
@@ -1041,7 +1092,7 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
     }
     let child_id = child.node_id;
 
-    let (prev_sib, next_sib) = {
+    let (prev_sib, next_sib, old_index) = {
         let t = tree.borrow();
         let parent_node = t.get_node(parent_id);
         if !parent_node.children.contains(&child_id) {
@@ -1051,8 +1102,11 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
         let pos = parent_children.iter().position(|&c| c == child_id);
         let prev = pos.and_then(|p| if p > 0 { Some(parent_children[p - 1]) } else { None });
         let next = pos.and_then(|p| parent_children.get(p + 1).copied());
-        (prev, next)
+        (prev, next, pos.unwrap())
     };
+
+    // Update live range boundaries before the actual removal
+    super::range::update_ranges_for_remove(ctx, parent_id, old_index, child_id, &tree.borrow());
 
     tree.borrow_mut().remove_child(parent_id, child_id);
 
@@ -1188,6 +1242,7 @@ fn append(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
     for nid in node_ids {
         validate_pre_insert(&tree.borrow(), parent_id, nid, None, None)?;
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, None);
+        fire_range_removal_for_move(ctx, &tree, &removal_info, nid);
         do_insert(&tree, parent_id, nid, None);
         fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
@@ -1206,6 +1261,7 @@ fn prepend(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVa
         validate_pre_insert(&tree.borrow(), parent_id, nid, original_first_child, None)?;
         let (added_ids, removal_info, prev_sib, next_sib) =
             capture_insert_state(&tree, parent_id, nid, original_first_child);
+        fire_range_removal_for_move(ctx, &tree, &removal_info, nid);
         do_insert(&tree, parent_id, nid, original_first_child);
         fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
@@ -1223,14 +1279,19 @@ fn replace_children(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     for &nid in &node_ids {
         validate_pre_insert(&tree.borrow(), parent_id, nid, None, None)?;
     }
-    // Capture removed children for MutationObserver
+    // Capture removed children for MutationObserver and update live ranges
     let removed_children: Vec<NodeId> = tree.borrow().get_node(parent_id).children.clone();
+    // Update live ranges for each removed child (in reverse order to keep indices valid)
+    for (idx, &child_id) in removed_children.iter().enumerate().rev() {
+        super::range::update_ranges_for_remove(ctx, parent_id, idx, child_id, &tree.borrow());
+    }
     tree.borrow_mut().clear_children(parent_id);
     if !removed_children.is_empty() {
         super::mutation_observer::queue_childlist_mutation(ctx, &tree, parent_id, vec![], removed_children, None, None);
     }
     for nid in node_ids {
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, parent_id, nid, None);
+        fire_range_removal_for_move(ctx, &tree, &removal_info, nid);
         do_insert(&tree, parent_id, nid, None);
         fire_insert_records(ctx, &tree, parent_id, &added_ids, removal_info, prev_sib, next_sib);
     }
@@ -1632,6 +1693,7 @@ pub(crate) fn document_append(this: &JsValue, args: &[JsValue], ctx: &mut Contex
     for nid in node_ids {
         validate_pre_insert(&tree.borrow(), doc_id, nid, None, None)?;
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, None);
+        fire_range_removal_for_move(ctx, &tree, &removal_info, nid);
         do_insert(&tree, doc_id, nid, None);
         fire_insert_records(ctx, &tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }
@@ -1654,6 +1716,7 @@ pub(crate) fn document_prepend(this: &JsValue, args: &[JsValue], ctx: &mut Conte
         validate_pre_insert(&tree.borrow(), doc_id, nid, original_first_child, None)?;
         let (added_ids, removal_info, prev_sib, next_sib) =
             capture_insert_state(&tree, doc_id, nid, original_first_child);
+        fire_range_removal_for_move(ctx, &tree, &removal_info, nid);
         do_insert(&tree, doc_id, nid, original_first_child);
         fire_insert_records(ctx, &tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }
@@ -1681,6 +1744,7 @@ pub(crate) fn document_replace_children(this: &JsValue, args: &[JsValue], ctx: &
     }
     for nid in node_ids {
         let (added_ids, removal_info, prev_sib, next_sib) = capture_insert_state(&tree, doc_id, nid, None);
+        fire_range_removal_for_move(ctx, &tree, &removal_info, nid);
         do_insert(&tree, doc_id, nid, None);
         fire_insert_records(ctx, &tree, doc_id, &added_ids, removal_info, prev_sib, next_sib);
     }

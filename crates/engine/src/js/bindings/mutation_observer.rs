@@ -981,7 +981,11 @@ pub(crate) fn character_data_set_with_observer(
     data: &str,
 ) {
     let old_value = tree.borrow().character_data_get(node_id);
+    let old_len = old_value.as_ref().map(|s| s.encode_utf16().count()).unwrap_or(0);
+    let new_len = data.encode_utf16().count();
     tree.borrow_mut().character_data_set(node_id, data);
+    // Range update: treat as replaceData(0, old_len, data)
+    super::range::update_ranges_for_char_data(ctx, node_id, 0, old_len, new_len);
     queue_character_data_mutation(ctx, tree, node_id, old_value);
 }
 
@@ -992,7 +996,11 @@ pub(crate) fn character_data_append_with_observer(
     data: &str,
 ) {
     let old_value = tree.borrow().character_data_get(node_id);
+    let offset = old_value.as_ref().map(|s| s.encode_utf16().count()).unwrap_or(0);
+    let added_len = data.encode_utf16().count();
     tree.borrow_mut().character_data_append(node_id, data);
+    // Range update: treat as replaceData(offset, 0, data)
+    super::range::update_ranges_for_char_data(ctx, node_id, offset, 0, added_len);
     queue_character_data_mutation(ctx, tree, node_id, old_value);
 }
 
@@ -1006,6 +1014,8 @@ pub(crate) fn character_data_delete_with_observer(
     let old_value = tree.borrow().character_data_get(node_id);
     let result = tree.borrow_mut().character_data_delete(node_id, offset, count);
     if result.is_ok() {
+        // Range update: replaceData(offset, count, "")
+        super::range::update_ranges_for_char_data(ctx, node_id, offset, count, 0);
         queue_character_data_mutation(ctx, tree, node_id, old_value);
     }
     result
@@ -1019,8 +1029,11 @@ pub(crate) fn character_data_insert_with_observer(
     data: &str,
 ) -> Result<(), &'static str> {
     let old_value = tree.borrow().character_data_get(node_id);
+    let added_len = data.encode_utf16().count();
     let result = tree.borrow_mut().character_data_insert(node_id, offset, data);
     if result.is_ok() {
+        // Range update: replaceData(offset, 0, data)
+        super::range::update_ranges_for_char_data(ctx, node_id, offset, 0, added_len);
         queue_character_data_mutation(ctx, tree, node_id, old_value);
     }
     result
@@ -1035,8 +1048,11 @@ pub(crate) fn character_data_replace_with_observer(
     data: &str,
 ) -> Result<(), &'static str> {
     let old_value = tree.borrow().character_data_get(node_id);
+    let added_len = data.encode_utf16().count();
     let result = tree.borrow_mut().character_data_replace(node_id, offset, count, data);
     if result.is_ok() {
+        // Range update: replaceData(offset, count, data)
+        super::range::update_ranges_for_char_data(ctx, node_id, offset, count, added_len);
         queue_character_data_mutation(ctx, tree, node_id, old_value);
     }
     result

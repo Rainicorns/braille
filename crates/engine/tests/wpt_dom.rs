@@ -127,6 +127,7 @@ fn testharness_preamble() -> String {
     self.promise_test = function(fn, name) {
         var result = { name: name || "(unnamed)", status: 0, message: "" };
         results.push(result);
+        var cleanups = [];
         try {
             var t = {
                 name: name || "(unnamed)",
@@ -143,7 +144,7 @@ fn testharness_preamble() -> String {
                 unreached_func: function(msg) {
                     return function() { throw new Error(msg || "unreached"); };
                 },
-                add_cleanup: function() {},
+                add_cleanup: function(f) { cleanups.push(f); },
                 step_timeout: function(fn, timeout) { fn(); },
                 _done: false
             };
@@ -157,6 +158,11 @@ fn testharness_preamble() -> String {
         } catch(e) {
             result.status = 1;
             result.message = e.message || String(e);
+        }
+        // Always run cleanups after the sync portion completes
+        // (promise_test may have pending awaits that never resolve)
+        for (var i = 0; i < cleanups.length; i++) {
+            try { cleanups[i](); } catch(ce) {}
         }
     };
 
@@ -397,11 +403,23 @@ fn expected_failures(rel_path: &str) -> usize {
         ("event-global.html", 4),
         // 30 failures: FocusEvent relatedTarget, MouseEvent instanceof, WheelEvent delta*,
         // KeyboardEvent modifier keys, SubclassedEvent class extends
-        ("Event-subclasses", 30),
+        ("Event-subclasses", 24),
         // HTMLCollection edge cases — Proxy set strictness
         ("HTMLCollection-own-props", 2),
         // DOMTokenList — 7 failures: relList, htmlFor, sandbox, sizes not implemented
         ("DOMTokenList-coverage-for-attributes", 7),
+        // AbortSignal event.any — 1 failure: isTrusted check (our abort events are not trusted)
+        ("event.any", 1),
+        // AddEventListenerOptions-signal — 1 failure: mid-dispatch signal abort removal
+        ("AddEventListenerOptions-signal", 1),
+        // abort-signal-any — 1 failure: abort event ordering across dependent signals
+        ("abort-signal-any.any", 1),
+        // NodeIterator — failures from foreign/xml document nodes (not supported)
+        ("NodeIterator.html", 420),
+        // HTMLCollection-supported-property-indices — 3 failures: 2^32 edge case + strict set
+        ("HTMLCollection-supported-property-indices", 3),
+        // HTMLCollection-supported-property-names — 3 failures: expando shadowing strict mode
+        ("HTMLCollection-supported-property-names", 3),
         // Range tests with cross-document failures (xmlDoc/foreignDoc ranges)
         ("Range-collapse.html", 9),
         ("Range-cloneRange.html", 3),
@@ -410,6 +428,16 @@ fn expected_failures(rel_path: &str) -> usize {
         ("Range-isPointInRange.html", 11),
         ("Range-intersectsNode.html", 310),
         ("Range-set.html", 470),
+        // Range-mutations: "selected" tests fail (getSelection stub returns rangeCount=0),
+        // foreignDoc/xmlDoc CharacterData nodes lack appendData/etc methods
+        ("Range-mutations-appendChild", 1),
+        ("Range-mutations-replaceChild", 2),
+        ("Range-mutations-appendData", 192),
+        ("Range-mutations-insertData", 165),
+        ("Range-mutations-deleteData", 243),
+        ("Range-mutations-replaceData", 495),
+        ("Range-mutations-dataChange", 1404),
+        ("Range-mutations-splitText", 15),
     ];
     for (pattern, count) in known {
         if rel_path.contains(pattern) {
@@ -445,7 +473,6 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // MutationObserver-cross-realm — now supported (per-iframe realms with shared MO state)
         ("mutation-observer", "requires moveBefore"),
         // Range — targeted skips for tests needing features we don't implement
-        ("Range-mutations", "requires live range mutation tracking"),
         ("Range-adopt", "requires cross-document range adoption"),
         ("Range-in-shadow", "requires Shadow DOM range behavior"),
         ("Range-intersectsNode-shadow", "requires Shadow DOM range behavior"),
@@ -471,24 +498,22 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("xml", "requires XML support"),
         ("XHTML", "requires XHTML"),
         ("xhtml", "requires XHTML"),
-        // NodeIterator / TreeWalker
-        ("NodeIterator", "requires NodeIterator"),
+        // NodeIterator — NodeIterator-removal needs live iterator mutation tracking
+        ("NodeIterator-removal", "requires live iterator mutation tracking"),
         // TreeWalker — createTreeWalker now implemented but traversal stubs
         // ("TreeWalker", "requires TreeWalker"),
         // DOMStringMap (dataset proxy)
         ("domstringmap", "requires DOMStringMap proxy"),
         // HTMLCollection edge cases needing stricter Proxy behavior
         ("HTMLCollection-as-prototype", "requires Proxy prototype chain strictness"),
-        ("HTMLCollection-delete", "requires Proxy deleteProperty trap"),
-        ("HTMLCollection-empty-name", "requires named property visibility"),
-        (
-            "HTMLCollection-supported-property-indices",
-            "requires getOwnPropertyDescriptor on indices",
-        ),
-        (
-            "HTMLCollection-supported-property-names",
-            "requires getOwnPropertyDescriptor on names",
-        ),
+        // HTMLCollection-delete — now have deleteProperty trap
+        // ("HTMLCollection-delete", "requires Proxy deleteProperty trap"),
+        // HTMLCollection-empty-name — now guard empty string in named getter
+        // ("HTMLCollection-empty-name", "requires named property visibility"),
+        // HTMLCollection-supported-property-indices — getOwnPropertyDescriptor implemented
+        // ("HTMLCollection-supported-property-indices", "requires getOwnPropertyDescriptor on indices"),
+        // HTMLCollection-supported-property-names — getOwnPropertyDescriptor implemented
+        // ("HTMLCollection-supported-property-names", "requires getOwnPropertyDescriptor on names"),
         // TreeWalker — requires common.js cross-document or srcdoc iframes
         ("TreeWalker-realm", "requires srcdoc iframe support"),
         ("TreeWalker.html", "requires common.js cross-document nodes"),
@@ -499,9 +524,11 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("worker", "requires Web Workers"),
         // .sub.html (server substitution)
         (".sub.", "requires server-side substitution"),
-        // AbortController / AbortSignal
-        ("abort", "requires AbortController"),
-        ("Abort", "requires AbortController"),
+        // AbortController / AbortSignal — core implemented; skip specific tests needing advanced features
+        ("abort-signal-timeout.html", "requires iframe detach for AbortSignal.timeout"),
+        ("reason-constructor.html", "requires cross-iframe AbortSignal"),
+        ("timeout-shadowrealm.any", "requires ShadowRealm"),
+        ("abort-signal-any-crash.html", "crash test, not testharness"),
         // Historical features
         // ("historical.html", "tests removed features"),  // 75/80 subtests pass
         ("interface-objects", "requires many unimplemented interface globals"),
@@ -602,8 +629,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ),
         // EventTarget constructor — now implemented
         // ("EventTarget-constructible", "requires EventTarget constructor"),
-        // addEventListener advanced options
-        ("AddEventListenerOptions-signal", "requires AbortSignal"),
+        // addEventListener advanced options — AbortSignal now implemented
+        // ("AddEventListenerOptions-signal", "requires AbortSignal"),
         // EventListener-handleEvent — handleEvent protocol now implemented
         // ("EventListener-handleEvent", "requires handleEvent protocol"),
         // Body/FrameSet event handlers
@@ -734,9 +761,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("preventDefault-during-activation", "requires promise_test"),
         // Window composed path — unskipped: composedPath now implemented
         // ("window-composed-path", "requires composedPath with window"),
-        // webkit animation/transition events
-        ("webkit-animation", "requires AnimationEvent"),
-        ("webkit-transition", "requires TransitionEvent"),
+        // webkit animation/transition events — now unskipped (CSSStyleSheet.insertRule stub added)
         // event-src-element-nullable — now passing (srcElement set during dispatch)
         // ("event-src-element-nullable", "requires srcElement on window"),
         // Event-dispatch-redispatch — re-dispatch semantics already work
@@ -1145,13 +1170,29 @@ struct WptResult {
 fn wrap_js_in_html(js_path: &Path) -> String {
     let js_content = std::fs::read_to_string(js_path).unwrap();
     let title = js_path.file_stem().unwrap().to_str().unwrap();
+
+    // Parse // META: script=<path> directives
+    let mut meta_scripts = String::new();
+    for line in js_content.lines() {
+        if let Some(rest) = line.strip_prefix("// META: script=") {
+            let script_path = rest.trim();
+            // Resolve relative to the .any.js file's directory
+            let resolved = js_path.parent().unwrap().join(script_path);
+            if let Ok(script_content) = std::fs::read_to_string(&resolved) {
+                meta_scripts.push_str(&format!(
+                    "<script>\n{script_content}\n</script>\n"
+                ));
+            }
+        }
+    }
+
     format!(
         r#"<!DOCTYPE html>
 <meta charset=utf-8>
 <title>{title}</title>
 <script src="/resources/testharness.js"></script>
 <script src="/resources/testharnessreport.js"></script>
-<script>
+{meta_scripts}<script>
 {js_content}
 </script>
 "#

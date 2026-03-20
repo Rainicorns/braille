@@ -15,27 +15,27 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 
 **RealmState Architecture (Phases 1-4) COMPLETE.** All 22 thread-local variables migrated to per-realm state stored in Boa's `Realm::host_defined()`. `RealmState` struct in `realm_state.rs` with 21 fields (data stores as `Rc<RefCell<...>>`, prototype caches as `RefCell<Option<...>>`, singletons). Accessor functions via `rc_accessor!`/`option_accessor!` macros clone Rc/value out, releasing the `GcRef` borrow immediately. Zero `thread_local!` declarations remain. Only `NEXT_EVENT_TARGET_ID` (AtomicUsize) kept as truly global. `with_realm()` function ready for Phase 5 (iframe realm creation). **Phase 4: `register_realm_globals()` extracted** — 13 helper methods moved from `impl JsRuntime` to free functions in `runtime.rs` (5 `pub(crate)`, 8 private). `register_realm_globals()` in `realm_state.rs` orchestrates the full 13-step initialization sequence; `copy_globals_to_window()` mirrors constructors/event methods onto `window`. `JsRuntime::new()` reduced to ~5 lines delegating to `register_realm_globals()`. Phase 5 (iframe realm creation) deferred.
 
+**Phase 20 — AbortController, FocusEvent, NodeIterator, HTMLCollection, webkit Events, Range Mutations COMPLETE.** AbortController/AbortSignal: new `abort.rs` with full constructor, `.signal` getter, `.abort(reason?)`, `AbortSignal.abort()`, `.timeout(ms)` (virtual timer), `.any(signals)` (composite). Signals are EventTargets via `resolve_event_target_key()`. addEventListener signal option: `unified_parse_listener_options` returns 4-tuple with signal; aborted signal skips add, otherwise registers "abort" listener for removal. DOMException constructor fixed to `FunctionObjectBuilder` (enables `instanceof`). META script support: `wrap_js_in_html()` parses `// META: script=` directives. FocusEvent: relatedTarget getter + constructor parsing (expected_failures 30→24). NodeIterator: new `node_iterator.rs` with `nextNode()`/`previousNode()` document-order traversal, registered on both documents. HTMLCollection Proxy: `deleteProperty` trap, empty string guard, strict `set` for named properties, `namedItem("")` returns null. webkit animation/transition events: CSSStyleSheet stub (`style.sheet` with `insertRule`/`deleteRule`/`cssRules`), `requestAnimationFrame`/`cancelAnimationFrame` stubs, `getSelection` stub. Range mutations: `RangeInner` shared state with `Rc`, live-range registry in RealmState, boundary adjustment hooks in mutation.rs (insert/remove/replace) and mutation_observer.rs (character data set/append/delete/insert/replace), splitText hook in character_data.rs. appendChild in element.rs now uses `capture_insert_state`/`fire_range_removal_for_move`/`fire_insert_records` for proper range+MO tracking. **273/353 WPT tests passing (0 fail, 80 skip).**
+
 **Phase 19 — TreeWalker Traversal + DOMTokenList Improvements COMPLETE.** DOMTokenList: Class NAME changed to "DOMTokenList" (was "ClassList"), Symbol.toStringTag on prototype, Array.prototype iteration methods (forEach/keys/values/entries/Symbol.iterator) copied to prototype. 4 tests unskipped (Iterable, iteration, stringifier, value). DOMTokenList-coverage-for-attributes expected_failures reduced from 42 to 7 (remaining: relList/htmlFor/sandbox/sizes). TreeWalker: full traversal in tree_walker.rs — `active` flag for recursive filter detection, `node_filter()` with whatToShow bitmask + callable/object filters, 7 methods (parentNode, firstChild, lastChild, nextSibling, previousSibling, nextNode, previousNode) via spec-compliant `traverse_children()`/`traverse_siblings()` helpers, Symbol.toStringTag on instances, filter undefined→null normalization. NodeFilter: added 3 deprecated constants (SHOW_ENTITY_REFERENCE, SHOW_ENTITY, SHOW_NOTATION). **249/353 WPT tests passing (0 fail, 104 skip).**
 
 **Phase 18 — Range API Expansion + Full WPT Checkout COMPLETE.** All `dom/` subdirectories now checked out: `dom/abort`, `dom/collections`, `dom/lists`, `dom/traversal` added alongside existing `dom/events`, `dom/nodes`, `dom/ranges`. 353 total test files (up from 275). Range API: `new Range()` constructor via `FunctionObjectBuilder`, shared `Range.prototype` cached in `RealmState::range_proto`. 21 methods: collapsed, commonAncestorContainer, detach, collapse, cloneRange, selectNode, selectNodeContents, toString, compareBoundaryPoints, comparePoint, isPointInRange, intersectsNode, cloneContents, plus existing setStart/End/Before/After, deleteContents, extractContents, insertNode, surroundContents. `compare_boundary_points_impl()` with correct DISCONNECTED/PRECEDING/CONTAINED_BY handling. `validate_boundary()` for IndexSizeError/InvalidNodeTypeError. Expected failures for cross-document xmlDoc/foreignDoc test cases. **249/353 WPT tests passing (0 fail, 104 skip).**
 
-**104 skipped tests by category:**
+**80 skipped tests by category:**
 - **nodes-other** (14): surrogates, characterSet, createEvent, cloneNode edge cases, remove-unscopable
-- **events-other** (13): Body/FrameSet handlers, signal, dispatch-order, focus, pointer, handler-count
-- **Range-mutations** (10): live range boundary updates on DOM mutations
-- **abort** (8): AbortController/AbortSignal — not implemented
+- **events-other** (11): Body/FrameSet handlers, dispatch-order, focus, pointer, handler-count
 - **nodes-querySelector** (6): querySelector-All (full), namespaces, query-target-in-load-event
 - **nodes-NodeList-tampered** (6): static NodeList length getter tampering
 - **nodes-iframe/shadow** (6): cross-doc adoption, shadow host adoption, iframe parentNode
 - **events-sub** (6): require `.sub.html` server-side substitution
 - **dom-other** (6): idlharness, interface-objects, slot-recalc, xpath
-- **collections** (6): HTMLCollection Proxy edge cases (prototype, delete, indices)
 - **Range-advanced** (6): shadow DOM ranges, iframe, adoption, crash
-- **events-webkit** (4): webkit- prefixed animation/transition events
+- **abort** (4): abort-signal-timeout (iframe detach), reason-constructor (cross-iframe), timeout-shadowrealm, crash test
 - **Range-cross-doc** (4): createDocument fixes for selectNode, comparePoint
 - **events-shadow** (3): shadow DOM event retargeting
 - **TreeWalker** (2): TreeWalker.html (common.js cross-doc), TreeWalker-realm (srcdoc iframe)
-- **NodeIterator** (2): NodeIterator implementation
+- **collections** (1): HTMLCollection-as-prototype (Proxy prototype chain)
+- **NodeIterator** (1): NodeIterator-removal (live iterator mutation tracking)
 - **nodes-sub** (1): .sub.html server substitution
 - **StaticRange** (1): StaticRange constructor
 

@@ -162,6 +162,7 @@ pub(crate) fn register_collections(context: &mut Context) {
                 };
                 // namedItem() dispatches to backing object's __braille_namedItem function
                 proto.namedItem = function(name) {
+                    if (name === '') return null;
                     var fn = this.__braille_namedItem;
                     if (fn) return fn(name);
                     return null;
@@ -394,7 +395,7 @@ pub(crate) fn register_collections(context: &mut Context) {
                         if (val !== undefined) {
                             return val;
                         }
-                        if (typeof prop === 'string' && prop !== 'length') {
+                        if (typeof prop === 'string' && prop !== 'length' && prop !== '') {
                             var named = getNamed(prop);
                             if (named !== undefined) {
                                 return named;
@@ -407,8 +408,36 @@ pub(crate) fn register_collections(context: &mut Context) {
                         if (typeof prop === 'string' && /^\d+$/.test(prop)) {
                             return false;
                         }
-                        // Allow expandos for named properties
+                        // Named collection properties are also read-only
+                        if (typeof prop === 'string' && prop !== '' && prop !== 'length') {
+                            var named = getNamed(prop);
+                            if (named !== undefined) {
+                                return false;
+                            }
+                        }
+                        // Allow expandos for other properties
                         expandos[prop] = value;
+                        return true;
+                    },
+                    deleteProperty: function(target, prop) {
+                        // Indexed properties cannot be deleted
+                        if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+                            var idx = parseInt(prop, 10);
+                            if (idx >= 0 && idx < getLength()) {
+                                return false;
+                            }
+                        }
+                        // Named collection properties cannot be deleted
+                        if (typeof prop === 'string' && prop !== '' && prop !== 'length') {
+                            var named = getNamed(prop);
+                            if (named !== undefined) {
+                                return false;
+                            }
+                        }
+                        // Allow deleting expandos and non-existent properties
+                        if (prop in expandos) {
+                            delete expandos[prop];
+                        }
                         return true;
                     },
                     has: function(target, prop) {
@@ -418,7 +447,7 @@ pub(crate) fn register_collections(context: &mut Context) {
                             return idx >= 0 && idx < getLength();
                         }
                         if (prop in target) return true;
-                        if (typeof prop === 'string') {
+                        if (typeof prop === 'string' && prop !== '') {
                             var named = getNamed(prop);
                             return named !== undefined;
                         }

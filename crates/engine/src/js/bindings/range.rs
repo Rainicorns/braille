@@ -21,6 +21,22 @@ use super::element::JsElement;
 use super::mutation_observer;
 
 // ---------------------------------------------------------------------------
+// RangeInner — shared boundary state for live range tracking
+// ---------------------------------------------------------------------------
+
+/// Shared interior state for a Range, referenced by both the JsRange (on the
+/// JS object) and the live-range registry in RealmState. Using `Rc` + `Cell`
+/// lets mutation hooks update boundaries without holding a borrow on the JS
+/// object.
+#[derive(Debug)]
+pub(crate) struct RangeInner {
+    pub(crate) start_node: Cell<NodeId>,
+    pub(crate) start_offset: Cell<usize>,
+    pub(crate) end_node: Cell<NodeId>,
+    pub(crate) end_offset: Cell<usize>,
+}
+
+// ---------------------------------------------------------------------------
 // JsRange — native data stored on the Range JsObject
 // ---------------------------------------------------------------------------
 
@@ -29,13 +45,7 @@ pub(crate) struct JsRange {
     #[unsafe_ignore_trace]
     tree: Rc<RefCell<DomTree>>,
     #[unsafe_ignore_trace]
-    start_node: Cell<NodeId>,
-    #[unsafe_ignore_trace]
-    start_offset: Cell<usize>,
-    #[unsafe_ignore_trace]
-    end_node: Cell<NodeId>,
-    #[unsafe_ignore_trace]
-    end_offset: Cell<usize>,
+    inner: Rc<RangeInner>,
 }
 
 // ---------------------------------------------------------------------------
@@ -188,16 +198,16 @@ fn range_set_start(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     // Validate: doctype → InvalidNodeTypeError, offset > nodeLength → IndexSizeError
     validate_boundary(node_id, offset, &range.tree.borrow())?;
 
-    range.start_node.set(node_id);
-    range.start_offset.set(offset);
+    range.inner.start_node.set(node_id);
+    range.inner.start_offset.set(offset);
 
     // If start is after end (same root), collapse end to start
     let tree = range.tree.borrow();
-    let same_root = root_of(&tree, node_id) == root_of(&tree, range.end_node.get());
-    if same_root && compare_boundary_points_impl(&tree, node_id, offset, range.end_node.get(), range.end_offset.get()) > 0 {
+    let same_root = root_of(&tree, node_id) == root_of(&tree, range.inner.end_node.get());
+    if same_root && compare_boundary_points_impl(&tree, node_id, offset, range.inner.end_node.get(), range.inner.end_offset.get()) > 0 {
         drop(tree);
-        range.end_node.set(node_id);
-        range.end_offset.set(offset);
+        range.inner.end_node.set(node_id);
+        range.inner.end_offset.set(offset);
     }
     Ok(JsValue::undefined())
 }
@@ -210,16 +220,16 @@ fn range_set_end(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
     // Validate: doctype → InvalidNodeTypeError, offset > nodeLength → IndexSizeError
     validate_boundary(node_id, offset, &range.tree.borrow())?;
 
-    range.end_node.set(node_id);
-    range.end_offset.set(offset);
+    range.inner.end_node.set(node_id);
+    range.inner.end_offset.set(offset);
 
     // If end is before start (same root), collapse start to end
     let tree = range.tree.borrow();
-    let same_root = root_of(&tree, node_id) == root_of(&tree, range.start_node.get());
-    if same_root && compare_boundary_points_impl(&tree, range.start_node.get(), range.start_offset.get(), node_id, offset) > 0 {
+    let same_root = root_of(&tree, node_id) == root_of(&tree, range.inner.start_node.get());
+    if same_root && compare_boundary_points_impl(&tree, range.inner.start_node.get(), range.inner.start_offset.get(), node_id, offset) > 0 {
         drop(tree);
-        range.start_node.set(node_id);
-        range.start_offset.set(offset);
+        range.inner.start_node.set(node_id);
+        range.inner.start_offset.set(offset);
     }
     Ok(JsValue::undefined())
 }
@@ -231,8 +241,8 @@ fn range_set_start_before(_this: &JsValue, args: &[JsValue], _ctx: &mut Context)
     let parent = tree.get_node(node_id).parent.expect("setStartBefore: node has no parent");
     let idx = child_index(&tree, parent, node_id);
     drop(tree);
-    range.start_node.set(parent);
-    range.start_offset.set(idx);
+    range.inner.start_node.set(parent);
+    range.inner.start_offset.set(idx);
     Ok(JsValue::undefined())
 }
 
@@ -243,8 +253,8 @@ fn range_set_start_after(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) 
     let parent = tree.get_node(node_id).parent.expect("setStartAfter: node has no parent");
     let idx = child_index(&tree, parent, node_id);
     drop(tree);
-    range.start_node.set(parent);
-    range.start_offset.set(idx + 1);
+    range.inner.start_node.set(parent);
+    range.inner.start_offset.set(idx + 1);
     Ok(JsValue::undefined())
 }
 
@@ -255,8 +265,8 @@ fn range_set_end_before(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) -
     let parent = tree.get_node(node_id).parent.expect("setEndBefore: node has no parent");
     let idx = child_index(&tree, parent, node_id);
     drop(tree);
-    range.end_node.set(parent);
-    range.end_offset.set(idx);
+    range.inner.end_node.set(parent);
+    range.inner.end_offset.set(idx);
     Ok(JsValue::undefined())
 }
 
@@ -267,8 +277,8 @@ fn range_set_end_after(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) ->
     let parent = tree.get_node(node_id).parent.expect("setEndAfter: node has no parent");
     let idx = child_index(&tree, parent, node_id);
     drop(tree);
-    range.end_node.set(parent);
-    range.end_offset.set(idx + 1);
+    range.inner.end_node.set(parent);
+    range.inner.end_offset.set(idx + 1);
     Ok(JsValue::undefined())
 }
 
@@ -278,8 +288,8 @@ fn range_set_end_after(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) ->
 
 fn range_collapsed(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     get_range!(_this, range);
-    let collapsed = range.start_node.get() == range.end_node.get()
-        && range.start_offset.get() == range.end_offset.get();
+    let collapsed = range.inner.start_node.get() == range.inner.end_node.get()
+        && range.inner.start_offset.get() == range.inner.end_offset.get();
     Ok(JsValue::from(collapsed))
 }
 
@@ -289,8 +299,8 @@ fn range_collapsed(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> Js
 
 fn range_common_ancestor_container(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     get_range!(_this, range);
-    let start = range.start_node.get();
-    let end = range.end_node.get();
+    let start = range.inner.start_node.get();
+    let end = range.inner.end_node.get();
     let tree = range.tree.clone();
     drop(range);
 
@@ -328,11 +338,11 @@ fn range_collapse(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsRe
     get_range!(_this, range);
     let to_start = args.first().map(|v| v.to_boolean()).unwrap_or(false);
     if to_start {
-        range.end_node.set(range.start_node.get());
-        range.end_offset.set(range.start_offset.get());
+        range.inner.end_node.set(range.inner.start_node.get());
+        range.inner.end_offset.set(range.inner.start_offset.get());
     } else {
-        range.start_node.set(range.end_node.get());
-        range.start_offset.set(range.end_offset.get());
+        range.inner.start_node.set(range.inner.end_node.get());
+        range.inner.start_offset.set(range.inner.end_offset.get());
     }
     Ok(JsValue::undefined())
 }
@@ -344,10 +354,10 @@ fn range_collapse(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> JsRe
 fn range_clone_range(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     get_range!(_this, range);
     let tree = range.tree.clone();
-    let start_node = range.start_node.get();
-    let start_offset = range.start_offset.get();
-    let end_node = range.end_node.get();
-    let end_offset = range.end_offset.get();
+    let start_node = range.inner.start_node.get();
+    let start_offset = range.inner.start_offset.get();
+    let end_node = range.inner.end_node.get();
+    let end_offset = range.inner.end_offset.get();
     drop(range);
     let obj = create_range_with_bounds(tree, start_node, start_offset, end_node, end_offset, ctx)?;
     Ok(obj.into())
@@ -366,10 +376,10 @@ fn range_select_node(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> J
     })?;
     let idx = child_index(&tree, parent, node_id);
     drop(tree);
-    range.start_node.set(parent);
-    range.start_offset.set(idx);
-    range.end_node.set(parent);
-    range.end_offset.set(idx + 1);
+    range.inner.start_node.set(parent);
+    range.inner.start_offset.set(idx);
+    range.inner.end_node.set(parent);
+    range.inner.end_offset.set(idx + 1);
     Ok(JsValue::undefined())
 }
 
@@ -383,10 +393,10 @@ fn range_select_node_contents(_this: &JsValue, args: &[JsValue], _ctx: &mut Cont
     }
     let len = node_length(&tree, node_id);
     drop(tree);
-    range.start_node.set(node_id);
-    range.start_offset.set(0);
-    range.end_node.set(node_id);
-    range.end_offset.set(len);
+    range.inner.start_node.set(node_id);
+    range.inner.start_offset.set(0);
+    range.inner.end_node.set(node_id);
+    range.inner.end_offset.set(len);
     Ok(JsValue::undefined())
 }
 
@@ -396,10 +406,10 @@ fn range_select_node_contents(_this: &JsValue, args: &[JsValue], _ctx: &mut Cont
 
 fn range_to_string(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     get_range!(_this, range);
-    let start_node = range.start_node.get();
-    let start_offset = range.start_offset.get();
-    let end_node = range.end_node.get();
-    let end_offset = range.end_offset.get();
+    let start_node = range.inner.start_node.get();
+    let start_offset = range.inner.start_offset.get();
+    let end_node = range.inner.end_node.get();
+    let end_offset = range.inner.end_offset.get();
     let tree = range.tree.clone();
     drop(range);
 
@@ -516,8 +526,8 @@ fn range_compare_boundary_points(_this: &JsValue, args: &[JsValue], ctx: &mut Co
 
     // Check roots are the same
     let tree = range.tree.borrow();
-    let this_root = root_of(&tree, range.start_node.get());
-    let source_root = root_of(&tree, source.start_node.get());
+    let this_root = root_of(&tree, range.inner.start_node.get());
+    let source_root = root_of(&tree, source.inner.start_node.get());
     if this_root != source_root {
         drop(tree);
         drop(source);
@@ -528,19 +538,19 @@ fn range_compare_boundary_points(_this: &JsValue, args: &[JsValue], ctx: &mut Co
     let (node_a, offset_a, node_b, offset_b) = match how {
         0 => {
             // START_TO_START: this.start vs source.start
-            (range.start_node.get(), range.start_offset.get(), source.start_node.get(), source.start_offset.get())
+            (range.inner.start_node.get(), range.inner.start_offset.get(), source.inner.start_node.get(), source.inner.start_offset.get())
         }
         1 => {
             // START_TO_END: this.end vs source.start
-            (range.end_node.get(), range.end_offset.get(), source.start_node.get(), source.start_offset.get())
+            (range.inner.end_node.get(), range.inner.end_offset.get(), source.inner.start_node.get(), source.inner.start_offset.get())
         }
         2 => {
             // END_TO_END: this.end vs source.end
-            (range.end_node.get(), range.end_offset.get(), source.end_node.get(), source.end_offset.get())
+            (range.inner.end_node.get(), range.inner.end_offset.get(), source.inner.end_node.get(), source.inner.end_offset.get())
         }
         3 => {
             // END_TO_START: this.start vs source.end
-            (range.start_node.get(), range.start_offset.get(), source.end_node.get(), source.end_offset.get())
+            (range.inner.start_node.get(), range.inner.start_offset.get(), source.inner.end_node.get(), source.inner.end_offset.get())
         }
         _ => unreachable!(),
     };
@@ -561,7 +571,7 @@ fn range_compare_point(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> 
     let tree = range.tree.borrow();
 
     // Check same root
-    let range_root = root_of(&tree, range.start_node.get());
+    let range_root = root_of(&tree, range.inner.start_node.get());
     let node_root = root_of(&tree, node_id);
     if range_root != node_root {
         drop(tree);
@@ -570,13 +580,13 @@ fn range_compare_point(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> 
     }
 
     // If point is before start, return -1
-    let vs_start = compare_boundary_points_impl(&tree, node_id, offset, range.start_node.get(), range.start_offset.get());
+    let vs_start = compare_boundary_points_impl(&tree, node_id, offset, range.inner.start_node.get(), range.inner.start_offset.get());
     if vs_start < 0 {
         return Ok(JsValue::from(-1));
     }
 
     // If point is after end, return 1
-    let vs_end = compare_boundary_points_impl(&tree, node_id, offset, range.end_node.get(), range.end_offset.get());
+    let vs_end = compare_boundary_points_impl(&tree, node_id, offset, range.inner.end_node.get(), range.inner.end_offset.get());
     if vs_end > 0 {
         return Ok(JsValue::from(1));
     }
@@ -596,14 +606,14 @@ fn range_is_point_in_range(_this: &JsValue, args: &[JsValue], ctx: &mut Context)
     let tree = range.tree.borrow();
 
     // Different roots → false (not an error)
-    let range_root = root_of(&tree, range.start_node.get());
+    let range_root = root_of(&tree, range.inner.start_node.get());
     let node_root = root_of(&tree, node_id);
     if range_root != node_root {
         return Ok(JsValue::from(false));
     }
 
-    let vs_start = compare_boundary_points_impl(&tree, node_id, offset, range.start_node.get(), range.start_offset.get());
-    let vs_end = compare_boundary_points_impl(&tree, node_id, offset, range.end_node.get(), range.end_offset.get());
+    let vs_start = compare_boundary_points_impl(&tree, node_id, offset, range.inner.start_node.get(), range.inner.start_offset.get());
+    let vs_end = compare_boundary_points_impl(&tree, node_id, offset, range.inner.end_node.get(), range.inner.end_offset.get());
     Ok(JsValue::from(vs_start >= 0 && vs_end <= 0))
 }
 
@@ -618,7 +628,7 @@ fn range_intersects_node(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) 
     let tree = range.tree.borrow();
 
     // Different roots → false
-    let range_root = root_of(&tree, range.start_node.get());
+    let range_root = root_of(&tree, range.inner.start_node.get());
     let node_root = root_of(&tree, node_id);
     if range_root != node_root {
         return Ok(JsValue::from(false));
@@ -637,15 +647,15 @@ fn range_intersects_node(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) 
         &tree,
         parent,
         idx + 1,
-        range.start_node.get(),
-        range.start_offset.get(),
+        range.inner.start_node.get(),
+        range.inner.start_offset.get(),
     ) > 0;
     let before_end = compare_boundary_points_impl(
         &tree,
         parent,
         idx,
-        range.end_node.get(),
-        range.end_offset.get(),
+        range.inner.end_node.get(),
+        range.inner.end_offset.get(),
     ) < 0;
 
     Ok(JsValue::from(after_start && before_end))
@@ -660,10 +670,10 @@ fn range_clone_contents(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) -
         get_range!(_this, range);
         (
             range.tree.clone(),
-            range.start_node.get(),
-            range.start_offset.get(),
-            range.end_node.get(),
-            range.end_offset.get(),
+            range.inner.start_node.get(),
+            range.inner.start_offset.get(),
+            range.inner.end_node.get(),
+            range.inner.end_offset.get(),
         )
     };
 
@@ -803,10 +813,10 @@ fn range_delete_contents(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) 
         get_range!(_this, range);
         (
             range.tree.clone(),
-            range.start_node.get(),
-            range.start_offset.get(),
-            range.end_node.get(),
-            range.end_offset.get(),
+            range.inner.start_node.get(),
+            range.inner.start_offset.get(),
+            range.inner.end_node.get(),
+            range.inner.end_offset.get(),
         )
     };
     delete_or_extract_contents(ctx, &tree, start_node, start_offset, end_node, end_offset, false)?;
@@ -822,10 +832,10 @@ fn range_extract_contents(_this: &JsValue, _args: &[JsValue], ctx: &mut Context)
         get_range!(_this, range);
         (
             range.tree.clone(),
-            range.start_node.get(),
-            range.start_offset.get(),
-            range.end_node.get(),
-            range.end_offset.get(),
+            range.inner.start_node.get(),
+            range.inner.start_offset.get(),
+            range.inner.end_node.get(),
+            range.inner.end_offset.get(),
         )
     };
     let frag_id = delete_or_extract_contents(ctx, &tree, start_node, start_offset, end_node, end_offset, true)?;
@@ -989,7 +999,7 @@ fn delete_or_extract_contents(
 fn range_insert_node(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let (tree, start_node, start_offset) = {
         get_range!(_this, range);
-        (range.tree.clone(), range.start_node.get(), range.start_offset.get())
+        (range.tree.clone(), range.inner.start_node.get(), range.inner.start_offset.get())
     };
 
     let new_node_id = extract_node(args.first().unwrap_or(&JsValue::undefined()))?;
@@ -1088,10 +1098,10 @@ fn range_surround_contents(_this: &JsValue, args: &[JsValue], ctx: &mut Context)
         get_range!(_this, range);
         (
             range.tree.clone(),
-            range.start_node.get(),
-            range.start_offset.get(),
-            range.end_node.get(),
-            range.end_offset.get(),
+            range.inner.start_node.get(),
+            range.inner.start_offset.get(),
+            range.inner.end_node.get(),
+            range.inner.end_offset.get(),
         )
     };
 
@@ -1159,7 +1169,7 @@ fn range_surround_contents(_this: &JsValue, args: &[JsValue], ctx: &mut Context)
 
 fn range_start_container(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     get_range!(_this, range);
-    let node_id = range.start_node.get();
+    let node_id = range.inner.start_node.get();
     let tree = range.tree.clone();
     drop(range);
     let js_el = super::element::get_or_create_js_element(node_id, tree, ctx)?;
@@ -1168,12 +1178,12 @@ fn range_start_container(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) 
 
 fn range_start_offset(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     get_range!(_this, range);
-    Ok(JsValue::from(range.start_offset.get() as u32))
+    Ok(JsValue::from(range.inner.start_offset.get() as u32))
 }
 
 fn range_end_container(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     get_range!(_this, range);
-    let node_id = range.end_node.get();
+    let node_id = range.inner.end_node.get();
     let tree = range.tree.clone();
     drop(range);
     let js_el = super::element::get_or_create_js_element(node_id, tree, ctx)?;
@@ -1182,7 +1192,7 @@ fn range_end_container(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) ->
 
 fn range_end_offset(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
     get_range!(_this, range);
-    Ok(JsValue::from(range.end_offset.get() as u32))
+    Ok(JsValue::from(range.inner.end_offset.get() as u32))
 }
 
 // ---------------------------------------------------------------------------
@@ -1330,7 +1340,162 @@ pub(crate) fn create_range(
     Ok(obj)
 }
 
+// ---------------------------------------------------------------------------
+// Live range mutation hooks — called from mutation.rs and mutation_observer.rs
+// ---------------------------------------------------------------------------
+
+/// Helper: check if `descendant` is an inclusive descendant of `ancestor` in the given tree.
+fn is_inclusive_descendant(tree: &DomTree, descendant: NodeId, ancestor: NodeId) -> bool {
+    let mut current = descendant;
+    loop {
+        if current == ancestor {
+            return true;
+        }
+        match tree.get_parent(current) {
+            Some(p) => current = p,
+            None => return false,
+        }
+    }
+}
+
+/// Called after a child node is inserted into `parent_id` at child index `new_index`.
+/// Per spec §4.2: "For each live range whose start node is parent and start offset
+/// is greater than index, increase its start offset by count."
+pub(crate) fn update_ranges_for_insert(ctx: &mut Context, parent_id: NodeId, new_index: usize, count: usize) {
+    let registry = crate::js::realm_state::live_ranges(ctx);
+    let reg = registry.borrow();
+    for weak in reg.iter() {
+        if let Some(inner) = weak.upgrade() {
+            if inner.start_node.get() == parent_id && inner.start_offset.get() > new_index {
+                inner.start_offset.set(inner.start_offset.get() + count);
+            }
+            if inner.end_node.get() == parent_id && inner.end_offset.get() > new_index {
+                inner.end_offset.set(inner.end_offset.get() + count);
+            }
+        }
+    }
+}
+
+/// Called before a child node at `old_index` is removed from `parent_id`.
+/// Per spec §4.2 removing steps: for each boundary, if node is removed_node
+/// or descendant, set to (parent_id, old_index). If node == parent_id and
+/// offset > old_index, decrement.
+pub(crate) fn update_ranges_for_remove(
+    ctx: &mut Context,
+    parent_id: NodeId,
+    old_index: usize,
+    removed_node_id: NodeId,
+    tree: &DomTree,
+) {
+    let registry = crate::js::realm_state::live_ranges(ctx);
+    let reg = registry.borrow();
+    for weak in reg.iter() {
+        if let Some(inner) = weak.upgrade() {
+            // Start boundary
+            if is_inclusive_descendant(tree, inner.start_node.get(), removed_node_id) {
+                inner.start_node.set(parent_id);
+                inner.start_offset.set(old_index);
+            } else if inner.start_node.get() == parent_id && inner.start_offset.get() > old_index {
+                inner.start_offset.set(inner.start_offset.get() - 1);
+            }
+
+            // End boundary
+            if is_inclusive_descendant(tree, inner.end_node.get(), removed_node_id) {
+                inner.end_node.set(parent_id);
+                inner.end_offset.set(old_index);
+            } else if inner.end_node.get() == parent_id && inner.end_offset.get() > old_index {
+                inner.end_offset.set(inner.end_offset.get() - 1);
+            }
+        }
+    }
+}
+
+/// Called after character data replacement per spec §4.2 "replace data" steps.
+/// `node_id` is the CharacterData node. `offset` is where replacement starts.
+/// `count` is how many UTF-16 code units were removed. `added_len` is how many
+/// UTF-16 code units were inserted.
+pub(crate) fn update_ranges_for_char_data(
+    ctx: &mut Context,
+    node_id: NodeId,
+    offset: usize,
+    count: usize,
+    added_len: usize,
+) {
+    let registry = crate::js::realm_state::live_ranges(ctx);
+    let reg = registry.borrow();
+    for weak in reg.iter() {
+        if let Some(inner) = weak.upgrade() {
+            // Start boundary
+            if inner.start_node.get() == node_id {
+                let so = inner.start_offset.get();
+                if so > offset && so <= offset + count {
+                    inner.start_offset.set(offset);
+                } else if so > offset + count {
+                    inner.start_offset.set(so - count + added_len);
+                }
+            }
+            // End boundary
+            if inner.end_node.get() == node_id {
+                let eo = inner.end_offset.get();
+                if eo > offset && eo <= offset + count {
+                    inner.end_offset.set(offset);
+                } else if eo > offset + count {
+                    inner.end_offset.set(eo - count + added_len);
+                }
+            }
+        }
+    }
+}
+
+/// Called after `Text.splitText(offset)` per spec §4.2 "split a Text node" steps.
+/// `old_node_id` is the original text node, `new_node_id` is the newly created
+/// node (containing text after offset), `offset` is the split point (UTF-16),
+/// `parent_id` is the parent (if any), `new_index` is the child index of new_node
+/// in parent.
+pub(crate) fn update_ranges_for_split_text(
+    ctx: &mut Context,
+    old_node_id: NodeId,
+    new_node_id: NodeId,
+    offset: usize,
+    parent_id: Option<NodeId>,
+    new_index: Option<usize>,
+) {
+    let registry = crate::js::realm_state::live_ranges(ctx);
+    let reg = registry.borrow();
+    for weak in reg.iter() {
+        if let Some(inner) = weak.upgrade() {
+            // Step 1 (from replaceData): already handled by update_ranges_for_char_data
+            // Step 2: if boundary node == old_node and offset > split offset,
+            //         move to new_node with offset adjusted
+            if inner.start_node.get() == old_node_id && inner.start_offset.get() > offset {
+                inner.start_node.set(new_node_id);
+                inner.start_offset.set(inner.start_offset.get() - offset);
+            }
+            if inner.end_node.get() == old_node_id && inner.end_offset.get() > offset {
+                inner.end_node.set(new_node_id);
+                inner.end_offset.set(inner.end_offset.get() - offset);
+            }
+
+            // Step 3: if parent exists, adjust parent-based boundaries
+            if let (Some(pid), Some(idx)) = (parent_id, new_index) {
+                if inner.start_node.get() == pid && inner.start_offset.get() > idx {
+                    inner.start_offset.set(inner.start_offset.get() + 1);
+                }
+                if inner.end_node.get() == pid && inner.end_offset.get() > idx {
+                    inner.end_offset.set(inner.end_offset.get() + 1);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Factory: create_range_with_bounds
+// ---------------------------------------------------------------------------
+
 /// Creates a Range JsObject with specified boundaries.
+/// Registers the range's inner state in the live-range registry so that
+/// DOM mutations can update boundaries automatically.
 fn create_range_with_bounds(
     tree: Rc<RefCell<DomTree>>,
     start_node: NodeId,
@@ -1339,12 +1504,26 @@ fn create_range_with_bounds(
     end_offset: usize,
     ctx: &mut Context,
 ) -> JsResult<JsObject> {
-    let range_data = JsRange {
-        tree,
+    let inner = Rc::new(RangeInner {
         start_node: Cell::new(start_node),
         start_offset: Cell::new(start_offset),
         end_node: Cell::new(end_node),
         end_offset: Cell::new(end_offset),
+    });
+
+    // Register in live-range registry (weak ref so JS GC can collect)
+    let registry = crate::js::realm_state::live_ranges(ctx);
+    let mut reg = registry.borrow_mut();
+    // Periodic cleanup: drop dead weak refs
+    if reg.len() > 64 {
+        reg.retain(|w| w.strong_count() > 0);
+    }
+    reg.push(Rc::downgrade(&inner));
+    drop(reg);
+
+    let range_data = JsRange {
+        tree,
+        inner,
     };
 
     let obj = boa_engine::object::ObjectInitializer::with_native_data(range_data, ctx).build();
@@ -1356,3 +1535,4 @@ fn create_range_with_bounds(
 
     Ok(obj)
 }
+

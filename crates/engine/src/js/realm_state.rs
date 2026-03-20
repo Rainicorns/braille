@@ -19,6 +19,7 @@ use crate::dom::{DomTree, NodeId};
 use super::bindings;
 use super::bindings::element::{DomPrototypes, NodeCache};
 use super::bindings::event_target::ListenerMap;
+use super::bindings::range::RangeInner;
 use super::runtime;
 
 // ---------------------------------------------------------------------------
@@ -161,6 +162,9 @@ pub(crate) struct RealmState {
     #[unsafe_ignore_trace]
     pub(crate) range_proto: RefCell<Option<JsObject>>,
 
+    #[unsafe_ignore_trace]
+    pub(crate) abort_signal_proto: RefCell<Option<JsObject>>,
+
     // -- Singleton state --
     #[unsafe_ignore_trace]
     pub(crate) dom_tree: Rc<RefCell<DomTree>>,
@@ -189,6 +193,10 @@ pub(crate) struct RealmState {
     // -- Timer state --
     #[unsafe_ignore_trace]
     pub(crate) timer_state: Rc<RefCell<TimerState>>,
+
+    // -- Live range registry (for automatic boundary adjustment on DOM mutations) --
+    #[unsafe_ignore_trace]
+    pub(crate) live_ranges: Rc<RefCell<Vec<std::rc::Weak<RangeInner>>>>,
 }
 
 impl RealmState {
@@ -216,6 +224,7 @@ impl RealmState {
             mutation_record_proto: RefCell::new(None),
             is_trusted_getter: RefCell::new(None),
             range_proto: RefCell::new(None),
+            abort_signal_proto: RefCell::new(None),
             dom_tree: tree,
             window_object: RefCell::new(None),
             current_event: RefCell::new(None),
@@ -224,6 +233,7 @@ impl RealmState {
             iframe_realms: Rc::new(RefCell::new(HashMap::new())),
             all_realms: Rc::new(RefCell::new(Vec::new())),
             timer_state: Rc::new(RefCell::new(TimerState::new())),
+            live_ranges: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -251,6 +261,7 @@ impl RealmState {
             mutation_record_proto: RefCell::new(None),
             is_trusted_getter: RefCell::new(None),
             range_proto: RefCell::new(None),
+            abort_signal_proto: RefCell::new(None),
             dom_tree: tree,
             window_object: RefCell::new(None),
             current_event: RefCell::new(None),
@@ -259,6 +270,7 @@ impl RealmState {
             iframe_realms: shared.iframe_realms,
             all_realms: shared.all_realms,
             timer_state: Rc::new(RefCell::new(TimerState::new())),
+            live_ranges: Rc::new(RefCell::new(Vec::new())),
         }
     }
 }
@@ -349,6 +361,11 @@ rc_accessor!(
 );
 rc_accessor!(all_realms, all_realms, Rc<RefCell<Vec<Realm>>>);
 rc_accessor!(timer_state, timer_state, Rc<RefCell<TimerState>>);
+rc_accessor!(
+    live_ranges,
+    live_ranges,
+    Rc<RefCell<Vec<std::rc::Weak<RangeInner>>>>
+);
 
 // -- Prototype/factory cache accessors (clone Option<T> out) --
 
@@ -372,6 +389,11 @@ option_accessor!(
 );
 option_accessor!(is_trusted_getter, set_is_trusted_getter, is_trusted_getter, JsObject);
 option_accessor!(range_proto, set_range_proto, range_proto, JsObject);
+pub(crate) fn set_abort_signal_proto(ctx: &Context, v: JsObject) {
+    let hd = ctx.realm().host_defined();
+    let state = hd.get::<RealmState>().expect("RealmState not initialized");
+    *state.abort_signal_proto.borrow_mut() = Some(v);
+}
 option_accessor!(window_object, set_window_object, window_object, JsObject);
 
 // -- DomPrototypes (special: clone returns the whole struct) --
@@ -555,7 +577,10 @@ fn register_realm_globals_inner(
     // 14. Range global constructor
     bindings::range::register_range_global(context);
 
-    // 15. Copy globals to window (EventTarget, constructors, event methods)
+    // 15. AbortController + AbortSignal globals
+    bindings::abort::register_abort_globals(context);
+
+    // 16. Copy globals to window (EventTarget, constructors, event methods)
     copy_globals_to_window(context);
 }
 

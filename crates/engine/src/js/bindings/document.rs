@@ -1189,6 +1189,9 @@ pub(crate) fn add_document_properties_to_element(
     // createTreeWalker method
     super::tree_walker::register_create_tree_walker(js_obj, new_tree.clone(), ctx);
 
+    // createNodeIterator method
+    super::node_iterator::register_create_node_iterator(js_obj, new_tree.clone(), ctx);
+
     // createProcessingInstruction method
     let tree_for_cpi = new_tree.clone();
     let create_pi = unsafe {
@@ -2420,7 +2423,10 @@ pub(crate) fn register_document(tree: Rc<RefCell<DomTree>>, context: &mut Contex
         .build();
 
     // createTreeWalker
-    super::tree_walker::register_create_tree_walker(&document, tree_for_tw, context);
+    super::tree_walker::register_create_tree_walker(&document, tree_for_tw.clone(), context);
+
+    // createNodeIterator
+    super::node_iterator::register_create_node_iterator(&document, tree_for_tw, context);
 
     // Add accessor properties (body, head, title)
     let realm = context.realm().clone();
