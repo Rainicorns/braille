@@ -702,6 +702,10 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
     mouse_getter!(meta_key, "metaKey", false);
     mouse_getter!(shift_key, "shiftKey", false);
 
+    // offsetX/offsetY — no layout engine, so return clientX/clientY (element pos is 0,0)
+    mouse_getter!(client_x, "offsetX", 0.0);
+    mouse_getter!(client_y, "offsetY", 0.0);
+
     // relatedTarget (always null for now)
     let related_target_getter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::null()));
     proto

@@ -438,6 +438,10 @@ fn expected_failures(rel_path: &str) -> usize {
         ("Range-mutations-replaceData", 495),
         ("Range-mutations-dataChange", 1404),
         ("Range-mutations-splitText", 15),
+        // Range-comparePoint-2: 1 failure from xmlDoctype WrongDocumentError
+        ("Range-comparePoint-2.html", 1),
+        // mouse-event-retarget: 1 failure from offsetX layout calculation (no layout engine)
+        ("mouse-event-retarget.html", 1),
     ];
     for (pattern, count) in known {
         if rel_path.contains(pattern) {
@@ -479,10 +483,12 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("Range-compareBoundaryPoints-crash", "requires Selection API"),
         ("Range-extractContents-dynamic-end", "requires iframe unload"),
         ("Range-test-iframe", "helper file, not a test"),
-        ("Range-selectNode", "requires createDocument to return full document"),
-        ("Range-comparePoint", "requires createDocument + doctype validation"),
-        ("Range-intersectsNode-binding", "requires TypeError for non-node args"),
-        ("StaticRange", "requires StaticRange"),
+        ("Range-selectNode", "test JS crashes: common.js uses features we don't support"),
+        ("Range-comparePoint.html", "3224/5580 failures from cross-doc nodes"),
+        // Range-intersectsNode-binding — fixed: extract_node now throws TypeError
+        // ("Range-intersectsNode-binding", "requires TypeError for non-node args"),
+        // StaticRange — now implemented
+        // ("StaticRange", "requires StaticRange"),
         // Selection
         ("Selection", "requires Selection API"),
         // Shadow DOM — core APIs implemented (attachShadow, shadowRoot, getRootNode composed)
@@ -556,8 +562,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
             "CharacterData-surrogates",
             "requires UTF-16 internal string storage for lone surrogates",
         ),
-        // Pre-insertion validation (requires DOMException hierarchy)
-        ("pre-insertion", "requires DOMException types"),
+        // Pre-insertion validation — only matches .js helper files, not test files
+        // ("pre-insertion", "requires DOMException types"),
         // Document.URL — URL/documentURI defined as "about:blank", test requires iframe src loading with redirect
         ("Document-URL", "requires iframe src loading with redirect"),
         // Document-doctype — doctype getter implemented (unskip)
@@ -584,23 +590,22 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
             "Node-cloneNode-document-allow-declarative-shadow-roots",
             "requires declarative shadow DOM",
         ),
-        (
-            "Node-cloneNode-on-inactive-document-crash",
-            "requires inactive document",
-        ),
+        // Node-cloneNode-on-inactive-document-crash — crash test, should just not crash
+        // ("Node-cloneNode-on-inactive-document-crash", "requires inactive document"),
         // Node-parentNode, Node-contains — now implemented
         // getElementsByClassName — now returns live HTMLCollection (unskip)
         // ("getElementsByClassName", "requires full getElementsByClassName"),
         // Document-characterSet
         ("Document-characterSet", "requires characterSet"),
-        // Creators
-        ("creators", "requires full creator functions"),
-        // Productions
-        ("productions", "requires productions"),
+        // Creators — only matches .js helper files
+        // ("creators", "requires full creator functions"),
+        // Productions — only matches .js helper files
+        // ("productions", "requires productions"),
         // case.html — getElementsByTagNameNS now implemented (unskip)
         // ("case.html", "requires getElementsByTagNameNS"),
         // Document-createEvent full spec
-        ("Document-createEvent.html", "requires full createEvent spec"),
+        // Document-createEvent.html — file doesn't exist in WPT
+        // ("Document-createEvent.html", "requires full createEvent spec"),
         // querySelector — now working; skip specific tests that need unimplemented features
         // ("query", "requires full querySelector"),  // removed broad pattern
         (
@@ -654,7 +659,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("scrolling", "requires scroll APIs"),
         // touch events
         ("touch", "requires touch events"),
-        ("Touch", "requires touch events"),
+        // ("Touch", "requires touch events"),  // redundant with lowercase "touch"
         // Document/DocumentFragment/DocumentType — constructors + interface implemented (unskip)
         // ("Document-constructor", "requires Document constructor"),
         // ("DocumentFragment-constructor", "requires DocumentFragment constructor"),
@@ -752,7 +757,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // focus/pointer/mouse events (need specific event types)
         ("focus-event", "requires FocusEvent"),
         ("pointer-event", "requires PointerEvent"),
-        ("mouse-event", "requires MouseEvent"),
+        // mouse-event — offsetX/offsetY now implemented
+        // ("mouse-event", "requires MouseEvent"),
         // handler-count (needs getEventListeners or similar)
         ("handler-count", "requires handler counting"),
         // label default action — now supported (activation behavior)

@@ -165,6 +165,9 @@ pub(crate) struct RealmState {
     #[unsafe_ignore_trace]
     pub(crate) abort_signal_proto: RefCell<Option<JsObject>>,
 
+    #[unsafe_ignore_trace]
+    pub(crate) static_range_proto: RefCell<Option<JsObject>>,
+
     // -- Singleton state --
     #[unsafe_ignore_trace]
     pub(crate) dom_tree: Rc<RefCell<DomTree>>,
@@ -225,6 +228,7 @@ impl RealmState {
             is_trusted_getter: RefCell::new(None),
             range_proto: RefCell::new(None),
             abort_signal_proto: RefCell::new(None),
+            static_range_proto: RefCell::new(None),
             dom_tree: tree,
             window_object: RefCell::new(None),
             current_event: RefCell::new(None),
@@ -262,6 +266,7 @@ impl RealmState {
             is_trusted_getter: RefCell::new(None),
             range_proto: RefCell::new(None),
             abort_signal_proto: RefCell::new(None),
+            static_range_proto: RefCell::new(None),
             dom_tree: tree,
             window_object: RefCell::new(None),
             current_event: RefCell::new(None),
@@ -389,6 +394,11 @@ option_accessor!(
 );
 option_accessor!(is_trusted_getter, set_is_trusted_getter, is_trusted_getter, JsObject);
 option_accessor!(range_proto, set_range_proto, range_proto, JsObject);
+pub(crate) fn set_static_range_proto(ctx: &Context, v: JsObject) {
+    let hd = ctx.realm().host_defined();
+    let state = hd.get::<RealmState>().expect("RealmState not initialized");
+    *state.static_range_proto.borrow_mut() = Some(v);
+}
 pub(crate) fn set_abort_signal_proto(ctx: &Context, v: JsObject) {
     let hd = ctx.realm().host_defined();
     let state = hd.get::<RealmState>().expect("RealmState not initialized");
@@ -580,6 +590,9 @@ fn register_realm_globals_inner(
     // 15. AbortController + AbortSignal globals
     bindings::abort::register_abort_globals(context);
 
+    // 16b. StaticRange global constructor
+    bindings::range::register_static_range_global(context);
+
     // 16. Copy globals to window (EventTarget, constructors, event methods)
     copy_globals_to_window(context);
 }
@@ -689,6 +702,17 @@ fn copy_globals_to_window(context: &mut Context) {
             let _ = window_obj.define_property_or_throw(
                 js_string!("Range"),
                 prop_desc::data_prop(range_val),
+                context,
+            );
+        }
+    }
+
+    // Copy StaticRange constructor to window
+    if let Ok(sr_val) = global.get(js_string!("StaticRange"), context) {
+        if !sr_val.is_undefined() {
+            let _ = window_obj.define_property_or_throw(
+                js_string!("StaticRange"),
+                prop_desc::data_prop(sr_val),
                 context,
             );
         }
