@@ -279,6 +279,34 @@ impl DomTree {
         }
     }
 
+    /// DOM spec retarget algorithm: walk `a` up through shadow boundaries until it reaches
+    /// a tree that is visible from `b`. If `b` is None (non-node target like XMLHttpRequest
+    /// or window), the shadow walk always continues to the outermost host.
+    ///
+    /// Spec: https://dom.spec.whatwg.org/#retarget
+    /// Walk A up through shadow roots until A's root is not a shadow root or B is in the same
+    /// shadow tree as A.
+    pub fn retarget(&self, mut a: NodeId, b: Option<NodeId>) -> NodeId {
+        loop {
+            let root = self.root_of(a);
+            if !matches!(self.nodes[root].data, NodeData::ShadowRoot { .. }) {
+                return a;
+            }
+            if let Some(b_id) = b {
+                // If B is in the same shadow tree as A, A is already visible from B
+                if self.root_of(b_id) == root {
+                    return a;
+                }
+            }
+            // Jump through shadow boundary to the host
+            if let NodeData::ShadowRoot { host, .. } = self.nodes[root].data {
+                a = host;
+            } else {
+                return a;
+            }
+        }
+    }
+
     /// Allocates a new Element node with attributes (unattached) and returns its NodeId.
     pub fn create_element_with_attrs(&mut self, tag_name: &str, attributes: Vec<DomAttribute>) -> NodeId {
         self.alloc_node(NodeData::Element {

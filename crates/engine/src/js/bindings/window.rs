@@ -20,7 +20,7 @@ type ConsoleBuffer = Rc<RefCell<Vec<String>>>;
 pub(crate) const WINDOW_LISTENER_ID: usize = usize::MAX - 1;
 
 /// Public window dispatchEvent — called from EventTarget.prototype.dispatchEvent for window `this`.
-pub(crate) fn window_dispatch_event(args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+pub(crate) fn window_dispatch_event_with_this(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let event_val = args.first().cloned().unwrap_or(JsValue::undefined());
     if event_val.is_null() || event_val.is_undefined() {
         return Ok(JsValue::from(true));
@@ -35,20 +35,23 @@ pub(crate) fn window_dispatch_event(args: &[JsValue], ctx: &mut Context) -> JsRe
         None => return Ok(JsValue::from(true)),
     };
 
+    // Retarget relatedTarget for window dispatch (non-node target)
+    super::event_target::retarget_related_target_for_non_node(&event_obj, ctx)?;
+
     {
         let mut evt = event_obj.downcast_mut::<super::event::JsEvent>().unwrap();
         evt.dispatching = true;
         evt.phase = 2;
     }
 
-    let window_val: JsValue = realm_state::window_object(ctx)
-        .map(JsValue::from)
-        .unwrap_or(JsValue::undefined());
+    // Use `this` as the target so that `event.target === self` works
+    // (self may be the global object, which differs from our window object)
+    let target_val = this.clone();
 
     event_obj.define_property_or_throw(
         js_string!("target"),
         PropertyDescriptor::builder()
-            .value(window_val.clone())
+            .value(target_val.clone())
             .writable(true)
             .configurable(true)
             .enumerable(true)
@@ -58,7 +61,7 @@ pub(crate) fn window_dispatch_event(args: &[JsValue], ctx: &mut Context) -> JsRe
     event_obj.define_property_or_throw(
         js_string!("srcElement"),
         PropertyDescriptor::builder()
-            .value(window_val.clone())
+            .value(target_val.clone())
             .writable(true)
             .configurable(true)
             .enumerable(true)
@@ -68,7 +71,7 @@ pub(crate) fn window_dispatch_event(args: &[JsValue], ctx: &mut Context) -> JsRe
     event_obj.define_property_or_throw(
         js_string!("currentTarget"),
         PropertyDescriptor::builder()
-            .value(window_val)
+            .value(target_val)
             .writable(true)
             .configurable(true)
             .enumerable(true)

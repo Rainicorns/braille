@@ -598,6 +598,11 @@ fn register_realm_globals_inner(
         .register_global_class::<bindings::event_target::JsEventTarget>()
         .unwrap();
 
+    // 10b. XMLHttpRequest stub (standalone EventTarget, no HTTP)
+    context
+        .register_global_class::<bindings::xhr::JsXMLHttpRequest>()
+        .unwrap();
+
     // 11. MutationObserver + MutationRecord globals
     bindings::mutation_observer::register_mutation_observer_global(context);
     bindings::mutation_observer::register_mutation_record_global(context);
@@ -718,6 +723,17 @@ fn copy_globals_to_window(context: &mut Context) {
             prop_desc::data_prop(ctor_val),
             context,
         );
+    }
+
+    // Copy XMLHttpRequest constructor to window
+    if let Ok(xhr_val) = global.get(js_string!("XMLHttpRequest"), context) {
+        if !xhr_val.is_undefined() {
+            let _ = window_obj.define_property_or_throw(
+                js_string!("XMLHttpRequest"),
+                prop_desc::data_prop(xhr_val),
+                context,
+            );
+        }
     }
 
     // Copy Range constructor to window

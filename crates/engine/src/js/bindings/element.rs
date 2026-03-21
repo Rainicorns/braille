@@ -1782,6 +1782,88 @@ impl JsElement {
         // 1. Build propagation path: [root, ..., grandparent, parent, target]
         let propagation_path = build_propagation_path(&tree.borrow(), target_node_id, composed);
 
+        // --- relatedTarget retargeting (DOM spec §2.7) ---
+        // Compute retargeting info while holding the tree borrow
+        enum RetargetAction {
+            EarlyReturn,
+            Retarget { retargeted_id: NodeId },
+            None,
+        }
+        let (clear_targets, retarget_action) = {
+            let tree_ref = tree.borrow();
+            let mut clear = false;
+
+            // Check if target's root is a ShadowRoot
+            let target_root = tree_ref.root_of(target_node_id);
+            if matches!(tree_ref.get_node(target_root).data, NodeData::ShadowRoot { .. }) {
+                clear = true;
+            }
+
+            let related_target_val =
+                event_obj.get(js_string!("__relatedTarget"), ctx).unwrap_or(JsValue::undefined());
+            let action = if !related_target_val.is_undefined() && !related_target_val.is_null() {
+                if let Some(rt_obj) = related_target_val.as_object() {
+                    if let Some(rt_el) = rt_obj.downcast_ref::<JsElement>() {
+                        let rt_node_id = rt_el.node_id;
+                        let retargeted = tree_ref.retarget(rt_node_id, Some(target_node_id));
+
+                        // clearTargets: check retargeted relatedTarget's root only
+                        let rt_root = tree_ref.root_of(retargeted);
+                        if matches!(tree_ref.get_node(rt_root).data, NodeData::ShadowRoot { .. }) {
+                            clear = true;
+                        }
+
+                        // Spec step 5.4: skip dispatch when retargetedRT = target AND
+                        // original relatedTarget ≠ target
+                        if retargeted == target_node_id && rt_node_id != target_node_id {
+                            RetargetAction::EarlyReturn
+                        } else if retargeted != rt_node_id {
+                            RetargetAction::Retarget { retargeted_id: retargeted }
+                        } else {
+                            RetargetAction::None
+                        }
+                    } else {
+                        RetargetAction::None
+                    }
+                } else {
+                    RetargetAction::None
+                }
+            } else {
+                RetargetAction::None
+            };
+
+            (clear, action)
+        };
+
+        // Apply retarget action (tree borrow released)
+        match retarget_action {
+            RetargetAction::EarlyReturn => {
+                // Early return: no dispatch. Set target/relatedTarget to retargeted values,
+                // then null them out (clearTargets is always true for early return since the
+                // original relatedTarget was in a shadow tree).
+                Self::set_event_prop(&event_obj, "target", JsValue::null(), ctx)?;
+                Self::set_event_prop(&event_obj, "srcElement", JsValue::null(), ctx)?;
+                event_obj.set(js_string!("__relatedTarget"), JsValue::null(), false, ctx)?;
+                event_obj.downcast_mut::<JsEvent>().unwrap().target = None;
+                let dp = event_obj.downcast_ref::<JsEvent>().unwrap().default_prevented;
+                return Ok(JsValue::from(!dp));
+            }
+            RetargetAction::Retarget { retargeted_id } => {
+                let retargeted_js = get_or_create_js_element(retargeted_id, tree.clone(), ctx)?;
+                event_obj.define_property_or_throw(
+                    js_string!("__relatedTarget"),
+                    PropertyDescriptor::builder()
+                        .value(JsValue::from(retargeted_js))
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(false)
+                        .build(),
+                    ctx,
+                )?;
+            }
+            RetargetAction::None => {}
+        }
+
         // Activation behavior: find activation target and run pre-activation
         let (activation_target, saved_activation) = if is_click_mouse {
             let tree_ref = tree.borrow();
@@ -1852,6 +1934,15 @@ impl JsElement {
 
         // 6. Finish dispatch — reset event state
         let result = Self::finish_dispatch_generic(&event_obj, ctx)?;
+
+        // 6b. clearTargets — null out target/relatedTarget if either was in a shadow tree
+        if clear_targets {
+            Self::set_event_prop(&event_obj, "target", JsValue::null(), ctx)?;
+            Self::set_event_prop(&event_obj, "srcElement", JsValue::null(), ctx)?;
+            event_obj.set(js_string!("__relatedTarget"), JsValue::null(), false, ctx)?;
+            // Also clear native target so composedPath() returns []
+            event_obj.downcast_mut::<JsEvent>().unwrap().target = None;
+        }
 
         // 7. Activation behavior (post-dispatch)
         if let (Some(at_id), Some(saved)) = (activation_target, saved_activation) {
@@ -3381,5 +3472,35 @@ mod tests {
         let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         // stopPropagation stops at the next node, but remaining listeners on this node still fire
         assert_eq!(s, "first,second");
+    }
+
+    #[test]
+    fn xhr_retarget_relatedtarget() {
+        let mut engine = Engine::new();
+        engine.load_html(
+            r#"<html><body><script>
+const host = document.createElement("div");
+const child = host.appendChild(document.createElement("p"));
+const shadow = host.attachShadow({ mode: "closed" });
+const slot = shadow.appendChild(document.createElement("slot"));
+
+var results = [];
+for (var relatedTarget of [shadow, slot]) {
+    for (var target of [new XMLHttpRequest(), self, host]) {
+        var event = new FocusEvent("demo", { relatedTarget: relatedTarget });
+        target.dispatchEvent(event);
+        var tMatch = event.target === target;
+        var rtMatch = event.relatedTarget === host;
+        results.push("target=" + tMatch + " rt=" + rtMatch + " rtType=" + typeof event.relatedTarget);
+    }
+}
+var result = results.join(";");
+</script></body></html>"#,
+        );
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval("result").unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
+        // XHR and self targets should pass, host gets early return
+        assert!(s.contains("target=true"), "XHR retarget: {}", s);
     }
 }

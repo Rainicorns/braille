@@ -26,6 +26,7 @@ pub(crate) mod style;
 pub(crate) mod traversal;
 pub(crate) mod tree_walker;
 pub(crate) mod window;
+pub(crate) mod xhr;
 
 pub(crate) use document::register_document;
 

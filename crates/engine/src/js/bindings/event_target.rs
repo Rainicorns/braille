@@ -25,7 +25,7 @@ type ListenerKeyResult = ((usize, NodeId), Option<Rc<std::cell::RefCell<DomTree>
 /// Given a `this` value, resolve to a `(tree_ptr, node_id)` listener key.
 /// Handles JsEventTarget, JsElement, JsDocument, window object, and null/undefined (→ window).
 /// Returns the key and optionally the DomTree Rc (for passive default computation).
-fn resolve_event_target_key(
+pub(crate) fn resolve_event_target_key(
     this: &JsValue,
     ctx: &mut boa_engine::Context,
 ) -> JsResult<ListenerKeyResult> {
@@ -47,6 +47,11 @@ fn resolve_event_target_key(
     // JsEventTarget (standalone)
     if let Some(et) = this_obj.downcast_ref::<JsEventTarget>() {
         return Ok(((0usize, et.id), None));
+    }
+
+    // JsXMLHttpRequest (standalone EventTarget)
+    if let Some(xhr) = this_obj.downcast_ref::<super::xhr::JsXMLHttpRequest>() {
+        return Ok(((0usize, xhr.id), None));
     }
 
     // JsElement (DOM node)
@@ -104,7 +109,7 @@ pub(crate) type ListenerMap = HashMap<(usize, NodeId), Vec<ListenerEntry>>;
 
 pub(crate) static NEXT_EVENT_TARGET_ID: AtomicUsize = AtomicUsize::new(usize::MAX / 2);
 
-fn next_event_target_id() -> usize {
+pub(crate) fn next_event_target_id() -> usize {
     NEXT_EVENT_TARGET_ID.fetch_add(1, Ordering::Relaxed)
 }
 
@@ -378,6 +383,11 @@ impl JsEventTarget {
         remove_event_listener_impl(listener_key, args, ctx)
     }
 
+    /// Public entry point for universal dispatch (used by XMLHttpRequest stub).
+    pub(crate) fn dispatch_event_public(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        Self::dispatch_event(this, args, ctx)
+    }
+
     /// Universal dispatchEvent — handles standalone EventTarget, JsElement, JsDocument, and window.
     fn dispatch_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
         // For JsElement or JsDocument, delegate to their own dispatch
@@ -391,24 +401,37 @@ impl JsEventTarget {
         }
         // Check for window or null/undefined → delegate to window dispatch
         if this.is_null() || this.is_undefined() {
-            return super::window::window_dispatch_event(args, ctx);
+            let window_val: JsValue = realm_state::window_object(ctx)
+                .map(JsValue::from)
+                .unwrap_or(JsValue::undefined());
+            return super::window::window_dispatch_event_with_this(&window_val, args, ctx);
         }
         if let Some(obj) = this.as_object() {
             if let Some(window) = realm_state::window_object(ctx) {
                 if obj.clone() == window {
-                    return super::window::window_dispatch_event(args, ctx);
+                    return super::window::window_dispatch_event_with_this(this, args, ctx);
                 }
+            }
+            // Also check if `this` is the global object (self === globalThis)
+            let global = ctx.global_object();
+            if obj.clone() == global {
+                return super::window::window_dispatch_event_with_this(this, args, ctx);
             }
         }
 
-        // Standalone EventTarget dispatch
+        // Standalone EventTarget / XMLHttpRequest dispatch
         let this_obj = this
             .as_object()
             .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not an object").into()))?;
-        let et = this_obj
-            .downcast_ref::<JsEventTarget>()
-            .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: `this` is not an EventTarget").into()))?;
-        let id = et.id;
+        let id = if let Some(et) = this_obj.downcast_ref::<JsEventTarget>() {
+            et.id
+        } else if let Some(xhr) = this_obj.downcast_ref::<super::xhr::JsXMLHttpRequest>() {
+            xhr.id
+        } else {
+            return Err(JsError::from_opaque(
+                js_string!("dispatchEvent: `this` is not an EventTarget").into(),
+            ));
+        };
 
         let event_val = args
             .first()
@@ -442,6 +465,10 @@ impl JsEventTarget {
             }
             evt.event_type.clone()
         };
+
+        // Retarget relatedTarget for standalone EventTarget dispatch
+        // Non-node targets pass b_root=None, so shadow nodes always retarget to their host
+        retarget_related_target_for_non_node(&event_obj, ctx)?;
 
         // Set dispatching flag and phase
         {
@@ -653,6 +680,36 @@ impl Class for JsEventTarget {
 
         Ok(())
     }
+}
+
+/// Retarget the event's __relatedTarget for non-node targets (standalone EventTarget, window).
+/// Since the target has no DOM root, retarget walks shadow relatedTargets all the way to the host.
+pub(crate) fn retarget_related_target_for_non_node(event_obj: &JsObject, ctx: &mut Context) -> JsResult<()> {
+    let related_target_val = event_obj.get(js_string!("__relatedTarget"), ctx).unwrap_or(JsValue::undefined());
+    if related_target_val.is_undefined() || related_target_val.is_null() {
+        return Ok(());
+    }
+    if let Some(rt_obj) = related_target_val.as_object() {
+        if let Some(rt_el) = rt_obj.downcast_ref::<super::element::JsElement>() {
+            let tree = rt_el.tree.clone();
+            let rt_node_id = rt_el.node_id;
+            let retargeted = tree.borrow().retarget(rt_node_id, None);
+            if retargeted != rt_node_id {
+                let retargeted_js = super::element::get_or_create_js_element(retargeted, tree.clone(), ctx)?;
+                event_obj.define_property_or_throw(
+                    js_string!("__relatedTarget"),
+                    boa_engine::property::PropertyDescriptor::builder()
+                        .value(JsValue::from(retargeted_js))
+                        .writable(true)
+                        .configurable(true)
+                        .enumerable(false)
+                        .build(),
+                    ctx,
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// composedPath() implementation for Event — returns [target] during dispatch, [] after.

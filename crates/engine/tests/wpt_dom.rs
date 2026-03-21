@@ -402,8 +402,10 @@ fn expected_failures(rel_path: &str) -> usize {
         // 4 failures: Shadow DOM window.event + XMLHttpRequest
         ("event-global.html", 4),
         // 18 failures: MouseEvent/WheelEvent instanceof (Boa Class vs FunctionObjectBuilder),
-        // WheelEvent/MouseEvent relatedTarget, SubclassedEvent class extends
+        // SubclassedEvent class extends
         ("Event-subclasses", 18),
+        // 2 failures: host-dispatched retarget early return, checkbox activation + clearTargets
+        ("relatedTarget", 2),
         // HTMLCollection edge cases — Proxy set strictness
         ("HTMLCollection-own-props", 2),
         // DOMTokenList — 7 failures: relList, htmlFor, sandbox, sizes not implemented
@@ -658,8 +660,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
             "event-global-is-still-set-when-reporting-exception-onerror",
             "requires cross-realm Function via contentWindow",
         ),
-        // relatedTarget
-        ("relatedTarget", "requires relatedTarget"),
+        // relatedTarget — relatedTarget.window.js now supported (retargeting + XMLHttpRequest stub)
+        // ("relatedTarget", "requires relatedTarget"),  // unskipped in Phase 24b
         // legacy-pre-activation — now supported (activation behavior)
         // ("legacy-pre-activation", "requires pre-activation behavior"),
         // scrolling

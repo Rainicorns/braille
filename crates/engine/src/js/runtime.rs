@@ -969,16 +969,22 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
     mouse_getter!(client_x, "offsetX", 0.0);
     mouse_getter!(client_y, "offsetY", 0.0);
 
-    // relatedTarget (always null for now)
-    let related_target_getter = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::null()));
+    // relatedTarget — reads from __relatedTarget hidden property (same pattern as FocusEvent)
+    let related_target_getter =
+        NativeFunction::from_fn_ptr(|this: &JsValue, _args: &[JsValue], ctx: &mut Context| {
+            if let Some(obj) = this.as_object() {
+                if let Ok(v) = obj.get(js_string!("__relatedTarget"), ctx) {
+                    if !v.is_undefined() {
+                        return Ok(v);
+                    }
+                }
+            }
+            Ok(JsValue::null())
+        });
     proto
         .define_property_or_throw(
             js_string!("relatedTarget"),
-            boa_engine::property::PropertyDescriptor::builder()
-                .get(related_target_getter.to_js_function(&realm))
-                .configurable(true)
-                .enumerable(true)
-                .build(),
+            prop_desc::readonly_accessor(related_target_getter.to_js_function(&realm)),
             context,
         )
         .expect("failed to define MouseEvent.relatedTarget");
@@ -1011,6 +1017,7 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
             let mut ctrl_key = false;
             let mut meta_key = false;
             let mut shift_key = false;
+            let mut related_target = JsValue::null();
 
             if let Some(opts_val) = args.get(1) {
                 if let Some(opts_obj) = opts_val.as_object() {
@@ -1063,6 +1070,10 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
                     if !v.is_undefined() {
                         shift_key = v.to_boolean();
                     }
+                    let rt = opts_obj.get(js_string!("relatedTarget"), ctx)?;
+                    if !rt.is_undefined() {
+                        related_target = rt;
+                    }
                 }
             }
 
@@ -1096,6 +1107,9 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
             let js_obj = JsEvent::from_data(event, ctx)?;
             js_obj.set_prototype(Some(proto_for_closure.clone()));
             attach_is_trusted_own_property(&js_obj, ctx)?;
+            if !related_target.is_null() {
+                js_obj.set(js_string!("__relatedTarget"), related_target, false, ctx)?;
+            }
             Ok(JsValue::from(js_obj))
         })
     };
