@@ -442,6 +442,12 @@ fn expected_failures(rel_path: &str) -> usize {
         ("Range-comparePoint-2.html", 1),
         // mouse-event-retarget: 1 failure from offsetX layout calculation (no layout engine)
         ("mouse-event-retarget.html", 1),
+        // Document-createEvent: 30 failures — missing constructors for legacy aliases
+        // (BeforeUnloadEvent, DeviceMotion/Orientation, Drag, HashChange, Message, Storage, Text × 3 case variants)
+        // + TouchEvent × 6 (precondition fails — no touch API)
+        ("Document-createEvent.https", 30),
+        // TreeWalker: 443 failures from foreign/xml document nodes (like NodeIterator)
+        ("TreeWalker.html", 443),
     ];
     for (pattern, count) in known {
         if rel_path.contains(pattern) {
@@ -522,7 +528,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("HTMLCollection-supported-property-names", "requires getOwnPropertyDescriptor on names"),
         // TreeWalker — requires common.js cross-document or srcdoc iframes
         ("TreeWalker-realm", "requires srcdoc iframe support"),
-        ("TreeWalker.html", "requires common.js cross-document nodes"),
+        // TreeWalker.html — now unskipped with expected_failures for foreign/xml nodes
+        // ("TreeWalker.html", "requires common.js cross-document nodes"),
         // Attr node — now implemented (unskip)
         // ("Attr-", "requires Attr node interface"),
         // Workers
@@ -666,9 +673,10 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("DocumentType-literal", "requires DocumentType interface"),
         // ("DocumentType-remove", "requires DocumentType interface"),
         // CDATA (XML only)
-        ("createCDATASection", "requires XML CDATA support"),
-        // Full createEvent spec (hundreds of event types)
-        ("Document-createEvent.https", "requires full createEvent spec"),
+        // createCDATASection — now throws NotSupportedError on HTML docs (unskipped)
+        // ("createCDATASection", "requires XML CDATA support"),
+        // Document-createEvent — now has whitelist + NotSupportedError (unskipped)
+        // ("Document-createEvent.https", "requires full createEvent spec"),
         // Event subclasses (UIEvent, MouseEvent, etc.)
         // Event-subclasses — UIEvent + CompositionEvent constructors now implemented
         // ("Event-subclasses", "missing CompositionEvent, UIEvent not on global, no class inheritance support"),
@@ -759,8 +767,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("pointer-event", "requires PointerEvent"),
         // mouse-event — offsetX/offsetY now implemented
         // ("mouse-event", "requires MouseEvent"),
-        // handler-count (needs getEventListeners or similar)
-        ("handler-count", "requires handler counting"),
+        // handler-count — requires test_driver.Actions() for real pointer clicks
+        ("handler-count", "requires test_driver browser automation"),
         // label default action — now supported (activation behavior)
         // ("label-default-action", "requires label activation"),
         // preventDefault-during-activation — now supported (promise_test implemented)

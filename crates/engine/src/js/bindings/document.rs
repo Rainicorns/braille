@@ -604,17 +604,47 @@ fn document_create_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) ->
         .map(|s| s.to_std_string_escaped())
         .unwrap_or_default();
 
-    let kind = if event_interface.eq_ignore_ascii_case("customevent") {
-        EventKind::Custom {
-            detail: JsValue::null(),
+    // Spec alias table per https://dom.spec.whatwg.org/#dom-document-createevent
+    // Case-insensitive match against known legacy aliases
+    let lower = event_interface.to_ascii_lowercase();
+    let (kind, proto_ctor_name): (EventKind, Option<&str>) = match lower.as_str() {
+        // Event aliases
+        "event" | "events" | "htmlevents" | "svgevents" => (EventKind::Standard, None),
+        // CustomEvent
+        "customevent" => (
+            EventKind::Custom {
+                detail: JsValue::null(),
+            },
+            Some("CustomEvent"),
+        ),
+        // UIEvent aliases
+        "uievent" | "uievents" => (EventKind::Standard, Some("UIEvent")),
+        // FocusEvent
+        "focusevent" => (EventKind::Focus, Some("FocusEvent")),
+        // MouseEvent aliases
+        "mouseevent" | "mouseevents" => (EventKind::mouse_default(), Some("MouseEvent")),
+        // KeyboardEvent
+        "keyboardevent" => (EventKind::Keyboard, Some("KeyboardEvent")),
+        // CompositionEvent
+        "compositionevent" => (EventKind::Composition, Some("CompositionEvent")),
+        // Legacy aliases we recognize but create as base Event (missing full constructors)
+        "beforeunloadevent" | "devicemotionevent" | "deviceorientationevent" | "dragevent"
+        | "hashchangeevent" | "messageevent" | "storageevent" | "textevent"
+        | "touchevent" => {
+            (EventKind::Standard, None)
         }
-    } else if event_interface.eq_ignore_ascii_case("keyboardevent") {
-        EventKind::Keyboard
-    } else if event_interface.eq_ignore_ascii_case("mouseevent") || event_interface.eq_ignore_ascii_case("mouseevents") {
-        EventKind::mouse_default()
-    } else {
-        EventKind::Standard
+        // Anything else is NOT a recognized alias — throw NotSupportedError
+        _ => {
+            let exc = super::create_dom_exception(
+                ctx,
+                "NotSupportedError",
+                &format!("The provided event type ('{}') is invalid", event_interface),
+                9,
+            )?;
+            return Err(JsError::from_opaque(exc.into()));
+        }
     };
+
     let event = JsEvent {
         event_type: String::new(),
         bubbles: false,
@@ -633,15 +663,6 @@ fn document_create_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) ->
     };
     let js_obj = JsEvent::from_data(event, ctx)?;
     // Set correct prototype for subclass instances
-    let proto_ctor_name = if event_interface.eq_ignore_ascii_case("customevent") {
-        Some("CustomEvent")
-    } else if event_interface.eq_ignore_ascii_case("keyboardevent") {
-        Some("KeyboardEvent")
-    } else if event_interface.eq_ignore_ascii_case("mouseevent") || event_interface.eq_ignore_ascii_case("mouseevents") {
-        Some("MouseEvent")
-    } else {
-        None
-    };
     if let Some(ctor_name) = proto_ctor_name {
         let global = ctx.global_object();
         if let Ok(ctor_val) = global.get(js_string!(ctor_name), ctx) {
@@ -1592,10 +1613,20 @@ pub(crate) fn add_document_properties_to_element(
         ctx,
     )?;
 
-    // createCDATASection method
+    // createCDATASection method — throws NotSupportedError on HTML documents per spec
     let tree_for_cdata = new_tree.clone();
+    let is_html_for_cdata = tree_for_cdata.borrow().is_html_document();
     let cdata_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, ctx2| {
+            if is_html_for_cdata {
+                let exc = super::create_dom_exception(
+                    ctx2,
+                    "NotSupportedError",
+                    "This method is not supported for HTML documents",
+                    9,
+                )?;
+                return Err(JsError::from_opaque(exc.into()));
+            }
             let data = args
                 .first()
                 .map(|v| v.to_string(ctx2))
