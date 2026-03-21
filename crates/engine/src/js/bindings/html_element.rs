@@ -210,6 +210,7 @@ fn click(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
         dispatching: false,
         time_stamp: super::event::dom_high_res_time_stamp(ctx),
         initialized: true,
+        composed: true,
         kind: super::event::EventKind::mouse_default(),
     };
 

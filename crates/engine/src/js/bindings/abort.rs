@@ -579,6 +579,7 @@ fn fire_abort_event(
         dispatching: false,
         time_stamp: super::event::dom_high_res_time_stamp(ctx),
         initialized: true,
+        composed: false,
     };
 
     let event_obj = ObjectInitializer::with_native_data(event, ctx).build();

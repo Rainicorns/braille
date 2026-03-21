@@ -17,6 +17,19 @@ use super::element::get_or_create_js_element;
 use super::tree_walker::{dom_node_type, FILTER_ACCEPT, FILTER_SKIP};
 
 // ---------------------------------------------------------------------------
+// NodeIteratorInner — shared state for live iterator tracking
+// ---------------------------------------------------------------------------
+
+/// Shared interior state for a NodeIterator, referenced by both the JsNodeIterator
+/// (on the JS object) and the live-iterator registry in RealmState.
+#[derive(Debug)]
+pub(crate) struct NodeIteratorInner {
+    pub(crate) root: NodeId,
+    pub(crate) reference_node: Cell<NodeId>,
+    pub(crate) pointer_before_reference: Cell<bool>,
+}
+
+// ---------------------------------------------------------------------------
 // JsNodeIterator — native data for NodeIterator instances
 // ---------------------------------------------------------------------------
 
@@ -25,11 +38,7 @@ pub(crate) struct JsNodeIterator {
     #[unsafe_ignore_trace]
     tree: Rc<RefCell<DomTree>>,
     #[unsafe_ignore_trace]
-    root: NodeId,
-    #[unsafe_ignore_trace]
-    reference_node: Cell<NodeId>,
-    #[unsafe_ignore_trace]
-    pointer_before_reference: Cell<bool>,
+    inner: Rc<NodeIteratorInner>,
     what_to_show: u32,
     filter: JsValue,
     #[unsafe_ignore_trace]
@@ -172,6 +181,28 @@ fn previous_in_document_order(node_id: NodeId, root: NodeId, tree: &DomTree) -> 
     }
 }
 
+/// First node after `node_id` and all its descendants, within the subtree rooted at `root`.
+/// Used by the pre-removing steps to find the "next" node that is NOT a descendant.
+fn next_node_not_descendant(node_id: NodeId, root: NodeId, tree: &DomTree) -> Option<NodeId> {
+    let mut current = node_id;
+    loop {
+        if current == root {
+            return None;
+        }
+        let n = tree.get_node(current);
+        if let Some(parent_id) = n.parent {
+            let parent = tree.get_node(parent_id);
+            let idx = parent.children.iter().position(|&c| c == current).unwrap();
+            if idx + 1 < parent.children.len() {
+                return Some(parent.children[idx + 1]);
+            }
+            current = parent_id;
+        } else {
+            return None;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // nextNode / previousNode
 // ---------------------------------------------------------------------------
@@ -179,7 +210,12 @@ fn previous_in_document_order(node_id: NodeId, root: NodeId, tree: &DomTree) -> 
 fn next_node(iter_obj: &boa_engine::JsObject, ctx: &mut Context) -> JsResult<JsValue> {
     let (tree, root, reference_node, pointer_before) = {
         let ni = iter_obj.downcast_ref::<JsNodeIterator>().unwrap();
-        (ni.tree.clone(), ni.root, ni.reference_node.get(), ni.pointer_before_reference.get())
+        (
+            ni.tree.clone(),
+            ni.inner.root,
+            ni.inner.reference_node.get(),
+            ni.inner.pointer_before_reference.get(),
+        )
     };
 
     let mut node = reference_node;
@@ -204,8 +240,8 @@ fn next_node(iter_obj: &boa_engine::JsObject, ctx: &mut Context) -> JsResult<JsV
         if result == FILTER_ACCEPT {
             // Update reference
             let ni = iter_obj.downcast_ref::<JsNodeIterator>().unwrap();
-            ni.reference_node.set(node);
-            ni.pointer_before_reference.set(false);
+            ni.inner.reference_node.set(node);
+            ni.inner.pointer_before_reference.set(false);
             return get_or_create_js_element(node, tree, ctx).map(JsValue::from);
         }
         // For NodeIterator, SKIP and REJECT are the same — just continue
@@ -215,7 +251,12 @@ fn next_node(iter_obj: &boa_engine::JsObject, ctx: &mut Context) -> JsResult<JsV
 fn previous_node(iter_obj: &boa_engine::JsObject, ctx: &mut Context) -> JsResult<JsValue> {
     let (tree, root, reference_node, pointer_before) = {
         let ni = iter_obj.downcast_ref::<JsNodeIterator>().unwrap();
-        (ni.tree.clone(), ni.root, ni.reference_node.get(), ni.pointer_before_reference.get())
+        (
+            ni.tree.clone(),
+            ni.inner.root,
+            ni.inner.reference_node.get(),
+            ni.inner.pointer_before_reference.get(),
+        )
     };
 
     let mut node = reference_node;
@@ -239,9 +280,80 @@ fn previous_node(iter_obj: &boa_engine::JsObject, ctx: &mut Context) -> JsResult
         let result = node_filter(iter_obj, node, ctx)?;
         if result == FILTER_ACCEPT {
             let ni = iter_obj.downcast_ref::<JsNodeIterator>().unwrap();
-            ni.reference_node.set(node);
-            ni.pointer_before_reference.set(true);
+            ni.inner.reference_node.set(node);
+            ni.inner.pointer_before_reference.set(true);
             return get_or_create_js_element(node, tree, ctx).map(JsValue::from);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NodeIterator pre-removing steps (spec §4.2)
+// ---------------------------------------------------------------------------
+
+/// Check if `ancestor_id` is an inclusive ancestor of `node_id`.
+fn is_inclusive_ancestor(tree: &DomTree, ancestor_id: NodeId, node_id: NodeId) -> bool {
+    let mut current = node_id;
+    loop {
+        if current == ancestor_id {
+            return true;
+        }
+        match tree.get_node(current).parent {
+            Some(p) => current = p,
+            None => return false,
+        }
+    }
+}
+
+/// Per spec §4.2 "NodeIterator pre-removing steps":
+/// Called before `removed_node_id` is removed from its parent. For each live iterator,
+/// adjust referenceNode if needed.
+pub(crate) fn update_iterators_for_removal(
+    ctx: &mut Context,
+    removed_node_id: NodeId,
+    tree: &DomTree,
+) {
+    let registry = crate::js::realm_state::live_iterators(ctx);
+    let reg = registry.borrow();
+    for weak in reg.iter() {
+        if let Some(inner) = weak.upgrade() {
+            let root = inner.root;
+            let ref_node = inner.reference_node.get();
+
+            // "If the node is root or is not an inclusive ancestor of the referenceNode
+            // attribute value, terminate these steps."
+            // Also: if removed_node is an inclusive ancestor of root, it wasn't part of
+            // the iterator's collection.
+            if is_inclusive_ancestor(tree, removed_node_id, root) {
+                continue;
+            }
+            if !is_inclusive_ancestor(tree, removed_node_id, ref_node) {
+                continue;
+            }
+
+            // "If the pointerBeforeReferenceNode attribute value is false":
+            if !inner.pointer_before_reference.get() {
+                // "Set the referenceNode attribute to the first node preceding the node
+                // that is being removed"
+                if let Some(prev) = previous_in_document_order(removed_node_id, root, tree) {
+                    inner.reference_node.set(prev);
+                }
+                continue;
+            }
+
+            // "If there is a node following the last inclusive descendant of the node that
+            // is being removed, set the referenceNode to the first such node."
+            if let Some(next) = next_node_not_descendant(removed_node_id, root, tree) {
+                inner.reference_node.set(next);
+                continue;
+            }
+
+            // "Set the referenceNode to the first node preceding the node that is being
+            // removed and set the pointerBeforeReferenceNode to false."
+            if let Some(prev) = previous_in_document_order(removed_node_id, root, tree) {
+                inner.reference_node.set(prev);
+                inner.pointer_before_reference.set(false);
+            }
         }
     }
 }
@@ -299,11 +411,26 @@ pub(crate) fn register_create_node_iterator(
                 .unwrap_or(JsValue::null());
             let filter = if filter.is_undefined() { JsValue::null() } else { filter };
 
-            let ni_data = JsNodeIterator {
-                tree: tree_for_closure.clone(),
+            let inner = Rc::new(NodeIteratorInner {
                 root: root_id,
                 reference_node: Cell::new(root_id),
                 pointer_before_reference: Cell::new(true),
+            });
+
+            // Register in live iterator registry
+            {
+                let registry = crate::js::realm_state::live_iterators(ctx);
+                let mut reg = registry.borrow_mut();
+                // Compact dead weak refs periodically
+                if reg.len() > 32 {
+                    reg.retain(|w| w.strong_count() > 0);
+                }
+                reg.push(Rc::downgrade(&inner));
+            }
+
+            let ni_data = JsNodeIterator {
+                tree: tree_for_closure.clone(),
+                inner,
                 what_to_show,
                 filter: filter.clone(),
                 active: Cell::new(false),
@@ -318,7 +445,7 @@ pub(crate) fn register_create_node_iterator(
             let root_getter =
                 NativeFunction::from_closure(move |this, _args, ctx| {
                     let obj = this.as_object().unwrap();
-                    let root = obj.downcast_ref::<JsNodeIterator>().unwrap().root;
+                    let root = obj.downcast_ref::<JsNodeIterator>().unwrap().inner.root;
                     get_or_create_js_element(root, root_tree.clone(), ctx).map(JsValue::from)
                 });
 
@@ -327,14 +454,19 @@ pub(crate) fn register_create_node_iterator(
             let ref_getter =
                 NativeFunction::from_closure(move |this, _args, ctx| {
                     let obj = this.as_object().unwrap();
-                    let ref_node = obj.downcast_ref::<JsNodeIterator>().unwrap().reference_node.get();
+                    let ref_node = obj.downcast_ref::<JsNodeIterator>().unwrap().inner.reference_node.get();
                     get_or_create_js_element(ref_node, ref_tree.clone(), ctx).map(JsValue::from)
                 });
 
             // pointerBeforeReferenceNode getter
             let pbr_getter = NativeFunction::from_fn_ptr(|this, _args, _ctx| {
                 let obj = this.as_object().unwrap();
-                let pbr = obj.downcast_ref::<JsNodeIterator>().unwrap().pointer_before_reference.get();
+                let pbr = obj
+                    .downcast_ref::<JsNodeIterator>()
+                    .unwrap()
+                    .inner
+                    .pointer_before_reference
+                    .get();
                 Ok(JsValue::from(pbr))
             });
 

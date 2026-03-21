@@ -410,8 +410,8 @@ fn expected_failures(rel_path: &str) -> usize {
         ("DOMTokenList-coverage-for-attributes", 7),
         // AbortSignal event.any — 1 failure: isTrusted check (our abort events are not trusted)
         ("event.any", 1),
-        // AddEventListenerOptions-signal — 1 failure: mid-dispatch signal abort removal
-        ("AddEventListenerOptions-signal", 1),
+        // AddEventListenerOptions-signal — all passing (removed flag fix in standalone EventTarget)
+        // ("AddEventListenerOptions-signal", 1),
         // abort-signal-any — 1 failure: abort event ordering across dependent signals
         ("abort-signal-any.any", 1),
         // NodeIterator — failures from foreign/xml document nodes (not supported)
@@ -504,8 +504,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("xml", "requires XML support"),
         ("XHTML", "requires XHTML"),
         ("xhtml", "requires XHTML"),
-        // NodeIterator — NodeIterator-removal needs live iterator mutation tracking
-        ("NodeIterator-removal", "requires live iterator mutation tracking"),
+        // NodeIterator-removal — unskipped: live iterator mutation tracking implemented
+        // ("NodeIterator-removal", "requires live iterator mutation tracking"),
         // TreeWalker — createTreeWalker now implemented but traversal stubs
         // ("TreeWalker", "requires TreeWalker"),
         // DOMStringMap — now implemented with live Proxy
@@ -755,7 +755,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // Event-dispatch-detached-input-and-change — now passing (is_connected check in activation)
         // ("Event-dispatch-detached-input-and-change", "requires input events"),
         // focus/pointer/mouse events (need specific event types)
-        ("focus-event", "requires FocusEvent"),
+        ("focus-event", "requires test_driver.js (browser focus automation)"),
         ("pointer-event", "requires PointerEvent"),
         // mouse-event — offsetX/offsetY now implemented
         // ("mouse-event", "requires MouseEvent"),
@@ -780,7 +780,7 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // passive-by-default — now passing (default passive value computation implemented)
         // ("passive-by-default", "requires passive event handling"),
         // no-focus-events-at-clicking-editable
-        ("no-focus-events", "requires focus events"),
+        ("no-focus-events", "requires test_driver.js (browser focus automation)"),
         // keypress-dispatch-crash — unskipped: unified JsEvent handles all event types
         // EventTarget-this-of-listener — this binding now implemented
         // ("EventTarget-this-of-listener", "requires this binding in listeners"),
@@ -810,11 +810,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         // ("Event-dispatch-bubbles-true", "requires window event target and cross-document dispatch"),
         // ("Event-dispatch-bubbles-false", "requires window event target and cross-document dispatch"),
         // Event-dispatch-reenter — now supported (window participates in event propagation)
-        // Event-dispatch-listener-order — fails with "not a callable function"
-        (
-            "Event-dispatch-listener-order",
-            "not a callable function: missing API on window or document",
-        ),
+        // Event-dispatch-listener-order — unskipped: shadow DOM now implemented
+        // ("Event-dispatch-listener-order", "not a callable function: missing API on window or document"),
         // Tests needing frames/DOMImplementation — W2-D: now enabled
         // ("Node-removeChild", "requires frames and DOMImplementation"),
         // ("Node-insertBefore.html", "requires frames and DOMImplementation"),

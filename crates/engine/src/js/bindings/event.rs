@@ -141,6 +141,8 @@ pub(crate) struct JsEvent {
     /// Whether the event has been initialized (via constructor or initEvent).
     /// Events created via createEvent() are uninitialized until initEvent() is called.
     pub(crate) initialized: bool,
+    /// Whether the event crosses shadow DOM boundaries
+    pub(crate) composed: bool,
     /// Event subclass kind — determines what extra properties are available
     pub(crate) kind: EventKind,
 }
@@ -157,8 +159,9 @@ impl JsEvent {
         Ok(JsValue::from(evt.time_stamp))
     }
 
-    fn get_composed(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
-        Ok(JsValue::from(false))
+    fn get_composed(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+        extract_event!(evt, this, "Event.composed getter");
+        Ok(JsValue::from(evt.composed))
     }
 
     fn get_src_element(_this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
@@ -465,6 +468,7 @@ impl Class for JsEvent {
             dispatching: false,
             time_stamp: dom_high_res_time_stamp(ctx),
             initialized: true,
+            composed: false,
             kind: EventKind::Standard,
         })
     }

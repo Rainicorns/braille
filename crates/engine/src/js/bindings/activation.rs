@@ -338,6 +338,7 @@ fn fire_simple_event(
             dispatching: false,
             time_stamp: super::event::dom_high_res_time_stamp(ctx),
             initialized: true,
+            composed: false,
             kind: EventKind::Standard,
         };
 

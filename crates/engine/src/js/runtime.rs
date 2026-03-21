@@ -797,6 +797,7 @@ where
 
             let mut bubbles = false;
             let mut cancelable = false;
+            let mut composed = false;
             let opts_obj: Option<JsObject> = args.get(1).and_then(|v| v.as_object());
             if let Some(ref obj) = opts_obj {
                 let b = obj.get(js_string!("bubbles"), ctx)?;
@@ -806,6 +807,10 @@ where
                 let c = obj.get(js_string!("cancelable"), ctx)?;
                 if !c.is_undefined() {
                     cancelable = c.to_boolean();
+                }
+                let comp = obj.get(js_string!("composed"), ctx)?;
+                if !comp.is_undefined() {
+                    composed = comp.to_boolean();
                 }
             }
 
@@ -824,6 +829,7 @@ where
                 dispatching: false,
                 time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
                 initialized: true,
+                composed,
                 kind,
             };
             let js_obj = JsEvent::from_data(event, ctx)?;
@@ -1073,6 +1079,7 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
                 dispatching: false,
                 time_stamp: bindings::event::dom_high_res_time_stamp(ctx),
                 initialized: true,
+                composed: false,
                 kind: EventKind::Mouse {
                     button,
                     buttons,

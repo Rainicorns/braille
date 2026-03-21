@@ -1755,7 +1755,7 @@ impl JsElement {
             .clone();
 
         // Read event_type, bubbles, and whether this is a Mouse click from the event's native data
-        let (event_type, bubbles, is_click_mouse) = {
+        let (event_type, bubbles, is_click_mouse, composed) = {
             let evt = event_obj
                 .downcast_ref::<JsEvent>()
                 .ok_or_else(|| JsError::from_opaque(js_string!("dispatchEvent: argument is not an Event").into()))?;
@@ -1770,7 +1770,7 @@ impl JsElement {
                 ));
             }
             let is_click = evt.event_type == "click" && evt.kind.is_mouse();
-            (evt.event_type.clone(), evt.bubbles, is_click)
+            (evt.event_type.clone(), evt.bubbles, is_click, evt.composed)
         };
 
         // Check cancelBubble (propagation_stopped) — if already set, dispatch is a no-op
@@ -1780,7 +1780,7 @@ impl JsElement {
         }
 
         // 1. Build propagation path: [root, ..., grandparent, parent, target]
-        let propagation_path = build_propagation_path(&tree.borrow(), target_node_id);
+        let propagation_path = build_propagation_path(&tree.borrow(), target_node_id, composed);
 
         // Activation behavior: find activation target and run pre-activation
         let (activation_target, saved_activation) = if is_click_mouse {
@@ -1920,12 +1920,28 @@ impl JsElement {
 }
 
 /// Build the event propagation path from target up to the root, returned as [root, ..., parent, target].
-fn build_propagation_path(tree: &DomTree, target_node_id: NodeId) -> Vec<NodeId> {
+/// When `composed` is true, the path crosses shadow DOM boundaries: when we reach a ShadowRoot
+/// (parent is None), we jump to the host element and continue walking up.
+fn build_propagation_path(tree: &DomTree, target_node_id: NodeId, composed: bool) -> Vec<NodeId> {
+    use crate::dom::NodeData;
+
     let mut path = vec![target_node_id];
     let mut current = target_node_id;
-    while let Some(parent_id) = tree.get_node(current).parent {
-        path.push(parent_id);
-        current = parent_id;
+    loop {
+        if let Some(parent_id) = tree.get_node(current).parent {
+            path.push(parent_id);
+            current = parent_id;
+        } else if composed {
+            // If current is a ShadowRoot, jump to its host element
+            if let NodeData::ShadowRoot { host, .. } = tree.get_node(current).data {
+                path.push(host);
+                current = host;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
     }
     path.reverse();
     path

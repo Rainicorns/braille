@@ -730,6 +730,7 @@ pub(crate) fn fire_range_removal_for_move(
         let old_children = &t.get_node(old_pid).children;
         if let Some(old_idx) = old_children.iter().position(|&c| c == moved_node_id) {
             super::range::update_ranges_for_remove(ctx, old_pid, old_idx, moved_node_id, &t);
+            super::node_iterator::update_iterators_for_removal(ctx, moved_node_id, &t);
         }
     }
 }
@@ -1017,13 +1018,14 @@ fn replace_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
         (added, removal, ps, ns)
     };
 
-    // Update live ranges for the removal of old_child (must happen before do_replace)
+    // Update live ranges and iterators for the removal of old_child (must happen before do_replace)
     {
         let t = tree.borrow();
         let parent_children = &t.get_node(parent_id).children;
         if let Some(old_idx) = parent_children.iter().position(|&c| c == old_child_id) {
             super::range::update_ranges_for_remove(ctx, parent_id, old_idx, old_child_id, &t);
         }
+        super::node_iterator::update_iterators_for_removal(ctx, old_child_id, &t);
     }
 
     do_replace(&tree, parent_id, new_child_id, old_child_id);
@@ -1105,8 +1107,12 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
         (prev, next, pos.unwrap())
     };
 
-    // Update live range boundaries before the actual removal
-    super::range::update_ranges_for_remove(ctx, parent_id, old_index, child_id, &tree.borrow());
+    // Update live range boundaries and iterators before the actual removal
+    {
+        let t = tree.borrow();
+        super::range::update_ranges_for_remove(ctx, parent_id, old_index, child_id, &t);
+        super::node_iterator::update_iterators_for_removal(ctx, child_id, &t);
+    }
 
     tree.borrow_mut().remove_child(parent_id, child_id);
 
@@ -1279,11 +1285,13 @@ fn replace_children(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     for &nid in &node_ids {
         validate_pre_insert(&tree.borrow(), parent_id, nid, None, None)?;
     }
-    // Capture removed children for MutationObserver and update live ranges
+    // Capture removed children for MutationObserver and update live ranges/iterators
     let removed_children: Vec<NodeId> = tree.borrow().get_node(parent_id).children.clone();
-    // Update live ranges for each removed child (in reverse order to keep indices valid)
+    // Update live ranges and iterators for each removed child (in reverse order to keep indices valid)
     for (idx, &child_id) in removed_children.iter().enumerate().rev() {
-        super::range::update_ranges_for_remove(ctx, parent_id, idx, child_id, &tree.borrow());
+        let t = tree.borrow();
+        super::range::update_ranges_for_remove(ctx, parent_id, idx, child_id, &t);
+        super::node_iterator::update_iterators_for_removal(ctx, child_id, &t);
     }
     tree.borrow_mut().clear_children(parent_id);
     if !removed_children.is_empty() {

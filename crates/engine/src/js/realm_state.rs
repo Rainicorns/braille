@@ -19,6 +19,7 @@ use crate::dom::{DomTree, NodeId};
 use super::bindings;
 use super::bindings::element::{DomPrototypes, NodeCache};
 use super::bindings::event_target::ListenerMap;
+use super::bindings::node_iterator::NodeIteratorInner;
 use super::bindings::range::RangeInner;
 use super::runtime;
 
@@ -206,6 +207,10 @@ pub(crate) struct RealmState {
     // -- Live range registry (for automatic boundary adjustment on DOM mutations) --
     #[unsafe_ignore_trace]
     pub(crate) live_ranges: Rc<RefCell<Vec<std::rc::Weak<RangeInner>>>>,
+
+    // -- Live iterator registry (for NodeIterator pre-removing steps) --
+    #[unsafe_ignore_trace]
+    pub(crate) live_iterators: Rc<RefCell<Vec<std::rc::Weak<NodeIteratorInner>>>>,
 }
 
 impl RealmState {
@@ -246,6 +251,7 @@ impl RealmState {
             all_realms: Rc::new(RefCell::new(Vec::new())),
             timer_state: Rc::new(RefCell::new(TimerState::new())),
             live_ranges: Rc::new(RefCell::new(Vec::new())),
+            live_iterators: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -286,6 +292,7 @@ impl RealmState {
             all_realms: shared.all_realms,
             timer_state: Rc::new(RefCell::new(TimerState::new())),
             live_ranges: Rc::new(RefCell::new(Vec::new())),
+            live_iterators: Rc::new(RefCell::new(Vec::new())),
         }
     }
 }
@@ -380,6 +387,11 @@ rc_accessor!(
     live_ranges,
     live_ranges,
     Rc<RefCell<Vec<std::rc::Weak<RangeInner>>>>
+);
+rc_accessor!(
+    live_iterators,
+    live_iterators,
+    Rc<RefCell<Vec<std::rc::Weak<NodeIteratorInner>>>>
 );
 
 // -- Prototype/factory cache accessors (clone Option<T> out) --

@@ -628,6 +628,7 @@ fn document_create_event(this: &JsValue, args: &[JsValue], ctx: &mut Context) ->
         dispatching: false,
         time_stamp: super::event::dom_high_res_time_stamp(ctx),
         initialized: false,
+        composed: false,
         kind,
     };
     let js_obj = JsEvent::from_data(event, ctx)?;

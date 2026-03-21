@@ -488,15 +488,16 @@ impl JsEventTarget {
         event_val: &JsValue,
         ctx: &mut Context,
     ) -> JsResult<bool> {
-        // Snapshot listeners to avoid borrow issues
-        let matching: Vec<(JsObject, bool, Option<bool>)> = {
+        // Snapshot listeners to avoid borrow issues (include removed flag for mid-dispatch removal)
+        #[allow(clippy::type_complexity)]
+        let matching: Vec<(JsObject, bool, Option<bool>, Rc<Cell<bool>>)> = {
             let listeners = realm_state::event_listeners(ctx);
             let map = listeners.borrow();
             match map.get(&(0usize, id)) {
                 Some(entries) => entries
                     .iter()
                     .filter(|entry| entry.event_type == event_type)
-                    .map(|entry| (entry.callback.clone(), entry.once, entry.passive))
+                    .map(|entry| (entry.callback.clone(), entry.once, entry.passive, entry.removed.clone()))
                     .collect(),
                 None => Vec::new(),
             }
@@ -506,8 +507,14 @@ impl JsEventTarget {
         let prev_event = realm_state::current_event(ctx);
         realm_state::set_current_event(ctx, Some(event_obj.clone()));
 
-        for (callback, once, passive) in &matching {
+        for (callback, once, passive, removed_flag) in &matching {
+            // Skip listeners that were removed during this dispatch
+            if removed_flag.get() {
+                continue;
+            }
+
             if *once {
+                removed_flag.set(true);
                 let listeners = realm_state::event_listeners(ctx);
                 let mut map = listeners.borrow_mut();
                 if let Some(entries) = map.get_mut(&(0usize, id)) {
