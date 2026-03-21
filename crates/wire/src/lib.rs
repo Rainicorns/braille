@@ -58,6 +58,26 @@ pub enum EngineAction {
     Error(String),
 }
 
+/// A pending fetch request from the engine's JS runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FetchRequest {
+    pub id: u64,
+    pub url: String,
+    pub method: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<String>,
+}
+
+/// Response data to resolve a pending fetch request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FetchResponseData {
+    pub status: u16,
+    pub status_text: String,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+    pub url: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -15,3 +15,7 @@ braille-wire = { path = "../wire" }
 braille-engine = { path = "../engine" }
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", features = ["blocking", "cookies"] }
+
+[dev-dependencies]
+tiny_http = "0.12"
+url = "2.5"

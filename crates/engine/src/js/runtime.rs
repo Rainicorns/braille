@@ -1,11 +1,14 @@
 use boa_engine::{
+    builtins::promise::PromiseState,
     class::Class,
     js_string,
+    module::{MapModuleLoader, Module},
     native_function::NativeFunction,
     object::{FunctionObjectBuilder, JsObject, ObjectInitializer},
     property::Attribute,
     Context, JsError, JsNativeError, JsResult, JsValue, Source,
 };
+use std::path::Path;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -42,6 +45,9 @@ pub(crate) const DOM_UTILITY_NAMES: &[&str] = &[
     "NodeFilter",
     "AbortController",
     "AbortSignal",
+    "FormData",
+    "URL",
+    "URLSearchParams",
 ];
 
 /// Core DOM type constructor names.
@@ -63,6 +69,7 @@ pub struct JsRuntime {
     pub(crate) context: Context,
     tree: Rc<RefCell<DomTree>>,
     console_buffer: Rc<RefCell<Vec<String>>>,
+    module_loader: Rc<MapModuleLoader>,
 }
 
 impl JsRuntime {
@@ -70,7 +77,11 @@ impl JsRuntime {
     /// Registers the `document` global, the `Element` class,
     /// the `window` global, and the `console` object.
     pub fn new(tree: Rc<RefCell<DomTree>>) -> Self {
-        let mut context = Context::default();
+        let module_loader = Rc::new(MapModuleLoader::new());
+        let mut context = Context::builder()
+            .module_loader(Rc::clone(&module_loader))
+            .build()
+            .expect("failed to build JS context");
         let console_buffer = Rc::new(RefCell::new(Vec::new()));
         realm_state::register_realm_globals(
             &mut context,
@@ -81,6 +92,7 @@ impl JsRuntime {
             context,
             tree,
             console_buffer,
+            module_loader,
         }
     }
 
@@ -89,6 +101,38 @@ impl JsRuntime {
         let result = self.context.eval(Source::from_bytes(code));
         let _ = self.context.run_jobs();
         result
+    }
+
+    /// Evaluates an ES module source string. If `specifier` is provided, the module
+    /// is registered in the module loader so other modules can import it.
+    pub fn eval_module(&mut self, code: &str, specifier: Option<&str>) -> JsResult<JsValue> {
+        let path = specifier.unwrap_or("__inline_module__");
+        let source = Source::from_bytes(code).with_path(Path::new(path));
+        let module = Module::parse(source, None, &mut self.context)?;
+
+        if let Some(spec) = specifier {
+            self.module_loader.insert(spec, module.clone());
+        }
+
+        let promise = module.load_link_evaluate(&mut self.context);
+        let _ = self.context.run_jobs();
+
+        match promise.state() {
+            PromiseState::Fulfilled(val) => Ok(val),
+            PromiseState::Rejected(err) => Err(JsError::from_opaque(err)),
+            PromiseState::Pending => Err(JsNativeError::typ()
+                .with_message("module evaluation did not complete synchronously")
+                .into()),
+        }
+    }
+
+    /// Register a module in the loader without evaluating it.
+    /// Used to pre-register external modules so import statements can resolve them.
+    pub fn register_module(&mut self, specifier: &str, code: &str) -> JsResult<()> {
+        let source = Source::from_bytes(code).with_path(Path::new(specifier));
+        let module = Module::parse(source, None, &mut self.context)?;
+        self.module_loader.insert(specifier, module);
+        Ok(())
     }
 
     /// Deliver pending MutationObserver records to their callbacks.

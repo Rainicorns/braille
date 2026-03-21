@@ -175,7 +175,9 @@ fn make_clear_timer() -> NativeFunction {
     }
 }
 fn build_location(url: &str, context: &mut Context) -> boa_engine::JsObject {
-    let url_str = Rc::new(RefCell::new(url.to_string()));
+    // Use the shared location_url from RealmState so History API can update it
+    let url_str = realm_state::location_url(context);
+    *url_str.borrow_mut() = url.to_string();
 
     let url_for_href_get = Rc::clone(&url_str);
     let href_getter = unsafe {
@@ -319,6 +321,349 @@ fn build_location(url: &str, context: &mut Context) -> boa_engine::JsObject {
 
     location
 }
+
+/// In-page history entry for pushState/replaceState.
+struct HistoryEntry {
+    url: String,
+    state: JsValue,
+}
+
+/// Build the `window.history` object with pushState/replaceState/back/forward/go.
+fn build_history(context: &mut Context) -> boa_engine::JsObject {
+    let location_url = realm_state::location_url(context);
+
+    // Initialize history stack with current URL
+    let initial_url = location_url.borrow().clone();
+    let entries: Rc<RefCell<Vec<HistoryEntry>>> = Rc::new(RefCell::new(vec![HistoryEntry {
+        url: initial_url,
+        state: JsValue::null(),
+    }]));
+    let index: Rc<std::cell::Cell<usize>> = Rc::new(std::cell::Cell::new(0));
+
+    let history = ObjectInitializer::new(context).build();
+    let realm = context.realm().clone();
+
+    // history.length getter
+    let entries_for_length = Rc::clone(&entries);
+    let length_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let len = entries_for_length.borrow().len();
+            Ok(JsValue::from(len as u32))
+        })
+    };
+    history
+        .define_property_or_throw(
+            js_string!("length"),
+            PropertyDescriptor::builder()
+                .get(length_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("define history.length");
+
+    // history.state getter
+    let entries_for_state = Rc::clone(&entries);
+    let index_for_state = Rc::clone(&index);
+    let state_getter = unsafe {
+        NativeFunction::from_closure(move |_this, _args, _ctx| {
+            let e = entries_for_state.borrow();
+            let i = index_for_state.get();
+            Ok(e.get(i).map(|entry| entry.state.clone()).unwrap_or(JsValue::null()))
+        })
+    };
+    history
+        .define_property_or_throw(
+            js_string!("state"),
+            PropertyDescriptor::builder()
+                .get(state_getter.to_js_function(&realm))
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("define history.state");
+
+    // history.pushState(state, title, url?)
+    let entries_for_push = Rc::clone(&entries);
+    let index_for_push = Rc::clone(&index);
+    let url_for_push = Rc::clone(&location_url);
+    let push_state = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let state = args.first().cloned().unwrap_or(JsValue::null());
+            // title (args[1]) is ignored per spec
+            let new_url = if let Some(url_val) = args.get(2) {
+                if !url_val.is_undefined() && !url_val.is_null() {
+                    let url_str = url_val.to_string(ctx)?.to_std_string_escaped();
+                    resolve_history_url(&url_for_push.borrow(), &url_str)
+                } else {
+                    url_for_push.borrow().clone()
+                }
+            } else {
+                url_for_push.borrow().clone()
+            };
+
+            let mut e = entries_for_push.borrow_mut();
+            let i = index_for_push.get();
+            // Truncate forward entries
+            e.truncate(i + 1);
+            e.push(HistoryEntry {
+                url: new_url.clone(),
+                state,
+            });
+            index_for_push.set(e.len() - 1);
+            *url_for_push.borrow_mut() = new_url;
+
+            Ok(JsValue::undefined())
+        })
+    };
+    history
+        .define_property_or_throw(
+            js_string!("pushState"),
+            PropertyDescriptor::builder()
+                .value(push_state.to_js_function(&realm))
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("define history.pushState");
+
+    // history.replaceState(state, title, url?)
+    let entries_for_replace = Rc::clone(&entries);
+    let index_for_replace = Rc::clone(&index);
+    let url_for_replace = Rc::clone(&location_url);
+    let replace_state = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let state = args.first().cloned().unwrap_or(JsValue::null());
+            let new_url = if let Some(url_val) = args.get(2) {
+                if !url_val.is_undefined() && !url_val.is_null() {
+                    let url_str = url_val.to_string(ctx)?.to_std_string_escaped();
+                    resolve_history_url(&url_for_replace.borrow(), &url_str)
+                } else {
+                    url_for_replace.borrow().clone()
+                }
+            } else {
+                url_for_replace.borrow().clone()
+            };
+
+            let mut e = entries_for_replace.borrow_mut();
+            let i = index_for_replace.get();
+            if let Some(entry) = e.get_mut(i) {
+                entry.url = new_url.clone();
+                entry.state = state;
+            }
+            *url_for_replace.borrow_mut() = new_url;
+
+            Ok(JsValue::undefined())
+        })
+    };
+    history
+        .define_property_or_throw(
+            js_string!("replaceState"),
+            PropertyDescriptor::builder()
+                .value(replace_state.to_js_function(&realm))
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("define history.replaceState");
+
+    // history.go(delta)
+    let entries_for_go = Rc::clone(&entries);
+    let index_for_go = Rc::clone(&index);
+    let url_for_go = Rc::clone(&location_url);
+    let go_fn = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let delta = args
+                .first()
+                .map(|v| v.to_i32(ctx).unwrap_or(0))
+                .unwrap_or(0);
+
+            let e = entries_for_go.borrow();
+            let current = index_for_go.get() as i64;
+            let new_index = current + delta as i64;
+
+            if new_index < 0 || new_index >= e.len() as i64 {
+                return Ok(JsValue::undefined());
+            }
+
+            let new_idx = new_index as usize;
+            index_for_go.set(new_idx);
+            let new_url = e[new_idx].url.clone();
+            let state = e[new_idx].state.clone();
+            *url_for_go.borrow_mut() = new_url;
+            drop(e);
+
+            // Fire popstate event on window
+            fire_popstate(state, ctx)?;
+
+            Ok(JsValue::undefined())
+        })
+    };
+    history
+        .define_property_or_throw(
+            js_string!("go"),
+            PropertyDescriptor::builder()
+                .value(go_fn.to_js_function(&realm))
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("define history.go");
+
+    // history.back()
+    let entries_for_back = Rc::clone(&entries);
+    let index_for_back = Rc::clone(&index);
+    let url_for_back = Rc::clone(&location_url);
+    let back_fn = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx| {
+            let current = index_for_back.get();
+            if current == 0 {
+                return Ok(JsValue::undefined());
+            }
+            let new_idx = current - 1;
+            index_for_back.set(new_idx);
+            let e = entries_for_back.borrow();
+            let new_url = e[new_idx].url.clone();
+            let state = e[new_idx].state.clone();
+            *url_for_back.borrow_mut() = new_url;
+            drop(e);
+            fire_popstate(state, ctx)?;
+            Ok(JsValue::undefined())
+        })
+    };
+    history
+        .define_property_or_throw(
+            js_string!("back"),
+            PropertyDescriptor::builder()
+                .value(back_fn.to_js_function(&realm))
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("define history.back");
+
+    // history.forward()
+    let entries_for_fwd = Rc::clone(&entries);
+    let index_for_fwd = Rc::clone(&index);
+    let url_for_fwd = Rc::clone(&location_url);
+    let forward_fn = unsafe {
+        NativeFunction::from_closure(move |_this, _args, ctx| {
+            let current = index_for_fwd.get();
+            let e = entries_for_fwd.borrow();
+            if current + 1 >= e.len() {
+                return Ok(JsValue::undefined());
+            }
+            let new_idx = current + 1;
+            index_for_fwd.set(new_idx);
+            let new_url = e[new_idx].url.clone();
+            let state = e[new_idx].state.clone();
+            *url_for_fwd.borrow_mut() = new_url;
+            drop(e);
+            fire_popstate(state, ctx)?;
+            Ok(JsValue::undefined())
+        })
+    };
+    history
+        .define_property_or_throw(
+            js_string!("forward"),
+            PropertyDescriptor::builder()
+                .value(forward_fn.to_js_function(&realm))
+                .writable(true)
+                .configurable(true)
+                .enumerable(false)
+                .build(),
+            context,
+        )
+        .expect("define history.forward");
+
+    history
+}
+
+/// Resolve a possibly-relative URL for pushState/replaceState against the current URL.
+fn resolve_history_url(current: &str, new_url: &str) -> String {
+    // Absolute URL
+    if new_url.starts_with("http://") || new_url.starts_with("https://") {
+        return new_url.to_string();
+    }
+    // Root-relative
+    if new_url.starts_with('/') {
+        // Extract origin from current
+        if let Some(idx) = current.find("://") {
+            let after_scheme = &current[idx + 3..];
+            let end = after_scheme.find('/').unwrap_or(after_scheme.len());
+            return format!("{}{}", &current[..idx + 3 + end], new_url);
+        }
+        return new_url.to_string();
+    }
+    // Fragment
+    if new_url.starts_with('#') {
+        let base = current.split('#').next().unwrap_or(current);
+        return format!("{}{}", base, new_url);
+    }
+    // Query string
+    if new_url.starts_with('?') {
+        let base = current.split('?').next().unwrap_or(current);
+        let base = base.split('#').next().unwrap_or(base);
+        return format!("{}{}", base, new_url);
+    }
+    // Relative path — join with current directory
+    if let Some(idx) = current.rfind('/') {
+        return format!("{}/{}", &current[..idx], new_url);
+    }
+    new_url.to_string()
+}
+
+/// Fire a popstate event on the window object.
+fn fire_popstate(state: JsValue, ctx: &mut Context) -> JsResult<()> {
+    // Create a new Event("popstate")
+    let global = ctx.global_object();
+    let event_ctor = global.get(js_string!("Event"), ctx)?;
+    let event_obj = event_ctor
+        .as_callable()
+        .unwrap()
+        .construct(&[JsValue::from(js_string!("popstate"))], None, ctx)?;
+
+    // Set .state property on the event
+    event_obj.define_property_or_throw(
+        js_string!("state"),
+        PropertyDescriptor::builder()
+            .value(state)
+            .writable(true)
+            .configurable(true)
+            .enumerable(true)
+            .build(),
+        ctx,
+    )?;
+
+    // Dispatch on window — invoke both addEventListener listeners and on* handler
+    if let Some(window) = realm_state::window_object(ctx) {
+        let this_val = JsValue::from(window);
+        window_dispatch_event_with_this(&this_val, &[JsValue::from(event_obj.clone())], ctx)?;
+
+        // Also invoke window.onpopstate handler
+        super::on_event::invoke_on_event_handler(
+            super::on_event::WINDOW_TREE_PTR,
+            WINDOW_LISTENER_ID,
+            "popstate",
+            &this_val,
+            &JsValue::from(event_obj.clone()),
+            &event_obj,
+            ctx,
+        );
+    }
+
+    Ok(())
+}
 fn extract_protocol(url: &str) -> String {
     if let Some(idx) = url.find("://") {
         format!("{}:", &url[..idx])
@@ -453,6 +798,7 @@ pub(crate) fn register_window(
 
     let location = build_location("about:blank", context);
     let navigator = build_navigator(context);
+    let history = build_history(context);
 
     // Window event listeners — stored in event_listeners with WINDOW_LISTENER_ID
     let window = ObjectInitializer::new(context)
@@ -617,6 +963,19 @@ pub(crate) fn register_window(
         )
         .expect("failed to define window.navigator");
 
+    window
+        .define_property_or_throw(
+            js_string!("history"),
+            PropertyDescriptor::builder()
+                .value(history)
+                .writable(true)
+                .configurable(true)
+                .enumerable(true)
+                .build(),
+            context,
+        )
+        .expect("failed to define window.history");
+
     let window_clone = window.clone();
     window
         .define_property_or_throw(
@@ -665,15 +1024,52 @@ pub(crate) fn register_window(
         )
         .expect("failed to define window.DOMParser");
 
-    // requestAnimationFrame — call callback synchronously with timestamp 0.0, return 1
-    let raf = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let callback = args.first().cloned().unwrap_or(JsValue::undefined());
-        if let Some(cb) = callback.as_callable() {
-            cb.call(&JsValue::undefined(), &[JsValue::from(0.0)], ctx)?;
-        }
-        Ok(JsValue::from(1))
-    });
-    let cancel_raf = NativeFunction::from_fn_ptr(|_this, _args, _ctx| Ok(JsValue::undefined()));
+    // requestAnimationFrame — schedule callback as a zero-delay timer so it fires
+    // on the next settle() iteration (async, like a real browser).
+    // The callback receives a DOMHighResTimeStamp from performance.now().
+    let raf = unsafe {
+        NativeFunction::from_closure(move |_this, args, ctx| {
+            let user_callback = args.first().cloned().unwrap_or(JsValue::undefined());
+            // Wrap user callback: call performance.now() and pass result as timestamp arg
+            let wrapper = NativeFunction::from_closure(move |_this, _args, ctx| {
+                if let Some(cb) = user_callback.as_callable() {
+                    let perf = ctx.global_object().get(js_string!("performance"), ctx)?;
+                    let now_val = if let Some(perf_obj) = perf.as_object() {
+                        let now_fn = perf_obj.get(js_string!("now"), ctx)?;
+                        if let Some(callable) = now_fn.as_callable() {
+                            callable.call(&perf, &[], ctx)?
+                        } else {
+                            JsValue::from(0.0)
+                        }
+                    } else {
+                        JsValue::from(0.0)
+                    };
+                    cb.call(&JsValue::undefined(), &[now_val], ctx)?;
+                }
+                Ok(JsValue::undefined())
+            });
+            let wrapper_fn = JsValue::from(wrapper.to_js_function(ctx.realm()));
+
+            // Register as a zero-delay one-shot timer
+            let ts = realm_state::timer_state(ctx);
+            let mut state = ts.borrow_mut();
+            let id = state.next_id;
+            state.next_id += 1;
+            let registered_at = state.current_time_ms;
+            state.entries.insert(
+                id,
+                TimerEntry {
+                    id,
+                    callback: wrapper_fn,
+                    delay_ms: 0,
+                    is_interval: false,
+                    registered_at,
+                },
+            );
+            Ok(JsValue::from(id))
+        })
+    };
+    let cancel_raf = make_clear_timer();
 
     let raf_fn = raf.to_js_function(context.realm());
     let cancel_raf_fn = cancel_raf.to_js_function(context.realm());
@@ -1129,6 +1525,98 @@ mod tests {
             Some(true),
             "onanimationend should still be null after setting onwebkitanimationend"
         );
+    }
+
+    #[test]
+    fn history_exists() {
+        let mut rt = make_runtime();
+        let result = rt.eval("typeof window.history === 'object'").unwrap();
+        assert_eq!(result.as_boolean(), Some(true));
+    }
+
+    #[test]
+    fn history_push_state_updates_location() {
+        let mut rt = make_runtime();
+        rt.eval(r#"window.location.href = "https://example.com/page1""#)
+            .unwrap();
+        rt.eval(r#"window.history.pushState({page: 2}, "", "/page2")"#)
+            .unwrap();
+        let result = rt.eval("window.location.pathname").unwrap();
+        let path = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert_eq!(path, "/page2");
+    }
+
+    #[test]
+    fn history_replace_state() {
+        let mut rt = make_runtime();
+        rt.eval(r#"window.location.href = "https://example.com/page1""#)
+            .unwrap();
+        rt.eval(r#"window.history.replaceState({replaced: true}, "", "/replaced")"#)
+            .unwrap();
+        let result = rt.eval("window.location.pathname").unwrap();
+        let path = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert_eq!(path, "/replaced");
+    }
+
+    #[test]
+    fn history_length_increments() {
+        let mut rt = make_runtime();
+        rt.eval(r#"window.location.href = "https://example.com/""#)
+            .unwrap();
+        let len1 = rt.eval("window.history.length").unwrap();
+        rt.eval(r#"window.history.pushState(null, "", "/page2")"#)
+            .unwrap();
+        let len2 = rt.eval("window.history.length").unwrap();
+        assert_eq!(len1.as_number(), Some(1.0));
+        assert_eq!(len2.as_number(), Some(2.0));
+    }
+
+    #[test]
+    fn history_state_getter() {
+        let mut rt = make_runtime();
+        rt.eval(r#"window.location.href = "https://example.com/""#)
+            .unwrap();
+        rt.eval(r#"window.history.pushState({myKey: "myVal"}, "", "/s")"#)
+            .unwrap();
+        let result = rt.eval("window.history.state.myKey").unwrap();
+        let val = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert_eq!(val, "myVal");
+    }
+
+    #[test]
+    fn history_back_fires_popstate() {
+        let mut rt = make_runtime();
+        rt.eval(
+            r#"
+            window.location.href = "https://example.com/";
+            var popstateUrl = null;
+            window.onpopstate = function(e) { popstateUrl = window.location.pathname; };
+            window.history.pushState(null, "", "/page2");
+            window.history.back();
+        "#,
+        )
+        .unwrap();
+        let result = rt.eval("popstateUrl").unwrap();
+        let val = result.to_string(&mut rt.context).unwrap().to_std_string_escaped();
+        assert_eq!(val, "/");
+    }
+
+    #[test]
+    fn history_forward_fires_popstate() {
+        let mut rt = make_runtime();
+        rt.eval(
+            r#"
+            window.location.href = "https://example.com/";
+            var fwdState = null;
+            window.onpopstate = function(e) { fwdState = e.state; };
+            window.history.pushState({p: 2}, "", "/page2");
+            window.history.back();
+            window.history.forward();
+        "#,
+        )
+        .unwrap();
+        let result = rt.eval("fwdState && fwdState.p === 2").unwrap();
+        assert_eq!(result.as_boolean(), Some(true));
     }
 
     #[test]

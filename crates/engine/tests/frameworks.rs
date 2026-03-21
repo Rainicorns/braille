@@ -224,3 +224,388 @@ fn static_form_submit_via_handle_click() {
     let snap = engine.snapshot(SnapMode::Accessibility);
     assert!(snap.contains("submitted: hello"), "form submit should have fired");
 }
+
+// ---------------------------------------------------------------------------
+// React SPA — comprehensive test of History API, fetch, FormData, routing
+// ---------------------------------------------------------------------------
+
+fn load_spa() -> (Engine, String) {
+    load_framework_test("react_spa.html")
+}
+
+#[test]
+fn spa_initial_render_shows_home() {
+    let (_engine, snapshot) = load_spa();
+    assert!(snapshot.contains("React SPA"), "should show home page title: {}", snapshot);
+    assert!(
+        snapshot.contains("Welcome to the single-page application demo"),
+        "should show welcome text: {}",
+        snapshot
+    );
+}
+
+#[test]
+fn spa_navbar_present() {
+    let (_engine, snapshot) = load_spa();
+    assert!(snapshot.contains("Home"), "nav should show Home: {}", snapshot);
+    assert!(snapshot.contains("Users"), "nav should show Users: {}", snapshot);
+    assert!(snapshot.contains("Search"), "nav should show Search: {}", snapshot);
+    assert!(snapshot.contains("Contact"), "nav should show Contact: {}", snapshot);
+}
+
+// -- History API / Client-side routing --
+
+#[test]
+fn spa_navigate_to_users_page() {
+    let (mut engine, _snap) = load_spa();
+
+    // Navigate via the nav link
+    engine.handle_click("#nav-users");
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(snap.contains("Users"), "should show Users page title: {}", snap);
+    assert!(
+        snap.contains("Load Users") || snap.contains("No users loaded"),
+        "should show load button or empty state: {}",
+        snap
+    );
+}
+
+#[test]
+fn spa_navigate_to_search_page() {
+    let (mut engine, _snap) = load_spa();
+
+    engine.handle_click("#nav-search");
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(
+        snap.contains("Search Users"),
+        "should show Search page title: {}",
+        snap
+    );
+}
+
+#[test]
+fn spa_navigate_to_contact_page() {
+    let (mut engine, _snap) = load_spa();
+
+    engine.handle_click("#nav-contact");
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(
+        snap.contains("Contact Us"),
+        "should show Contact page title: {}",
+        snap
+    );
+    assert!(
+        snap.contains("Send Message"),
+        "should show submit button: {}",
+        snap
+    );
+}
+
+#[test]
+fn spa_history_push_state_updates_route() {
+    let (mut engine, _snap) = load_spa();
+
+    // Navigate to users, then to search
+    engine.handle_click("#nav-users");
+    let snap1 = engine.snapshot(SnapMode::Accessibility);
+    assert!(snap1.contains("Users"), "should be on Users page");
+
+    engine.handle_click("#nav-search");
+    let snap2 = engine.snapshot(SnapMode::Accessibility);
+    assert!(snap2.contains("Search Users"), "should be on Search page");
+
+    // Verify history length via JS
+    let len = engine.eval_js("window.history.length").unwrap();
+    // Initial + navigate to /users + navigate to /search = 3
+    assert_eq!(len, "3", "history should have 3 entries, got: {}", len);
+}
+
+#[test]
+fn spa_history_back_returns_to_previous_page() {
+    let (mut engine, _snap) = load_spa();
+
+    // Navigate to users then search
+    engine.handle_click("#nav-users");
+    engine.handle_click("#nav-search");
+    let snap_search = engine.snapshot(SnapMode::Accessibility);
+    assert!(snap_search.contains("Search Users"), "should be on Search");
+
+    // Go back
+    engine.eval_js("window.history.back()").unwrap();
+    engine.settle();
+    let snap_users = engine.snapshot(SnapMode::Accessibility);
+    assert!(
+        snap_users.contains("Users"),
+        "should be back on Users page: {}",
+        snap_users
+    );
+}
+
+#[test]
+fn spa_404_for_unknown_route() {
+    let (mut engine, _snap) = load_spa();
+
+    engine.eval_js("window.__test.navigate('/nonexistent')").unwrap();
+    engine.settle();
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(snap.contains("404"), "should show 404: {}", snap);
+    assert!(
+        snap.contains("Page not found"),
+        "should show not found message: {}",
+        snap
+    );
+}
+
+// -- fetch API (via mock) --
+
+#[test]
+fn spa_fetch_users_populates_list() {
+    let (mut engine, _snap) = load_spa();
+
+    // Navigate to users page
+    engine.handle_click("#nav-users");
+    engine.settle();
+
+    // Click "Load Users" button
+    engine.handle_click("#load-users");
+    engine.settle();
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(snap.contains("Alice"), "should show Alice: {}", snap);
+    assert!(snap.contains("Bob"), "should show Bob: {}", snap);
+    assert!(snap.contains("Charlie"), "should show Charlie: {}", snap);
+}
+
+#[test]
+fn spa_click_user_shows_detail() {
+    let (mut engine, _snap) = load_spa();
+
+    // Navigate to users page and load
+    engine.handle_click("#nav-users");
+    engine.settle();
+    engine.handle_click("#load-users");
+    engine.settle();
+
+    // Click on Alice
+    engine.handle_click("#user-1");
+    engine.settle();
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(snap.contains("Alice"), "should show user name: {}", snap);
+    assert!(
+        snap.contains("alice@example.com"),
+        "should show user email: {}",
+        snap
+    );
+    assert!(
+        snap.contains("Software engineer"),
+        "should show user bio: {}",
+        snap
+    );
+}
+
+#[test]
+fn spa_user_detail_back_to_list() {
+    let (mut engine, _snap) = load_spa();
+
+    engine.handle_click("#nav-users");
+    engine.settle();
+    engine.handle_click("#load-users");
+    engine.settle();
+    engine.handle_click("#user-1");
+    engine.settle();
+
+    // Click back button
+    engine.handle_click("#back-to-users");
+    engine.settle();
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(
+        snap.contains("Users"),
+        "should be back on users list page: {}",
+        snap
+    );
+}
+
+// -- Search with fetch --
+
+#[test]
+fn spa_search_finds_user() {
+    let (mut engine, _snap) = load_spa();
+
+    engine.handle_click("#nav-search");
+    engine.settle();
+
+    // Type search query and submit
+    engine.handle_type("#search-input", "ali").unwrap();
+    engine.handle_click("#search-btn");
+    engine.settle();
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(
+        snap.contains("Alice"),
+        "search should find Alice: {}",
+        snap
+    );
+}
+
+#[test]
+fn spa_search_no_results() {
+    let (mut engine, _snap) = load_spa();
+
+    engine.handle_click("#nav-search");
+    engine.settle();
+
+    engine.handle_type("#search-input", "zzzzz").unwrap();
+    engine.handle_click("#search-btn");
+    engine.settle();
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(
+        snap.contains("No results"),
+        "should show no results message: {}",
+        snap
+    );
+}
+
+// -- FormData via contact form --
+
+#[test]
+fn spa_contact_form_renders() {
+    let (mut engine, _snap) = load_spa();
+
+    engine.handle_click("#nav-contact");
+    engine.settle();
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    assert!(snap.contains("Contact Us"), "should show title: {}", snap);
+    assert!(snap.contains("Name"), "should show name label: {}", snap);
+    assert!(snap.contains("Email"), "should show email label: {}", snap);
+    assert!(snap.contains("Message"), "should show message label: {}", snap);
+    assert!(
+        snap.contains("Send Message"),
+        "should show submit button: {}",
+        snap
+    );
+}
+
+#[test]
+fn spa_contact_form_submit_uses_formdata() {
+    let (mut engine, _snap) = load_spa();
+
+    engine.handle_click("#nav-contact");
+    engine.settle();
+
+    // Fill in the form
+    engine.handle_type("#contact-name", "Test User").unwrap();
+    engine.handle_type("#contact-email", "test@example.com").unwrap();
+
+    // Submit the form
+    engine.handle_click("#contact-submit");
+    engine.settle();
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    // Check the success message (from mock API response)
+    assert!(
+        snap.contains("Message sent!"),
+        "should show success message: {}",
+        snap
+    );
+
+    // Check that FormData methods worked correctly
+    assert!(
+        snap.contains("FormData.has(name): true"),
+        "FormData.has should work: {}",
+        snap
+    );
+    assert!(
+        snap.contains("FormData.get(name): Test User"),
+        "FormData.get should return name value: {}",
+        snap
+    );
+    assert!(
+        snap.contains("FormData.getAll(name).length: 1"),
+        "FormData.getAll should return array: {}",
+        snap
+    );
+}
+
+#[test]
+fn spa_contact_form_reset_and_resubmit() {
+    let (mut engine, _snap) = load_spa();
+
+    engine.handle_click("#nav-contact");
+    engine.settle();
+    engine.handle_type("#contact-name", "First").unwrap();
+    engine.handle_click("#contact-submit");
+    engine.settle();
+
+    let snap1 = engine.snapshot(SnapMode::Accessibility);
+    assert!(snap1.contains("Message sent!"), "first submit should succeed");
+
+    // Click "Send Another" to reset
+    engine.handle_click("#reset-contact");
+    engine.settle();
+    let snap2 = engine.snapshot(SnapMode::Accessibility);
+    assert!(
+        snap2.contains("Contact Us"),
+        "should show form again after reset: {}",
+        snap2
+    );
+}
+
+// -- Combined: navigate, fetch, FormData, back --
+
+#[test]
+fn spa_full_user_journey() {
+    let (mut engine, _snap) = load_spa();
+
+    // 1. Start at home
+    let home = engine.snapshot(SnapMode::Accessibility);
+    assert!(home.contains("React SPA"), "start at home");
+
+    // 2. Navigate to users, load list
+    engine.handle_click("#nav-users");
+    engine.settle();
+    engine.handle_click("#load-users");
+    engine.settle();
+    let users = engine.snapshot(SnapMode::Accessibility);
+    assert!(users.contains("Alice"), "users loaded");
+
+    // 3. View user detail
+    engine.handle_click("#user-1");
+    engine.settle();
+    let detail = engine.snapshot(SnapMode::Accessibility);
+    assert!(detail.contains("Software engineer"), "user detail shown");
+
+    // 4. Navigate to search
+    engine.handle_click("#nav-search");
+    engine.settle();
+    engine.handle_type("#search-input", "bob").unwrap();
+    engine.handle_click("#search-btn");
+    engine.settle();
+    let search = engine.snapshot(SnapMode::Accessibility);
+    assert!(search.contains("Bob"), "search found Bob");
+
+    // 5. Navigate to contact and submit
+    engine.handle_click("#nav-contact");
+    engine.settle();
+    engine.handle_type("#contact-name", "Journey User").unwrap();
+    engine.handle_click("#contact-submit");
+    engine.settle();
+    let contact = engine.snapshot(SnapMode::Accessibility);
+    assert!(contact.contains("Message sent!"), "contact form submitted");
+
+    // 6. Verify history has accumulated
+    let len = engine.eval_js("window.history.length").unwrap();
+    let len_num: usize = len.parse().unwrap_or(0);
+    assert!(
+        len_num >= 4,
+        "history should have at least 4 entries from navigation, got: {}",
+        len
+    );
+}

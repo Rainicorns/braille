@@ -20,10 +20,29 @@ use braille_wire::SnapMode;
 /// Represents a script to be executed — either inline or external (needing fetch).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScriptDescriptor {
-    /// Script text content, ready to execute.
+    /// Classic script text content, ready to execute.
     Inline(String),
-    /// A src URL that needs to be fetched by the host.
+    /// A classic script src URL that needs to be fetched by the host.
     External(String),
+    /// ES module inline script (`<script type="module">...</script>`).
+    InlineModule(String),
+    /// ES module external script (`<script type="module" src="...">`).
+    ExternalModule(String),
+}
+
+impl ScriptDescriptor {
+    /// Returns true if this is a module script (inline or external).
+    pub fn is_module(&self) -> bool {
+        matches!(self, Self::InlineModule(_) | Self::ExternalModule(_))
+    }
+
+    /// Returns the external URL if this is an External or ExternalModule descriptor.
+    pub fn external_url(&self) -> Option<&str> {
+        match self {
+            Self::External(url) | Self::ExternalModule(url) => Some(url),
+            _ => None,
+        }
+    }
 }
 
 /// Pre-fetched resources for external scripts and iframe content.
@@ -251,6 +270,16 @@ impl Engine {
         } = &node.data
         {
             if tag_name.eq_ignore_ascii_case("script") {
+                // Skip nomodule scripts — they are fallback for browsers that don't support modules
+                let has_nomodule = attributes.iter().any(|a| a.local_name == "nomodule");
+                if has_nomodule {
+                    return;
+                }
+
+                let is_module = attributes
+                    .iter()
+                    .any(|a| a.local_name == "type" && a.value.eq_ignore_ascii_case("module"));
+
                 // Per HTML spec: if src attribute exists, it's an external script
                 // (inline text content is ignored when src is present)
                 let src = attributes
@@ -258,10 +287,18 @@ impl Engine {
                     .find(|a| a.local_name == "src")
                     .map(|a| a.value.clone());
                 if let Some(url) = src {
-                    descriptors.push(ScriptDescriptor::External(url));
+                    if is_module {
+                        descriptors.push(ScriptDescriptor::ExternalModule(url));
+                    } else {
+                        descriptors.push(ScriptDescriptor::External(url));
+                    }
                 } else {
                     let text = tree.get_text_content(node_id);
-                    descriptors.push(ScriptDescriptor::Inline(text));
+                    if is_module {
+                        descriptors.push(ScriptDescriptor::InlineModule(text));
+                    } else {
+                        descriptors.push(ScriptDescriptor::Inline(text));
+                    }
                 }
                 // Don't recurse into script children
                 return;
@@ -293,6 +330,18 @@ impl Engine {
         // Populate iframe_src_content in RealmState with pre-fetched iframe content
         Self::populate_iframe_src_content(&fetched.iframes, &runtime.context);
 
+        // Pre-register external modules so import statements can resolve them
+        for descriptor in descriptors {
+            if let ScriptDescriptor::ExternalModule(url) = descriptor {
+                if let Some(script_content) = fetched.scripts.get(url) {
+                    if !script_content.trim().is_empty() {
+                        // Best-effort: if parsing fails, we'll get an error when the module is imported
+                        let _ = runtime.register_module(url, script_content);
+                    }
+                }
+            }
+        }
+
         for descriptor in descriptors {
             match descriptor {
                 ScriptDescriptor::Inline(text) => {
@@ -308,7 +357,20 @@ impl Engine {
                             runtime.notify_mutation_observers();
                         }
                     }
-                    // Skip if URL not found in fetched map
+                }
+                ScriptDescriptor::InlineModule(text) => {
+                    if !text.trim().is_empty() {
+                        runtime.eval_module(text, None).unwrap();
+                        runtime.notify_mutation_observers();
+                    }
+                }
+                ScriptDescriptor::ExternalModule(url) => {
+                    if let Some(script_content) = fetched.scripts.get(url) {
+                        if !script_content.trim().is_empty() {
+                            runtime.eval_module(script_content, Some(url)).unwrap();
+                            runtime.notify_mutation_observers();
+                        }
+                    }
                 }
             }
         }
@@ -356,20 +418,45 @@ impl Engine {
         // Populate iframe_src_content in RealmState with pre-fetched iframe content
         Self::populate_iframe_src_content(&fetched.iframes, &runtime.context);
 
+        // Pre-register external modules so import statements can resolve them
         for descriptor in descriptors {
+            if let ScriptDescriptor::ExternalModule(url) = descriptor {
+                if let Some(script_content) = fetched.scripts.get(url) {
+                    if !script_content.trim().is_empty() {
+                        let _ = runtime.register_module(url, script_content);
+                    }
+                }
+            }
+        }
+
+        for descriptor in descriptors {
+            let is_module = descriptor.is_module();
             let code = match descriptor {
-                ScriptDescriptor::Inline(text) => {
+                ScriptDescriptor::Inline(text) | ScriptDescriptor::InlineModule(text) => {
                     if text.trim().is_empty() {
                         continue;
                     }
                     text.clone()
                 }
-                ScriptDescriptor::External(url) => match fetched.scripts.get(url) {
-                    Some(content) if !content.trim().is_empty() => content.clone(),
-                    _ => continue,
-                },
+                ScriptDescriptor::External(url) | ScriptDescriptor::ExternalModule(url) => {
+                    match fetched.scripts.get(url) {
+                        Some(content) if !content.trim().is_empty() => content.clone(),
+                        _ => continue,
+                    }
+                }
             };
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.eval(&code))) {
+            let result = if is_module {
+                let specifier = match descriptor {
+                    ScriptDescriptor::ExternalModule(url) => Some(url.as_str()),
+                    _ => None,
+                };
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    runtime.eval_module(&code, specifier)
+                }))
+            } else {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.eval(&code)))
+            };
+            match result {
                 Ok(Ok(_)) => {
                     runtime.notify_mutation_observers();
                 }
@@ -719,6 +806,113 @@ impl Engine {
             Self::collect_iframes(tree, child_id, tree_rc, result, ctx);
         }
     }
+
+    // -- Fetch API public methods --
+
+    /// Returns true if there are pending fetch requests that need to be serviced.
+    pub fn has_pending_fetches(&self) -> bool {
+        if let Some(runtime) = &self.runtime {
+            let pending = crate::js::realm_state::pending_fetches(&runtime.context);
+            let is_empty = pending.borrow().is_empty();
+            !is_empty
+        } else {
+            false
+        }
+    }
+
+    /// Returns all pending fetch requests as serializable DTOs.
+    /// Does NOT consume them — they remain pending until resolved or rejected.
+    pub fn pending_fetches(&self) -> Vec<braille_wire::FetchRequest> {
+        if let Some(runtime) = &self.runtime {
+            let pending = crate::js::realm_state::pending_fetches(&runtime.context);
+            let fetches = pending.borrow();
+            fetches
+                .iter()
+                .map(|pf| braille_wire::FetchRequest {
+                    id: pf.id,
+                    url: pf.url.clone(),
+                    method: pf.method.clone(),
+                    headers: pf.headers.clone(),
+                    body: pf.body.clone(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Resolve a pending fetch with a response. Removes the fetch from the pending list,
+    /// calls its resolve function with a Response object, and flushes microtasks.
+    pub fn resolve_fetch(&mut self, id: u64, response: &braille_wire::FetchResponseData) {
+        let runtime = self.runtime.as_mut().expect("resolve_fetch: no runtime loaded");
+        let pending = crate::js::realm_state::pending_fetches(&runtime.context);
+
+        // Find and remove the pending fetch
+        let entry = {
+            let mut fetches = pending.borrow_mut();
+            let pos = fetches.iter().position(|pf| pf.id == id);
+            pos.map(|i| fetches.remove(i))
+        };
+
+        if let Some(pf) = entry {
+            // Create a Response object
+            let resp_obj = crate::js::bindings::fetch::create_response_object(
+                response.status,
+                &response.status_text,
+                response.headers.clone(),
+                response.body.clone(),
+                &response.url,
+                &mut runtime.context,
+            );
+            match resp_obj {
+                Ok(obj) => {
+                    let _ = pf
+                        .resolve
+                        .call(&JsValue::undefined(), &[JsValue::from(obj)], &mut runtime.context);
+                }
+                Err(e) => {
+                    let _ = pf.reject.call(
+                        &JsValue::undefined(),
+                        &[JsValue::from(boa_engine::js_string!(format!("{:?}", e)))],
+                        &mut runtime.context,
+                    );
+                }
+            }
+            // Flush microtasks so .then() callbacks fire
+            let _ = runtime.context.run_jobs();
+            runtime.notify_mutation_observers();
+        }
+    }
+
+    /// Reject a pending fetch with an error message.
+    pub fn reject_fetch(&mut self, id: u64, error: &str) {
+        let runtime = self.runtime.as_mut().expect("reject_fetch: no runtime loaded");
+        let pending = crate::js::realm_state::pending_fetches(&runtime.context);
+
+        let entry = {
+            let mut fetches = pending.borrow_mut();
+            let pos = fetches.iter().position(|pf| pf.id == id);
+            pos.map(|i| fetches.remove(i))
+        };
+
+        if let Some(pf) = entry {
+            let _ = pf.reject.call(
+                &JsValue::undefined(),
+                &[JsValue::from(boa_engine::js_string!(error))],
+                &mut runtime.context,
+            );
+            let _ = runtime.context.run_jobs();
+            runtime.notify_mutation_observers();
+        }
+    }
+
+    /// Set the location URL in the JS runtime (e.g., after navigation).
+    pub fn set_url(&mut self, url: &str) {
+        if let Some(runtime) = &self.runtime {
+            let location_url = crate::js::realm_state::location_url(&runtime.context);
+            *location_url.borrow_mut() = url.to_string();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -933,7 +1127,7 @@ mod tests {
             ScriptDescriptor::Inline(text) => {
                 assert!(text.contains("console.log"), "inline script text: {}", text);
             }
-            ScriptDescriptor::External(_) => panic!("expected Inline, got External"),
+            other => panic!("expected Inline, got {:?}", other),
         }
     }
 
@@ -952,7 +1146,7 @@ mod tests {
             ScriptDescriptor::External(url) => {
                 assert_eq!(url, "https://example.com/app.js");
             }
-            ScriptDescriptor::Inline(_) => panic!("expected External, got Inline"),
+            other => panic!("expected External, got {:?}", other),
         }
     }
 
@@ -1151,7 +1345,7 @@ mod tests {
             ScriptDescriptor::External(url) => {
                 assert_eq!(url, "https://example.com/real.js");
             }
-            ScriptDescriptor::Inline(_) => panic!("should be External when src is present"),
+            other => panic!("should be External when src is present, got {:?}", other),
         }
 
         let mut fetched = HashMap::new();

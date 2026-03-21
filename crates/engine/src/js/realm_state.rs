@@ -19,6 +19,7 @@ use crate::dom::{DomTree, NodeId};
 use super::bindings;
 use super::bindings::element::{DomPrototypes, NodeCache};
 use super::bindings::event_target::ListenerMap;
+use super::bindings::fetch::PendingFetch;
 use super::bindings::node_iterator::NodeIteratorInner;
 use super::bindings::range::RangeInner;
 use super::runtime;
@@ -211,6 +212,14 @@ pub(crate) struct RealmState {
     // -- Live iterator registry (for NodeIterator pre-removing steps) --
     #[unsafe_ignore_trace]
     pub(crate) live_iterators: Rc<RefCell<Vec<std::rc::Weak<NodeIteratorInner>>>>,
+
+    // -- Pending fetch requests (for async fetch API) --
+    #[unsafe_ignore_trace]
+    pub(crate) pending_fetches: Rc<RefCell<Vec<PendingFetch>>>,
+
+    // -- Shared location URL (for History API integration) --
+    #[unsafe_ignore_trace]
+    pub(crate) location_url: Rc<RefCell<String>>,
 }
 
 impl RealmState {
@@ -252,6 +261,8 @@ impl RealmState {
             timer_state: Rc::new(RefCell::new(TimerState::new())),
             live_ranges: Rc::new(RefCell::new(Vec::new())),
             live_iterators: Rc::new(RefCell::new(Vec::new())),
+            pending_fetches: Rc::new(RefCell::new(Vec::new())),
+            location_url: Rc::new(RefCell::new("about:blank".to_string())),
         }
     }
 
@@ -293,6 +304,8 @@ impl RealmState {
             timer_state: Rc::new(RefCell::new(TimerState::new())),
             live_ranges: Rc::new(RefCell::new(Vec::new())),
             live_iterators: Rc::new(RefCell::new(Vec::new())),
+            pending_fetches: Rc::new(RefCell::new(Vec::new())),
+            location_url: Rc::new(RefCell::new("about:blank".to_string())),
         }
     }
 }
@@ -393,6 +406,8 @@ rc_accessor!(
     live_iterators,
     Rc<RefCell<Vec<std::rc::Weak<NodeIteratorInner>>>>
 );
+rc_accessor!(pending_fetches, pending_fetches, Rc<RefCell<Vec<PendingFetch>>>);
+rc_accessor!(location_url, location_url, Rc<RefCell<String>>);
 
 // -- Prototype/factory cache accessors (clone Option<T> out) --
 
@@ -621,6 +636,18 @@ fn register_realm_globals_inner(
 
     // 16b. StaticRange global constructor
     bindings::range::register_static_range_global(context);
+
+    // 17. FormData global constructor
+    bindings::form_data::register_form_data_global(context);
+
+    // 18. fetch + Response + Headers globals
+    bindings::fetch::register_fetch_global(context);
+
+    // 19. URL + URLSearchParams globals
+    bindings::url::register_url_globals(context);
+
+    // 20. localStorage + sessionStorage globals
+    bindings::storage::register_storage_globals(context);
 
     // 16. Copy globals to window (EventTarget, constructors, event methods)
     copy_globals_to_window(context);

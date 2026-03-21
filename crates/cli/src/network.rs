@@ -102,6 +102,52 @@ impl NetworkClient {
         format!("{dir}{url}")
     }
 
+    /// Fetch a URL with custom method, headers, and body.
+    pub fn fetch_with_options(
+        &mut self,
+        url: &str,
+        method: &str,
+        headers: &[(String, String)],
+        body: Option<&str>,
+    ) -> Result<FetchResponse, String> {
+        let resolved = self.resolve_url(url);
+        let mut builder = match method.to_uppercase().as_str() {
+            "POST" => self.client.post(&resolved),
+            "PUT" => self.client.put(&resolved),
+            "DELETE" => self.client.delete(&resolved),
+            "PATCH" => self.client.patch(&resolved),
+            "HEAD" => self.client.head(&resolved),
+            _ => self.client.get(&resolved),
+        };
+
+        for (name, value) in headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+
+        if let Some(body_str) = body {
+            builder = builder.body(body_str.to_string());
+        }
+
+        let response = builder.send().map_err(|e| format!("fetch failed: {e}"))?;
+
+        let final_url = response.url().to_string();
+        let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let body = response.text().map_err(|e| format!("failed to read body: {e}"))?;
+
+        Ok(FetchResponse {
+            body,
+            url: final_url,
+            status,
+            content_type,
+        })
+    }
+
     /// Update the base URL (typically after navigation).
     pub fn set_base_url(&mut self, url: &str) {
         self.base_url = Some(url.to_string());

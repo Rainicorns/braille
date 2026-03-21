@@ -112,7 +112,7 @@ fn fetch_and_load(net: &mut NetworkClient, session: &mut session::Session, url: 
     // 2. Fetch external scripts
     let mut fetched = HashMap::new();
     for desc in &descriptors {
-        if let ScriptDescriptor::External(src_url) = desc {
+        if let ScriptDescriptor::External(src_url) | ScriptDescriptor::ExternalModule(src_url) = desc {
             let resolved = net.resolve_url(src_url);
             match net.fetch(&resolved) {
                 Ok(script_resp) => {
@@ -130,11 +130,75 @@ fn fetch_and_load(net: &mut NetworkClient, session: &mut session::Session, url: 
         .engine
         .execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched));
 
+    // 3b. Set the URL in the JS runtime so location.href is correct
+    session.engine.set_url(&resp.url);
+
+    // 3c. Settle + fetch resolution loop
+    session.engine.settle();
+    resolve_pending_fetches(net, &mut session.engine);
+
     // 4. Record navigation in session history
     session.navigate(resp.url);
 
     // 5. Return accessibility snapshot
     Ok(session.engine.snapshot(SnapMode::Accessibility))
+}
+
+/// Service all pending fetch requests from the engine's JS runtime.
+/// Loops until no more pending fetches remain.
+fn resolve_pending_fetches(net: &mut NetworkClient, engine: &mut braille_engine::Engine) {
+    for _ in 0..50 {
+        if !engine.has_pending_fetches() {
+            break;
+        }
+        let pending = engine.pending_fetches();
+        for req in pending {
+            let resolved_url = net.resolve_url(&req.url);
+            match net.fetch_with_options(
+                &resolved_url,
+                &req.method,
+                &req.headers,
+                req.body.as_deref(),
+            ) {
+                Ok(resp) => {
+                    let response_data = braille_wire::FetchResponseData {
+                        status: resp.status,
+                        status_text: status_text_for_code(resp.status).to_string(),
+                        headers: resp
+                            .content_type
+                            .map(|ct| vec![("content-type".to_string(), ct)])
+                            .unwrap_or_default(),
+                        body: resp.body,
+                        url: resp.url,
+                    };
+                    engine.resolve_fetch(req.id, &response_data);
+                }
+                Err(e) => {
+                    engine.reject_fetch(req.id, &e);
+                }
+            }
+        }
+        engine.settle();
+    }
+}
+
+fn status_text_for_code(code: u16) -> &'static str {
+    match code {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        _ => "",
+    }
 }
 
 fn run(cli: Cli) -> String {
