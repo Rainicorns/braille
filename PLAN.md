@@ -116,10 +116,58 @@ All 6 phases complete (770 tests). html5lib-tests tree-construction suite: **177
 | Timer execution | **COMPLETE.** `TimerEntry`/`TimerState` in RealmState with virtual clock (`current_time_ms`). `settle()` fires ready timers, advances virtual clock to next deadline, loops until quiescent (max 100 iterations, 10s virtual cap). `setTimeout`/`setInterval` parse delay arg, `clearTimeout`/`clearInterval` remove entries. 16 verification tests in `snapshot_views.rs` (settle+Promise, settle+setTimeout, all view modes, ref stability, selector/region views, timer lifecycle). |
 | Adversarial tests | **COMPLETE.** 28 tests in `adversarial.rs` across 4 categories: 6 real-world SPA patterns (tabs, form validation, modal, shopping cart, lazy load, router), 12 anti-LLM adversarial (honeypot links, opacity:0 gap, zero-height gap, offscreen gap, color camouflage gap, fake buttons, misleading ARIA, form action mismatch, contradictory semantics, bait-and-switch, click surprise, MO injection), 3 edge cases (DOM vs flexbox order, deep nesting, massive hidden content), 7 camelCase style tests (camelCase tab UI, mixed setProperty+camelCase, read-back, empty string removes, overwrite, MO+camelCase hide, cssText interplay). Documents 4 serializer gaps (opacity:0, height:0+overflow:hidden, offscreen position, color camouflage) with `// GAP:` comments and assertions that test current behavior. |
 | CSSStyleDeclaration camelCase | **COMPLETE.** 80 camelCase getter/setter accessors registered on `JsStyleDeclaration` prototype in `style.rs`. Each getter reads the `style` attribute and returns the kebab-case property value. Each setter parses, upserts/removes the property, serializes back, and calls `set_attribute_with_observer`. Empty string assignment removes the property (per spec). Uses `NativeFunction::from_closure` pattern matching `computed_style.rs`. Covers all common CSS properties including `cssFloat` → `float`. |
-| Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height |
+| fetch API | Not started. SPAs need `fetch()` → `Response` → `.json()/.text()` for data loading. XHR stub exists (EventTarget only, no HTTP). |
+| History API | Not started. `history.pushState`/`replaceState`/`popstate` needed for SPA client-side routing (React Router, Next.js, SvelteKit). `window.location` exists but no history state management. |
+| FormData | Not started. Needed for proper `<form>` submission handling and `fetch()` body encoding. |
+| requestAnimationFrame | Stub exists. Needs real scheduling integration with `settle()` to support React reconciler and animation libraries. |
+| Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height. Prerequisite for IntersectionObserver, ResizeObserver. |
 | WASM sandbox | Not started — engine runs in-process |
 
-## Implementation Plan
+---
+
+## Next Phase: Real-World SPA Support
+
+WPT conformance is at 286/353 (81%). Remaining 67 skipped tests are diminishing returns (XML docs, custom elements, server-side substitution, perf tests). Shifting focus to **real-world site support** — the APIs that SPAs actually need.
+
+### Priority Order & Dependencies
+
+```
+fetch API  ──────────────────────────> real SPA data loading
+History API ─────────────────────────> SPA navigation (pushState/replaceState/popstate)
+FormData ────────────────────────────> form submission + fetch body encoding
+                                         │
+rAF (enhance stub) ─────────────────> React/framework rendering loop
+                                         │
+Layout (Taffy) ──┬───────────────────> offsetWidth, getBoundingClientRect
+                 ├─> IntersectionObserver ──> lazy loading
+                 └─> ResizeObserver
+```
+
+### Phase S1: fetch + History API + FormData
+
+**Goal:** Enable loading a real React/Next.js SPA — data fetching, client-side navigation, form handling.
+
+These three are independent of each other and of layout. Bounded scope, high impact.
+
+- **fetch API** — `fetch(url, options)` returning `Promise<Response>`. Response with `.json()`, `.text()`, `.ok`, `.status`, `.headers`. Pre-fetched resources pattern (like iframe src loading). Request options: method, headers, body.
+- **History API** — `history.pushState(state, title, url)`, `history.replaceState()`, `history.back()`, `history.forward()`, `history.length`, `history.state`. `popstate` event on window. Integration with existing navigation history in CLI session manager.
+- **FormData** — `new FormData(form?)` constructor, `.append()`, `.get()`, `.set()`, `.has()`, `.delete()`, `.entries()`, iterator. Used as `fetch()` body and for form data collection.
+
+### Phase S2: requestAnimationFrame + settle integration
+
+**Goal:** React's reconciler and animation libraries work correctly.
+
+Enhance existing rAF stub to queue callbacks and fire them during `settle()` cycles. Small change, outsized impact for framework compatibility.
+
+### Phase S3: Layout (Taffy)
+
+**Goal:** `offsetWidth`/`getBoundingClientRect` return real values. Unblocks IntersectionObserver, ResizeObserver.
+
+Largest investment. Incremental: start with block layout, add flexbox. Wire Taffy into the style computation pipeline.
+
+---
+
+## Implementation Plan (Original — Directions A/B/C, ALL COMPLETE)
 
 Three directions, all running. Shared dependencies noted. **51 agent tasks total across all three directions.**
 
