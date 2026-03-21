@@ -73,7 +73,22 @@ pub(crate) enum EventKind {
         shift_key: bool,
     },
     Keyboard,
-    Wheel,
+    Wheel {
+        button: i16,
+        buttons: u16,
+        client_x: f64,
+        client_y: f64,
+        screen_x: f64,
+        screen_y: f64,
+        alt_key: bool,
+        ctrl_key: bool,
+        meta_key: bool,
+        shift_key: bool,
+        delta_x: f64,
+        delta_y: f64,
+        delta_z: f64,
+        delta_mode: u32,
+    },
     Focus,
     Animation,
     Transition,
@@ -98,7 +113,7 @@ impl EventKind {
     }
 
     pub(crate) fn is_mouse(&self) -> bool {
-        matches!(self, EventKind::Mouse { .. })
+        matches!(self, EventKind::Mouse { .. } | EventKind::Wheel { .. })
     }
 }
 

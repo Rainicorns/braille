@@ -2,7 +2,7 @@ use boa_engine::{
     class::ClassBuilder,
     js_string,
     native_function::NativeFunction,
-    object::{builtins::JsArray, ObjectInitializer},
+    object::builtins::JsArray,
     property::Attribute,
     Context, JsResult, JsValue,
 };
@@ -16,17 +16,41 @@ use super::element::get_or_create_js_element;
 // e.g. "user-id" -> "userId", "foo-bar-baz" -> "fooBarBaz"
 // ---------------------------------------------------------------------------
 
-fn kebab_to_camel(s: &str) -> String {
+pub(crate) fn kebab_to_camel(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut capitalize_next = false;
     for ch in s.chars() {
         if ch == '-' {
+            if capitalize_next {
+                // Consecutive or trailing hyphen — preserve as literal '-'
+                result.push('-');
+            }
             capitalize_next = true;
         } else if capitalize_next {
             for upper in ch.to_uppercase() {
                 result.push(upper);
             }
             capitalize_next = false;
+        } else {
+            result.push(ch);
+        }
+    }
+    // Trailing hyphen — preserve
+    if capitalize_next {
+        result.push('-');
+    }
+    result
+}
+
+/// camelCase to kebab-case: "dateOfBirth" -> "date-of-birth"
+pub(crate) fn camel_to_kebab(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        if ch.is_ascii_uppercase() {
+            result.push('-');
+            for lower in ch.to_lowercase() {
+                result.push(lower);
+            }
         } else {
             result.push(ch);
         }
@@ -212,31 +236,14 @@ fn set_hidden(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<J
 
 // ---------------------------------------------------------------------------
 // All elements: element.dataset getter
-// Returns a plain JS object with data-* attributes converted to camelCase.
-// NOTE: This is a snapshot — mutations to the returned object do NOT write
-// back to the DOM. This is a known limitation. A full Proxy-based dataset
-// would require Boa Proxy support.
+// Returns a live DOMStringMap Proxy backed by the element's data-* attributes.
 // ---------------------------------------------------------------------------
 
 fn get_dataset(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     extract_element!(el, this, "dataset getter");
-
-    let tree = el.tree.borrow();
-    let node = tree.get_node(el.node_id);
-
-    let mut builder = ObjectInitializer::new(ctx);
-
-    if let NodeData::Element { ref attributes, .. } = node.data {
-        for attr in attributes {
-            if let Some(suffix) = attr.local_name.strip_prefix("data-") {
-                let camel = kebab_to_camel(suffix);
-                builder.property(js_string!(camel), js_string!(attr.value.clone()), Attribute::all());
-            }
-        }
-    }
-
-    let dataset_obj = builder.build();
-    Ok(dataset_obj.into())
+    let tree = el.tree.clone();
+    let proxy = super::collections::create_live_domstringmap(el.node_id, tree, ctx)?;
+    Ok(proxy.into())
 }
 
 // ---------------------------------------------------------------------------

@@ -151,6 +151,12 @@ pub(crate) struct RealmState {
     pub(crate) nnm_proxy_factory: RefCell<Option<JsObject>>,
 
     #[unsafe_ignore_trace]
+    pub(crate) dsm_proto: RefCell<Option<JsObject>>,
+
+    #[unsafe_ignore_trace]
+    pub(crate) dsm_proxy_factory: RefCell<Option<JsObject>>,
+
+    #[unsafe_ignore_trace]
     pub(crate) domimpl_proto: RefCell<Option<JsObject>>,
 
     #[unsafe_ignore_trace]
@@ -223,6 +229,8 @@ impl RealmState {
             hc_proxy_factory: RefCell::new(None),
             nnm_proto: RefCell::new(None),
             nnm_proxy_factory: RefCell::new(None),
+            dsm_proto: RefCell::new(None),
+            dsm_proxy_factory: RefCell::new(None),
             domimpl_proto: RefCell::new(None),
             mutation_record_proto: RefCell::new(None),
             is_trusted_getter: RefCell::new(None),
@@ -261,6 +269,8 @@ impl RealmState {
             hc_proxy_factory: RefCell::new(None),
             nnm_proto: RefCell::new(None),
             nnm_proxy_factory: RefCell::new(None),
+            dsm_proto: RefCell::new(None),
+            dsm_proxy_factory: RefCell::new(None),
             domimpl_proto: RefCell::new(None),
             mutation_record_proto: RefCell::new(None),
             is_trusted_getter: RefCell::new(None),
@@ -385,6 +395,8 @@ option_accessor!(nl_proxy_factory, set_nl_proxy_factory, nl_proxy_factory, JsObj
 option_accessor!(hc_proxy_factory, set_hc_proxy_factory, hc_proxy_factory, JsObject);
 option_accessor!(nnm_proto, set_nnm_proto, nnm_proto, JsObject);
 option_accessor!(nnm_proxy_factory, set_nnm_proxy_factory, nnm_proxy_factory, JsObject);
+option_accessor!(dsm_proto, set_dsm_proto, dsm_proto, JsObject);
+option_accessor!(dsm_proxy_factory, set_dsm_proxy_factory, dsm_proxy_factory, JsObject);
 option_accessor!(domimpl_proto, set_domimpl_proto, domimpl_proto, JsObject);
 option_accessor!(
     mutation_record_proto,

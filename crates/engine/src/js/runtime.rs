@@ -283,7 +283,7 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
     );
 
     // --- MouseEvent ---
-    create_mouse_event_constructor(context, &event_proto_obj);
+    let mouse_event_proto = create_mouse_event_constructor(context, &event_proto_obj);
 
     // --- UIEvent ---
     let ui_event_proto = register_event_type(
@@ -343,10 +343,266 @@ pub(crate) fn wrap_event_constructors(context: &mut Context) {
         },
     );
 
-    // --- UIEvent subclasses: KeyboardEvent, WheelEvent, AnimationEvent, TransitionEvent ---
+    // --- WheelEvent (inherits MouseEvent.prototype) ---
+    register_event_type(
+        context,
+        "WheelEvent",
+        &mouse_event_proto,
+        |proto, ctx| {
+            use bindings::event::JsEvent;
+
+            let realm = ctx.realm().clone();
+            // WheelEvent-specific delta getters
+            macro_rules! wheel_getter {
+                ($field:ident, $js_name:expr, $default:expr) => {{
+                    let getter = NativeFunction::from_fn_ptr(|this, _args, _ctx| {
+                        let obj = match this.as_object() {
+                            Some(o) => o,
+                            None => return Ok(JsValue::from($default)),
+                        };
+                        let evt = match obj.downcast_ref::<JsEvent>() {
+                            Some(e) => e,
+                            None => return Ok(JsValue::from($default)),
+                        };
+                        match &evt.kind {
+                            EventKind::Wheel { $field, .. } => Ok(JsValue::from(*$field)),
+                            _ => Ok(JsValue::from($default)),
+                        }
+                    });
+                    proto
+                        .define_property_or_throw(
+                            js_string!($js_name),
+                            boa_engine::property::PropertyDescriptor::builder()
+                                .get(getter.to_js_function(&realm))
+                                .configurable(true)
+                                .enumerable(true)
+                                .build(),
+                            ctx,
+                        )
+                        .expect(concat!("failed to define WheelEvent.", $js_name));
+                }};
+            }
+            wheel_getter!(delta_x, "deltaX", 0.0);
+            wheel_getter!(delta_y, "deltaY", 0.0);
+            wheel_getter!(delta_z, "deltaZ", 0.0);
+            wheel_getter!(delta_mode, "deltaMode", 0);
+
+            // WheelEvent constants
+            proto
+                .set(js_string!("DOM_DELTA_PIXEL"), JsValue::from(0), false, ctx)
+                .expect("set DOM_DELTA_PIXEL");
+            proto
+                .set(js_string!("DOM_DELTA_LINE"), JsValue::from(1), false, ctx)
+                .expect("set DOM_DELTA_LINE");
+            proto
+                .set(js_string!("DOM_DELTA_PAGE"), JsValue::from(2), false, ctx)
+                .expect("set DOM_DELTA_PAGE");
+        },
+        |opts, ctx| {
+            let (view, detail_val) = parse_ui_event_options(opts, ctx, false)?;
+            let mut button: i16 = 0;
+            let mut buttons: u16 = 0;
+            let mut client_x: f64 = 0.0;
+            let mut client_y: f64 = 0.0;
+            let mut screen_x: f64 = 0.0;
+            let mut screen_y: f64 = 0.0;
+            let mut alt_key = false;
+            let mut ctrl_key = false;
+            let mut meta_key = false;
+            let mut shift_key = false;
+            let mut delta_x: f64 = 0.0;
+            let mut delta_y: f64 = 0.0;
+            let mut delta_z: f64 = 0.0;
+            let mut delta_mode: u32 = 0;
+
+            if let Some(obj) = opts {
+                macro_rules! parse_num {
+                    ($name:expr, $var:ident, $ty:ty) => {
+                        let v = obj.get(js_string!($name), ctx)?;
+                        if !v.is_undefined() { $var = v.to_number(ctx)? as $ty; }
+                    };
+                }
+                macro_rules! parse_bool {
+                    ($name:expr, $var:ident) => {
+                        let v = obj.get(js_string!($name), ctx)?;
+                        if !v.is_undefined() { $var = v.to_boolean(); }
+                    };
+                }
+                parse_num!("button", button, i16);
+                parse_num!("buttons", buttons, u16);
+                parse_num!("clientX", client_x, f64);
+                parse_num!("clientY", client_y, f64);
+                parse_num!("screenX", screen_x, f64);
+                parse_num!("screenY", screen_y, f64);
+                parse_bool!("altKey", alt_key);
+                parse_bool!("ctrlKey", ctrl_key);
+                parse_bool!("metaKey", meta_key);
+                parse_bool!("shiftKey", shift_key);
+                parse_num!("deltaX", delta_x, f64);
+                parse_num!("deltaY", delta_y, f64);
+                parse_num!("deltaZ", delta_z, f64);
+                parse_num!("deltaMode", delta_mode, u32);
+            }
+
+            Ok((EventKind::Wheel {
+                button, buttons, client_x, client_y, screen_x, screen_y,
+                alt_key, ctrl_key, meta_key, shift_key,
+                delta_x, delta_y, delta_z, delta_mode,
+            }, vec![
+                (js_string!("__view"), view),
+                (js_string!("__detail"), detail_val),
+            ]))
+        },
+    );
+
+    // --- KeyboardEvent (inherits UIEvent.prototype) ---
+    register_event_type(
+        context,
+        "KeyboardEvent",
+        &ui_event_proto,
+        |proto, ctx| {
+            let realm = ctx.realm().clone();
+            // KeyboardEvent property getters via hidden __* props
+            macro_rules! kb_string_getter {
+                ($prop:expr, $hidden:expr) => {{
+                    let getter = NativeFunction::from_fn_ptr(|this, _args, ctx| {
+                        if let Some(obj) = this.as_object() {
+                            if let Ok(v) = obj.get(js_string!($hidden), ctx) {
+                                if !v.is_undefined() {
+                                    return Ok(v);
+                                }
+                            }
+                        }
+                        Ok(JsValue::from(js_string!("")))
+                    });
+                    proto
+                        .define_property_or_throw(
+                            js_string!($prop),
+                            prop_desc::readonly_accessor(getter.to_js_function(&realm)),
+                            ctx,
+                        )
+                        .expect(concat!("failed to define KeyboardEvent.", $prop));
+                }};
+            }
+            macro_rules! kb_num_getter {
+                ($prop:expr, $hidden:expr) => {{
+                    let getter = NativeFunction::from_fn_ptr(|this, _args, ctx| {
+                        if let Some(obj) = this.as_object() {
+                            if let Ok(v) = obj.get(js_string!($hidden), ctx) {
+                                if !v.is_undefined() {
+                                    return Ok(v);
+                                }
+                            }
+                        }
+                        Ok(JsValue::from(0))
+                    });
+                    proto
+                        .define_property_or_throw(
+                            js_string!($prop),
+                            prop_desc::readonly_accessor(getter.to_js_function(&realm)),
+                            ctx,
+                        )
+                        .expect(concat!("failed to define KeyboardEvent.", $prop));
+                }};
+            }
+            macro_rules! kb_bool_getter {
+                ($prop:expr, $hidden:expr) => {{
+                    let getter = NativeFunction::from_fn_ptr(|this, _args, ctx| {
+                        if let Some(obj) = this.as_object() {
+                            if let Ok(v) = obj.get(js_string!($hidden), ctx) {
+                                if !v.is_undefined() {
+                                    return Ok(v);
+                                }
+                            }
+                        }
+                        Ok(JsValue::from(false))
+                    });
+                    proto
+                        .define_property_or_throw(
+                            js_string!($prop),
+                            prop_desc::readonly_accessor(getter.to_js_function(&realm)),
+                            ctx,
+                        )
+                        .expect(concat!("failed to define KeyboardEvent.", $prop));
+                }};
+            }
+            kb_string_getter!("key", "__key");
+            kb_string_getter!("code", "__code");
+            kb_num_getter!("location", "__location");
+            kb_bool_getter!("repeat", "__repeat");
+            kb_bool_getter!("isComposing", "__isComposing");
+            kb_num_getter!("charCode", "__charCode");
+            kb_num_getter!("keyCode", "__keyCode");
+            kb_num_getter!("which", "__which");
+            kb_bool_getter!("ctrlKey", "__ctrlKey");
+            kb_bool_getter!("shiftKey", "__shiftKey");
+            kb_bool_getter!("altKey", "__altKey");
+            kb_bool_getter!("metaKey", "__metaKey");
+
+            // KeyboardEvent constants
+            proto
+                .set(js_string!("DOM_KEY_LOCATION_STANDARD"), JsValue::from(0), false, ctx)
+                .expect("set DOM_KEY_LOCATION_STANDARD");
+            proto
+                .set(js_string!("DOM_KEY_LOCATION_LEFT"), JsValue::from(1), false, ctx)
+                .expect("set DOM_KEY_LOCATION_LEFT");
+            proto
+                .set(js_string!("DOM_KEY_LOCATION_RIGHT"), JsValue::from(2), false, ctx)
+                .expect("set DOM_KEY_LOCATION_RIGHT");
+            proto
+                .set(js_string!("DOM_KEY_LOCATION_NUMPAD"), JsValue::from(3), false, ctx)
+                .expect("set DOM_KEY_LOCATION_NUMPAD");
+        },
+        |opts, ctx| {
+            let (view, detail_val) = parse_ui_event_options(opts, ctx, false)?;
+            let mut hidden_props = vec![
+                (js_string!("__view"), view),
+                (js_string!("__detail"), detail_val),
+            ];
+            if let Some(obj) = opts {
+                macro_rules! parse_kb_string {
+                    ($js:expr, $hidden:expr) => {{
+                        let v = obj.get(js_string!($js), ctx)?;
+                        if !v.is_undefined() {
+                            hidden_props.push((js_string!($hidden), v.to_string(ctx)?.into()));
+                        }
+                    }};
+                }
+                macro_rules! parse_kb_num {
+                    ($js:expr, $hidden:expr) => {{
+                        let v = obj.get(js_string!($js), ctx)?;
+                        if !v.is_undefined() {
+                            hidden_props.push((js_string!($hidden), v));
+                        }
+                    }};
+                }
+                macro_rules! parse_kb_bool {
+                    ($js:expr, $hidden:expr) => {{
+                        let v = obj.get(js_string!($js), ctx)?;
+                        if !v.is_undefined() {
+                            hidden_props.push((js_string!($hidden), JsValue::from(v.to_boolean())));
+                        }
+                    }};
+                }
+                parse_kb_string!("key", "__key");
+                parse_kb_string!("code", "__code");
+                parse_kb_num!("location", "__location");
+                parse_kb_bool!("repeat", "__repeat");
+                parse_kb_bool!("isComposing", "__isComposing");
+                parse_kb_num!("charCode", "__charCode");
+                parse_kb_num!("keyCode", "__keyCode");
+                parse_kb_num!("which", "__which");
+                parse_kb_bool!("ctrlKey", "__ctrlKey");
+                parse_kb_bool!("shiftKey", "__shiftKey");
+                parse_kb_bool!("altKey", "__altKey");
+                parse_kb_bool!("metaKey", "__metaKey");
+            }
+            Ok((EventKind::Keyboard, hidden_props))
+        },
+    );
+
+    // --- AnimationEvent, TransitionEvent (remaining UIEvent subclasses) ---
     for (name, kind) in &[
-        ("KeyboardEvent", EventKind::Keyboard),
-        ("WheelEvent", EventKind::Wheel),
         ("AnimationEvent", EventKind::Animation),
         ("TransitionEvent", EventKind::Transition),
     ] {
@@ -620,7 +876,8 @@ pub(crate) fn register_node_filter(context: &mut Context) {
 }
 
 /// Build the MouseEvent constructor with all mouse-specific property getters and register it.
-fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObject) {
+/// Returns the MouseEvent prototype object (for WheelEvent to inherit from).
+fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObject) -> JsObject {
     use bindings::event::{attach_is_trusted_own_property, EventKind, JsEvent};
 
     let proto = ObjectInitializer::new(context).build();
@@ -646,7 +903,7 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
                     None => return Ok(JsValue::from($default)),
                 };
                 match &evt.kind {
-                    EventKind::Mouse { $field, .. } => Ok(JsValue::from(*$field as $cast_ty)),
+                    EventKind::Mouse { $field, .. } | EventKind::Wheel { $field, .. } => Ok(JsValue::from(*$field as $cast_ty)),
                     _ => Ok(JsValue::from($default)),
                 }
             });
@@ -673,7 +930,7 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
                     None => return Ok(JsValue::from($default)),
                 };
                 match &evt.kind {
-                    EventKind::Mouse { $field, .. } => Ok(JsValue::from(*$field)),
+                    EventKind::Mouse { $field, .. } | EventKind::Wheel { $field, .. } => Ok(JsValue::from(*$field)),
                     _ => Ok(JsValue::from($default)),
                 }
             });
@@ -843,7 +1100,7 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
         .build();
 
     ctor_fn
-        .define_property_or_throw(js_string!("prototype"), prop_desc::prototype_on_ctor(proto), context)
+        .define_property_or_throw(js_string!("prototype"), prop_desc::prototype_on_ctor(proto.clone()), context)
         .expect("failed to define MouseEvent.prototype on wrapper");
 
     context
@@ -853,6 +1110,8 @@ fn create_mouse_event_constructor(context: &mut Context, event_proto_obj: &JsObj
             Attribute::WRITABLE | Attribute::CONFIGURABLE,
         )
         .expect("failed to register MouseEvent wrapper");
+
+    proto
 }
 
 /// Register the full DOM type hierarchy and copy constructors to window.

@@ -401,9 +401,9 @@ fn expected_failures(rel_path: &str) -> usize {
         ("/attributes.html", 6),
         // 4 failures: Shadow DOM window.event + XMLHttpRequest
         ("event-global.html", 4),
-        // 30 failures: FocusEvent relatedTarget, MouseEvent instanceof, WheelEvent delta*,
-        // KeyboardEvent modifier keys, SubclassedEvent class extends
-        ("Event-subclasses", 24),
+        // 18 failures: MouseEvent/WheelEvent instanceof (Boa Class vs FunctionObjectBuilder),
+        // WheelEvent/MouseEvent relatedTarget, SubclassedEvent class extends
+        ("Event-subclasses", 18),
         // HTMLCollection edge cases — Proxy set strictness
         ("HTMLCollection-own-props", 2),
         // DOMTokenList — 7 failures: relList, htmlFor, sandbox, sizes not implemented
@@ -508,8 +508,8 @@ fn should_skip(rel_path: &str) -> Option<&'static str> {
         ("NodeIterator-removal", "requires live iterator mutation tracking"),
         // TreeWalker — createTreeWalker now implemented but traversal stubs
         // ("TreeWalker", "requires TreeWalker"),
-        // DOMStringMap (dataset proxy)
-        ("domstringmap", "requires DOMStringMap proxy"),
+        // DOMStringMap — now implemented with live Proxy
+        // ("domstringmap", "requires DOMStringMap proxy"),
         // HTMLCollection edge cases needing stricter Proxy behavior
         ("HTMLCollection-as-prototype", "requires Proxy prototype chain strictness"),
         // HTMLCollection-delete — now have deleteProperty trap
