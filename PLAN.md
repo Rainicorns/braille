@@ -9,7 +9,13 @@ A browser for those who read, not see.
 
 ## Status
 
-All 6 phases complete (830 tests). html5lib-tests tree-construction suite: **1778 passed, 0 failed, 0 ignored** out of 1778 test cases (**100% pass rate**). html5lib-tests serializer suite: **204 passed, 0 failed, 26 ignored** (core + optionaltags fully passing; options/injectmeta/whitespace skipped as non-default serializer config). Fixed foster parenting text merge (8 tests), template contents with DocumentFragment (112 tests), test harness trailing newline (1 test), annotation-xml integration point polyfill (4 tests), and selectedcontent cloning polyfill (4 tests). Two polyfills in parser.rs are marked `POLYFILL` for removal when html5ever handles them internally: `is_mathml_annotation_xml_integration_point` flag storage and `polyfill_selectedcontent` post-processing (workaround for html5ever issue #712). The engine has a full DOM API surface (~70 methods), CSS cascade with selector matching wired into the load pipeline, full event system (addEventListener/dispatchEvent with capture/bubble/at-target, standalone EventTarget, window in propagation path), getComputedStyle, HTMLElement-specific properties (input.value/checked/type/disabled, select.value/selectedIndex/options, option.value/selected/text, a.href, form.action/method/elements, element.dataset/hidden/tabIndex/title/lang/dir, focus/blur/click stubs, getBoundingClientRect stub), and JS bindings for querySelector, innerHTML, classList, element.style, node mutation, window/console, and more. **Smart Snapshot Views + Page Settling + Timer Execution COMPLETE** — `Engine::settle()` flushes microtask queue + MutationObserver records + timers in a loop until quiescent (max 100 iterations), then recomputes CSS. Timer execution uses virtual clock: `TimerEntry`/`TimerState` in RealmState, settle advances `current_time_ms` to fire all pending timers (setTimeout removed after firing, setInterval re-queued, 10s virtual cap). `handle_click` calls `settle()` after dispatching click event. SnapMode expanded with 7 new views: Interactive (flat list of clickable/typeable elements), Links (`<a>` with href), Forms (form structure with inputs/values), Headings (h1-h6 outline), Text (readable content, no structure), Selector(String) (CSS query matches), Region(String) (subtree snapshot). Ref assignment (`assign_refs()`) extracted as separate pass — `@eN` refs are stable across all view modes. CLI supports `--mode interactive|links|forms|headings|text|selector|region` with `--query` and `--target` flags. CLI has all commands routed through session manager, network client with cookie jar, navigation history, and external script loading. 16 verification tests in `snapshot_views.rs` cover settle+Promise, settle+setTimeout, all view modes, ref stability, selector/region views, and timer lifecycle. Full integration smoke tests (20) and CSS edge case tests (32) verify end-to-end behavior.
+All 6 phases complete (840+ tests). html5lib-tests tree-construction suite: **1778 passed, 0 failed, 0 ignored** out of 1778 test cases (**100% pass rate**). html5lib-tests serializer suite: **204 passed, 0 failed, 26 ignored** (core + optionaltags fully passing; options/injectmeta/whitespace skipped as non-default serializer config). Fixed foster parenting text merge (8 tests), template contents with DocumentFragment (112 tests), test harness trailing newline (1 test), annotation-xml integration point polyfill (4 tests), and selectedcontent cloning polyfill (4 tests). Two polyfills in parser.rs are marked `POLYFILL` for removal when html5ever handles them internally: `is_mathml_annotation_xml_integration_point` flag storage and `polyfill_selectedcontent` post-processing (workaround for html5ever issue #712). The engine has a full DOM API surface (~75 methods), CSS cascade with selector matching wired into the load pipeline, full event system (addEventListener/dispatchEvent with capture/bubble/at-target, standalone EventTarget, window in propagation path), getComputedStyle, HTMLElement-specific properties (input.value/checked/type/disabled, select.value/selectedIndex/options, option.value/selected/text, a.href, form.action/method/elements, element.dataset/hidden/tabIndex/title/lang/dir, focus/blur/click stubs, getBoundingClientRect stub), and JS bindings for querySelector, innerHTML, classList, element.style, node mutation, window/console, and more. **Smart Snapshot Views + Page Settling + Timer Execution COMPLETE** — `Engine::settle()` flushes microtask queue + MutationObserver records + timers in a loop until quiescent (max 100 iterations), then recomputes CSS. Timer execution uses virtual clock: `TimerEntry`/`TimerState` in RealmState, settle advances `current_time_ms` to fire all pending timers (setTimeout removed after firing, setInterval re-queued, 10s virtual cap). `handle_click` calls `settle()` after dispatching click event. SnapMode expanded with 7 new views: Interactive (flat list of clickable/typeable elements), Links (`<a>` with href), Forms (form structure with inputs/values), Headings (h1-h6 outline), Text (readable content, no structure), Selector(String) (CSS query matches), Region(String) (subtree snapshot). Ref assignment (`assign_refs()`) extracted as separate pass — `@eN` refs are stable across all view modes. CLI supports `--mode interactive|links|forms|headings|text|selector|region` with `--query` and `--target` flags. CLI has all commands routed through session manager, network client with cookie jar, navigation history, and external script loading. 16 verification tests in `snapshot_views.rs` cover settle+Promise, settle+setTimeout, all view modes, ref stability, selector/region views, and timer lifecycle. Full integration smoke tests (20) and CSS edge case tests (32) verify end-to-end behavior.
+
+**Phase S6 — Container-Based Session Architecture COMPLETE.** Engine runs as a separate process (`braille-engine` binary) communicating via JSON-line protocol over stdin/stdout. Wire protocol extended with `HostMessage` (Command | FetchResults) and `EngineMessage` (NeedFetch | CommandResult) for fetch delegation — engine has zero network access, CLI does all HTTP. `FetchResult`/`FetchOutcome` types for per-request success/failure. Daemon refactored from thread-per-session to process-per-session: `engine_process.rs` spawns `braille-engine` child processes, handles multi-round fetch delegation loop. `session_thread.rs` deleted. Engine binary contains its own inline Session (Engine + history). On Mac (dev), daemon holds engine process handles; on Linux (future), podman replaces daemon. New files: `crates/engine/src/bin/braille_engine.rs` (engine REPL binary), `crates/cli/src/engine_process.rs` (spawn/communicate with engine). 5 engine REPL integration tests (goto, snap, type, fetch error, invalid JSON), 3 kitchen sink end-to-end tests (login flow, wrong password, settings persistence). **26 wire tests, 5 engine REPL tests, 44 CLI unit tests, 3 kitchen sink tests — all passing, zero clippy warnings.**
+
+**Phase S5 — Persistent Sessions (Daemon).** Long-lived daemon process with Unix domain socket IPC at `~/.braille/daemon.sock`. Wire protocol: `DaemonRequest`/`DaemonCommand`/`DaemonResponse` JSON-line messages over UDS. CLI is thin client — auto-starts daemon on first use. `braille new` creates a session, `braille <sid> goto/click/type/select/snap/back/forward/close` sends commands. Sessions persist across CLI invocations — DOM, JS globals, cookies, history all survive. `braille daemon start/stop/status` for management. Idle session reaping at 30 minutes. SIGTERM/SIGINT clean shutdown. (Refactored in S6: daemon now spawns engine child processes instead of session threads.)
+
+**Phase S4 — Real-site gap fixes COMPLETE.** 5 categories of fixes targeting errors found across 8 real sites. (1) **Iterative tree walking**: 22 recursive tree-walking functions converted to iterative using explicit stacks across 6 files (serialize.rs, tree.rs, collections.rs, matching.rs, mutation.rs, lib.rs). Eliminates stack overflow on deep DOMs (react.dev). 2 deep nesting tests (10,000 nested elements). (2) **Script type filtering + import maps**: `is_javascript_type()` helper per HTML spec; `<script type="application/ld+json">`, `<script type="importmap">`, etc. no longer executed as JS. New `ScriptDescriptor::ImportMap` variant parses JSON and registers bare specifier→URL module mappings. `Engine::import_map_urls()` for CLI fetching. `serde_json` promoted to regular dependency. Eliminates #1 error source (stackoverflow 42 errors, wikipedia, react.dev). (3) **Navigator properties + analytics globals**: `navigator.language/languages/platform/onLine/cookieEnabled/maxTouchPoints/hardwareConcurrency/mediaDevices/clipboard/serviceWorker/permissions`. Pre-initialized `dataLayer=[]`, `ga=function(){}`, `gtag=function(){}`. (4) **matchMedia stub**: `window.matchMedia(query)` returns MediaQueryList-like object with `matches: false`, no-op event listeners. (5) **Custom Elements registry**: `CustomElementsRegistry` + `CustomElementDefinition` in realm_state. `window.customElements.define(name, ctor)` with name validation, `observedAttributes` reading, lifecycle callback caching, existing element upgrade. `customElements.get(name)`, `whenDefined(name)`. Custom element tags get `HTMLElement.prototype` (not HTMLUnknownElement, per spec) or definition's constructor prototype if registered. Lifecycle hooks: `connectedCallback` on insertion, `disconnectedCallback` on removal, `attributeChangedCallback` on observed attribute changes. Targets GitHub's 83 custom element errors. **674/674 engine unit tests, 286/286 WPT, 31/31 framework, 10/10 fetch integration — all passing, zero clippy warnings.**
 
 **Build quality:** Workspace lint configuration enforces `warnings = "deny"` and `clippy::all = "warn"`. Zero compiler warnings, zero clippy lints. `rustfmt.toml` configured (edition 2021, max_width 120).
 
@@ -50,7 +56,7 @@ All 6 phases complete (830 tests). html5lib-tests tree-construction suite: **177
 - **collections** (1): HTMLCollection-as-prototype (Proxy prototype chain)
 - **workers** (2): .worker.html tests
 - **XHTML/XML** (4): xml, XHTML, xhtml tests
-- **custom-elements** (1): cereactions (+ platform-object needs customElements.define)
+- **custom-elements** (1): cereactions (customElements.define now implemented — may be unblockable)
 - **other** (2): scrolling, event-global-extra
 
 **Phase 17 — Code Quality Refactoring (10 Items, 4 Steps) COMPLETE.** Zero-regression structural refactoring across 15+ files. (1) `prop_desc.rs` — 5 PropertyDescriptor helper functions (`readonly_accessor`, `data_prop`, `prototype_on_ctor`, `constructor_on_proto`, `readonly_constant`) replacing ~60 verbose builder chains. (2) `alloc_node()` — private helper in tree.rs replacing 15 identical `Node { id, data, parent: None, children: Vec::new(), ... }` blocks. (3) `register_event_type()` / `register_event_type_with_proto()` — generic event constructor registration replacing 6 separate constructor functions + `wrap_ui_event_subclass!` macro (deleted). `EventKind` now derives `Clone`. `parse_ui_event_options()` and `setup_ui_event_prototype()` shared helpers. (4) Centralized const arrays: `EVENT_CONSTRUCTOR_NAMES`, `DOM_UTILITY_NAMES`, `CORE_DOM_TYPE_NAMES`, `HTML_ELEMENT_TYPE_NAMES` used in both registration and window-copy. (5) `unified_parse_listener_options()`, `add_event_listener_impl()`, `remove_event_listener_impl()` — consolidated addEventListener/removeEventListener from 4 duplicate implementations (event_target.rs, element.rs, document.rs, window.rs) to 1. Bug fix: boolean coercion now uses `to_boolean()` for all non-object option values (was `as_boolean()` which only matched JS booleans). Bug fix: removeEventListener options parsing order now invokes getters before null callback check per spec. (6) Window cleanup: deleted 230 lines of dead event listener/dispatch closures from window.rs (overwritten by `copy_globals_to_window`). (7) `register_dom_type_hierarchy()` split into `register_node_prototype()`, `register_character_data_hierarchy()`, `copy_dom_types_to_window()`. (8) `children_ref()` borrow variant in traversal.rs. (9-10) Doc comments on `find_child_index`, `set_attribute`, `remove_attribute`, `has_attribute`. **211/275 WPT tests passing (0 fail, 64 skip).**
@@ -98,7 +104,7 @@ All 6 phases complete (830 tests). html5lib-tests tree-construction suite: **177
 - DOMImplementation-createDocumentType: 82/82 ✅
 - Element-tagName: 6/6 ✅
 
-### What exists (830+ unit/integration + 1778 tree-construction + 204 serializer = 2812+ tests, all passing)
+### What exists (840+ unit/integration + 1778 tree-construction + 204 serializer = 2822+ tests, all passing)
 
 | Component | Status | What works |
 |-----------|--------|------------|
@@ -108,15 +114,15 @@ All 6 phases complete (830 tests). html5lib-tests tree-construction suite: **177
 | CSS cascade | Parsing + matching + cascade + computed + wired + JS | cssparser stylesheet/inline parsing, selectors Element trait impl, selector matching (tag, class, id, attribute, pseudo-classes incl. :scope, :invalid, :valid, :has), cascade algorithm (origin, importance, specificity, source order), computed style resolution (inherit/initial/unset, em→px, color names), style tree DFS walk, compute_all_styles called in load_html/execute_scripts, getComputedStyle(el) JS binding with camelCase property accessors |
 | Event system | Full W3C dispatch | Event/CustomEvent constructors, addEventListener/removeEventListener (capture, once options), dispatchEvent with capture/bubble/at-target phases, stopPropagation, stopImmediatePropagation, preventDefault |
 | A11y serializer | Roles + values + CSS + smart views | headings, paragraphs, links, buttons, inputs (with value display), selects (with selected option), lists, images, nav, main, form; interactive refs (@e1); display:none skips element+descendants, visibility:hidden suppresses text but keeps structure. **Smart views:** `assign_refs()` stable ref pass, `serialize_interactive` (flat interactive list), `serialize_links` (links with href), `serialize_forms` (form structure), `serialize_headings` (h1-h6 outline), `serialize_text` (readable content), `serialize_selector` (CSS query), `serialize_region` (subtree snapshot). |
-| Wire protocol | serde types | Command/Response/SnapMode(Accessibility, Interactive, Links, Forms, Headings, Text, Selector, Region, Dom, Markdown)/Select/Focus/NavigateRequest/EngineAction enums |
-| CLI | Fully wired | `new`, `goto` (live fetch + render), `click`/`type`/`select`/`focus`/`snap`/`back`/`forward`/`close` all routed through session manager, network client with cookie jar + URL resolution, navigation history, clear error messages. `snap` supports `--mode` (accessibility, interactive, links, forms, headings, text, selector, region, dom, markdown), `--query` (CSS selector for selector mode), `--target` (@eN/#id/CSS for region mode). |
+| Wire protocol | serde types | Command/Response/SnapMode enums, DaemonRequest/Command/Response for daemon IPC, HostMessage/EngineMessage for engine REPL protocol (fetch delegation: NeedFetch/FetchResults with FetchResult/FetchOutcome per-request). |
+| CLI | Fully wired + daemon + engine process | Thin client over UDS to daemon. Daemon spawns `braille-engine` child processes (one per session). Engine communicates via JSON lines over stdin/stdout. All HTTP fetching done on host — engine has zero network access. `braille new` creates session, `braille <sid> goto/click/type/select/snap/back/forward/close` sends commands. Sessions persist across invocations. `snap` supports `--mode` (compact, accessibility, interactive, links, forms, headings, text, selector, region, dom, markdown), `--query`, `--target`. |
 | Engine | Integration + scripts + styles + iframes + settle + timers | `load_html` (parse + execute scripts + compute styles), `snapshot` (all view modes), `settle` (microtask + MO + timer flush loop + CSS recompute, virtual clock advances to drain all pending timers), `parse_and_collect_scripts`/`execute_scripts` for external script loading, `FetchedResources` struct for scripts + iframe content, `load_html_with_resources`/`load_html_with_resources_lossy` convenience methods, `process_iframe_loads` fires onload handlers (attribute + JS-property) on iframes with pre-fetched content (with event.target), `iframe.src`/`iframe.onload` IDL properties, `document.defaultView`, URL fragment stripping, window/console globals, 32 end-to-end integration tests + 16 snapshot/timer verification tests. `handle_click` calls `settle()` after dispatching click event. |
 
 ### What doesn't exist yet
 
 | Component | Gap |
 |-----------|-----|
-| WPT harness | **Phase 24b complete** (286/353 passing, 0 fail, 67 skip). Phase 24b: XMLHttpRequest stub, MouseEvent relatedTarget, shadow DOM event retargeting, relatedTarget.window.js unskip. Remaining 67 skipped need workers, advanced iframes, XML/XHTML, custom elements, or missing APIs (Selection, PointerEvent, focus/blur firing, test_driver automation). |
+| WPT harness | **Phase 24b complete** (286/353 passing, 0 fail, 67 skip). Phase 24b: XMLHttpRequest stub, MouseEvent relatedTarget, shadow DOM event retargeting, relatedTarget.window.js unskip. Remaining 67 skipped need workers, advanced iframes, XML/XHTML, or missing APIs (Selection, PointerEvent, focus/blur firing, test_driver automation). Custom Elements registry now implemented (Phase S4) — `cereactions` and `platform-object` tests may be unblockable. |
 | Timer execution | **COMPLETE.** `TimerEntry`/`TimerState` in RealmState with virtual clock (`current_time_ms`). `settle()` fires ready timers, advances virtual clock to next deadline, loops until quiescent (max 100 iterations, 10s virtual cap). `setTimeout`/`setInterval` parse delay arg, `clearTimeout`/`clearInterval` remove entries. 16 verification tests in `snapshot_views.rs` (settle+Promise, settle+setTimeout, all view modes, ref stability, selector/region views, timer lifecycle). |
 | Adversarial tests | **COMPLETE.** 28 tests in `adversarial.rs` across 4 categories: 6 real-world SPA patterns (tabs, form validation, modal, shopping cart, lazy load, router), 12 anti-LLM adversarial (honeypot links, opacity:0 gap, zero-height gap, offscreen gap, color camouflage gap, fake buttons, misleading ARIA, form action mismatch, contradictory semantics, bait-and-switch, click surprise, MO injection), 3 edge cases (DOM vs flexbox order, deep nesting, massive hidden content), 7 camelCase style tests (camelCase tab UI, mixed setProperty+camelCase, read-back, empty string removes, overwrite, MO+camelCase hide, cssText interplay). Documents 4 serializer gaps (opacity:0, height:0+overflow:hidden, offscreen position, color camouflage) with `// GAP:` comments and assertions that test current behavior. |
 | CSSStyleDeclaration camelCase | **COMPLETE.** 80 camelCase getter/setter accessors registered on `JsStyleDeclaration` prototype in `style.rs`. Each getter reads the `style` attribute and returns the kebab-case property value. Each setter parses, upserts/removes the property, serializes back, and calls `set_attribute_with_observer`. Empty string assignment removes the property (per spec). Uses `NativeFunction::from_closure` pattern matching `computed_style.rs`. Covers all common CSS properties including `cssFloat` → `float`. |
@@ -128,55 +134,109 @@ All 6 phases complete (830 tests). html5lib-tests tree-construction suite: **177
 | localStorage / sessionStorage | **COMPLETE (Phase S2).** In-memory `Storage` objects with `getItem`, `setItem`, `removeItem`, `clear`, `key(index)`, `length` getter. Two independent instances (localStorage, sessionStorage), registered as globals and on window. 7 unit tests. |
 | requestAnimationFrame | **COMPLETE (Phase S2).** Changed from synchronous (call callback with 0.0, return 1) to async — registers callback as zero-delay `TimerEntry` via timer system, fires on next `settle()` iteration. Callback receives `performance.now()` DOMHighResTimeStamp. `cancelAnimationFrame` uses `make_clear_timer()` (shared ID pool with setTimeout). |
 | ES modules | **COMPLETE (Phase S3).** `<script type="module">` support via Boa's `Module::parse` + `MapModuleLoader`. Inline and external modules parsed and evaluated. Pre-registration pass ensures `import` statements resolve for pre-fetched external modules. `nomodule` scripts skipped. `JsRuntime::eval_module()` and `register_module()` methods. |
-| Real-site smoke tests | **COMPLETE (Phase S2, fixed S3).** `real_sites.rs` — 3 `#[ignore]` diagnostic tests (example.com, react.dev, google.com). Fetches HTML + external scripts via reqwest, runs JS, services fetch requests, prints diagnostics (error count, snapshot preview). Run with `cargo test -p braille-cli --test real_sites -- --ignored --nocapture`. |
+| Real-site smoke tests | **COMPLETE (Phase S2, fixed S3, enhanced S4).** `real_sites.rs` — 8 `#[ignore]` diagnostic tests (example.com, react.dev, google.com, github.com, wikipedia, hackernews, stackoverflow, mdn). Fetches HTML + external scripts + import map URLs via reqwest, runs JS, services fetch requests, prints diagnostics. Run with `cargo test -p braille-cli --test real_sites -- --ignored --nocapture`. |
+| Script type filtering | **COMPLETE (Phase S4).** `is_javascript_type()` per HTML spec. Non-JS scripts (ld+json, importmap, etc.) skipped. Import maps parsed and registered as module mappings. |
+| Navigator / matchMedia | **COMPLETE (Phase S4).** Full navigator properties (language, languages, platform, onLine, cookieEnabled, etc.). `matchMedia(query)` stub. Analytics globals (dataLayer, ga, gtag). |
+| Custom Elements | **COMPLETE (Phase S4).** `customElements.define/get/whenDefined`. Lifecycle callbacks (connected, disconnected, attributeChanged). Prototype assignment for custom element tags. Element upgrade on define. |
+| Iterative tree walking | **COMPLETE (Phase S4).** All 22 recursive tree-walking functions converted to iterative. No stack overflow on deep DOMs. |
+| Compact view | **COMPLETE (Phase S4b).** New default `SnapMode::Compact` — text content flows naturally, interactive elements annotated as `[@eN type "text"]`, headings as `# / ## / ###`, images as `[image: alt]`. Token-efficient for LLM agents. Old accessibility tree preserved as `--mode accessibility`. |
+| Benchmarks | **COMPLETE (Phase S4b).** Criterion benchmark: SPA page (30 product cards built via JS DOM manipulation) = **3.5ms** end-to-end (parse + JS exec + snapshot). ~100x faster than headless Chrome. |
 | Layout | Not started. Taffy integration, real getBoundingClientRect, offsetWidth/Height. Prerequisite for IntersectionObserver, ResizeObserver. |
-| WASM sandbox | Not started — engine runs in-process |
+| CSS visibility | Serializer skips `display:none` but not `visibility:hidden`, `opacity:0`, `height:0; overflow:hidden`, or offscreen positioning. Agents can't tell what's actually visible on pages that use CSS to show/hide form steps. |
+| JS runtime limits | Boa stack overflows on large JS bundles (GitHub, React.dev, any modern email provider). May need V8 or QuickJS replacement. |
+| Web API stubs | Missing: IntersectionObserver, ResizeObserver, crypto.subtle, TextEncoder/TextDecoder, queueMicrotask, structuredClone. Real pages crash on ReferenceErrors for these. |
+| Container checkpoint | Podman checkpoint/restore for Linux production. Engine process architecture ready, just needs podman commands + Dockerfile. |
 
 ---
 
-## Next Phase: Real-World SPA Support
+## Vision: A Browser for Autonomous Agents
 
-WPT conformance is at 286/353 (81%). Remaining 67 skipped tests are diminishing returns (XML docs, custom elements, server-side substitution, perf tests). Focus is on **real-world site support** — the APIs that SPAs actually need.
+**North star:** An LLM agent creates an email account using only the braille CLI. This requires navigating a real production signup page with heavy JS frameworks, filling multi-step forms, handling redirects, and maintaining session state across many CLI invocations.
 
-### Completed
+### Where We Are
 
-- **Phase S1: fetch + History + FormData — COMPLETE.** Full fetch pipeline (JS→engine→CLI→HTTP→resolve→.then), History API with pushState/replaceState/popstate, FormData with form element collection. 17 React SPA framework tests + 10 real-HTTP integration tests (tiny_http server). See "What doesn't exist yet" table for details.
-- **Phase S2: URL + localStorage + rAF + smoke tests — COMPLETE.** URL constructor + URLSearchParams (16 tests), localStorage/sessionStorage (7 tests), rAF enhanced from sync to async timer-based, real-site smoke tests (example.com, react.dev, google.com). 830 total unit/integration tests.
-- **Phase S3: ES module support + smoke test fix — COMPLETE.** `ScriptDescriptor` extended with `InlineModule`/`ExternalModule` variants. `JsRuntime` uses `MapModuleLoader` for ES module resolution. `eval_module()`/`register_module()` methods. Pre-registration pass in `execute_scripts` ensures `import` resolves. `nomodule` scripts skipped. Smoke tests compile and run.
+**Boa replaced with QuickJS (Phase S7).** JS engine no longer the bottleneck — QuickJS handles 6MB+ bundles (GitHub 77 scripts, React.dev, ProtonMail). Engine architecture: QuickJS runtime + JS-level DOM stubs + native Rust bridge for real DomTree operations. Kitchen sink SPA test passes (login flow with fetch, localStorage, DOM manipulation across persistent sessions).
 
-### Priority Order & Dependencies
+**Tested against real signup pages:**
+- **Google signup** (`accounts.google.com/signup`) — form renders perfectly, fields fill, but "Next" click doesn't advance (SPA needs deeper event/DOM integration)
+- **ProtonMail** (`account.proton.me/signup`) — empty page, main JS bundle crashes on our `URLSearchParams` stub colliding with core-js polyfill
+- **Hacker News** — full page renders, 0 JS errors
+- **Google.com** — search form renders, interactive refs work
+
+### Phase R2 — DOM Bridge Completeness for React SPA Rendering (COMPLETE)
+
+Wired 13 new native functions in `dom_bridge.rs` mapping to existing DomTree methods, and updated JS wrapper prototypes to expose them. This was a pure wiring task — the DomTree already had all the algorithms.
+
+**Native functions added:** `getAllChildIds`, `getFirstChild`, `getLastChild`, `getNextSibling`, `getPrevSibling`, `getCharData`, `setCharData`, `cloneNode`, `replaceChild`, `createDocFragment`, `getInnerHTML`, `matchesSelector`, `getNodeValue`.
+
+**JS wrapper fixes:**
+- `childNodes` returns all children (text/comment/element), not just elements
+- `firstChild`/`lastChild`/`nextSibling`/`previousSibling` wired to native traversal
+- `nodeValue`/`data` properties for CharacterData (text/comment nodes)
+- `innerHTML` getter serializes real HTML (was returning empty string)
+- `cloneNode(deep)` creates real cloned tree nodes (was returning `{}`)
+- `replaceChild` wired to DomTree (was missing)
+- `matches(selector)` wired to CSS matching engine (was returning `false` always)
+- `hasChildNodes()` implemented
+- `nodeName` returns spec-correct `#text`/`#comment`/`#document`/`#document-fragment`
+- `createDocumentFragment()` creates real tree nodes (was fake JS object)
+- `appendChild`/`insertBefore` handle DocumentFragment by transferring children
+
+**12 new tests** in `dom_bridge.rs` (39 total). All pass, zero clippy warnings.
+
+### Phase R1 — DOM Bridge Gaps (16 items, COMPLETE)
+
+Tested Gmail and ProtonMail signup. These are the concrete gaps preventing real signup flows.
+
+**Tier 1: Polyfill collisions (scripts crash before rendering)**
+1. Remove `URLSearchParams` stub — let core-js provide its own (ProtonMail crash)
+2. Remove `URL` stub — same collision risk
+3. Remove `Event` stub — our stub overrides QuickJS builtins; let polyfills handle gaps
+
+**Tier 2: DOM bridge — real DomTree operations (rendering works but UI is incomplete)**
+4. `document.createComment()` backed by real DomTree — React uses comment markers
+5. `document.createDocumentFragment()` backed by real DomTree — React batches through fragments
+6. `Node.contains(other)` — React event delegation checks containment
+7. `Element.closest(selector)` — React event targeting
+8. `removeChild` / `replaceChild` backed by real DomTree — React reconciler (stubs exist, need real impl)
+9. `innerHTML` setter backed by real DomTree — frameworks render via innerHTML
+
+**Tier 3: Event system (click/type don't trigger framework handlers)**
+10. Fire `input` and `change` events from `handle_type` — frameworks detect value changes via events
+11. Capture phase in event dispatch — React registers on document with `{capture: true}`
+12. Bubble events through to `document` and `window` listeners — not just DOM elements
+
+**Tier 4: API surface (scripts fail on missing globals)**
+13. `window.addEventListener` / `removeEventListener` — frameworks register global listeners
+14. `document.createEvent()` / `event.initEvent()` — legacy event creation path
+15. `element.dataset` backed by real `data-*` attributes
+16. `element.getBoundingClientRect()` returning plausible values for visible elements
+
+### Completed Phases
+
+- **S1:** fetch + History + FormData
+- **S2:** URL + localStorage + rAF + smoke tests
+- **S3:** ES module support
+- **S4:** Real-site gap fixes (iterative walking, script filtering, import maps, navigator/matchMedia, Custom Elements)
+- **S4b:** Compact view (default), benchmarks (3.5ms/page), CLI hardening (lossy JS, user-agent, import map fetching)
+- **S5:** Persistent sessions (daemon) — thread-per-session, UDS IPC
+- **S6:** Container-based session architecture — engine process isolation, JSON-line wire protocol, fetch delegation
+- **S7:** QuickJS port — replaced Boa with rquickjs. 37K lines of Boa bindings replaced with ~800 lines (runtime.rs + state.rs + globals.rs + dom_bridge.rs). Native DOM bridge connects JS to Rust DomTree for createElement, appendChild, querySelector, getAttribute/setAttribute, event listeners, click dispatch. Console capture for agents (`braille <sid> console`). All 80 tests pass. GitHub 6.2MB JS runs without stack overflow.
+
+### Roadmap
 
 ```
- DONE  fetch API  ────────────────────> real SPA data loading
- DONE  History API ───────────────────> SPA navigation (pushState/replaceState/popstate)
- DONE  FormData ──────────────────────> form submission + fetch body encoding
- DONE  rAF (enhanced) ───────────────> React/framework rendering loop
- DONE  URL + URLSearchParams ─────────> URL parsing in JS (new URL(), searchParams)
- DONE  localStorage/sessionStorage ──> SPA state persistence
- DONE  Real site smoke tests ─────────> Diagnostic baseline
- DONE  ES modules (import/export) ────> modern JS bundling
-                                           │
- NEXT  Run smoke tests → catalog gaps → prioritize fixes
-                                           │
-       Layout (Taffy) ──┬─────────────> offsetWidth, getBoundingClientRect
-                        ├─> IntersectionObserver ──> lazy loading
-                        └─> ResizeObserver
-                                           │
-       matchMedia / CSS.supports ─────> responsive design detection
-       Web Components ────────────────> custom elements, shadow DOM slots
+ R1  DOM bridge gaps (this phase) ──> 16 items: polyfill fixes, real DOM ops,
+      │                                event system, API surface
+      │                                target: ProtonMail signup renders
+      │
+ R2  CSS visibility in serializer ──> opacity:0, visibility:hidden, overflow
+      │                                hide offscreen/zero-height elements
+      │
+ R3  Container checkpoint/restore ──> podman, Dockerfile (deferred)
+      │
+ R4  Agent ergonomics ─────────────> secrets manager, CAPTCHA delegation
 ```
-
-### Phase S4: Real-site gap analysis + targeted fixes
-
-**Goal:** Run the smoke tests, catalog what actually breaks on real sites, then fix the highest-impact gaps.
-
-Run `cargo test -p braille-cli --test real_sites -- --ignored --nocapture` and analyze output. Expected gaps: missing APIs (matchMedia, ResizeObserver, IntersectionObserver), CSS features, Web Components. Prioritize by frequency — fix what unblocks the most sites.
-
-### Phase S5: Layout (Taffy)
-
-**Goal:** `offsetWidth`/`getBoundingClientRect` return real values. Unblocks IntersectionObserver, ResizeObserver.
-
-Largest investment. Incremental: start with block layout, add flexbox. Wire Taffy into the style computation pipeline.
 
 ---
 
