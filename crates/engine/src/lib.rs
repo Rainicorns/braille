@@ -9,7 +9,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use boa_engine::{JsObject, JsValue};
+// Engine-level code should not reference Boa types directly.
+// All JS engine operations go through JsRuntime methods.
 
 use crate::dom::node::NodeData;
 use crate::dom::tree::DomTree;
@@ -28,6 +29,8 @@ pub enum ScriptDescriptor {
     InlineModule(String),
     /// ES module external script (`<script type="module" src="...">`).
     ExternalModule(String),
+    /// Import map JSON text (`<script type="importmap">...</script>`).
+    ImportMap(String),
 }
 
 impl ScriptDescriptor {
@@ -43,6 +46,24 @@ impl ScriptDescriptor {
             _ => None,
         }
     }
+}
+
+/// Per HTML spec, a script type is JavaScript only if it matches one of these
+/// (case-insensitive, after trimming). Empty string also means JS.
+fn is_javascript_type(type_value: &str) -> bool {
+    let t = type_value.trim();
+    if t.is_empty() {
+        return true;
+    }
+    matches!(
+        t.to_ascii_lowercase().as_str(),
+        "text/javascript"
+            | "application/javascript"
+            | "text/ecmascript"
+            | "application/ecmascript"
+            | "text/jscript"
+            | "text/livescript"
+    )
 }
 
 /// Pre-fetched resources for external scripts and iframe content.
@@ -95,6 +116,8 @@ pub struct Engine {
     // This is intentional - refs are tied to a specific accessibility tree snapshot.
     pub(crate) ref_map: HashMap<String, NodeId>,
     pub(crate) focused_element: Option<NodeId>,
+    /// URL to set on the JS runtime when it is next created (before scripts run).
+    pending_url: Option<String>,
 }
 
 impl Default for Engine {
@@ -110,6 +133,7 @@ impl Engine {
             runtime: None,
             ref_map: HashMap::new(),
             focused_element: None,
+            pending_url: None,
         }
     }
 
@@ -149,13 +173,13 @@ impl Engine {
         if let Some(runtime) = self.runtime.as_mut() {
             for _ in 0..100 {
                 // 1. Flush microtask queue (Promises from event handlers)
-                let _ = runtime.context.run_jobs();
+                runtime.run_jobs();
 
                 // 2. Deliver pending MO records
                 let had_mo = runtime.has_pending_mutation_observers();
                 if had_mo {
                     runtime.notify_mutation_observers();
-                    let _ = runtime.context.run_jobs();
+                    runtime.run_jobs();
                 }
 
                 // 3. Fire ready timers (delay <= current virtual time)
@@ -168,13 +192,16 @@ impl Engine {
 
                 // 4. No MO and no ready timers at current time — try advancing clock
                 if !had_mo && !fired_timers {
-                    if runtime.has_pending_timers() {
-                        // Advance virtual clock to next deadline and loop
+                    if runtime.has_pending_timers() && !runtime.has_pending_fetches() {
+                        // Advance virtual clock to next deadline and loop.
+                        // Skip if there are pending fetches — the caller must
+                        // service those first, otherwise we'd fire timeouts
+                        // (e.g. webpack's chunk-load retry) prematurely.
                         if runtime.advance_timers_to_next_deadline() {
                             continue;
                         }
                     }
-                    // Truly quiescent
+                    // Truly quiescent (or waiting on fetches)
                     break;
                 }
             }
@@ -193,9 +220,13 @@ impl Engine {
         self.ref_map = ref_map;
 
         match mode {
+            SnapMode::Compact => {
+                let (output, ref_map) = serialize::serialize_compact(&tree, self.focused_element);
+                self.ref_map = ref_map;
+                output
+            }
             SnapMode::Accessibility => {
                 let (output, ref_map) = serialize::serialize_a11y(&tree, self.focused_element);
-                // serialize_a11y does its own assign_refs, update ref_map with its result
                 self.ref_map = ref_map;
                 output
             }
@@ -235,21 +266,30 @@ impl Engine {
         scripts
     }
 
-    fn walk_for_scripts(tree: &DomTree, node_id: NodeId, scripts: &mut Vec<String>) {
-        let node = tree.get_node(node_id);
-        if let NodeData::Element { tag_name, .. } = &node.data {
-            if tag_name.eq_ignore_ascii_case("script") {
-                // Extract text content from this script element
-                let text = tree.get_text_content(node_id);
-                scripts.push(text);
-                // Don't recurse into script children (we already got the text)
-                return;
+    fn walk_for_scripts(tree: &DomTree, root: NodeId, scripts: &mut Vec<String>) {
+        let mut stack = vec![root];
+        while let Some(node_id) = stack.pop() {
+            let node = tree.get_node(node_id);
+            if let NodeData::Element {
+                tag_name, attributes, ..
+            } = &node.data
+            {
+                if tag_name.eq_ignore_ascii_case("script") {
+                    // Check type attribute — skip non-JS scripts (data blocks)
+                    let type_attr = attributes.iter().find(|a| a.local_name == "type").map(|a| a.value.as_str());
+                    if let Some(t) = type_attr {
+                        if !is_javascript_type(t) && !t.trim().eq_ignore_ascii_case("module") {
+                            continue; // data block (importmap, ld+json, etc.) — skip
+                        }
+                    }
+                    let text = tree.get_text_content(node_id);
+                    scripts.push(text);
+                    continue; // don't descend into script children
+                }
             }
-        }
-        // Recurse into children
-        let children: Vec<NodeId> = node.children.clone();
-        for child_id in children {
-            Self::walk_for_scripts(tree, child_id, scripts);
+            for &child_id in node.children.iter().rev() {
+                stack.push(child_id);
+            }
         }
     }
 
@@ -263,50 +303,66 @@ impl Engine {
         descriptors
     }
 
-    fn walk_for_script_descriptors(tree: &DomTree, node_id: NodeId, descriptors: &mut Vec<ScriptDescriptor>) {
-        let node = tree.get_node(node_id);
-        if let NodeData::Element {
-            tag_name, attributes, ..
-        } = &node.data
-        {
-            if tag_name.eq_ignore_ascii_case("script") {
-                // Skip nomodule scripts — they are fallback for browsers that don't support modules
-                let has_nomodule = attributes.iter().any(|a| a.local_name == "nomodule");
-                if has_nomodule {
-                    return;
-                }
-
-                let is_module = attributes
-                    .iter()
-                    .any(|a| a.local_name == "type" && a.value.eq_ignore_ascii_case("module"));
-
-                // Per HTML spec: if src attribute exists, it's an external script
-                // (inline text content is ignored when src is present)
-                let src = attributes
-                    .iter()
-                    .find(|a| a.local_name == "src")
-                    .map(|a| a.value.clone());
-                if let Some(url) = src {
-                    if is_module {
-                        descriptors.push(ScriptDescriptor::ExternalModule(url));
-                    } else {
-                        descriptors.push(ScriptDescriptor::External(url));
+    fn walk_for_script_descriptors(tree: &DomTree, root: NodeId, descriptors: &mut Vec<ScriptDescriptor>) {
+        let mut stack = vec![root];
+        while let Some(node_id) = stack.pop() {
+            let node = tree.get_node(node_id);
+            if let NodeData::Element {
+                tag_name, attributes, ..
+            } = &node.data
+            {
+                if tag_name.eq_ignore_ascii_case("script") {
+                    // Skip nomodule scripts — they are fallback for browsers that don't support modules
+                    let has_nomodule = attributes.iter().any(|a| a.local_name == "nomodule");
+                    if has_nomodule {
+                        continue;
                     }
-                } else {
-                    let text = tree.get_text_content(node_id);
-                    if is_module {
-                        descriptors.push(ScriptDescriptor::InlineModule(text));
+
+                    // 4-way type decision per HTML spec
+                    let type_attr = attributes
+                        .iter()
+                        .find(|a| a.local_name == "type")
+                        .map(|a| a.value.as_str());
+
+                    let type_trimmed = type_attr.map(|t| t.trim().to_ascii_lowercase());
+
+                    if let Some(ref t) = type_trimmed {
+                        if t == "module" {
+                            // Module script
+                            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+                            if let Some(url) = src {
+                                descriptors.push(ScriptDescriptor::ExternalModule(url));
+                            } else {
+                                descriptors.push(ScriptDescriptor::InlineModule(tree.get_text_content(node_id)));
+                            }
+                        } else if t == "importmap" {
+                            // Import map — store JSON text
+                            descriptors.push(ScriptDescriptor::ImportMap(tree.get_text_content(node_id)));
+                        } else if is_javascript_type(t) {
+                            // Explicit JS MIME type — treat as classic script
+                            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+                            if let Some(url) = src {
+                                descriptors.push(ScriptDescriptor::External(url));
+                            } else {
+                                descriptors.push(ScriptDescriptor::Inline(tree.get_text_content(node_id)));
+                            }
+                        }
+                        // else: data block (ld+json, etc.) — skip entirely
                     } else {
-                        descriptors.push(ScriptDescriptor::Inline(text));
+                        // No type attribute — classic script
+                        let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+                        if let Some(url) = src {
+                            descriptors.push(ScriptDescriptor::External(url));
+                        } else {
+                            descriptors.push(ScriptDescriptor::Inline(tree.get_text_content(node_id)));
+                        }
                     }
+                    continue; // don't descend into script children
                 }
-                // Don't recurse into script children
-                return;
             }
-        }
-        let children: Vec<NodeId> = node.children.clone();
-        for child_id in children {
-            Self::walk_for_script_descriptors(tree, child_id, descriptors);
+            for &child_id in node.children.iter().rev() {
+                stack.push(child_id);
+            }
         }
     }
 
@@ -327,8 +383,13 @@ impl Engine {
     pub fn execute_scripts(&mut self, descriptors: &[ScriptDescriptor], fetched: &FetchedResources) {
         let mut runtime = JsRuntime::new(Rc::clone(&self.tree));
 
+        // Apply pending URL so scripts see correct location from the start
+        if let Some(url) = &self.pending_url {
+            runtime.set_url(url);
+        }
+
         // Populate iframe_src_content in RealmState with pre-fetched iframe content
-        Self::populate_iframe_src_content(&fetched.iframes, &runtime.context);
+        Self::populate_iframe_src_content(&fetched.iframes, &runtime);
 
         // Pre-register external modules so import statements can resolve them
         for descriptor in descriptors {
@@ -372,8 +433,15 @@ impl Engine {
                         }
                     }
                 }
+                ScriptDescriptor::ImportMap(json) => {
+                    Self::process_import_map(&mut runtime, json, fetched);
+                }
             }
         }
+
+        // Fire DOMContentLoaded on document (defer scripts have all run)
+        let _ = runtime.eval("document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));");
+        runtime.run_jobs();
 
         // Fire onload handlers for iframes with pre-fetched content
         Self::process_iframe_loads(&mut runtime, &self.tree);
@@ -415,8 +483,13 @@ impl Engine {
         let mut runtime = JsRuntime::new(Rc::clone(&self.tree));
         let mut errors = Vec::new();
 
+        // Apply pending URL so scripts see correct location from the start
+        if let Some(url) = &self.pending_url {
+            runtime.set_url(url);
+        }
+
         // Populate iframe_src_content in RealmState with pre-fetched iframe content
-        Self::populate_iframe_src_content(&fetched.iframes, &runtime.context);
+        Self::populate_iframe_src_content(&fetched.iframes, &runtime);
 
         // Pre-register external modules so import statements can resolve them
         for descriptor in descriptors {
@@ -430,6 +503,10 @@ impl Engine {
         }
 
         for descriptor in descriptors {
+            if let ScriptDescriptor::ImportMap(json) = descriptor {
+                Self::process_import_map(&mut runtime, json, fetched);
+                continue;
+            }
             let is_module = descriptor.is_module();
             let code = match descriptor {
                 ScriptDescriptor::Inline(text) | ScriptDescriptor::InlineModule(text) => {
@@ -444,6 +521,7 @@ impl Engine {
                         _ => continue,
                     }
                 }
+                ScriptDescriptor::ImportMap(_) => unreachable!(),
             };
             let result = if is_module {
                 let specifier = match descriptor {
@@ -477,6 +555,12 @@ impl Engine {
             }
         }
 
+        // Fire DOMContentLoaded on document (defer scripts have all run)
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime.eval("document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));")
+        }));
+        runtime.run_jobs();
+
         // Fire onload handlers for iframes with pre-fetched content
         Self::process_iframe_loads(&mut runtime, &self.tree);
 
@@ -503,6 +587,47 @@ impl Engine {
         self.load_html_with_resources_lossy(html, &FetchedResources::scripts_only(fetched.clone()))
     }
 
+    /// Parse an import map JSON and register bare specifier → URL mappings.
+    /// For each entry in `imports`, if the URL has been pre-fetched, register it as a module.
+    fn process_import_map(runtime: &mut JsRuntime, json: &str, fetched: &FetchedResources) {
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json) else {
+            return;
+        };
+        let Some(imports) = parsed.get("imports").and_then(|v| v.as_object()) else {
+            return;
+        };
+        for (specifier, url_value) in imports {
+            let Some(url) = url_value.as_str() else {
+                continue;
+            };
+            if let Some(content) = fetched.scripts.get(url) {
+                if !content.trim().is_empty() {
+                    let _ = runtime.register_module(specifier, content);
+                }
+            }
+        }
+    }
+
+    /// Returns all URLs referenced in import maps found in the parsed document.
+    /// Call after `parse_and_collect_scripts` so the CLI can fetch these URLs.
+    pub fn import_map_urls(descriptors: &[ScriptDescriptor]) -> Vec<String> {
+        let mut urls = Vec::new();
+        for desc in descriptors {
+            if let ScriptDescriptor::ImportMap(json) = desc {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json) {
+                    if let Some(imports) = parsed.get("imports").and_then(|v| v.as_object()) {
+                        for url_value in imports.values() {
+                            if let Some(url) = url_value.as_str() {
+                                urls.push(url.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        urls
+    }
+
     /// Incrementally parse HTML, executing scripts as the parser encounters them.
     /// MutationObserver records are synthesized for parser-inserted nodes between
     /// script executions. Returns any JS errors encountered.
@@ -512,7 +637,7 @@ impl Engine {
         fetched: &FetchedResources,
     ) -> Vec<String> {
         use crate::html::parser::{split_html_at_scripts, IncrementalParser};
-        use crate::js::bindings::mutation_observer::synthesize_parser_mutations;
+        // MutationObserver synthesis is handled by JsRuntime
 
         let mut errors = Vec::new();
 
@@ -524,7 +649,7 @@ impl Engine {
         let mut runtime = JsRuntime::new(Rc::clone(&tree));
 
         // 3. Populate iframe src content
-        Self::populate_iframe_src_content(&fetched.iframes, &runtime.context);
+        Self::populate_iframe_src_content(&fetched.iframes, &runtime);
 
         // 4. Split HTML at </script> boundaries
         let chunks = split_html_at_scripts(html);
@@ -561,7 +686,7 @@ impl Engine {
             };
 
             // Synthesize MO records for ALL new nodes (including scripts and their text children)
-            synthesize_parser_mutations(&mut runtime.context, &tree, watermark);
+            runtime.synthesize_parser_mutations(&tree, watermark);
 
             // Execute each new script
             for (_script_id, src, inline_text) in &new_scripts {
@@ -618,300 +743,97 @@ impl Engine {
     /// Panics if no runtime is loaded (call load_html or execute_scripts first).
     pub fn eval_js(&mut self, code: &str) -> Result<String, String> {
         let runtime = self.runtime.as_mut().expect("eval_js: no runtime loaded");
-        match runtime.eval(code) {
-            Ok(val) => {
-                if val.is_null() {
-                    Ok("null".to_string())
-                } else if val.is_undefined() {
-                    Ok("undefined".to_string())
-                } else {
-                    match val.to_string(&mut runtime.context) {
-                        Ok(s) => Ok(s.to_std_string_escaped()),
-                        Err(_) => Ok("undefined".to_string()),
-                    }
-                }
-            }
-            Err(e) => Err(format!("{:?}", e)),
-        }
+        runtime.eval_to_string(code)
     }
 
     /// Fire `window.onload` handler after all scripts and iframe loads have completed.
     fn fire_window_load(runtime: &mut JsRuntime) {
-        use crate::js::bindings::on_event::get_on_event_handler;
-        use crate::js::bindings::window::WINDOW_LISTENER_ID;
-
-        let handler = get_on_event_handler(usize::MAX, WINDOW_LISTENER_ID, "load", &runtime.context);
-        if let Some(handler_fn) = handler {
-            if handler_fn.is_callable() {
-                let window_val = crate::js::realm_state::window_object(&runtime.context)
-                    .map(JsValue::from)
-                    .unwrap_or(JsValue::undefined());
-
-                // Create a simple Event-like object with type "load"
-                let event_obj = boa_engine::object::ObjectInitializer::new(&mut runtime.context).build();
-                let _ = event_obj.set(
-                    boa_engine::js_string!("type"),
-                    JsValue::from(boa_engine::js_string!("load")),
-                    false,
-                    &mut runtime.context,
-                );
-
-                let _ = handler_fn.call(&window_val, &[JsValue::from(event_obj)], &mut runtime.context);
-                runtime.notify_mutation_observers();
-            }
-        }
+        runtime.fire_window_load();
     }
 
-    /// Store pre-fetched iframe HTML content in the RealmState iframe_src_content.
-    fn populate_iframe_src_content(iframes: &HashMap<String, String>, ctx: &boa_engine::Context) {
-        let src_content = crate::js::realm_state::iframe_src_content(ctx);
-        let mut m = src_content.borrow_mut();
-        for (url, content) in iframes {
-            m.insert(url.clone(), content.clone());
-        }
+    /// Store pre-fetched iframe HTML content in the realm state.
+    fn populate_iframe_src_content(iframes: &HashMap<String, String>, runtime: &JsRuntime) {
+        runtime.populate_iframe_content(iframes);
     }
 
     /// After scripts have executed, walk the DOM for `<iframe>` elements with a `src`
     /// attribute. For each one whose content was pre-fetched, ensure the content doc
-    /// is populated and fire any `onload` handler (attribute or JS-property).
+    /// is populated and fire any `onload` handler.
     fn process_iframe_loads(runtime: &mut JsRuntime, tree: &Rc<RefCell<DomTree>>) {
-        // Collect iframe nodes that have a `src` attribute
-        // Tuple: (node_id, src, onload_attr_code, onload_js_handler)
-        let iframes: Vec<(NodeId, String, Option<String>, Option<JsObject>)> = {
-            let t = tree.borrow();
-            let mut result = Vec::new();
-            Self::collect_iframes(&t, t.document(), tree, &mut result, &runtime.context);
-            result
-        };
-
-        if iframes.is_empty() {
-            return;
-        }
-
-        // Check which iframes have pre-fetched content (strip fragment before lookup)
-        let has_content: Vec<bool> = {
-            let src_content = crate::js::realm_state::iframe_src_content(&runtime.context);
-            let map = src_content.borrow();
-            iframes
-                .iter()
-                .map(|(_, src, _, _)| {
-                    let src_no_fragment = src.split('#').next().unwrap_or(src);
-                    map.contains_key(src_no_fragment)
-                })
-                .collect()
-        };
-
-        let tree_ptr = Rc::as_ptr(tree) as usize;
-
-        for (i, (node_id, _src, onload_attr, onload_js)) in iframes.iter().enumerate() {
-            if !has_content[i] {
-                continue;
-            }
-
-            // Ensure the content document is populated (this will use IFRAME_SRC_CONTENT)
-            let _ = crate::js::bindings::element::ensure_iframe_content_doc(tree_ptr, *node_id, &mut runtime.context);
-
-            // Get the iframe's JS object for `this` and event.target
-            let iframe_js =
-                crate::js::bindings::element::get_or_create_js_element(*node_id, tree.clone(), &mut runtime.context)
-                    .ok();
-
-            // Create a simple event object with `target` property
-            let event_obj = if let Some(ref ijs) = iframe_js {
-                let evt = boa_engine::object::ObjectInitializer::new(&mut runtime.context).build();
-                let _ = evt.set(
-                    boa_engine::js_string!("target"),
-                    JsValue::from(ijs.clone()),
-                    false,
-                    &mut runtime.context,
-                );
-                JsValue::from(evt)
-            } else {
-                JsValue::undefined()
-            };
-
-            // Fire onload attribute handler if present
-            if let Some(handler_code) = onload_attr {
-                let func_code = format!("(function(e) {{ {} }})", handler_code);
-                if let Ok(func_val) = runtime.eval(&func_code) {
-                    if let Ok(func_obj) =
-                        func_val.as_object().ok_or(()).and_then(
-                            |o| {
-                                if o.is_callable() {
-                                    Ok(o.clone())
-                                } else {
-                                    Err(())
-                                }
-                            },
-                        )
-                    {
-                        if let Some(ref ijs) = iframe_js {
-                            let _ = func_obj.call(
-                                &JsValue::from(ijs.clone()),
-                                std::slice::from_ref(&event_obj),
-                                &mut runtime.context,
-                            );
-                        }
-                    }
-                }
-                runtime.notify_mutation_observers();
-            }
-
-            // Fire JS-property onload handler if present
-            if let Some(handler_obj) = onload_js {
-                if handler_obj.is_callable() {
-                    if let Some(ref ijs) = iframe_js {
-                        let _ = handler_obj.call(
-                            &JsValue::from(ijs.clone()),
-                            std::slice::from_ref(&event_obj),
-                            &mut runtime.context,
-                        );
-                    }
-                }
-                runtime.notify_mutation_observers();
-            }
-        }
+        runtime.process_iframe_loads(tree);
     }
 
-    /// Recursively collect `<iframe>` elements with their src and onload attributes/handlers.
-    /// Tuple: (node_id, src, onload_attr_code, onload_js_handler)
-    fn collect_iframes(
-        tree: &DomTree,
-        node_id: NodeId,
-        tree_rc: &Rc<RefCell<DomTree>>,
-        result: &mut Vec<(NodeId, String, Option<String>, Option<JsObject>)>,
-        ctx: &boa_engine::Context,
-    ) {
-        let node = tree.get_node(node_id);
-        if let NodeData::Element {
-            tag_name, attributes, ..
-        } = &node.data
-        {
-            if tag_name.eq_ignore_ascii_case("iframe") {
-                if let Some(src_attr) = attributes.iter().find(|a| a.local_name == "src") {
-                    let src = src_attr.value.clone();
-                    let onload_attr = attributes
-                        .iter()
-                        .find(|a| a.local_name == "onload")
-                        .map(|a| a.value.clone());
-                    // Check for JS-property onload handler (via unified on_event system)
-                    let tree_ptr = Rc::as_ptr(tree_rc) as usize;
-                    let onload_js = crate::js::bindings::on_event::get_on_event_handler(tree_ptr, node_id, "load", ctx);
-                    result.push((node_id, src, onload_attr, onload_js));
-                }
-            }
-        }
-        let children: Vec<NodeId> = node.children.clone();
-        for child_id in children {
-            Self::collect_iframes(tree, child_id, tree_rc, result, ctx);
-        }
-    }
+    // collect_iframes moved to JsRuntime::collect_iframes_impl
 
     // -- Fetch API public methods --
 
     /// Returns true if there are pending fetch requests that need to be serviced.
     pub fn has_pending_fetches(&self) -> bool {
         if let Some(runtime) = &self.runtime {
-            let pending = crate::js::realm_state::pending_fetches(&runtime.context);
-            let is_empty = pending.borrow().is_empty();
-            !is_empty
+            runtime.has_pending_fetches()
+        } else {
+            false
+        }
+    }
+
+    /// Returns true if there are pending timers.
+    pub fn has_pending_timers(&self) -> bool {
+        if let Some(runtime) = &self.runtime {
+            runtime.has_pending_timers()
         } else {
             false
         }
     }
 
     /// Returns all pending fetch requests as serializable DTOs.
-    /// Does NOT consume them — they remain pending until resolved or rejected.
     pub fn pending_fetches(&self) -> Vec<braille_wire::FetchRequest> {
         if let Some(runtime) = &self.runtime {
-            let pending = crate::js::realm_state::pending_fetches(&runtime.context);
-            let fetches = pending.borrow();
-            fetches
-                .iter()
-                .map(|pf| braille_wire::FetchRequest {
-                    id: pf.id,
-                    url: pf.url.clone(),
-                    method: pf.method.clone(),
-                    headers: pf.headers.clone(),
-                    body: pf.body.clone(),
-                })
-                .collect()
+            runtime.pending_fetches()
         } else {
             Vec::new()
         }
     }
 
-    /// Resolve a pending fetch with a response. Removes the fetch from the pending list,
-    /// calls its resolve function with a Response object, and flushes microtasks.
+    /// Resolve a pending fetch with a response.
     pub fn resolve_fetch(&mut self, id: u64, response: &braille_wire::FetchResponseData) {
         let runtime = self.runtime.as_mut().expect("resolve_fetch: no runtime loaded");
-        let pending = crate::js::realm_state::pending_fetches(&runtime.context);
-
-        // Find and remove the pending fetch
-        let entry = {
-            let mut fetches = pending.borrow_mut();
-            let pos = fetches.iter().position(|pf| pf.id == id);
-            pos.map(|i| fetches.remove(i))
-        };
-
-        if let Some(pf) = entry {
-            // Create a Response object
-            let resp_obj = crate::js::bindings::fetch::create_response_object(
-                response.status,
-                &response.status_text,
-                response.headers.clone(),
-                response.body.clone(),
-                &response.url,
-                &mut runtime.context,
-            );
-            match resp_obj {
-                Ok(obj) => {
-                    let _ = pf
-                        .resolve
-                        .call(&JsValue::undefined(), &[JsValue::from(obj)], &mut runtime.context);
-                }
-                Err(e) => {
-                    let _ = pf.reject.call(
-                        &JsValue::undefined(),
-                        &[JsValue::from(boa_engine::js_string!(format!("{:?}", e)))],
-                        &mut runtime.context,
-                    );
-                }
-            }
-            // Flush microtasks so .then() callbacks fire
-            let _ = runtime.context.run_jobs();
-            runtime.notify_mutation_observers();
-        }
+        runtime.resolve_fetch(id, response);
     }
 
     /// Reject a pending fetch with an error message.
     pub fn reject_fetch(&mut self, id: u64, error: &str) {
         let runtime = self.runtime.as_mut().expect("reject_fetch: no runtime loaded");
-        let pending = crate::js::realm_state::pending_fetches(&runtime.context);
+        runtime.reject_fetch(id, error);
+    }
 
-        let entry = {
-            let mut fetches = pending.borrow_mut();
-            let pos = fetches.iter().position(|pf| pf.id == id);
-            pos.map(|i| fetches.remove(i))
-        };
+    /// Returns all console output (log, warn, error, etc.) since last drain.
+    pub fn console_output(&self) -> Vec<String> {
+        if let Some(runtime) = &self.runtime {
+            runtime.console_output()
+        } else {
+            Vec::new()
+        }
+    }
 
-        if let Some(pf) = entry {
-            let _ = pf.reject.call(
-                &JsValue::undefined(),
-                &[JsValue::from(boa_engine::js_string!(error))],
-                &mut runtime.context,
-            );
-            let _ = runtime.context.run_jobs();
-            runtime.notify_mutation_observers();
+    /// Returns and clears all console output since last drain.
+    pub fn drain_console(&self) -> Vec<String> {
+        if let Some(runtime) = &self.runtime {
+            let output = runtime.console_output();
+            runtime.clear_console();
+            output
+        } else {
+            Vec::new()
         }
     }
 
     /// Set the location URL in the JS runtime (e.g., after navigation).
+    /// If no runtime exists yet, the URL is stored and applied when the runtime
+    /// is created (so scripts see the correct location from the start).
     pub fn set_url(&mut self, url: &str) {
         if let Some(runtime) = &self.runtime {
-            let location_url = crate::js::realm_state::location_url(&runtime.context);
-            *location_url.borrow_mut() = url.to_string();
+            runtime.set_url(url);
         }
+        self.pending_url = Some(url.to_string());
     }
 }
 

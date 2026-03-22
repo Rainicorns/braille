@@ -5,8 +5,7 @@ edition = "2021"
 
 [dependencies]
 braille-wire = { path = "../wire" }
-boa_engine = "0.21"
-boa_gc = "0.21"
+rquickjs = { version = "0.11", features = ["macro", "loader"] }
 html5ever = "0.38"
 markup5ever = "0.38"
 tendril = "0.5"
@@ -15,14 +14,26 @@ selectors = "0.28"
 precomputed-hash = "0.1"
 url = "2.5"
 quick-xml = "0.37"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+chrono = "0.4"
+ring = "0.17"
+getrandom = "0.2"
 
 [lints]
 workspace = true
 
+[[bin]]
+name = "braille-engine"
+path = "src/bin/braille_engine.rs"
+
 [dev-dependencies]
 libtest-mimic = "0.8"
-serde_json = "1"
-serde = { version = "1", features = ["derive"] }
+criterion = "0.5"
+
+[[bench]]
+name = "engine_bench"
+harness = false
 
 [[test]]
 name = "html5lib_tree_construction"

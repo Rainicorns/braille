@@ -405,6 +405,11 @@ fn register_native_functions(ctx: &Ctx<'_>) {
             }
         })
     }).unwrap()).unwrap();
+
+    // __n_cssSupports(declaration) -> bool — check if a CSS declaration parses
+    g.set("__n_cssSupports", Function::new(ctx.clone(), |decl: String| -> bool {
+        !crate::css::parser::parse_inline_style(&decl).is_empty()
+    }).unwrap()).unwrap();
 }
 
 fn register_js_wrappers(ctx: &Ctx<'_>) {
@@ -499,6 +504,22 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             return id >= 0 ? __w(id) : null;
         };
         EP.getAttributeNames = function() { return []; };
+        EP.remove = function() {
+            if (this.__nid !== undefined) {
+                var pid = __n_getParent(this.__nid);
+                if (pid >= 0) __n_removeChild(pid, this.__nid);
+            }
+        };
+        EP.getRootNode = function() { return document; };
+        EP.compareDocumentPosition = function(other) {
+            if (!other || other.__nid === undefined || this.__nid === undefined) return 0;
+            if (this.__nid === other.__nid) return 0;
+            // Check if other is contained by this
+            if (__n_contains(this.__nid, other.__nid)) return 16 | 4; // CONTAINED_BY | FOLLOWING
+            // Check if this is contained by other
+            if (__n_contains(other.__nid, this.__nid)) return 8 | 2; // CONTAINS | PRECEDING
+            return 4; // FOLLOWING (simplified)
+        };
 
         Object.defineProperties(EP, {
             textContent: {
@@ -539,6 +560,26 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             disabled: {
                 get: function() { return this.hasAttribute('disabled'); },
                 set: function(v) { if(v) this.setAttribute('disabled',''); else this.removeAttribute('disabled'); },
+                configurable: true
+            },
+            noModule: {
+                get: function() { return this.hasAttribute('nomodule'); },
+                set: function(v) { if(v) this.setAttribute('nomodule',''); else this.removeAttribute('nomodule'); },
+                configurable: true
+            },
+            async: {
+                get: function() { return this.hasAttribute('async'); },
+                set: function(v) { if(v) this.setAttribute('async',''); else this.removeAttribute('async'); },
+                configurable: true
+            },
+            defer: {
+                get: function() { return this.hasAttribute('defer'); },
+                set: function(v) { if(v) this.setAttribute('defer',''); else this.removeAttribute('defer'); },
+                configurable: true
+            },
+            reversed: {
+                get: function() { return this.hasAttribute('reversed'); },
+                set: function(v) { if(v) this.setAttribute('reversed',''); else this.removeAttribute('reversed'); },
                 configurable: true
             },
             type: {
@@ -619,7 +660,22 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             },
             style: {
                 get: function() {
-                    if (!this._s) this._s = new Proxy({}, { set: function(t,p,v){t[p]=v;return true;}, get: function(t,p){return t[p]||'';} });
+                    if (!this._s) {
+                        var store = {};
+                        store.setProperty = function(prop, val) { store[prop] = val; };
+                        store.removeProperty = function(prop) { var old = store[prop]; delete store[prop]; return old || ''; };
+                        store.getPropertyValue = function(prop) { return store[prop] || ''; };
+                        store.getPropertyPriority = function() { return ''; };
+                        this._s = new Proxy(store, {
+                            set: function(t,p,v){t[p]=v;return true;},
+                            get: function(t,p){
+                                if (p in t) return t[p];
+                                if (p === 'cssText') return '';
+                                if (p === 'length') return 0;
+                                return '';
+                            }
+                        });
+                    }
                     return this._s;
                 },
                 configurable: true
@@ -729,6 +785,35 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             el.click();
         };
 
+        // Dynamic script loading: fetch and eval <script src="..."> on insertion
+        globalThis.__braille_script_log = [];
+        globalThis.__braille_maybe_load_script = function(node) {
+            if (!node || node.tagName !== 'SCRIPT') return;
+            var src = node.getAttribute('src');
+            if (!src) return;
+            var shortSrc = src.substring(src.lastIndexOf('/') + 1).substring(0, 40);
+            __braille_script_log.push('FETCH: ' + shortSrc);
+            fetch(src).then(function(resp) {
+                __braille_script_log.push('RESP: ' + shortSrc + ' ok=' + resp.ok + ' status=' + resp.status);
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                return resp.text();
+            }).then(function(code) {
+                __braille_script_log.push('EVAL: ' + shortSrc + ' len=' + code.length);
+                (0, eval)(code);
+                __braille_script_log.push('OK: ' + shortSrc);
+                if (typeof node.onload === 'function') {
+                    node.onload({type: 'load', target: node});
+                }
+                node.dispatchEvent(new Event('load'));
+            }).catch(function(err) {
+                __braille_script_log.push('ERR: ' + shortSrc + ' -> ' + String(err).substring(0, 100));
+                if (typeof node.onerror === 'function') {
+                    node.onerror({type: 'error', target: node, message: String(err)});
+                }
+                node.dispatchEvent(new Event('error'));
+            });
+        };
+
         // Element mutation methods that operate on the real DomTree
         EP.appendChild = function(child) {
             if (child && child.__nid !== undefined && this.__nid !== undefined) {
@@ -742,6 +827,7 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                     __n_appendChild(this.__nid, child.__nid);
                 }
             }
+            __braille_maybe_load_script(child);
             return child;
         };
         EP.removeChild = function(child) {
@@ -763,6 +849,7 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                     __n_insertBefore(this.__nid, newChild.__nid, refId);
                 }
             }
+            __braille_maybe_load_script(newChild);
             return newChild;
         };
 
@@ -813,6 +900,19 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         doc.createComment = function(text) {
             var nid = __n_createComment(text || '');
             return __w(nid);
+        };
+
+        doc.createRange = function() {
+            return {
+                setStart: function(){}, setEnd: function(){},
+                setStartBefore: function(){}, setStartAfter: function(){},
+                setEndBefore: function(){}, setEndAfter: function(){},
+                selectNode: function(){}, selectNodeContents: function(){},
+                collapse: function(){}, cloneRange: function(){ return doc.createRange(); },
+                detach: function(){}, toString: function(){ return ''; },
+                commonAncestorContainer: null, collapsed: true, startContainer: null,
+                startOffset: 0, endContainer: null, endOffset: 0,
+            };
         };
 
         // window.addEventListener / removeEventListener
