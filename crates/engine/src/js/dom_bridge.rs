@@ -410,6 +410,28 @@ fn register_native_functions(ctx: &Ctx<'_>) {
     g.set("__n_cssSupports", Function::new(ctx.clone(), |decl: String| -> bool {
         !crate::css::parser::parse_inline_style(&decl).is_empty()
     }).unwrap()).unwrap();
+
+    // __n_getComputedStyle(nodeId, prop) -> string value or empty
+    g.set("__n_getComputedStyle", Function::new(ctx.clone(), |node_id: u32, prop: String| -> String {
+        with_tree(|tree| {
+            let node = tree.get_node(node_id as NodeId);
+            node.computed_style.as_ref()
+                .and_then(|cs| cs.get(&prop))
+                .cloned()
+                .unwrap_or_default()
+        })
+    }).unwrap()).unwrap();
+
+    // __n_getComputedStyleAll(nodeId) -> JSON string of all computed styles
+    g.set("__n_getComputedStyleAll", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            let node = tree.get_node(node_id as NodeId);
+            match &node.computed_style {
+                Some(cs) => serde_json::to_string(cs).unwrap_or_else(|_| "{}".to_string()),
+                None => "{}".to_string(),
+            }
+        })
+    }).unwrap()).unwrap();
 }
 
 fn register_js_wrappers(ctx: &Ctx<'_>) {
@@ -432,8 +454,16 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             var v = __n_getAttribute(this.__nid, name);
             return __n_hasAttrValue(this.__nid, name) ? v : null;
         };
-        EP.setAttribute = function(name, value) { __n_setAttribute(this.__nid, name, String(value)); };
-        EP.removeAttribute = function(name) { __n_removeAttribute(this.__nid, name); };
+        EP.setAttribute = function(name, value) {
+            var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
+            __n_setAttribute(this.__nid, name, String(value));
+            if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
+        };
+        EP.removeAttribute = function(name) {
+            var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
+            __n_removeAttribute(this.__nid, name);
+            if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
+        };
         EP.hasAttribute = function(name) { return __n_hasAttribute(this.__nid, name); };
 
         EP.addEventListener = function(type, cb, opts) {
@@ -494,7 +524,18 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             return oldChild;
         };
         EP.hasChildNodes = function() { return __n_getFirstChild(this.__nid) >= 0; };
-        EP.getBoundingClientRect = function() { return {top:0,left:0,width:0,height:0,right:0,bottom:0}; };
+        EP.getBoundingClientRect = function() {
+            // Return plausible non-zero defaults instead of all zeros
+            var s = __n_getAttribute(this.__nid, 'style') || '';
+            // display:none → all zeros
+            if (/display\s*:\s*none/i.test(s)) return {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
+            var w = 100, h = 20;
+            var wm = s.match(/(?:^|;)\s*width\s*:\s*(\d+)/);
+            var hm = s.match(/(?:^|;)\s*height\s*:\s*(\d+)/);
+            if (wm) w = parseInt(wm[1]);
+            if (hm) h = parseInt(hm[1]);
+            return {top:0,left:0,width:w,height:h,right:w,bottom:h,x:0,y:0};
+        };
         EP.focus = function() {};
         EP.blur = function() {};
         EP.scrollIntoView = function() {};
@@ -503,7 +544,102 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             var id = __n_closest(this.__nid, sel);
             return id >= 0 ? __w(id) : null;
         };
-        EP.getAttributeNames = function() { return []; };
+        EP.getAttributeNames = function() {
+            // TODO: return real attribute names from native
+            return [];
+        };
+        EP.append = function() {
+            for (var i = 0; i < arguments.length; i++) {
+                var arg = arguments[i];
+                if (typeof arg === 'string') arg = document.createTextNode(arg);
+                this.appendChild(arg);
+            }
+        };
+        EP.prepend = function() {
+            var first = this.firstChild;
+            for (var i = 0; i < arguments.length; i++) {
+                var arg = arguments[i];
+                if (typeof arg === 'string') arg = document.createTextNode(arg);
+                if (first) this.insertBefore(arg, first);
+                else this.appendChild(arg);
+            }
+        };
+        EP.replaceChildren = function() {
+            while (this.firstChild) this.removeChild(this.firstChild);
+            for (var i = 0; i < arguments.length; i++) {
+                var arg = arguments[i];
+                if (typeof arg === 'string') arg = document.createTextNode(arg);
+                this.appendChild(arg);
+            }
+        };
+        EP.after = function() {
+            var parent = this.parentNode;
+            var next = this.nextSibling;
+            if (!parent) return;
+            for (var i = 0; i < arguments.length; i++) {
+                var arg = arguments[i];
+                if (typeof arg === 'string') arg = document.createTextNode(arg);
+                if (next) parent.insertBefore(arg, next);
+                else parent.appendChild(arg);
+            }
+        };
+        EP.before = function() {
+            var parent = this.parentNode;
+            if (!parent) return;
+            for (var i = 0; i < arguments.length; i++) {
+                var arg = arguments[i];
+                if (typeof arg === 'string') arg = document.createTextNode(arg);
+                parent.insertBefore(arg, this);
+            }
+        };
+        EP.replaceWith = function() {
+            var parent = this.parentNode;
+            if (!parent) return;
+            var next = this.nextSibling;
+            parent.removeChild(this);
+            for (var i = 0; i < arguments.length; i++) {
+                var arg = arguments[i];
+                if (typeof arg === 'string') arg = document.createTextNode(arg);
+                if (next) parent.insertBefore(arg, next);
+                else parent.appendChild(arg);
+            }
+        };
+        EP.toggleAttribute = function(name, force) {
+            if (force !== undefined) {
+                if (force) { this.setAttribute(name, ''); return true; }
+                else { this.removeAttribute(name); return false; }
+            }
+            if (this.hasAttribute(name)) { this.removeAttribute(name); return false; }
+            this.setAttribute(name, ''); return true;
+        };
+        EP.setAttributeNS = function(ns, name, value) { this.setAttribute(name, String(value)); };
+        EP.getAttributeNS = function(ns, name) { return this.getAttribute(name); };
+        EP.removeAttributeNS = function(ns, name) { this.removeAttribute(name); };
+        EP.hasAttributeNS = function(ns, name) { return this.hasAttribute(name); };
+        EP.insertAdjacentHTML = function(position, html) {
+            var temp = document.createElement('div');
+            __n_setInnerHTML(temp.__nid, html);
+            var frag = document.createDocumentFragment();
+            while (temp.firstChild) frag.appendChild(temp.firstChild);
+            if (position === 'beforebegin') this.before(frag);
+            else if (position === 'afterbegin') this.prepend(frag);
+            else if (position === 'beforeend') this.append(frag);
+            else if (position === 'afterend') this.after(frag);
+        };
+        EP.insertAdjacentElement = function(position, el) {
+            if (position === 'beforebegin') this.before(el);
+            else if (position === 'afterbegin') this.prepend(el);
+            else if (position === 'beforeend') this.append(el);
+            else if (position === 'afterend') this.after(el);
+            return el;
+        };
+        EP.getAnimations = function() { return []; };
+        EP.animate = function() { return { finished: Promise.resolve(), cancel: function(){}, play: function(){}, pause: function(){} }; };
+        EP.attachShadow = function() { return document.createDocumentFragment(); };
+        EP.getAttributeNode = function(name) {
+            if (!this.hasAttribute(name)) return null;
+            return { name: name, value: this.getAttribute(name), specified: true };
+        };
         EP.remove = function() {
             if (this.__nid !== undefined) {
                 var pid = __n_getParent(this.__nid);
@@ -661,17 +797,110 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             style: {
                 get: function() {
                     if (!this._s) {
-                        var store = {};
-                        store.setProperty = function(prop, val) { store[prop] = val; };
-                        store.removeProperty = function(prop) { var old = store[prop]; delete store[prop]; return old || ''; };
-                        store.getPropertyValue = function(prop) { return store[prop] || ''; };
-                        store.getPropertyPriority = function() { return ''; };
+                        var nid = this.__nid;
+                        // helpers to parse / serialize the style attribute
+                        function parseStyle() {
+                            var s = __n_getAttribute(nid, 'style');
+                            var arr = [];
+                            if (!s) return arr;
+                            var parts = s.split(';');
+                            for (var i = 0; i < parts.length; i++) {
+                                var p = parts[i].trim();
+                                if (!p) continue;
+                                var ci = p.indexOf(':');
+                                if (ci < 0) continue;
+                                arr.push([p.substring(0, ci).trim(), p.substring(ci + 1).trim()]);
+                            }
+                            return arr;
+                        }
+                        function serializeStyle(arr) {
+                            return arr.map(function(e) { return e[0] + ': ' + e[1]; }).join('; ');
+                        }
+                        function writeStyle(arr) {
+                            var s = serializeStyle(arr);
+                            if (s) __n_setAttribute(nid, 'style', s);
+                            else __n_removeAttribute(nid, 'style');
+                        }
+                        // camelCase <-> kebab-case
+                        function toKebab(cc) {
+                            if (cc === 'cssFloat') return 'float';
+                            return cc.replace(/[A-Z]/g, function(c) { return '-' + c.toLowerCase(); });
+                        }
+                        var store = {
+                            setProperty: function(prop, val) {
+                                var arr = parseStyle();
+                                var found = false;
+                                for (var i = 0; i < arr.length; i++) {
+                                    if (arr[i][0] === prop) { arr[i][1] = val; found = true; break; }
+                                }
+                                if (!found) arr.push([prop, val]);
+                                writeStyle(arr);
+                            },
+                            removeProperty: function(prop) {
+                                var arr = parseStyle();
+                                var old = '';
+                                for (var i = 0; i < arr.length; i++) {
+                                    if (arr[i][0] === prop) { old = arr[i][1]; arr.splice(i, 1); break; }
+                                }
+                                writeStyle(arr);
+                                return old;
+                            },
+                            getPropertyValue: function(prop) {
+                                var arr = parseStyle();
+                                for (var i = 0; i < arr.length; i++) {
+                                    if (arr[i][0] === prop) return arr[i][1];
+                                }
+                                return '';
+                            },
+                            getPropertyPriority: function() { return ''; },
+                        };
                         this._s = new Proxy(store, {
-                            set: function(t,p,v){t[p]=v;return true;},
-                            get: function(t,p){
+                            set: function(t, p, v) {
+                                if (typeof p !== 'string') return true;
+                                if (p === 'cssText') {
+                                    if (v && String(v).trim()) __n_setAttribute(nid, 'style', String(v));
+                                    else __n_removeAttribute(nid, 'style');
+                                    return true;
+                                }
+                                // setting a camelCase or kebab prop writes to the DOM
+                                var kebab = toKebab(p);
+                                var arr = parseStyle();
+                                if (v === '' || v === null || v === undefined) {
+                                    // empty string removes property per spec
+                                    for (var i = 0; i < arr.length; i++) {
+                                        if (arr[i][0] === kebab) { arr.splice(i, 1); break; }
+                                    }
+                                } else {
+                                    var found = false;
+                                    for (var i = 0; i < arr.length; i++) {
+                                        if (arr[i][0] === kebab) { arr[i][1] = String(v); found = true; break; }
+                                    }
+                                    if (!found) arr.push([kebab, String(v)]);
+                                }
+                                writeStyle(arr);
+                                return true;
+                            },
+                            get: function(t, p) {
                                 if (p in t) return t[p];
-                                if (p === 'cssText') return '';
-                                if (p === 'length') return 0;
+                                if (typeof p !== 'string') return undefined;
+                                if (p === 'cssText') {
+                                    return __n_getAttribute(nid, 'style') || '';
+                                }
+                                if (p === 'length') {
+                                    return parseStyle().length;
+                                }
+                                if (p === 'item') {
+                                    return function(idx) {
+                                        var arr = parseStyle();
+                                        return idx < arr.length ? arr[idx][0] : '';
+                                    };
+                                }
+                                // camelCase property read
+                                var kebab = toKebab(p);
+                                var arr = parseStyle();
+                                for (var i = 0; i < arr.length; i++) {
+                                    if (arr[i][0] === kebab) return arr[i][1];
+                                }
                                 return '';
                             }
                         });
@@ -688,6 +917,12 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                         remove: function() { var c=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean); for(var i=0;i<arguments.length;i++){var idx=c.indexOf(arguments[i]);if(idx>=0)c.splice(idx,1);} el.setAttribute('class',c.join(' ')); },
                         contains: function(cls) { return (el.getAttribute('class')||'').split(/\s+/).indexOf(cls)>=0; },
                         toggle: function(cls,force) { if(force!==undefined){if(force)this.add(cls);else this.remove(cls);return force;} if(this.contains(cls)){this.remove(cls);return false;} this.add(cls);return true; },
+                        forEach: function(cb) { var c=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean); for(var i=0;i<c.length;i++) cb(c[i],i,c); },
+                        get length() { return (el.getAttribute('class')||'').split(/\s+/).filter(Boolean).length; },
+                        item: function(i) { var c=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean); return i<c.length?c[i]:null; },
+                        toString: function() { return el.getAttribute('class')||''; },
+                        get value() { return el.getAttribute('class')||''; },
+                        set value(v) { el.setAttribute('class', v); },
                     };
                 },
                 configurable: true
@@ -711,6 +946,18 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 configurable: true
             },
             ownerDocument: { get: function() { return document; }, configurable: true },
+            isConnected: {
+                get: function() {
+                    // Walk up to see if we reach the document root
+                    var cur = this.__nid;
+                    while (cur >= 0) {
+                        if (__n_getNodeType(cur) === 9) return true; // document node
+                        cur = __n_getParent(cur);
+                    }
+                    return false;
+                },
+                configurable: true
+            },
         });
 
         // Wrapper factory
@@ -739,7 +986,18 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             // Bubble through DOM elements
             for (var i = 0; i < path.length; i++) {
                 var nid = path[i];
-                event.currentTarget = __w(nid);
+                var el = __w(nid);
+                event.currentTarget = el;
+
+                // Inline event handler (e.g. onclick="...") — only on target element
+                if (i === 0) {
+                    var attrHandler = __n_getAttribute(nid, 'on' + event.type);
+                    if (attrHandler) {
+                        (new Function('event', attrHandler)).call(el, event);
+                        if (event._stopImmediate) return;
+                    }
+                }
+
                 var key = nid + ':' + event.type;
                 var cbs = _listeners[key];
                 if (cbs) {
@@ -785,6 +1043,21 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             el.click();
         };
 
+        // Fire load event on <link> elements (CSS, prefetch, etc.)
+        // We don't actually load CSS, but frameworks need the onload to resolve promises.
+        globalThis.__braille_maybe_load_link = function(node) {
+            if (!node || node.tagName !== 'LINK') return;
+            var rel = node.rel || node.getAttribute('rel') || '';
+            if (rel === 'stylesheet' || rel === 'prefetch' || rel === 'preload') {
+                setTimeout(function() {
+                    if (typeof node.onload === 'function') {
+                        node.onload({type: 'load', target: node});
+                    }
+                    node.dispatchEvent(new Event('load'));
+                }, 0);
+            }
+        };
+
         // Dynamic script loading: fetch and eval <script src="..."> on insertion
         globalThis.__braille_script_log = [];
         globalThis.__braille_maybe_load_script = function(node) {
@@ -818,21 +1091,26 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         EP.appendChild = function(child) {
             if (child && child.__nid !== undefined && this.__nid !== undefined) {
                 if (child.nodeType === 11) {
-                    // DocumentFragment: transfer all children
                     var kids = __n_getAllChildIds(child.__nid);
+                    var added = [];
                     for (var i = 0; i < kids.length; i++) {
                         __n_appendChild(this.__nid, kids[i]);
+                        added.push(__w(kids[i]));
                     }
+                    if (typeof __mo_notify === 'function' && added.length) __mo_notify('childList', this, {addedNodes: added});
                 } else {
                     __n_appendChild(this.__nid, child.__nid);
+                    if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [child]});
                 }
             }
             __braille_maybe_load_script(child);
+            __braille_maybe_load_link(child);
             return child;
         };
         EP.removeChild = function(child) {
             if (child && child.__nid !== undefined && this.__nid !== undefined) {
                 __n_removeChild(this.__nid, child.__nid);
+                if (typeof __mo_notify === 'function') __mo_notify('childList', this, {removedNodes: [child]});
             }
             return child;
         };
@@ -840,16 +1118,20 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             if (newChild && newChild.__nid !== undefined && this.__nid !== undefined) {
                 var refId = (refChild && refChild.__nid !== undefined) ? refChild.__nid : -1;
                 if (newChild.nodeType === 11) {
-                    // DocumentFragment: transfer all children
                     var kids = __n_getAllChildIds(newChild.__nid);
+                    var added = [];
                     for (var i = 0; i < kids.length; i++) {
                         __n_insertBefore(this.__nid, kids[i], refId);
+                        added.push(__w(kids[i]));
                     }
+                    if (typeof __mo_notify === 'function' && added.length) __mo_notify('childList', this, {addedNodes: added});
                 } else {
                     __n_insertBefore(this.__nid, newChild.__nid, refId);
+                    if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [newChild]});
                 }
             }
             __braille_maybe_load_script(newChild);
+            __braille_maybe_load_link(newChild);
             return newChild;
         };
 
@@ -925,6 +1207,59 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             if (_winListeners[type]) {
                 _winListeners[type] = _winListeners[type].filter(function(f){return f!==cb;});
             }
+        };
+
+        doc.dispatchEvent = function(event) {
+            event.target = document;
+            event.currentTarget = document;
+            var cbs = doc.__listeners[event.type];
+            if (cbs) {
+                var snapshot = cbs.slice();
+                for (var i = 0; i < snapshot.length; i++) snapshot[i].call(document, event);
+            }
+            return !event.defaultPrevented;
+        };
+        doc.createEvent = function(type) { return new Event(type); };
+        doc.createTreeWalker = function(root, whatToShow, filter) {
+            // Minimal TreeWalker: pre-order traversal of element nodes
+            var current = root;
+            return {
+                currentNode: root,
+                nextNode: function() {
+                    // depth-first walk
+                    if (current.firstChild) { current = current.firstChild; this.currentNode = current; return current; }
+                    while (current) {
+                        if (current.nextSibling) { current = current.nextSibling; this.currentNode = current; return current; }
+                        current = current.parentNode;
+                        if (current === root) { current = null; this.currentNode = null; return null; }
+                    }
+                    return null;
+                },
+                previousNode: function() { return null; },
+                firstChild: function() { var c = current.firstChild; if (c) { current = c; this.currentNode = c; } return c; },
+                lastChild: function() { var c = current.lastChild; if (c) { current = c; this.currentNode = c; } return c; },
+                nextSibling: function() { var s = current.nextSibling; if (s) { current = s; this.currentNode = s; } return s; },
+                previousSibling: function() { var s = current.previousSibling; if (s) { current = s; this.currentNode = s; } return s; },
+                parentNode: function() { var p = current.parentNode; if (p && p !== root) { current = p; this.currentNode = p; return p; } return null; },
+            };
+        };
+        doc.createNodeIterator = function(root) { return doc.createTreeWalker(root); };
+        doc.importNode = function(node, deep) {
+            if (!node) return node;
+            if (node.__nid !== undefined) return node.cloneNode(!!deep);
+            return node;
+        };
+        doc.adoptNode = function(node) { return node; };
+
+        window.dispatchEvent = function(event) {
+            event.target = window;
+            event.currentTarget = window;
+            var cbs = _winListeners[event.type];
+            if (cbs) {
+                var snapshot = cbs.slice();
+                for (var i = 0; i < snapshot.length; i++) snapshot[i].call(window, event);
+            }
+            return !event.defaultPrevented;
         };
 
         Object.defineProperties(doc, {

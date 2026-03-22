@@ -86,7 +86,8 @@ fn register_timers(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
     // setTimeout/setInterval: JS wrapper stores callback functions, Rust tracks timing
     {
         let state_st = Rc::clone(&state);
-        let register_timer = Function::new(ctx.clone(), move |delay: f64, is_interval: bool| -> u32 {
+        let register_timer = Function::new(ctx.clone(), move |delay: rquickjs::Value<'_>, is_interval: bool| -> u32 {
+            let delay_ms = delay.as_float().or_else(|| delay.as_int().map(|i| i as f64)).unwrap_or(0.0).max(0.0) as u64;
             let mut st = state_st.borrow_mut();
             let id = st.next_timer_id;
             st.next_timer_id += 1;
@@ -94,7 +95,7 @@ fn register_timers(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
             st.timer_entries.insert(id, super::state::TimerEntry {
                 id,
                 callback_code: format!("__braille_fire_timer({id})"),
-                delay_ms: delay.max(0.0) as u64,
+                delay_ms,
                 registered_at: current_time,
                 is_interval,
             });
@@ -103,8 +104,10 @@ fn register_timers(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
         ctx.globals().set("__braille_register_timer", register_timer).unwrap();
 
         let state_ct = Rc::clone(&state);
-        let clear_timer = Function::new(ctx.clone(), move |id: u32| {
-            state_ct.borrow_mut().timer_entries.remove(&id);
+        let clear_timer = Function::new(ctx.clone(), move |id: rquickjs::Value<'_>| {
+            if let Some(n) = id.as_int() {
+                state_ct.borrow_mut().timer_entries.remove(&(n as u32));
+            }
         }).unwrap();
         ctx.globals().set("__braille_clear_timer", clear_timer).unwrap();
 
@@ -136,15 +139,6 @@ fn register_timers(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
         "#).unwrap();
     }
 
-    // clearTimeout / clearInterval
-    {
-        let state = Rc::clone(&state);
-        let clear = Function::new(ctx.clone(), move |id: u32| {
-            state.borrow_mut().timer_entries.remove(&id);
-        }).unwrap();
-        ctx.globals().set("clearTimeout", clear.clone()).unwrap();
-        ctx.globals().set("clearInterval", clear).unwrap();
-    }
 }
 
 fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
@@ -178,14 +172,88 @@ fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
 
     ctx.globals().set("__braille_fetch_setup", fetch_setup).unwrap();
 
-    // Install the JS-side fetch() wrapper
+    // Install Headers, Request constructors and fetch() wrapper
     ctx.eval::<(), _>(r#"
+        // --- Headers constructor ---
+        globalThis.Headers = class Headers {
+            constructor(init) {
+                this._map = {};
+                if (init instanceof Headers) {
+                    init.forEach(function(v, k) { this.append(k, v); }.bind(this));
+                } else if (Array.isArray(init)) {
+                    for (var i = 0; i < init.length; i++) this.append(init[i][0], init[i][1]);
+                } else if (init && typeof init === 'object') {
+                    var keys = Object.keys(init);
+                    for (var i = 0; i < keys.length; i++) this.append(keys[i], init[keys[i]]);
+                }
+            }
+            append(name, value) { var k = name.toLowerCase(); if (this._map[k]) this._map[k] += ', ' + value; else this._map[k] = String(value); }
+            set(name, value) { this._map[name.toLowerCase()] = String(value); }
+            get(name) { var v = this._map[name.toLowerCase()]; return v !== undefined ? v : null; }
+            has(name) { return name.toLowerCase() in this._map; }
+            delete(name) { delete this._map[name.toLowerCase()]; }
+            forEach(cb) { for (var k in this._map) cb(this._map[k], k, this); }
+            entries() { var arr = []; for (var k in this._map) arr.push([k, this._map[k]]); return arr[Symbol.iterator](); }
+            keys() { return Object.keys(this._map)[Symbol.iterator](); }
+            values() { var arr = []; for (var k in this._map) arr.push(this._map[k]); return arr[Symbol.iterator](); }
+            [Symbol.iterator]() { return this.entries(); }
+        };
+
+        // --- Request constructor ---
+        globalThis.Request = class Request {
+            constructor(input, init) {
+                if (input instanceof Request) {
+                    this.url = input.url;
+                    this.method = input.method;
+                    this.headers = new Headers(input.headers);
+                    this.body = input.body;
+                } else {
+                    this.url = String(input);
+                    this.method = 'GET';
+                    this.headers = new Headers();
+                    this.body = null;
+                }
+                if (init) {
+                    if (init.method) this.method = init.method;
+                    if (init.headers) this.headers = new Headers(init.headers);
+                    if (init.body !== undefined) this.body = init.body;
+                }
+            }
+            clone() { return new Request(this); }
+        };
+
+        // --- fetch() ---
         globalThis.__braille_fetch_resolvers = {};
         globalThis.__braille_fetch_rejecters = {};
         globalThis.__braille_next_resolver_id = 1;
 
         globalThis.fetch = function(input, init) {
-            var url = typeof input === 'string' ? input : (input && input.url ? input.url : String(input));
+            var url, method, headers, body;
+            if (input instanceof Request) {
+                url = input.url;
+                method = (init && init.method) ? init.method : input.method;
+                var h = (init && init.headers) ? new Headers(init.headers) : input.headers;
+                var arr = [];
+                h.forEach(function(v, k) { arr.push([k, v]); });
+                headers = JSON.stringify(arr);
+                body = (init && init.body !== undefined) ? init.body : input.body;
+            } else {
+                url = typeof input === 'string' ? input : String(input);
+                method = (init && init.method) ? init.method : 'GET';
+                headers = '[]';
+                if (init && init.headers) {
+                    var h = init.headers;
+                    if (typeof h.forEach === 'function') {
+                        var arr = [];
+                        h.forEach(function(v, k) { arr.push([k, v]); });
+                        headers = JSON.stringify(arr);
+                    } else if (typeof h === 'object') {
+                        headers = JSON.stringify(Object.entries(h));
+                    }
+                }
+                body = (init && init.body != null) ? String(init.body) : null;
+            }
+
             // Resolve relative URLs against the page origin
             if (url.charAt(0) === '/' && url.charAt(1) !== '/') {
                 url = location.origin + url;
@@ -194,9 +262,6 @@ fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
             } else if (!/^https?:\/\//.test(url)) {
                 url = location.origin + location.pathname.replace(/[^\/]*$/, '') + url;
             }
-            var method = (init && init.method) ? init.method : 'GET';
-            var headers = (init && init.headers) ? JSON.stringify(Object.entries(init.headers)) : '[]';
-            var body = (init && init.body != null) ? String(init.body) : null;
 
             var id = __braille_fetch_setup(url, method, headers, body);
 
@@ -204,7 +269,6 @@ fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
                 var rid = __braille_next_resolver_id++;
                 __braille_fetch_resolvers[rid] = resolve;
                 __braille_fetch_rejecters[rid] = reject;
-                // Store the resolver ID on the pending fetch (via global update)
                 if (typeof __braille_set_fetch_resolver === 'function') {
                     __braille_set_fetch_resolver(id, rid);
                 }
@@ -217,27 +281,63 @@ fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
                 delete __braille_fetch_resolvers[rid];
                 delete __braille_fetch_rejecters[rid];
                 var data = JSON.parse(responseJson);
-                var headers = {};
-                if (data.headers) {
-                    for (var i = 0; i < data.headers.length; i++) {
-                        headers[data.headers[i][0].toLowerCase()] = data.headers[i][1];
-                    }
-                }
-                var response = {
-                    ok: data.status >= 200 && data.status < 300,
-                    status: data.status,
-                    statusText: data.status_text,
-                    url: data.url,
-                    headers: {
-                        get: function(name) { return headers[name.toLowerCase()] || null; },
-                        has: function(name) { return name.toLowerCase() in headers; },
-                        forEach: function(cb) { for (var k in headers) cb(headers[k], k); },
-                    },
-                    text: function() { return Promise.resolve(data.body); },
-                    json: function() { return Promise.resolve(JSON.parse(data.body)); },
+                var hdrs = new Headers(data.headers);
+                var bodyStr = data.body;
+                var makeResponse = function(b) {
+                    return {
+                        ok: data.status >= 200 && data.status < 300,
+                        status: data.status,
+                        statusText: data.status_text,
+                        url: data.url,
+                        headers: hdrs,
+                        _bodyUsed: false,
+                        get bodyUsed() { return this._bodyUsed; },
+                        text: function() { this._bodyUsed = true; return Promise.resolve(b); },
+                        json: function() { this._bodyUsed = true; return Promise.resolve(JSON.parse(b)); },
+                        arrayBuffer: function() {
+                            this._bodyUsed = true;
+                            var enc = new TextEncoder();
+                            return Promise.resolve(enc.encode(b).buffer);
+                        },
+                        blob: function() {
+                            this._bodyUsed = true;
+                            var ct = hdrs.get('content-type') || '';
+                            return Promise.resolve({ size: b.length, type: ct, text: function() { return Promise.resolve(b); }, arrayBuffer: function() { return Promise.resolve(new TextEncoder().encode(b).buffer); } });
+                        },
+                        body: new ReadableStream(b),
+                        clone: function() { return makeResponse(b); },
+                        type: 'basic',
+                        redirected: false,
+                    };
                 };
-                resolve(response);
+                resolve(makeResponse(bodyStr));
             }
+        };
+
+        // Response constructor and static methods
+        globalThis.Response = class Response {
+            constructor(body, init) {
+                var opts = init || {};
+                this.status = opts.status || 200;
+                this.statusText = opts.statusText || '';
+                this.ok = this.status >= 200 && this.status < 300;
+                this.headers = new Headers(opts.headers);
+                this.url = '';
+                this.type = 'basic';
+                this.redirected = false;
+                this._body = body != null ? String(body) : '';
+                this._bodyUsed = false;
+                this.body = new ReadableStream(this._body);
+            }
+            get bodyUsed() { return this._bodyUsed; }
+            text() { this._bodyUsed = true; return Promise.resolve(this._body); }
+            json() { this._bodyUsed = true; return Promise.resolve(JSON.parse(this._body)); }
+            arrayBuffer() { this._bodyUsed = true; return Promise.resolve(new TextEncoder().encode(this._body).buffer); }
+            blob() { this._bodyUsed = true; return Promise.resolve(new Blob([this._body], {type: this.headers.get('content-type') || ''})); }
+            clone() { return new Response(this._body, {status: this.status, statusText: this.statusText, headers: this.headers}); }
+            static redirect(url, status) { return new Response(null, {status: status || 302, headers: {Location: url}}); }
+            static json(data, init) { var opts = init || {}; opts.headers = new Headers(opts.headers); opts.headers.set('content-type','application/json'); return new Response(JSON.stringify(data), opts); }
+            static error() { return new Response(null, {status: 0}); }
         };
 
         globalThis.__braille_reject_fetch = function(rid, error) {
@@ -375,13 +475,58 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             return loc;
         })();
 
-        // History
-        globalThis.history = {
-            pushState: function(s,t,u) { if(u) location.href = u; },
-            replaceState: function(s,t,u) { if(u) location.href = u; },
-            back: function(){}, forward: function(){}, go: function(){},
-            state: null, length: 1,
-        };
+        // History — pushState/replaceState update URL components without triggering navigation
+        globalThis.history = (function() {
+            var stateStack = [null];
+            var stateIndex = 0;
+            function updateUrl(url) {
+                if (!url) return;
+                var u = String(url);
+                // Resolve relative URLs
+                if (u.charAt(0) === '/') u = location.origin + u;
+                else if (!/^https?:\/\//.test(u)) u = location.origin + location.pathname.replace(/[^\/]*$/, '') + u;
+                // Update location components directly (bypass the setter to avoid re-parse side effects)
+                var m = u.match(/^(https?:)\/\/([^/:]+)(?::(\d+))?(\/[^?#]*)?(\?[^#]*)?(#.*)?$/);
+                if (m) {
+                    location._href = u;
+                    location.protocol = m[1];
+                    location.hostname = m[2];
+                    location.port = m[3] || '';
+                    location.host = location.port ? location.hostname + ':' + location.port : location.hostname;
+                    location.pathname = m[4] || '/';
+                    location.search = m[5] || '';
+                    location.hash = m[6] || '';
+                    location.origin = location.protocol + '//' + location.host;
+                }
+            }
+            return {
+                pushState: function(s, t, u) {
+                    stateStack.splice(stateIndex + 1);
+                    stateStack.push(s);
+                    stateIndex = stateStack.length - 1;
+                    this.state = s;
+                    this.length = stateStack.length;
+                    updateUrl(u);
+                },
+                replaceState: function(s, t, u) {
+                    stateStack[stateIndex] = s;
+                    this.state = s;
+                    updateUrl(u);
+                },
+                back: function() {
+                    if (stateIndex > 0) { stateIndex--; this.state = stateStack[stateIndex]; }
+                },
+                forward: function() {
+                    if (stateIndex < stateStack.length - 1) { stateIndex++; this.state = stateStack[stateIndex]; }
+                },
+                go: function(n) {
+                    var idx = stateIndex + (n || 0);
+                    if (idx >= 0 && idx < stateStack.length) { stateIndex = idx; this.state = stateStack[stateIndex]; }
+                },
+                state: null,
+                length: 1,
+            };
+        })();
 
         // Storage
         function makeStorage() {
@@ -399,7 +544,26 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.sessionStorage = makeStorage();
 
         // Geometry/display stubs
-        globalThis.getComputedStyle = function() { return new Proxy({}, { get: function(t,p) { return ''; } }); };
+        globalThis.getComputedStyle = function(el) {
+            if (!el || el.__nid === undefined) return new Proxy({}, { get: function(t,p) { return ''; } });
+            var nid = el.__nid;
+            function toKebab(cc) {
+                if (cc === 'cssFloat') return 'float';
+                return cc.replace(/[A-Z]/g, function(c) { return '-' + c.toLowerCase(); });
+            }
+            return new Proxy({
+                getPropertyValue: function(prop) { return __n_getComputedStyle(nid, prop); },
+                getPropertyPriority: function() { return ''; },
+            }, {
+                get: function(t, p) {
+                    if (p in t) return t[p];
+                    if (typeof p !== 'string') return undefined;
+                    if (p === 'length') return 0;
+                    if (p === 'cssText') return '';
+                    return __n_getComputedStyle(nid, toKebab(p));
+                }
+            });
+        };
         globalThis.matchMedia = function(q) { return { matches: false, media: q, addListener: function(){}, removeListener: function(){}, addEventListener: function(){}, removeEventListener: function(){} }; };
         globalThis.requestAnimationFrame = function(cb) { return setTimeout(cb, 0); };
         globalThis.cancelAnimationFrame = function(id) { clearTimeout(id); };
@@ -435,7 +599,78 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
         // Observer stubs
         globalThis.ResizeObserver = class { observe(){} unobserve(){} disconnect(){} };
         globalThis.IntersectionObserver = class { constructor(cb,opts){} observe(){} unobserve(){} disconnect(){} };
-        globalThis.MutationObserver = class { constructor(cb){this._cb=cb;} observe(){} disconnect(){} takeRecords(){return [];} };
+        // MutationObserver — functional implementation
+        (function() {
+            var observers = [];
+            var pendingDeliver = false;
+
+            function MutationRecord(type, target) {
+                this.type = type; this.target = target;
+                this.addedNodes = []; this.removedNodes = [];
+                this.attributeName = null; this.oldValue = null;
+                this.previousSibling = null; this.nextSibling = null;
+            }
+
+            function queueRecord(record) {
+                for (var i = 0; i < observers.length; i++) {
+                    var obs = observers[i];
+                    for (var j = 0; j < obs._targets.length; j++) {
+                        var entry = obs._targets[j];
+                        var target = record.target;
+                        // Check if this observer watches this target (or subtree ancestor)
+                        var match = false;
+                        if (target === entry.target) match = true;
+                        else if (entry.options.subtree) {
+                            var cur = target;
+                            while (cur) { if (cur === entry.target) { match = true; break; } cur = cur.parentNode; }
+                        }
+                        if (!match) continue;
+                        if (record.type === 'attributes' && !entry.options.attributes) continue;
+                        if (record.type === 'childList' && !entry.options.childList) continue;
+                        if (record.type === 'characterData' && !entry.options.characterData) continue;
+                        obs._records.push(record);
+                    }
+                }
+                if (!pendingDeliver) {
+                    pendingDeliver = true;
+                    queueMicrotask(function() {
+                        pendingDeliver = false;
+                        for (var i = 0; i < observers.length; i++) {
+                            var obs = observers[i];
+                            if (obs._records.length > 0) {
+                                var recs = obs._records.splice(0);
+                                obs._cb(recs, obs);
+                            }
+                        }
+                    });
+                }
+            }
+
+            globalThis.MutationObserver = function(cb) {
+                this._cb = cb; this._records = []; this._targets = [];
+            };
+            MutationObserver.prototype.observe = function(target, options) {
+                this._targets.push({target: target, options: options || {}});
+                if (observers.indexOf(this) < 0) observers.push(this);
+            };
+            MutationObserver.prototype.disconnect = function() {
+                this._targets = [];
+                var idx = observers.indexOf(this);
+                if (idx >= 0) observers.splice(idx, 1);
+            };
+            MutationObserver.prototype.takeRecords = function() { return this._records.splice(0); };
+
+            globalThis.__mo_notify = function(type, target, extra) {
+                var r = new MutationRecord(type, target);
+                if (extra) {
+                    if (extra.addedNodes) r.addedNodes = extra.addedNodes;
+                    if (extra.removedNodes) r.removedNodes = extra.removedNodes;
+                    if (extra.attributeName) r.attributeName = extra.attributeName;
+                    if (extra.oldValue !== undefined) r.oldValue = extra.oldValue;
+                }
+                queueRecord(r);
+            };
+        })();
 
         // Performance
         globalThis.performance = {
@@ -499,8 +734,30 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
         // Encoding
         globalThis.TextEncoder = class TextEncoder { encode(s) { return new Uint8Array(Array.from(s||'').map(function(c){return c.charCodeAt(0);})); } };
         globalThis.TextDecoder = class TextDecoder { decode(buf) { if(!buf)return''; return Array.from(new Uint8Array(buf)).map(function(b){return String.fromCharCode(b);}).join(''); } };
-        globalThis.btoa = globalThis.btoa || function(s) { return s; };
-        globalThis.atob = globalThis.atob || function(s) { return s; };
+        // Real base64 btoa/atob
+        globalThis.btoa = function(s) {
+            var T = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+            var str = String(s), out = '', i = 0;
+            while (i < str.length) {
+                var a = str.charCodeAt(i++), b = i < str.length ? str.charCodeAt(i++) : NaN, c = i < str.length ? str.charCodeAt(i++) : NaN;
+                var n = (a << 16) | ((isNaN(b) ? 0 : b) << 8) | (isNaN(c) ? 0 : c);
+                out += T[(n >> 18) & 63] + T[(n >> 12) & 63] + (isNaN(b) ? '=' : T[(n >> 6) & 63]) + (isNaN(c) ? '=' : T[n & 63]);
+            }
+            return out;
+        };
+        globalThis.atob = function(s) {
+            var T = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+            var str = String(s).replace(/[\s]/g, ''), out = '', i = 0;
+            while (i < str.length) {
+                var a = T.indexOf(str.charAt(i++)), b = T.indexOf(str.charAt(i++));
+                var c = T.indexOf(str.charAt(i++)), d = T.indexOf(str.charAt(i++));
+                var n = (a << 18) | (b << 12) | ((c & 63) << 6) | (d & 63);
+                out += String.fromCharCode((n >> 16) & 255);
+                if (c !== 64) out += String.fromCharCode((n >> 8) & 255);
+                if (d !== 64) out += String.fromCharCode(n & 255);
+            }
+            return out;
+        };
 
         // Crypto — real WebCrypto backed by ring (native functions registered in crypto.rs)
         globalThis.crypto = (function() {
@@ -649,8 +906,41 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
         })();
 
         // Misc stubs
-        globalThis.AbortController = class AbortController { constructor(){this.signal={aborted:false,reason:undefined,addEventListener:function(){},removeEventListener:function(){},onabort:null};} abort(r){this.signal.aborted=true;this.signal.reason=r;} };
-        globalThis.AbortSignal = { abort: function(r){var s={aborted:true,reason:r,addEventListener:function(){},removeEventListener:function(){}};return s;}, timeout: function(){return{aborted:false,addEventListener:function(){},removeEventListener:function(){}};} };
+        // AbortController / AbortSignal with real event dispatch
+        globalThis.AbortSignal = (function() {
+            function makeSignal() {
+                return { aborted: false, reason: undefined, onabort: null, _listeners: [],
+                    addEventListener: function(type, cb) { if (type === 'abort') this._listeners.push(cb); },
+                    removeEventListener: function(type, cb) { if (type === 'abort') this._listeners = this._listeners.filter(function(f){return f!==cb;}); },
+                    _fire: function() {
+                        var ev = {type: 'abort', target: this};
+                        if (this.onabort) this.onabort(ev);
+                        for (var i = 0; i < this._listeners.length; i++) this._listeners[i](ev);
+                    },
+                    throwIfAborted: function() { if (this.aborted) throw this.reason || new Error('AbortError'); },
+                };
+            }
+            var AS = {
+                abort: function(reason) { var s = makeSignal(); s.aborted = true; s.reason = reason !== undefined ? reason : new Error('AbortError'); return s; },
+                timeout: function(ms) { var s = makeSignal(); setTimeout(function() { s.aborted = true; s.reason = new Error('TimeoutError'); s._fire(); }, ms); return s; },
+                any: function(signals) { var s = makeSignal(); function onAbort() { if (!s.aborted) { s.aborted = true; s.reason = this.reason; s._fire(); } } for (var i = 0; i < signals.length; i++) { if (signals[i].aborted) { s.aborted = true; s.reason = signals[i].reason; return s; } signals[i].addEventListener('abort', onAbort.bind(signals[i])); } return s; },
+            };
+            AS._makeSignal = makeSignal;
+            return AS;
+        })();
+        globalThis.AbortController = class AbortController {
+            constructor() { this.signal = AbortSignal._makeSignal(); }
+            abort(reason) { if (!this.signal.aborted) { this.signal.aborted = true; this.signal.reason = reason !== undefined ? reason : new Error('AbortError'); this.signal._fire(); } }
+        };
+        // Worker shim — inert, never responds. Apps fall back to main-thread code path.
+        globalThis.Worker = class Worker {
+            constructor(url) { this.onmessage = null; this.onerror = null; this._listeners = {}; }
+            postMessage(data) {}
+            terminate() {}
+            addEventListener(type, cb) { if (!this._listeners[type]) this._listeners[type] = []; this._listeners[type].push(cb); }
+            removeEventListener(type, cb) { if (this._listeners[type]) this._listeners[type] = this._listeners[type].filter(function(f){return f!==cb;}); }
+        };
+
         globalThis.XMLHttpRequest = class XMLHttpRequest { open(){} send(){} setRequestHeader(){} addEventListener(){} removeEventListener(){} };
         globalThis.DOMParser = class DOMParser { parseFromString(s,t) { return document; } };
         globalThis.HTMLElement = class HTMLElement {};
@@ -668,6 +958,23 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.DocumentFragment = class DocumentFragment {};
         globalThis.ShadowRoot = class ShadowRoot {};
         globalThis.CSSStyleSheet = class CSSStyleSheet { insertRule(){return 0;} deleteRule(){} get cssRules(){return [];} };
+        // ReadableStream (minimal — single-chunk body reader)
+        globalThis.ReadableStream = class ReadableStream {
+            constructor(src) { this._src = src; this.locked = false; }
+            getReader() {
+                this.locked = true;
+                var data = this._src; var done = false;
+                return {
+                    read: function() { if (done) return Promise.resolve({done:true,value:undefined}); done = true; return Promise.resolve({done:false,value: typeof data === 'string' ? new TextEncoder().encode(data) : data}); },
+                    releaseLock: function() {},
+                    cancel: function() { return Promise.resolve(); },
+                };
+            }
+            cancel() { return Promise.resolve(); }
+            pipeTo() { return Promise.resolve(); }
+            pipeThrough(t) { return t.readable || this; }
+            tee() { return [new ReadableStream(this._src), new ReadableStream(this._src)]; }
+        };
         globalThis.FormData = class FormData {
             constructor() { this._entries = []; }
             append(n,v) { this._entries.push([n,String(v)]); }
@@ -682,6 +989,60 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             forEach(cb) { this._entries.forEach(function(e){cb(e[1],e[0]);}); }
             [Symbol.iterator]() { return this.entries(); }
         };
+        // Blob / File / FileReader
+        globalThis.Blob = class Blob {
+            constructor(parts, options) {
+                this._data = '';
+                if (parts) for (var i = 0; i < parts.length; i++) {
+                    var p = parts[i];
+                    if (p instanceof Blob) this._data += p._data;
+                    else if (p instanceof ArrayBuffer) this._data += new TextDecoder().decode(p);
+                    else if (ArrayBuffer.isView(p)) this._data += new TextDecoder().decode(p);
+                    else this._data += String(p);
+                }
+                this.type = (options && options.type) || '';
+                this.size = this._data.length;
+            }
+            text() { return Promise.resolve(this._data); }
+            arrayBuffer() { return Promise.resolve(new TextEncoder().encode(this._data).buffer); }
+            slice(start, end, type) {
+                var s = this._data.slice(start || 0, end);
+                var b = new Blob([s], {type: type || this.type});
+                return b;
+            }
+            stream() { return { getReader: function() { var d = this._d; var done = false; return { read: function() { if (done) return Promise.resolve({done:true}); done=true; return Promise.resolve({value: new TextEncoder().encode(d), done:false}); }, cancel: function() { return Promise.resolve(); } }; }.bind({_d: this._data}) }; }
+        };
+        globalThis.File = class File extends Blob {
+            constructor(parts, name, options) {
+                super(parts, options);
+                this.name = name;
+                this.lastModified = (options && options.lastModified) || Date.now();
+            }
+        };
+        globalThis.FileReader = class FileReader {
+            constructor() { this.result = null; this.readyState = 0; this.error = null; this.onload = null; this.onerror = null; this.onloadend = null; }
+            _finish(result) {
+                var self = this;
+                self.readyState = 1;
+                setTimeout(function() {
+                    self.result = result;
+                    self.readyState = 2;
+                    if (self.onload) self.onload({target: self});
+                    if (self.onloadend) self.onloadend({target: self});
+                }, 0);
+            }
+            readAsText(blob) { this._finish(blob._data); }
+            readAsArrayBuffer(blob) { this._finish(new TextEncoder().encode(blob._data).buffer); }
+            readAsDataURL(blob) { this._finish('data:' + (blob.type || 'application/octet-stream') + ';base64,' + btoa(blob._data)); }
+            abort() { this.readyState = 2; }
+        };
+        // URL.createObjectURL / revokeObjectURL
+        (function() {
+            var blobStore = {};
+            URL.createObjectURL = function(blob) { var id = 'blob:' + crypto.randomUUID(); blobStore[id] = blob; return id; };
+            URL.revokeObjectURL = function(url) { delete blobStore[url]; };
+        })();
+
         globalThis.queueMicrotask = function(cb) { Promise.resolve().then(cb); };
         globalThis.structuredClone = globalThis.structuredClone || function(v) { return JSON.parse(JSON.stringify(v)); };
         globalThis.WeakRef = globalThis.WeakRef || class WeakRef { constructor(t){this._t=t;} deref(){return this._t;} };
