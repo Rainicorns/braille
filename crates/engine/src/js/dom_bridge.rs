@@ -481,17 +481,25 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         EP.addEventListener = function(type, cb, opts) {
             if (typeof cb !== 'function') return;
             var capture = !!(opts === true || (opts && opts.capture));
+            var once = !!(opts && typeof opts === 'object' && opts.once);
             var key = this.__nid + ':' + type;
             var store = capture ? _captureKeys : _bubbleKeys;
             if (!store[key]) store[key] = [];
-            store[key].push(cb);
+            if (once) {
+                var el = this;
+                var wrapper = function(e) { cb.call(el, e); el.removeEventListener(type, wrapper, capture); };
+                wrapper._origCb = cb;
+                store[key].push(wrapper);
+            } else {
+                store[key].push(cb);
+            }
         };
         EP.removeEventListener = function(type, cb, opts) {
             var capture = !!(opts === true || (opts && opts.capture));
             var key = this.__nid + ':' + type;
             var store = capture ? _captureKeys : _bubbleKeys;
             if (store[key]) {
-                store[key] = store[key].filter(function(f) { return f !== cb; });
+                store[key] = store[key].filter(function(f) { return f !== cb && f._origCb !== cb; });
             }
         };
         EP.dispatchEvent = function(event) {
@@ -542,8 +550,40 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         EP.querySelectorAll = function(sel) {
             return __n_querySelectorAll(this.__nid, sel).map(__w);
         };
-        EP.getElementsByTagName = function(tag) { return this.querySelectorAll(tag); };
-        EP.getElementsByClassName = function(cls) { return this.querySelectorAll('.' + cls); };
+        EP.getElementsByTagName = function(tag) {
+            var self = this;
+            return new Proxy([], {
+                get: function(t, p) {
+                    var live = self.querySelectorAll(tag);
+                    if (p === 'length') return live.length;
+                    if (p === 'item') return function(i) { return live[i] || null; };
+                    if (p === 'namedItem') return function(name) {
+                        for (var i = 0; i < live.length; i++) {
+                            if (live[i].getAttribute('name') === name || live[i].getAttribute('id') === name) return live[i];
+                        }
+                        return null;
+                    };
+                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
+                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
+                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                    return live[p];
+                }
+            });
+        };
+        EP.getElementsByClassName = function(cls) {
+            var self = this;
+            return new Proxy([], {
+                get: function(t, p) {
+                    var live = self.querySelectorAll('.' + cls);
+                    if (p === 'length') return live.length;
+                    if (p === 'item') return function(i) { return live[i] || null; };
+                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
+                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
+                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                    return live[p];
+                }
+            });
+        };
         EP.contains = function(other) {
             if (!other || other.__nid === undefined) return false;
             return __n_contains(this.__nid, other.__nid);
@@ -576,11 +616,24 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             var s = __n_getAttribute(this.__nid, 'style') || '';
             // display:none → all zeros
             if (/display\s*:\s*none/i.test(s)) return {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
+            // Also check computed style for display:none
+            var compDisplay = __n_getComputedStyle(this.__nid, 'display');
+            if (compDisplay === 'none') return {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
             var w = 100, h = 20;
+            // Try inline style first
             var wm = s.match(/(?:^|;)\s*width\s*:\s*(\d+)/);
             var hm = s.match(/(?:^|;)\s*height\s*:\s*(\d+)/);
             if (wm) w = parseInt(wm[1]);
             if (hm) h = parseInt(hm[1]);
+            // Fall back to computed style if inline didn't have dimensions
+            if (!wm) {
+                var cw = __n_getComputedStyle(this.__nid, 'width');
+                if (cw) { var pw = parseInt(cw); if (!isNaN(pw)) w = pw; }
+            }
+            if (!hm) {
+                var ch = __n_getComputedStyle(this.__nid, 'height');
+                if (ch) { var ph = parseInt(ch); if (!isNaN(ph)) h = ph; }
+            }
             return {top:0,left:0,width:w,height:h,right:w,bottom:h,x:0,y:0};
         };
         // focus/blur defined later after defineProperties to track activeElement
@@ -1038,7 +1091,23 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             clientLeft: { get: function() { return 0; }, configurable: true },
             offsetParent: { get: function() { return this.parentNode; }, configurable: true },
             innerText: {
-                get: function() { return this.textContent; },
+                get: function() {
+                    // Walk tree, skipping hidden elements (display:none, visibility:hidden)
+                    function walk(nid) {
+                        var nt = __n_getNodeType(nid);
+                        if (nt === 3) return __n_getCharData(nid);
+                        if (nt !== 1) return '';
+                        var disp = __n_getComputedStyle(nid, 'display');
+                        if (disp === 'none') return '';
+                        var vis = __n_getComputedStyle(nid, 'visibility');
+                        if (vis === 'hidden') return '';
+                        var kids = __n_getAllChildIds(nid);
+                        var parts = [];
+                        for (var i = 0; i < kids.length; i++) parts.push(walk(kids[i]));
+                        return parts.join('');
+                    }
+                    return walk(this.__nid);
+                },
                 set: function(v) { this.textContent = v; },
                 configurable: true
             },
@@ -1068,6 +1137,85 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 },
                 configurable: true
             },
+        });
+
+        // --- Form-related properties and methods ---
+        // form property: walk up to find ancestor <form>
+        Object.defineProperty(EP, 'form', {
+            get: function() {
+                var cur = __n_getParent(this.__nid);
+                while (cur >= 0) {
+                    if (__n_getTagName(cur) === 'FORM') return __w(cur);
+                    cur = __n_getParent(cur);
+                }
+                return null;
+            },
+            configurable: true
+        });
+
+        // Form-specific methods (only meaningful on <form> elements but safe on all)
+        EP.submit = function() {
+            if (this.tagName === 'FORM') {
+                var evt = new Event('submit', {bubbles: true, cancelable: true});
+                evt.target = this;
+                this.dispatchEvent(evt);
+            }
+        };
+        EP.reset = function() {
+            if (this.tagName !== 'FORM') return;
+            // Clear dirty flags on all descendant controls
+            var controls = this.querySelectorAll('input, textarea, select');
+            for (var i = 0; i < controls.length; i++) {
+                var c = controls[i];
+                if (c.__props) {
+                    delete c.__props._value;
+                    delete c.__props._checked;
+                    delete c.__props._selected;
+                }
+                // Sync attribute back (value falls back to defaultValue)
+                var dv = c.getAttribute('value');
+                if (dv !== null) __n_setAttribute(c.__nid, 'value', dv);
+                else __n_removeAttribute(c.__nid, 'value');
+            }
+            var evt = new Event('reset', {bubbles: true, cancelable: true});
+            evt.target = this;
+            this.dispatchEvent(evt);
+        };
+        EP.checkValidity = function() { return true; };
+        EP.reportValidity = function() { return true; };
+
+        // elements property for <form>: returns descendant controls with named access
+        Object.defineProperty(EP, 'elements', {
+            get: function() {
+                if (this.tagName !== 'FORM') return undefined;
+                var controls = this.querySelectorAll('input, textarea, select, button');
+                return new Proxy(controls, {
+                    get: function(arr, prop) {
+                        if (prop in arr) return arr[prop];
+                        if (typeof prop === 'string' && isNaN(prop)) {
+                            // Named access: find by name attribute
+                            for (var i = 0; i < arr.length; i++) {
+                                if (arr[i].getAttribute('name') === prop || arr[i].getAttribute('id') === prop) return arr[i];
+                            }
+                            return undefined;
+                        }
+                        return arr[prop];
+                    }
+                });
+            },
+            configurable: true
+        });
+
+        // action/method properties for all elements (meaningful on <form>)
+        Object.defineProperty(EP, 'action', {
+            get: function() { return this.getAttribute('action') || ''; },
+            set: function(v) { this.setAttribute('action', String(v)); },
+            configurable: true
+        });
+        Object.defineProperty(EP, 'method', {
+            get: function() { return (this.getAttribute('method') || 'get').toLowerCase(); },
+            set: function(v) { this.setAttribute('method', String(v)); },
+            configurable: true
         });
 
         // Tag → constructor map for React's node.constructor.prototype lookup
@@ -1107,6 +1255,13 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
 
             event.target = __w(nodeId);
             event.eventPhase = 0;
+
+            // Build composedPath: wrapped elements + document + window
+            var composedPath = [];
+            for (var pi = 0; pi < path.length; pi++) composedPath.push(__w(path[pi]));
+            composedPath.push(document);
+            composedPath.push(window);
+            event._path = composedPath;
 
             // Helper to fire a list of callbacks
             function fireCbs(cbs, thisObj) {
@@ -1315,25 +1470,56 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             var nid = __n_createDocFragment();
             return __w(nid);
         };
-        doc.getElementsByTagName = function(tag) { return doc.querySelectorAll(tag); };
-        doc.getElementsByClassName = function(cls) { return doc.querySelectorAll('.' + cls); };
+        doc.getElementsByTagName = function(tag) {
+            return new Proxy([], {
+                get: function(t, p) {
+                    var live = doc.querySelectorAll(tag);
+                    if (p === 'length') return live.length;
+                    if (p === 'item') return function(i) { return live[i] || null; };
+                    if (p === 'namedItem') return function(name) {
+                        for (var i = 0; i < live.length; i++) {
+                            if (live[i].getAttribute('name') === name || live[i].getAttribute('id') === name) return live[i];
+                        }
+                        return null;
+                    };
+                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
+                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
+                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                    return live[p];
+                }
+            });
+        };
+        doc.getElementsByClassName = function(cls) {
+            return new Proxy([], {
+                get: function(t, p) {
+                    var live = doc.querySelectorAll('.' + cls);
+                    if (p === 'length') return live.length;
+                    if (p === 'item') return function(i) { return live[i] || null; };
+                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
+                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
+                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                    return live[p];
+                }
+            });
+        };
         doc.addEventListener = function(type, cb, opts) {
+            if (typeof cb !== 'function') return;
             var capture = !!(opts === true || (opts && opts.capture));
-            if (capture) {
-                if (!_docCapture[type]) _docCapture[type] = [];
-                _docCapture[type].push(cb);
+            var once = !!(opts && typeof opts === 'object' && opts.once);
+            var store = capture ? _docCapture : doc.__listeners;
+            if (!store[type]) store[type] = [];
+            if (once) {
+                var wrapper = function(e) { cb.call(document, e); doc.removeEventListener(type, wrapper, capture); };
+                wrapper._origCb = cb;
+                store[type].push(wrapper);
             } else {
-                if (!doc.__listeners[type]) doc.__listeners[type] = [];
-                doc.__listeners[type].push(cb);
+                store[type].push(cb);
             }
         };
         doc.removeEventListener = function(type, cb, opts) {
             var capture = !!(opts === true || (opts && opts.capture));
-            if (capture) {
-                if (_docCapture[type]) _docCapture[type] = _docCapture[type].filter(function(f){return f!==cb;});
-            } else {
-                if (doc.__listeners[type]) doc.__listeners[type] = doc.__listeners[type].filter(function(f){return f!==cb;});
-            }
+            var store = capture ? _docCapture : doc.__listeners;
+            if (store[type]) store[type] = store[type].filter(function(f){return f!==cb && f._origCb!==cb;});
         };
 
         doc.createComment = function(text) {
@@ -1358,15 +1544,22 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         window.addEventListener = function(type, cb, opts) {
             if (typeof cb !== 'function') return;
             var capture = !!(opts === true || (opts && opts.capture));
+            var once = !!(opts && typeof opts === 'object' && opts.once);
             var store = capture ? _winCapture : _winListeners;
             if (!store[type]) store[type] = [];
-            store[type].push(cb);
+            if (once) {
+                var wrapper = function(e) { cb.call(window, e); window.removeEventListener(type, wrapper, capture); };
+                wrapper._origCb = cb;
+                store[type].push(wrapper);
+            } else {
+                store[type].push(cb);
+            }
         };
         window.removeEventListener = function(type, cb, opts) {
             var capture = !!(opts === true || (opts && opts.capture));
             var store = capture ? _winCapture : _winListeners;
             if (store[type]) {
-                store[type] = store[type].filter(function(f){return f!==cb;});
+                store[type] = store[type].filter(function(f){return f!==cb && f._origCb!==cb;});
             }
         };
 
@@ -1428,11 +1621,63 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         EP.focus = function() { __focusedElement = this; };
         EP.blur = function() { if (__focusedElement === this) __focusedElement = null; };
 
+        // document.cookie implementation (JS-side cookie jar)
+        var _cookieJar = {};
         Object.defineProperties(doc, {
             body: { get: function() { return doc.querySelector('body'); }, configurable: true },
             head: { get: function() { return doc.querySelector('head'); }, configurable: true },
             documentElement: { get: function() { return doc.querySelector('html'); }, configurable: true },
             activeElement: { get: function() { return __focusedElement || doc.querySelector('body'); }, configurable: true },
+            cookie: {
+                get: function() {
+                    var now = Date.now();
+                    var parts = [];
+                    for (var name in _cookieJar) {
+                        var c = _cookieJar[name];
+                        if (c.expires && c.expires < now) { delete _cookieJar[name]; continue; }
+                        parts.push(name + '=' + c.value);
+                    }
+                    return parts.join('; ');
+                },
+                set: function(s) {
+                    if (typeof s !== 'string') return;
+                    var parts = s.split(';');
+                    var nv = parts[0].trim().split('=');
+                    if (nv.length < 2) return;
+                    var name = nv[0].trim();
+                    var value = nv.slice(1).join('=').trim();
+                    var expires = null;
+                    for (var i = 1; i < parts.length; i++) {
+                        var p = parts[i].trim().toLowerCase();
+                        if (p.indexOf('expires=') === 0) {
+                            expires = Date.parse(parts[i].trim().substring(8));
+                        } else if (p.indexOf('max-age=') === 0) {
+                            var sec = parseInt(parts[i].trim().substring(8));
+                            if (!isNaN(sec)) expires = Date.now() + sec * 1000;
+                        }
+                    }
+                    if (expires !== null && expires < Date.now()) {
+                        delete _cookieJar[name];
+                    } else {
+                        _cookieJar[name] = { value: value, expires: expires };
+                    }
+                },
+                configurable: true
+            },
+            title: {
+                get: function() {
+                    var t = doc.querySelector('title');
+                    return t ? t.textContent : '';
+                },
+                set: function(v) {
+                    var t = doc.querySelector('title');
+                    if (t) t.textContent = String(v);
+                },
+                configurable: true
+            },
+            referrer: { value: '', writable: true, configurable: true },
+            characterSet: { value: 'UTF-8', configurable: true },
+            contentType: { value: 'text/html', configurable: true },
         });
     })();
     "#).unwrap_or_else(|e| {

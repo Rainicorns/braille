@@ -391,6 +391,7 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             preventDefault() { this.defaultPrevented = true; }
             stopPropagation() { this._stopPropagation = true; }
             stopImmediatePropagation() { this._stopImmediate = true; this._stopPropagation = true; }
+            composedPath() { return this._path || []; }
         };
         globalThis.CustomEvent = class CustomEvent extends Event {
             constructor(type, opts) { super(type, opts); this.detail = (opts && opts.detail) || null; }

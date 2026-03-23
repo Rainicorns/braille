@@ -393,6 +393,10 @@ impl JsRuntime {
             let _ = ctx.eval::<(), _>(code.as_str());
         });
         self.flush_jobs();
+        // Drain 0ms timers (React scheduler uses MessageChannel shimmed to setTimeout(fn, 0))
+        if self.fire_ready_timers() {
+            self.flush_jobs();
+        }
     }
 
     /// Synthesize MutationObserver records for parser-inserted nodes.
