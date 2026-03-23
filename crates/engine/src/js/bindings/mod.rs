@@ -6,6 +6,7 @@ pub(crate) mod character_data;
 pub(crate) mod class_list;
 pub(crate) mod collections;
 pub(crate) mod computed_style;
+pub(crate) mod custom_elements;
 pub(crate) mod document;
 pub(crate) mod dom_parser;
 pub(crate) mod element;

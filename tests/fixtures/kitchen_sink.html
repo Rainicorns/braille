@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head><title>Kitchen Sink App</title></head>
+<body>
+<div id="app"></div>
+<script>
+// ============================================================================
+// Kitchen Sink App — multi-step flow fixture for session persistence & secrets
+//
+// Pages:
+//   /          → Login form (username + password)
+//   /dashboard → Protected dashboard (requires login, shows greeting)
+//   /settings  → Settings page (change display name, toggle newsletter)
+//   /logout    → Logs out, redirects to /
+//
+// Auth state stored in localStorage (persists within a session).
+// API calls use real fetch() — test server handles /api/* endpoints.
+// ============================================================================
+
+// --- Simple DOM helpers (no framework) ---
+function el(tag, attrs) {
+  var node = document.createElement(tag);
+  attrs = attrs || {};
+  for (var k in attrs) {
+    if (k === "textContent") { node.textContent = attrs[k]; continue; }
+    if (k.indexOf("on") === 0) {
+      node.addEventListener(k.substring(2).toLowerCase(), attrs[k]);
+      continue;
+    }
+    node.setAttribute(k, String(attrs[k]));
+  }
+  for (var i = 2; i < arguments.length; i++) {
+    var child = arguments[i];
+    if (child == null) continue;
+    if (typeof child === "string") child = document.createTextNode(child);
+    node.appendChild(child);
+  }
+  return node;
+}
+
+// --- Auth state (localStorage-backed) ---
+function getAuth() {
+  var raw = localStorage.getItem("auth");
+  return raw ? JSON.parse(raw) : null;
+}
+
+function setAuth(data) {
+  localStorage.setItem("auth", JSON.stringify(data));
+}
+
+function clearAuth() {
+  localStorage.removeItem("auth");
+}
+
+// --- Settings state (localStorage-backed) ---
+function getSettings() {
+  var raw = localStorage.getItem("settings");
+  return raw ? JSON.parse(raw) : { displayName: "", newsletter: false };
+}
+
+function saveSettings(s) {
+  localStorage.setItem("settings", JSON.stringify(s));
+}
+
+// --- Router ---
+var currentPath = "/";
+
+function navigate(path) {
+  currentPath = path;
+  window.history.pushState(null, "", path);
+  render();
+}
+
+window.onpopstate = function() {
+  currentPath = window.location.pathname || "/";
+  render();
+};
+
+// --- Pages ---
+function doLogin() {
+  var username = document.getElementById("username").value;
+  var password = document.getElementById("password").value;
+  var errorEl = document.getElementById("login-error");
+
+  if (!username || !password) {
+    errorEl.textContent = "Please fill in all fields";
+    return;
+  }
+
+  fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: username, password: password })
+  }).then(function(r) {
+    return r.json().then(function(data) { return { ok: r.ok, data: data }; });
+  }).then(function(result) {
+    if (result.ok) {
+      setAuth({ token: result.data.token, user: result.data.user });
+      navigate("/dashboard");
+    } else {
+      errorEl.textContent = result.data.error || "Login failed";
+    }
+  });
+}
+
+function renderLogin() {
+  var container = el("div", { id: "login-page" },
+    el("h1", null, "Sign In"),
+    el("div", { id: "login-form" },
+      el("div", null,
+        el("label", { "for": "username" }, "Username:"),
+        el("input", { type: "text", id: "username", name: "username", placeholder: "Enter username" })
+      ),
+      el("div", null,
+        el("label", { "for": "password" }, "Password:"),
+        el("input", { type: "password", id: "password", name: "password", placeholder: "Enter password" })
+      ),
+      el("p", { id: "login-error" }),
+      el("button", { id: "login-btn", onclick: function() { doLogin(); } }, "Sign In")
+    )
+  );
+  return container;
+}
+
+function renderDashboard() {
+  var auth = getAuth();
+  if (!auth) { navigate("/"); return el("div"); }
+
+  var settings = getSettings();
+  var displayName = settings.displayName || auth.user.name;
+
+  return el("div", { id: "dashboard-page" },
+    el("nav", { id: "dashboard-nav" },
+      el("button", { id: "nav-dashboard", onclick: function() { navigate("/dashboard"); } }, "Dashboard"),
+      " | ",
+      el("button", { id: "nav-settings", onclick: function() { navigate("/settings"); } }, "Settings"),
+      " | ",
+      el("button", { id: "nav-logout", onclick: function() { navigate("/logout"); } }, "Logout")
+    ),
+    el("h1", null, "Dashboard"),
+    el("p", { id: "greeting" }, "Welcome, " + displayName + "!"),
+    el("div", { id: "profile-card" },
+      el("h2", null, "Profile"),
+      el("p", { id: "profile-email" }, "Email: " + auth.user.email),
+      el("p", { id: "profile-username" }, "Username: " + auth.user.username)
+    ),
+    el("div", { id: "quick-actions" },
+      el("h2", null, "Quick Actions"),
+      el("button", { id: "btn-settings", onclick: function() { navigate("/settings"); } }, "Go to Settings"),
+      el("button", { id: "btn-refresh", onclick: function() {
+        fetch("/api/profile").then(function(r) { return r.json(); }).then(function(data) {
+          document.getElementById("profile-email").textContent = "Email: " + data.email;
+          document.getElementById("last-refresh").textContent = "Profile refreshed";
+        });
+      }}, "Refresh Profile"),
+      el("p", { id: "last-refresh" }, "")
+    )
+  );
+}
+
+function renderSettings() {
+  var auth = getAuth();
+  if (!auth) { navigate("/"); return el("div"); }
+
+  var settings = getSettings();
+
+  return el("div", { id: "settings-page" },
+    el("nav", { id: "settings-nav" },
+      el("button", { id: "nav-dashboard", onclick: function() { navigate("/dashboard"); } }, "Dashboard"),
+      " | ",
+      el("button", { id: "nav-settings", onclick: function() { navigate("/settings"); } }, "Settings"),
+      " | ",
+      el("button", { id: "nav-logout", onclick: function() { navigate("/logout"); } }, "Logout")
+    ),
+    el("h1", null, "Settings"),
+    el("div", { id: "settings-form" },
+      el("div", null,
+        el("label", { "for": "display-name" }, "Display Name:"),
+        el("input", { type: "text", id: "display-name", name: "displayName", value: settings.displayName || "" })
+      ),
+      el("div", null,
+        el("input", { type: "checkbox", id: "newsletter", name: "newsletter" }),
+        el("label", { "for": "newsletter" }, "Subscribe to newsletter")
+      ),
+      el("button", { id: "save-settings", onclick: function() {
+        var displayName = document.getElementById("display-name").value;
+        var newsletter = document.getElementById("newsletter").checked;
+        saveSettings({ displayName: displayName, newsletter: newsletter });
+        document.getElementById("settings-status").textContent = "Settings saved";
+      }}, "Save Settings"),
+      el("p", { id: "settings-status" }, "")
+    )
+  );
+}
+
+function renderLogout() {
+  clearAuth();
+  navigate("/");
+  return el("div");
+}
+
+// --- Render ---
+function render() {
+  var app = document.getElementById("app");
+  app.innerHTML = "";
+
+  var page;
+  if (currentPath === "/" || currentPath === "") {
+    page = renderLogin();
+  } else if (currentPath === "/dashboard") {
+    page = renderDashboard();
+  } else if (currentPath === "/settings") {
+    page = renderSettings();
+  } else if (currentPath === "/logout") {
+    page = renderLogout();
+  } else {
+    page = el("div", { id: "not-found" },
+      el("h1", null, "404"),
+      el("p", null, "Page not found")
+    );
+  }
+
+  if (page) app.appendChild(page);
+}
+
+// Initial render
+render();
+
+// Test helpers
+window.__test = {
+  getAuth: getAuth,
+  getSettings: getSettings,
+  getCurrentPath: function() { return currentPath; },
+  navigate: navigate
+};
+</script>
+</body>
+</html>

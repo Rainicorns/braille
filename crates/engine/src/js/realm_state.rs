@@ -45,6 +45,28 @@ pub(crate) type AttrCacheKey = (usize, NodeId, String);
 /// Shared Attr identity cache: maps (tree_ptr, element_id, attr_qname) → Attr NodeId.
 pub(crate) type AttrNodeCache = HashMap<AttrCacheKey, NodeId>;
 
+/// Custom element definition — stores constructor + cached lifecycle callbacks.
+pub(crate) struct CustomElementDefinition {
+    pub(crate) constructor: JsObject,
+    pub(crate) observed_attributes: Vec<String>,
+    pub(crate) connected_callback: Option<JsObject>,
+    pub(crate) disconnected_callback: Option<JsObject>,
+    pub(crate) attribute_changed_callback: Option<JsObject>,
+}
+
+/// Custom Elements registry per spec.
+pub(crate) struct CustomElementsRegistry {
+    pub(crate) definitions: HashMap<String, CustomElementDefinition>,
+}
+
+impl CustomElementsRegistry {
+    pub(crate) fn new() -> Self {
+        Self {
+            definitions: HashMap::new(),
+        }
+    }
+}
+
 /// A pending timer (setTimeout or setInterval).
 pub(crate) struct TimerEntry {
     pub(crate) id: u32,
@@ -220,6 +242,10 @@ pub(crate) struct RealmState {
     // -- Shared location URL (for History API integration) --
     #[unsafe_ignore_trace]
     pub(crate) location_url: Rc<RefCell<String>>,
+
+    // -- Custom Elements registry --
+    #[unsafe_ignore_trace]
+    pub(crate) custom_elements: Rc<RefCell<CustomElementsRegistry>>,
 }
 
 impl RealmState {
@@ -263,6 +289,7 @@ impl RealmState {
             live_iterators: Rc::new(RefCell::new(Vec::new())),
             pending_fetches: Rc::new(RefCell::new(Vec::new())),
             location_url: Rc::new(RefCell::new("about:blank".to_string())),
+            custom_elements: Rc::new(RefCell::new(CustomElementsRegistry::new())),
         }
     }
 
@@ -306,6 +333,7 @@ impl RealmState {
             live_iterators: Rc::new(RefCell::new(Vec::new())),
             pending_fetches: Rc::new(RefCell::new(Vec::new())),
             location_url: Rc::new(RefCell::new("about:blank".to_string())),
+            custom_elements: Rc::new(RefCell::new(CustomElementsRegistry::new())),
         }
     }
 }
@@ -408,6 +436,11 @@ rc_accessor!(
 );
 rc_accessor!(pending_fetches, pending_fetches, Rc<RefCell<Vec<PendingFetch>>>);
 rc_accessor!(location_url, location_url, Rc<RefCell<String>>);
+rc_accessor!(
+    custom_elements,
+    custom_elements,
+    Rc<RefCell<CustomElementsRegistry>>
+);
 
 // -- Prototype/factory cache accessors (clone Option<T> out) --
 
@@ -648,6 +681,9 @@ fn register_realm_globals_inner(
 
     // 20. localStorage + sessionStorage globals
     bindings::storage::register_storage_globals(context);
+
+    // 21. Custom Elements registry (customElements.define/get/whenDefined)
+    bindings::custom_elements::register_custom_elements(context);
 
     // 16. Copy globals to window (EventTarget, constructors, event methods)
     copy_globals_to_window(context);

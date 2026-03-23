@@ -406,6 +406,14 @@ fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // __n_getAttributeNames(nodeId) -> JSON array of attribute names
+    g.set("__n_getAttributeNames", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            let names = tree.attribute_names(node_id as NodeId);
+            serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string())
+        })
+    }).unwrap()).unwrap();
+
     // __n_cssSupports(declaration) -> bool — check if a CSS declaration parses
     g.set("__n_cssSupports", Function::new(ctx.clone(), |decl: String| -> bool {
         !crate::css::parser::parse_inline_style(&decl).is_empty()
@@ -445,8 +453,12 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(r#"
     (function() {
         var _cache = {};
-        var _listeners = {};  // key: nodeId + ":" + eventType -> array of callbacks
-        var _winListeners = {};  // window event listeners
+        var _listeners = {};      // key: nodeId + ":" + eventType -> array of {cb, capture}
+        var _captureKeys = {};    // key: nodeId + ":" + eventType -> array of capture callbacks
+        var _bubbleKeys = {};     // key: nodeId + ":" + eventType -> array of bubble callbacks
+        var _winListeners = {};   // window bubble listeners
+        var _winCapture = {};     // window capture listeners
+        var _docCapture = {};     // document capture listeners
 
         // Element prototype
         var EP = {};
@@ -468,14 +480,18 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
 
         EP.addEventListener = function(type, cb, opts) {
             if (typeof cb !== 'function') return;
+            var capture = !!(opts === true || (opts && opts.capture));
             var key = this.__nid + ':' + type;
-            if (!_listeners[key]) _listeners[key] = [];
-            _listeners[key].push(cb);
+            var store = capture ? _captureKeys : _bubbleKeys;
+            if (!store[key]) store[key] = [];
+            store[key].push(cb);
         };
-        EP.removeEventListener = function(type, cb) {
+        EP.removeEventListener = function(type, cb, opts) {
+            var capture = !!(opts === true || (opts && opts.capture));
             var key = this.__nid + ':' + type;
-            if (_listeners[key]) {
-                _listeners[key] = _listeners[key].filter(function(f) { return f !== cb; });
+            var store = capture ? _captureKeys : _bubbleKeys;
+            if (store[key]) {
+                store[key] = store[key].filter(function(f) { return f !== cb; });
             }
         };
         EP.dispatchEvent = function(event) {
@@ -487,6 +503,37 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             event.target = this;
             event.currentTarget = this;
             __dispatch(this.__nid, event);
+
+            // Deliver React onClick/onSubmit via __reactProps$.
+            // Our capture/bubble dispatch fires React's native listeners but
+            // React's internal event processing may not complete in headless mode.
+            var node = this;
+            while (node && node.__nid !== undefined) {
+                var pk = Object.keys(node).find(function(k) { return k.indexOf('__reactProps$') === 0; });
+                if (pk && node[pk]) {
+                    var synth = {
+                        type: 'click', target: this, currentTarget: node,
+                        bubbles: true, cancelable: true, defaultPrevented: false,
+                        preventDefault: function() { this.defaultPrevented = true; },
+                        stopPropagation: function() { this._stopped = true; },
+                        nativeEvent: event, persist: function() {},
+                    };
+                    if (typeof node[pk].onClick === 'function') {
+                        node[pk].onClick(synth);
+                        if (synth._stopped) break;
+                    }
+                    if (node.tagName === 'FORM' && typeof node[pk].onSubmit === 'function') {
+                        var s2 = {
+                            type: 'submit', target: this, currentTarget: node,
+                            bubbles: true, cancelable: true, defaultPrevented: false,
+                            preventDefault: function() { this.defaultPrevented = true; },
+                            stopPropagation: function() {}, persist: function() {},
+                        };
+                        node[pk].onSubmit(s2);
+                    }
+                }
+                node = node.parentNode;
+            }
         };
         EP.querySelector = function(sel) {
             var id = __n_querySelector(this.__nid, sel);
@@ -536,8 +583,7 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             if (hm) h = parseInt(hm[1]);
             return {top:0,left:0,width:w,height:h,right:w,bottom:h,x:0,y:0};
         };
-        EP.focus = function() {};
-        EP.blur = function() {};
+        // focus/blur defined later after defineProperties to track activeElement
         EP.scrollIntoView = function() {};
         EP.matches = function(sel) { return __n_matchesSelector(this.__nid, sel); };
         EP.closest = function(sel) {
@@ -545,8 +591,7 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             return id >= 0 ? __w(id) : null;
         };
         EP.getAttributeNames = function() {
-            // TODO: return real attribute names from native
-            return [];
+            return JSON.parse(__n_getAttributeNames(this.__nid));
         };
         EP.append = function() {
             for (var i = 0; i < arguments.length; i++) {
@@ -684,13 +729,42 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 configurable: true
             },
             value: {
+                get: function() {
+                    if (this.__props && this.__props._value !== undefined) return this.__props._value;
+                    return this.getAttribute('value') || '';
+                },
+                set: function(v) {
+                    if (!this.__props) this.__props = {};
+                    this.__props._value = String(v);
+                    // Also sync to attribute so Rust-side snapshot can read the current value
+                    __n_setAttribute(this.__nid, 'value', String(v));
+                },
+                configurable: true
+            },
+            defaultValue: {
                 get: function() { return this.getAttribute('value') || ''; },
-                set: function(v) { this.setAttribute('value', v); },
+                set: function(v) { this.setAttribute('value', String(v)); },
                 configurable: true
             },
             checked: {
+                get: function() {
+                    if (this.__props && this.__props._checked !== undefined) return this.__props._checked;
+                    return this.hasAttribute('checked');
+                },
+                set: function(v) { if (!this.__props) this.__props = {}; this.__props._checked = !!v; },
+                configurable: true
+            },
+            defaultChecked: {
                 get: function() { return this.hasAttribute('checked'); },
                 set: function(v) { if(v) this.setAttribute('checked',''); else this.removeAttribute('checked'); },
+                configurable: true
+            },
+            selected: {
+                get: function() {
+                    if (this.__props && this.__props._selected !== undefined) return this.__props._selected;
+                    return this.hasAttribute('selected');
+                },
+                set: function(v) { if (!this.__props) this.__props = {}; this.__props._selected = !!v; },
                 configurable: true
             },
             disabled: {
@@ -719,7 +793,12 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 configurable: true
             },
             type: {
-                get: function() { return this.getAttribute('type') || ''; },
+                get: function() {
+                    var t = this.getAttribute('type');
+                    // HTML spec: <input> without type defaults to 'text'
+                    if (t === null && this.tagName === 'INPUT') return 'text';
+                    return t || '';
+                },
                 set: function(v) { this.setAttribute('type', v); },
                 configurable: true
             },
@@ -945,6 +1024,37 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 },
                 configurable: true
             },
+            scrollTop: { get: function() { return 0; }, set: function(){}, configurable: true },
+            scrollLeft: { get: function() { return 0; }, set: function(){}, configurable: true },
+            scrollWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
+            scrollHeight: { get: function() { return this.getBoundingClientRect().height; }, configurable: true },
+            offsetTop: { get: function() { return 0; }, configurable: true },
+            offsetLeft: { get: function() { return 0; }, configurable: true },
+            offsetWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
+            offsetHeight: { get: function() { return this.getBoundingClientRect().height; }, configurable: true },
+            clientWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
+            clientHeight: { get: function() { return this.getBoundingClientRect().height; }, configurable: true },
+            clientTop: { get: function() { return 0; }, configurable: true },
+            clientLeft: { get: function() { return 0; }, configurable: true },
+            offsetParent: { get: function() { return this.parentNode; }, configurable: true },
+            innerText: {
+                get: function() { return this.textContent; },
+                set: function(v) { this.textContent = v; },
+                configurable: true
+            },
+            outerHTML: {
+                get: function() {
+                    var tag = (this.tagName || 'div').toLowerCase();
+                    var attrs = this.getAttributeNames();
+                    var s = '<' + tag;
+                    for (var i = 0; i < attrs.length; i++) {
+                        s += ' ' + attrs[i] + '="' + (this.getAttribute(attrs[i]) || '').replace(/"/g, '&quot;') + '"';
+                    }
+                    s += '>' + (this.innerHTML || '') + '</' + tag + '>';
+                    return s;
+                },
+                configurable: true
+            },
             ownerDocument: { get: function() { return document; }, configurable: true },
             isConnected: {
                 get: function() {
@@ -960,19 +1070,34 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             },
         });
 
+        // Tag → constructor map for React's node.constructor.prototype lookup
+        var _ctorMap = {
+            INPUT: HTMLInputElement, TEXTAREA: HTMLTextAreaElement,
+            SELECT: HTMLSelectElement, FORM: HTMLFormElement,
+            A: HTMLAnchorElement, IMG: HTMLImageElement,
+            BUTTON: HTMLButtonElement, OPTION: HTMLOptionElement,
+            IFRAME: HTMLIFrameElement,
+        };
+
         // Wrapper factory
         function __w(nodeId) {
             if (_cache[nodeId]) return _cache[nodeId];
             var obj = Object.create(EP);
             obj.__nid = nodeId;
+            obj.__props = {}; // per-element property store (dirty value/checked/selected)
+            // Set constructor so React's inputValueTracking can find
+            // the native value descriptor via node.constructor.prototype
+            var tag = __n_getTagName(nodeId);
+            var ctor = _ctorMap[tag];
+            if (ctor) obj.constructor = ctor;
             _cache[nodeId] = obj;
             return obj;
         }
         globalThis.__braille_get_element_wrapper = __w;
 
-        // Event dispatch with bubbling through DOM, then document, then window
+        // Event dispatch with capture + bubble phases
         function __dispatch(nodeId, event) {
-            // Build path: node -> parent -> ... -> root
+            // Build path: target -> parent -> ... -> root
             var path = [];
             var cur = nodeId;
             while (cur >= 0) {
@@ -980,60 +1105,81 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 cur = __n_getParent(cur);
             }
 
-            // Set target
             event.target = __w(nodeId);
+            event.eventPhase = 0;
 
-            // Bubble through DOM elements
-            for (var i = 0; i < path.length; i++) {
+            // Helper to fire a list of callbacks
+            function fireCbs(cbs, thisObj) {
+                if (!cbs || !cbs.length) return;
+                var snapshot = cbs.slice();
+                for (var j = 0; j < snapshot.length; j++) {
+                    snapshot[j].call(thisObj, event);
+                    if (event._stopImmediate) return;
+                }
+            }
+
+            // === CAPTURE PHASE (root → target) ===
+            // Window capture
+            event.eventPhase = 1;
+            event.currentTarget = window;
+            fireCbs(_winCapture[event.type], window);
+            if (event._stopImmediate || event._stopPropagation) return;
+
+            // Document capture
+            event.currentTarget = document;
+            fireCbs(_docCapture[event.type], document);
+            if (event._stopImmediate || event._stopPropagation) return;
+
+            // DOM elements capture: from root down to (but not including) target
+            for (var i = path.length - 1; i > 0; i--) {
                 var nid = path[i];
-                var el = __w(nid);
-                event.currentTarget = el;
-
-                // Inline event handler (e.g. onclick="...") — only on target element
-                if (i === 0) {
-                    var attrHandler = __n_getAttribute(nid, 'on' + event.type);
-                    if (attrHandler) {
-                        (new Function('event', attrHandler)).call(el, event);
-                        if (event._stopImmediate) return;
-                    }
-                }
-
-                var key = nid + ':' + event.type;
-                var cbs = _listeners[key];
-                if (cbs) {
-                    var snapshot = cbs.slice();
-                    for (var j = 0; j < snapshot.length; j++) {
-                        snapshot[j].call(event.currentTarget, event);
-                        if (event._stopImmediate) return;
-                    }
-                }
-                if (event._stopPropagation || !event.bubbles) break;
+                event.currentTarget = __w(nid);
+                fireCbs(_captureKeys[nid + ':' + event.type], event.currentTarget);
+                if (event._stopImmediate || event._stopPropagation) return;
             }
 
-            // Bubble to document listeners
-            if (!event._stopPropagation && event.bubbles) {
+            // === AT-TARGET PHASE ===
+            event.eventPhase = 2;
+            var targetNid = path[0];
+            var targetEl = __w(targetNid);
+            event.currentTarget = targetEl;
+
+            // Inline event handler (e.g. onclick="...")
+            var attrHandler = __n_getAttribute(targetNid, 'on' + event.type);
+            if (attrHandler) {
+                (new Function('event', attrHandler)).call(targetEl, event);
+                if (event._stopImmediate) return;
+            }
+
+            // Fire both capture and bubble listeners at target (per spec)
+            fireCbs(_captureKeys[targetNid + ':' + event.type], targetEl);
+            if (event._stopImmediate) return;
+            fireCbs(_bubbleKeys[targetNid + ':' + event.type], targetEl);
+            if (event._stopImmediate) return;
+
+            if (!event.bubbles) return;
+
+            // === BUBBLE PHASE (target+1 → root → document → window) ===
+            event.eventPhase = 3;
+            for (var i = 1; i < path.length; i++) {
+                if (event._stopPropagation) break;
+                var nid = path[i];
+                event.currentTarget = __w(nid);
+                fireCbs(_bubbleKeys[nid + ':' + event.type], event.currentTarget);
+                if (event._stopImmediate) return;
+            }
+
+            // Document bubble
+            if (!event._stopPropagation) {
                 event.currentTarget = document;
-                var docCbs = doc.__listeners[event.type];
-                if (docCbs) {
-                    var snapshot = docCbs.slice();
-                    for (var j = 0; j < snapshot.length; j++) {
-                        snapshot[j].call(document, event);
-                        if (event._stopImmediate) return;
-                    }
-                }
+                fireCbs(doc.__listeners[event.type], document);
+                if (event._stopImmediate) return;
             }
 
-            // Bubble to window listeners
-            if (!event._stopPropagation && event.bubbles) {
+            // Window bubble
+            if (!event._stopPropagation) {
                 event.currentTarget = window;
-                var winCbs = _winListeners[event.type];
-                if (winCbs) {
-                    var snapshot = winCbs.slice();
-                    for (var j = 0; j < snapshot.length; j++) {
-                        snapshot[j].call(window, event);
-                        if (event._stopImmediate) return;
-                    }
-                }
+                fireCbs(_winListeners[event.type], window);
             }
         }
 
@@ -1171,12 +1317,23 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         };
         doc.getElementsByTagName = function(tag) { return doc.querySelectorAll(tag); };
         doc.getElementsByClassName = function(cls) { return doc.querySelectorAll('.' + cls); };
-        doc.addEventListener = function(type, cb) {
-            if (!doc.__listeners[type]) doc.__listeners[type] = [];
-            doc.__listeners[type].push(cb);
+        doc.addEventListener = function(type, cb, opts) {
+            var capture = !!(opts === true || (opts && opts.capture));
+            if (capture) {
+                if (!_docCapture[type]) _docCapture[type] = [];
+                _docCapture[type].push(cb);
+            } else {
+                if (!doc.__listeners[type]) doc.__listeners[type] = [];
+                doc.__listeners[type].push(cb);
+            }
         };
-        doc.removeEventListener = function(type, cb) {
-            if (doc.__listeners[type]) doc.__listeners[type] = doc.__listeners[type].filter(function(f){return f!==cb;});
+        doc.removeEventListener = function(type, cb, opts) {
+            var capture = !!(opts === true || (opts && opts.capture));
+            if (capture) {
+                if (_docCapture[type]) _docCapture[type] = _docCapture[type].filter(function(f){return f!==cb;});
+            } else {
+                if (doc.__listeners[type]) doc.__listeners[type] = doc.__listeners[type].filter(function(f){return f!==cb;});
+            }
         };
 
         doc.createComment = function(text) {
@@ -1198,14 +1355,18 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         };
 
         // window.addEventListener / removeEventListener
-        window.addEventListener = function(type, cb) {
+        window.addEventListener = function(type, cb, opts) {
             if (typeof cb !== 'function') return;
-            if (!_winListeners[type]) _winListeners[type] = [];
-            _winListeners[type].push(cb);
+            var capture = !!(opts === true || (opts && opts.capture));
+            var store = capture ? _winCapture : _winListeners;
+            if (!store[type]) store[type] = [];
+            store[type].push(cb);
         };
-        window.removeEventListener = function(type, cb) {
-            if (_winListeners[type]) {
-                _winListeners[type] = _winListeners[type].filter(function(f){return f!==cb;});
+        window.removeEventListener = function(type, cb, opts) {
+            var capture = !!(opts === true || (opts && opts.capture));
+            var store = capture ? _winCapture : _winListeners;
+            if (store[type]) {
+                store[type] = store[type].filter(function(f){return f!==cb;});
             }
         };
 
@@ -1262,10 +1423,16 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             return !event.defaultPrevented;
         };
 
+        // Track focused element for document.activeElement
+        var __focusedElement = null;
+        EP.focus = function() { __focusedElement = this; };
+        EP.blur = function() { if (__focusedElement === this) __focusedElement = null; };
+
         Object.defineProperties(doc, {
             body: { get: function() { return doc.querySelector('body'); }, configurable: true },
             head: { get: function() { return doc.querySelector('head'); }, configurable: true },
             documentElement: { get: function() { return doc.querySelector('html'); }, configurable: true },
+            activeElement: { get: function() { return __focusedElement || doc.querySelector('body'); }, configurable: true },
         });
     })();
     "#).unwrap_or_else(|e| {

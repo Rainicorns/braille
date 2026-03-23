@@ -25,9 +25,15 @@ impl NetworkClient {
     pub fn new() -> Self {
         let client = Client::builder()
             .cookie_store(true)
+            .user_agent("Mozilla/5.0 (compatible; Braille/0.1)")
             .build()
             .expect("failed to build reqwest client");
         NetworkClient { client, base_url: None }
+    }
+
+    /// Get a clone of the underlying reqwest client (for parallel fetching).
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     /// Fetch a URL. Follows redirects automatically (reqwest default).

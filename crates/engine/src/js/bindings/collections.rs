@@ -2378,10 +2378,12 @@ fn collect_descendants_by_class_recursive(
     node_id: NodeId,
     class_names: &[String],
     results: &mut Vec<NodeId>,
-    is_root: bool,
+    _is_root: bool,
 ) {
-    let node = tree.get_node(node_id);
-    if !is_root {
+    // Iterative DFS — start with root's children to skip root itself
+    let mut stack: Vec<NodeId> = tree.get_node(node_id).children.iter().copied().rev().collect();
+    while let Some(current) = stack.pop() {
+        let node = tree.get_node(current);
         if let NodeData::Element { ref attributes, .. } = node.data {
             if let Some(class_attr) = attributes
                 .iter()
@@ -2390,14 +2392,13 @@ fn collect_descendants_by_class_recursive(
             {
                 let element_classes: Vec<&str> = class_attr.split_ascii_whitespace().collect();
                 if class_names.iter().all(|cn| element_classes.contains(&cn.as_str())) {
-                    results.push(node_id);
+                    results.push(current);
                 }
             }
         }
-    }
-    let children: Vec<NodeId> = node.children.clone();
-    for child_id in children {
-        collect_descendants_by_class_recursive(tree, child_id, class_names, results, false);
+        for &child_id in node.children.iter().rev() {
+            stack.push(child_id);
+        }
     }
 }
 
@@ -2692,10 +2693,12 @@ fn collect_descendants_by_tag_recursive(
     node_id: NodeId,
     search_tag: &str,
     results: &mut Vec<NodeId>,
-    is_root: bool,
+    _is_root: bool,
 ) {
-    let node = tree.get_node(node_id);
-    if !is_root {
+    // Iterative DFS — start with root's children to skip root itself
+    let mut stack: Vec<NodeId> = tree.get_node(node_id).children.iter().copied().rev().collect();
+    while let Some(current) = stack.pop() {
+        let node = tree.get_node(current);
         if let NodeData::Element {
             ref tag_name,
             ref namespace,
@@ -2703,7 +2706,7 @@ fn collect_descendants_by_tag_recursive(
         } = node.data
         {
             if search_tag == "*" {
-                results.push(node_id);
+                results.push(current);
             } else if tree.is_html_document() {
                 // Per spec for HTML documents:
                 // - HTML-namespace elements: compare search_tag ASCII-lowercased against
@@ -2712,24 +2715,21 @@ fn collect_descendants_by_tag_recursive(
                 let is_html_ns = namespace == "http://www.w3.org/1999/xhtml";
                 if is_html_ns {
                     if search_tag.to_ascii_lowercase() == *tag_name {
-                        results.push(node_id);
+                        results.push(current);
                     }
-                } else {
-                    if search_tag == tag_name {
-                        results.push(node_id);
-                    }
+                } else if search_tag == tag_name {
+                    results.push(current);
                 }
             } else {
                 // XML document: exact match for all namespaces
                 if search_tag == tag_name {
-                    results.push(node_id);
+                    results.push(current);
                 }
             }
         }
-    }
-    let children: Vec<NodeId> = node.children.clone();
-    for child_id in children {
-        collect_descendants_by_tag_recursive(tree, child_id, search_tag, results, false);
+        for &child_id in node.children.iter().rev() {
+            stack.push(child_id);
+        }
     }
 }
 

@@ -77,25 +77,25 @@ impl<'a> DomElement<'a> {
         self.check_options_recursive(self.node_id)
     }
 
-    /// Recursively check children for <option selected> with non-empty value.
+    /// Iteratively check descendants for <option selected> with non-empty value.
     fn check_options_recursive(&self, node_id: NodeId) -> bool {
-        let node = self.tree.get_node(node_id);
-        for &child_id in &node.children {
-            let child = self.tree.get_node(child_id);
-            if let NodeData::Element { ref tag_name, .. } = child.data {
-                if tag_name == "option" && self.tree.has_attribute(child_id, "selected") {
+        let mut stack: Vec<NodeId> = self.tree.get_node(node_id).children.iter().copied().rev().collect();
+        while let Some(current) = stack.pop() {
+            let node = self.tree.get_node(current);
+            if let NodeData::Element { ref tag_name, .. } = node.data {
+                if tag_name == "option" && self.tree.has_attribute(current, "selected") {
                     // Check the option's value attribute; if not present, use text content
                     let value = self
                         .tree
-                        .get_attribute(child_id, "value")
-                        .unwrap_or_else(|| self.tree.get_text_content(child_id));
+                        .get_attribute(current, "value")
+                        .unwrap_or_else(|| self.tree.get_text_content(current));
                     if !value.is_empty() {
                         return true;
                     }
                 }
-                // Recurse into optgroup etc.
-                if self.check_options_recursive(child_id) {
-                    return true;
+                // Push children for optgroup etc.
+                for &child_id in node.children.iter().rev() {
+                    stack.push(child_id);
                 }
             }
         }
@@ -107,21 +107,21 @@ impl<'a> DomElement<'a> {
         self.check_invalid_descendants(self.node_id)
     }
 
-    /// Recursively walk descendants looking for invalid form elements.
+    /// Iteratively walk descendants looking for invalid form elements.
     fn check_invalid_descendants(&self, node_id: NodeId) -> bool {
-        let node = self.tree.get_node(node_id);
-        for &child_id in &node.children {
-            let child = self.tree.get_node(child_id);
-            if let NodeData::Element { ref tag_name, .. } = child.data {
+        let mut stack: Vec<NodeId> = self.tree.get_node(node_id).children.iter().copied().rev().collect();
+        while let Some(current) = stack.pop() {
+            let node = self.tree.get_node(current);
+            if let NodeData::Element { ref tag_name, .. } = node.data {
                 if matches!(tag_name.as_str(), "input" | "textarea" | "select") {
-                    let child_elem = DomElement::new(self.tree, child_id);
+                    let child_elem = DomElement::new(self.tree, current);
                     if child_elem.is_form_element_invalid() {
                         return true;
                     }
                 }
-                // Recurse into children
-                if self.check_invalid_descendants(child_id) {
-                    return true;
+                // Push children
+                for &child_id in node.children.iter().rev() {
+                    stack.push(child_id);
                 }
             }
         }
@@ -556,36 +556,37 @@ pub fn matches_selector_str(tree: &DomTree, node_id: NodeId, selector: &str, sco
     false
 }
 
-/// Helper function to recursively find the first matching element.
+/// Helper function to iteratively find the first matching element (pre-order DFS).
 fn find_first_match(
     tree: &DomTree,
     node_id: NodeId,
     selector_list: &SelectorList<BrailleSelectorImpl>,
     context: &mut MatchingContext<BrailleSelectorImpl>,
 ) -> Option<NodeId> {
-    let node = tree.get_node(node_id);
+    let mut stack: Vec<NodeId> = vec![node_id];
+    while let Some(current) = stack.pop() {
+        let node = tree.get_node(current);
 
-    // Check if this node is an element and matches
-    if matches!(node.data, NodeData::Element { .. }) {
-        let element = DomElement::new(tree, node_id);
-        for selector in selector_list.slice().iter() {
-            if matches_selector(selector, 0, None, &element, context) {
-                return Some(node_id);
+        // Check if this node is an element and matches
+        if matches!(node.data, NodeData::Element { .. }) {
+            let element = DomElement::new(tree, current);
+            for selector in selector_list.slice().iter() {
+                if matches_selector(selector, 0, None, &element, context) {
+                    return Some(current);
+                }
             }
         }
-    }
 
-    // Recursively search children
-    for &child_id in &node.children {
-        if let Some(found) = find_first_match(tree, child_id, selector_list, context) {
-            return Some(found);
+        // Push children in reverse for pre-order DFS
+        for &child_id in node.children.iter().rev() {
+            stack.push(child_id);
         }
     }
 
     None
 }
 
-/// Helper function to recursively collect all matching elements.
+/// Helper function to iteratively collect all matching elements (pre-order DFS).
 fn collect_matches(
     tree: &DomTree,
     node_id: NodeId,
@@ -593,22 +594,25 @@ fn collect_matches(
     context: &mut MatchingContext<BrailleSelectorImpl>,
     results: &mut Vec<NodeId>,
 ) {
-    let node = tree.get_node(node_id);
+    let mut stack: Vec<NodeId> = vec![node_id];
+    while let Some(current) = stack.pop() {
+        let node = tree.get_node(current);
 
-    // Check if this node is an element and matches
-    if matches!(node.data, NodeData::Element { .. }) {
-        let element = DomElement::new(tree, node_id);
-        for selector in selector_list.slice().iter() {
-            if matches_selector(selector, 0, None, &element, context) {
-                results.push(node_id);
-                break; // Don't add the same element multiple times
+        // Check if this node is an element and matches
+        if matches!(node.data, NodeData::Element { .. }) {
+            let element = DomElement::new(tree, current);
+            for selector in selector_list.slice().iter() {
+                if matches_selector(selector, 0, None, &element, context) {
+                    results.push(current);
+                    break; // Don't add the same element multiple times
+                }
             }
         }
-    }
 
-    // Recursively search children
-    for &child_id in &node.children {
-        collect_matches(tree, child_id, selector_list, context, results);
+        // Push children in reverse for pre-order DFS
+        for &child_id in node.children.iter().rev() {
+            stack.push(child_id);
+        }
     }
 }
 

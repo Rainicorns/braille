@@ -118,91 +118,103 @@ fn adopt_node_recursive(
     dst_tree: &Rc<RefCell<DomTree>>,
     mapping: &mut Vec<(NodeId, NodeId)>,
 ) -> NodeId {
-    let src = src_tree.borrow();
-    let node = src.get_node(src_id);
+    // Iterative DFS with explicit stack of (src_id, Option<dst_parent_id>).
+    // None means this is the root node whose new_id we return.
+    let mut stack: Vec<(NodeId, Option<NodeId>)> = vec![(src_id, None)];
+    let mut root_new_id: Option<NodeId> = None;
 
-    let new_id = match &node.data {
-        NodeData::Text { content } => {
-            let t = content.clone();
-            drop(src);
-            dst_tree.borrow_mut().create_text(&t)
-        }
-        NodeData::Comment { content } => {
-            let t = content.clone();
-            drop(src);
-            dst_tree.borrow_mut().create_comment(&t)
-        }
-        NodeData::Element {
-            tag_name,
-            attributes,
-            namespace,
-            ..
-        } => {
-            let tag = tag_name.clone();
-            let attrs = attributes.clone();
-            let ns = namespace.clone();
+    while let Some((current_src, dst_parent)) = stack.pop() {
+        // Borrow src_tree, clone needed data, then drop borrow before mutating dst_tree
+        let (new_id, child_ids) = {
+            let src = src_tree.borrow();
+            let node = src.get_node(current_src);
             let child_ids: Vec<NodeId> = node.children.clone();
-            drop(src);
-            let id = dst_tree.borrow_mut().create_element_ns(&tag, attrs, &ns);
-            for child_id in child_ids {
-                let adopted_child = adopt_node_recursive(src_tree, child_id, dst_tree, mapping);
-                dst_tree.borrow_mut().append_child(id, adopted_child);
-            }
-            id
-        }
-        NodeData::Doctype {
-            name,
-            public_id,
-            system_id,
-        } => {
-            let n = name.clone();
-            let p = public_id.clone();
-            let s = system_id.clone();
-            drop(src);
-            dst_tree.borrow_mut().create_doctype(&n, &p, &s)
-        }
-        NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
-            let child_ids: Vec<NodeId> = node.children.clone();
-            drop(src);
-            let id = dst_tree.borrow_mut().create_document_fragment();
-            for child_id in child_ids {
-                let adopted_child = adopt_node_recursive(src_tree, child_id, dst_tree, mapping);
-                dst_tree.borrow_mut().append_child(id, adopted_child);
-            }
-            id
-        }
-        NodeData::ProcessingInstruction { target, data } => {
-            let t = target.clone();
-            let d = data.clone();
-            drop(src);
-            dst_tree.borrow_mut().create_processing_instruction(&t, &d)
-        }
-        NodeData::Attr {
-            local_name,
-            namespace,
-            prefix,
-            value,
-        } => {
-            let ln = local_name.clone();
-            let ns = namespace.clone();
-            let pfx = prefix.clone();
-            let val = value.clone();
-            drop(src);
-            dst_tree.borrow_mut().create_attr(&ln, &ns, &pfx, &val)
-        }
-        NodeData::CDATASection { content } => {
-            let t = content.clone();
-            drop(src);
-            dst_tree.borrow_mut().create_cdata_section(&t)
-        }
-        NodeData::Document => {
-            drop(src);
-            dst_tree.borrow_mut().create_document_fragment()
-        }
-    };
+            let new_id = match &node.data {
+                NodeData::Text { content } => {
+                    let t = content.clone();
+                    drop(src);
+                    dst_tree.borrow_mut().create_text(&t)
+                }
+                NodeData::Comment { content } => {
+                    let t = content.clone();
+                    drop(src);
+                    dst_tree.borrow_mut().create_comment(&t)
+                }
+                NodeData::Element {
+                    tag_name,
+                    attributes,
+                    namespace,
+                    ..
+                } => {
+                    let tag = tag_name.clone();
+                    let attrs = attributes.clone();
+                    let ns = namespace.clone();
+                    drop(src);
+                    dst_tree.borrow_mut().create_element_ns(&tag, attrs, &ns)
+                }
+                NodeData::Doctype {
+                    name,
+                    public_id,
+                    system_id,
+                } => {
+                    let n = name.clone();
+                    let p = public_id.clone();
+                    let s = system_id.clone();
+                    drop(src);
+                    dst_tree.borrow_mut().create_doctype(&n, &p, &s)
+                }
+                NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
+                    drop(src);
+                    dst_tree.borrow_mut().create_document_fragment()
+                }
+                NodeData::ProcessingInstruction { target, data } => {
+                    let t = target.clone();
+                    let d = data.clone();
+                    drop(src);
+                    dst_tree.borrow_mut().create_processing_instruction(&t, &d)
+                }
+                NodeData::Attr {
+                    local_name,
+                    namespace,
+                    prefix,
+                    value,
+                } => {
+                    let ln = local_name.clone();
+                    let ns = namespace.clone();
+                    let pfx = prefix.clone();
+                    let val = value.clone();
+                    drop(src);
+                    dst_tree.borrow_mut().create_attr(&ln, &ns, &pfx, &val)
+                }
+                NodeData::CDATASection { content } => {
+                    let t = content.clone();
+                    drop(src);
+                    dst_tree.borrow_mut().create_cdata_section(&t)
+                }
+                NodeData::Document => {
+                    drop(src);
+                    dst_tree.borrow_mut().create_document_fragment()
+                }
+            };
+            (new_id, child_ids)
+        };
 
-    mapping.push((src_id, new_id));
-    new_id
+        // Append to parent if this isn't the root
+        if let Some(parent_id) = dst_parent {
+            dst_tree.borrow_mut().append_child(parent_id, new_id);
+        } else {
+            root_new_id = Some(new_id);
+        }
+
+        mapping.push((current_src, new_id));
+
+        // Push children in reverse order for pre-order DFS
+        for &child_id in child_ids.iter().rev() {
+            stack.push((child_id, Some(new_id)));
+        }
+    }
+
+    root_new_id.expect("adopt_node_recursive called with empty stack")
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +727,11 @@ pub(crate) fn fire_insert_records(
             next_sib,
         );
     }
+
+    // Invoke connectedCallback for custom elements that were inserted
+    for &nid in added_ids {
+        super::custom_elements::invoke_connected_callback(tree, nid, ctx);
+    }
 }
 
 /// Update live range boundaries for the removal of a node from its old parent
@@ -1125,6 +1142,9 @@ fn remove_child(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult
         prev_sib,
         next_sib,
     );
+
+    // Invoke disconnectedCallback for custom elements
+    super::custom_elements::invoke_disconnected_callback(&tree, child_id, ctx);
 
     let js_obj = get_or_create_js_element(child_id, tree, ctx)?;
     Ok(js_obj.into())

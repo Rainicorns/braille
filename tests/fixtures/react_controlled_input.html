@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head><title>React Controlled Input Test</title></head>
+<body>
+<div id="root">Loading...</div>
+<script>
+// ==========================================================================
+// Minimal React-like controlled input simulation.
+// Exercises the exact patterns real React uses:
+//   1. inputValueTracking: overrides node.value with a tracked getter/setter
+//   2. Event delegation: capture-phase listener on root container
+//   3. onChange via __reactProps$ on the element
+//   4. Controlled re-render: sets node.value = state after onChange
+//   5. onBlur validation: validates on blur and shows error/success
+// ==========================================================================
+
+(function() {
+    var root = document.getElementById('root');
+    var state = { username: '', password: '', error: '', submitted: false };
+    var REACT_HASH = 'test123';
+
+    // --- inputValueTracking (mirrors React's implementation) ---
+    function trackValueOnNode(node) {
+        var descriptor = Object.getOwnPropertyDescriptor(
+            node.constructor.prototype, 'value'
+        );
+        if (!descriptor || typeof descriptor.get !== 'function' || typeof descriptor.set !== 'function') {
+            console.error('[track] FAILED: no value descriptor on', node.constructor.name);
+            return;
+        }
+        var currentValue = '' + (descriptor.get.call(node) || '');
+        Object.defineProperty(node, 'value', {
+            configurable: true,
+            get: function() { return descriptor.get.call(this); },
+            set: function(value) {
+                currentValue = '' + value;
+                descriptor.set.call(this, value);
+            }
+        });
+        node._valueTracker = {
+            getValue: function() { return currentValue; },
+            setValue: function(value) { currentValue = '' + value; },
+        };
+    }
+
+    function updateValueIfChanged(node) {
+        var tracker = node._valueTracker;
+        if (!tracker) return true;
+        var lastValue = tracker.getValue();
+        var nextValue = node.value;
+        if (nextValue !== lastValue) {
+            tracker.setValue(nextValue);
+            return true;
+        }
+        return false;
+    }
+
+    // --- Render function ---
+    function render() {
+        root.innerHTML = '';
+        var form = document.createElement('form');
+
+        var h1 = document.createElement('h1');
+        h1.textContent = 'Signup';
+        form.appendChild(h1);
+
+        // Username field
+        var uLabel = document.createElement('label');
+        uLabel.textContent = 'Username';
+        form.appendChild(uLabel);
+        var uInput = document.createElement('input');
+        uInput.setAttribute('id', 'username');
+        // Note: no type attribute (should default to 'text')
+        form.appendChild(uInput);
+
+        // Password field
+        var pLabel = document.createElement('label');
+        pLabel.textContent = 'Password';
+        form.appendChild(pLabel);
+        var pInput = document.createElement('input');
+        pInput.setAttribute('id', 'password');
+        pInput.setAttribute('type', 'password');
+        form.appendChild(pInput);
+
+        // Error/success message
+        var msg = document.createElement('p');
+        msg.setAttribute('id', 'message');
+        msg.textContent = state.error || (state.submitted ? 'Account created!' : '');
+        form.appendChild(msg);
+
+        // Submit button
+        var btn = document.createElement('button');
+        btn.setAttribute('id', 'submit');
+        btn.setAttribute('type', 'button');
+        btn.textContent = 'Create Account';
+        form.appendChild(btn);
+
+        root.appendChild(form);
+
+        // --- Set controlled values ---
+        uInput.value = state.username;
+        pInput.value = state.password;
+
+        // --- Set up value tracking (like React does after render) ---
+        trackValueOnNode(uInput);
+        trackValueOnNode(pInput);
+
+        // --- Store React-like props on nodes ---
+        uInput['__reactFiber$' + REACT_HASH] = { tag: 5, type: 'input', stateNode: uInput };
+        uInput['__reactProps$' + REACT_HASH] = {
+            id: 'username',
+            value: state.username,
+            onChange: function(e) {
+                state.username = e.target.value;
+                state.error = '';
+                render();
+            },
+            onBlur: function(e) {
+                if (state.username.length > 0 && state.username.length < 3) {
+                    state.error = 'Username too short';
+                    render();
+                } else if (state.username.length >= 3) {
+                    // Simulate async validation
+                    state.error = '';
+                    render();
+                }
+            },
+        };
+
+        pInput['__reactFiber$' + REACT_HASH] = { tag: 5, type: 'input', stateNode: pInput };
+        pInput['__reactProps$' + REACT_HASH] = {
+            id: 'password',
+            type: 'password',
+            value: state.password,
+            onChange: function(e) {
+                state.password = e.target.value;
+                render();
+            },
+        };
+
+        btn['__reactFiber$' + REACT_HASH] = { tag: 5, type: 'button', stateNode: btn };
+        btn['__reactProps$' + REACT_HASH] = {
+            onClick: function(e) {
+                if (!state.username || state.username.length < 3) {
+                    state.error = 'Username required (min 3 chars)';
+                    render();
+                    return;
+                }
+                if (!state.password || state.password.length < 6) {
+                    state.error = 'Password required (min 6 chars)';
+                    render();
+                    return;
+                }
+                state.submitted = true;
+                state.error = '';
+                render();
+            },
+        };
+
+        form['__reactFiber$' + REACT_HASH] = { tag: 5, type: 'form', stateNode: form };
+        form['__reactProps$' + REACT_HASH] = {
+            onSubmit: function(e) {
+                if (e.preventDefault) e.preventDefault();
+            },
+        };
+
+        // --- Event delegation on root (like React 17+) ---
+        // Only register once
+        if (!root.__eventsRegistered) {
+            root.__eventsRegistered = true;
+            // React registers on root container with capture=true
+            root.addEventListener('input', function(e) {
+                var target = e.target;
+                if (target && target._valueTracker && updateValueIfChanged(target)) {
+                    var pk = Object.keys(target).find(function(k) { return k.indexOf('__reactProps$') === 0; });
+                    if (pk && target[pk] && typeof target[pk].onChange === 'function') {
+                        target[pk].onChange({ type: 'change', target: target, currentTarget: target, preventDefault: function(){}, stopPropagation: function(){}, persist: function(){} });
+                    }
+                }
+            }, true);
+        }
+    }
+
+    render();
+})();
+</script>
+</body>
+</html>

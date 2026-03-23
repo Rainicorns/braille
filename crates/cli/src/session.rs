@@ -1,9 +1,13 @@
-use braille_engine::Engine;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(test)]
+use braille_engine::Engine;
+#[cfg(test)]
+use std::collections::HashMap;
+
 /// Metadata and state for a browser session.
+#[cfg(test)]
 pub struct Session {
     pub engine: Engine,
     pub current_url: Option<String>,
@@ -11,6 +15,14 @@ pub struct Session {
     pub history_index: Option<usize>,
 }
 
+#[cfg(test)]
+impl Default for Session {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
 impl Session {
     pub fn new() -> Self {
         Session {
@@ -72,7 +84,6 @@ impl Session {
     }
 
     /// Returns current URL from history, or None if history is empty.
-    #[cfg(test)]
     pub fn current_url(&self) -> Option<&str> {
         match self.history_index {
             Some(idx) => Some(&self.history[idx]),
@@ -82,22 +93,13 @@ impl Session {
 }
 
 /// Manages multiple browser sessions in memory.
-///
-/// DESIGN NOTE: This is an in-memory session manager. Sessions are lost when
-/// the process exits. A future daemon-based implementation will persist sessions
-/// across CLI invocations via Unix domain socket IPC.
-///
-/// Why not serialize Engine? Engine contains Rc<RefCell<DomTree>> and JsRuntime
-/// with Boa Context, which are not serializable. To persist sessions across
-/// process boundaries, we need either:
-/// 1. A daemon process that owns the sessions (future work)
-/// 2. Serialize minimal state (URL, cookies, history) and reconstruct Engine (future work)
-///
-/// For now, this provides the session abstraction layer that main.rs can use.
+/// Used in tests; the daemon uses per-thread Sessions directly.
+#[cfg(test)]
 pub struct SessionManager {
     sessions: HashMap<String, Session>,
 }
 
+#[cfg(test)]
 impl SessionManager {
     pub fn new() -> Self {
         SessionManager {
@@ -105,7 +107,6 @@ impl SessionManager {
         }
     }
 
-    /// Create a new session and return its ID.
     pub fn new_session(&mut self) -> String {
         let session_id = generate_session_id();
         let session = Session::new();
@@ -113,18 +114,14 @@ impl SessionManager {
         session_id
     }
 
-    /// Get a mutable reference to a session by ID.
     pub fn get_session(&mut self, id: &str) -> Option<&mut Session> {
         self.sessions.get_mut(id)
     }
 
-    /// Close a session, removing it from the manager.
     pub fn close_session(&mut self, id: &str) -> bool {
         self.sessions.remove(id).is_some()
     }
 
-    /// Get the number of active sessions.
-    #[cfg(test)]
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }

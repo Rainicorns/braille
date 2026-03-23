@@ -27,16 +27,32 @@ impl Engine {
                 // 3. If <input>: set_attribute(node_id, "value", text)
                 if tag_lower == "input" {
                     drop(tree);
-                    let mut tree_mut = self.tree.borrow_mut();
-                    tree_mut.set_attribute(node_id, "value", text);
+                    self.tree.borrow_mut().set_attribute(node_id, "value", text);
+                    if let Some(runtime) = self.runtime.as_mut() {
+                        // Set the JS-side __props._value so the property reflects the new value
+                        let escaped = text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n");
+                        let _ = runtime.eval(&format!(
+                            "var __el = __braille_get_element_wrapper({nid}); if(__el) {{ if(!__el.__props) __el.__props={{}}; __el.__props._value = '{val}'; }}",
+                            nid = node_id, val = escaped
+                        ));
+                        runtime.fire_input_events(node_id);
+                    }
                     return Ok(());
                 }
 
                 // 4. If <textarea>: set_text_content(node_id, text)
                 if tag_lower == "textarea" {
                     drop(tree);
-                    let mut tree_mut = self.tree.borrow_mut();
-                    tree_mut.set_text_content(node_id, text);
+                    self.tree.borrow_mut().set_text_content(node_id, text);
+                    if let Some(runtime) = self.runtime.as_mut() {
+                        // Set the JS-side __props._value so the property reflects the new value
+                        let escaped = text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n");
+                        let _ = runtime.eval(&format!(
+                            "var __el = __braille_get_element_wrapper({nid}); if(__el) {{ if(!__el.__props) __el.__props={{}}; __el.__props._value = '{val}'; }}",
+                            nid = node_id, val = escaped
+                        ));
+                        runtime.fire_input_events(node_id);
+                    }
                     return Ok(());
                 }
 

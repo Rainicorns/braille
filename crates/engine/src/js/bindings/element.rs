@@ -422,8 +422,18 @@ fn create_js_element(
                 }
             }
             NodeKind::HtmlElement(tag) => {
-                // Look up specific HTML element prototype by tag name
-                if let Some(proto) = p.html_tag_protos.get(tag.as_str()) {
+                // Custom elements (tag contains `-`): look up custom element registry first
+                if tag.contains('-') {
+                    if let Some(ce_proto) = super::custom_elements::lookup_custom_element_proto(tag, ctx) {
+                        js_obj.set_prototype(Some(ce_proto));
+                    } else {
+                        // Undefined custom element — per spec, use HTMLElement.prototype
+                        if let Some(ref proto) = p.html_element_proto {
+                            js_obj.set_prototype(Some(proto.clone()));
+                        }
+                    }
+                } else if let Some(proto) = p.html_tag_protos.get(tag.as_str()) {
+                    // Look up specific HTML element prototype by tag name
                     js_obj.set_prototype(Some(proto.clone()));
                 } else if is_known_html_element(tag) {
                     // Known HTML element without a specific type -> HTMLElement

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head><title>SPA Dynamic Loading Test</title></head>
+<body>
+<div id="app">Loading...</div>
+<script>
+// ============================================================================
+// Simulated webpack-style SPA with:
+//   1. A runtime that loads async chunks via <script src="..."> insertion
+//   2. React-like component rendering triggered by chunk resolution
+//   3. API calls (fetch) triggered by component mount
+//   4. A polling timer (like Proton's version.json check)
+//
+// Chunks served by the test server:
+//   /chunks/framework.js  — "React" framework (render helpers)
+//   /chunks/app.js        — Main app component (triggers API calls)
+//   /chunks/vendor.js     — Third-party libs (no side effects)
+//
+// API endpoints:
+//   GET  /api/config       — App configuration
+//   GET  /api/user         — Current user info
+//   POST /api/signup       — Create account
+//   GET  /api/version      — Version polling (like Proton's version.json)
+// ============================================================================
+
+// --- Simulated webpack chunk registry ---
+window.__chunks = {};
+window.__chunkCallbacks = {};
+
+window.__registerChunk = function(id, factory) {
+    __chunks[id] = factory;
+    if (__chunkCallbacks[id]) {
+        var cbs = __chunkCallbacks[id];
+        delete __chunkCallbacks[id];
+        cbs.forEach(function(cb) { cb(); });
+    }
+};
+
+window.__loadChunk = function(id) {
+    if (__chunks[id]) return Promise.resolve();
+    return new Promise(function(resolve, reject) {
+        if (!__chunkCallbacks[id]) __chunkCallbacks[id] = [];
+        __chunkCallbacks[id].push(resolve);
+
+        // Dynamic script insertion (same as webpack's A.l)
+        var script = document.createElement('script');
+        script.src = '/chunks/' + id + '.js';
+        script.onerror = function() { reject(new Error('Failed to load chunk: ' + id)); };
+        document.head.appendChild(script);
+    });
+};
+
+// --- App bootstrap ---
+// Load all chunks in parallel, then initialize
+Promise.all([
+    __loadChunk('framework'),
+    __loadChunk('app'),
+    __loadChunk('vendor')
+]).then(function() {
+    // All chunks loaded — initialize the app
+    var framework = __chunks['framework']();
+    var app = __chunks['app'](framework);
+    app.mount(document.getElementById('app'));
+}).catch(function(err) {
+    document.getElementById('app').textContent = 'Failed to load: ' + err.message;
+});
+
+// --- Version polling (starts immediately, like Proton) ---
+var versionCheckCount = 0;
+function checkVersion() {
+    versionCheckCount++;
+    fetch('/api/version').then(function(r) { return r.json(); }).then(function(data) {
+        window.__lastVersion = data.version;
+    });
+}
+setInterval(checkVersion, 60000); // every 60s (virtual time)
+checkVersion(); // first check immediately
+</script>
+</body>
+</html>

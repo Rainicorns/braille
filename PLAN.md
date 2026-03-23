@@ -11,6 +11,90 @@ A browser for those who read, not see.
 
 All 6 phases complete (840+ tests). html5lib-tests tree-construction suite: **1778 passed, 0 failed, 0 ignored** out of 1778 test cases (**100% pass rate**). html5lib-tests serializer suite: **204 passed, 0 failed, 26 ignored** (core + optionaltags fully passing; options/injectmeta/whitespace skipped as non-default serializer config). Fixed foster parenting text merge (8 tests), template contents with DocumentFragment (112 tests), test harness trailing newline (1 test), annotation-xml integration point polyfill (4 tests), and selectedcontent cloning polyfill (4 tests). Two polyfills in parser.rs are marked `POLYFILL` for removal when html5ever handles them internally: `is_mathml_annotation_xml_integration_point` flag storage and `polyfill_selectedcontent` post-processing (workaround for html5ever issue #712). The engine has a full DOM API surface (~75 methods), CSS cascade with selector matching wired into the load pipeline, full event system (addEventListener/dispatchEvent with capture/bubble/at-target, standalone EventTarget, window in propagation path), getComputedStyle, HTMLElement-specific properties (input.value/checked/type/disabled, select.value/selectedIndex/options, option.value/selected/text, a.href, form.action/method/elements, element.dataset/hidden/tabIndex/title/lang/dir, focus/blur/click stubs, getBoundingClientRect stub), and JS bindings for querySelector, innerHTML, classList, element.style, node mutation, window/console, and more. **Smart Snapshot Views + Page Settling + Timer Execution COMPLETE** — `Engine::settle()` flushes microtask queue + MutationObserver records + timers in a loop until quiescent (max 100 iterations), then recomputes CSS. Timer execution uses virtual clock: `TimerEntry`/`TimerState` in RealmState, settle advances `current_time_ms` to fire all pending timers (setTimeout removed after firing, setInterval re-queued, 10s virtual cap). `handle_click` calls `settle()` after dispatching click event. SnapMode expanded with 7 new views: Interactive (flat list of clickable/typeable elements), Links (`<a>` with href), Forms (form structure with inputs/values), Headings (h1-h6 outline), Text (readable content, no structure), Selector(String) (CSS query matches), Region(String) (subtree snapshot). Ref assignment (`assign_refs()`) extracted as separate pass — `@eN` refs are stable across all view modes. CLI supports `--mode interactive|links|forms|headings|text|selector|region` with `--query` and `--target` flags. CLI has all commands routed through session manager, network client with cookie jar, navigation history, and external script loading. 16 verification tests in `snapshot_views.rs` cover settle+Promise, settle+setTimeout, all view modes, ref stability, selector/region views, and timer lifecycle. Full integration smoke tests (20) and CSS edge case tests (32) verify end-to-end behavior.
 
+## TODO
+
+### DOM Spec Compliance Overhaul
+
+Our DOM/JS layer is a collection of ad-hoc shims patched site-by-site. Every real SPA we try hits a new gap. This plan systematically closes those gaps.
+
+#### P0 — Critical (blocking all real SPAs)
+
+**1. Property vs Attribute Distinction for Form Elements**
+
+The single most important fix. The spec distinguishes DOM *properties* (`.value`, `.checked`, `.selected`) from HTML *attributes* (`getAttribute('value')`). For inputs, `.value` is the *current* mutable value; `getAttribute('value')` is the *default* from the HTML. Changing `.value` must NOT update the attribute.
+
+We currently conflate them — `.value` reads/writes `getAttribute('value')`. This breaks:
+- React's `inputValueTracking` (compares property vs attribute)
+- Any controlled input in any framework (React, Vue, Svelte)
+- Form state across re-renders
+
+Fix: store an internal `_value` property on the wrapper. The `.value` getter returns `_value` if set, else falls back to `getAttribute('value')`. The `.value` setter writes to `_value` only. `setAttribute('value', ...)` updates the attribute but doesn't touch `_value`. Same pattern for `.checked`, `.selected`, `.disabled`, `.readOnly`.
+
+Files: `dom_bridge.rs` (EP defineProperties), `globals.rs` (HTMLInputElement.prototype)
+
+**2. Remove `__reactProps$` Direct Invocation Hack**
+
+Currently `fire_input_events` and `EP.click` directly invoke React's `onChange`/`onClick`/`onSubmit` by reading `__reactProps$`. This is fragile and React-specific. It exists because React's event delegation doesn't fully fire through our dispatch pipeline.
+
+Root cause: React's `dispatchEvent` calls `getEventTarget(nativeEvent)` → needs `nativeEvent.target` to be a real DOM node that returns proper `nodeName`, `nodeType`, and fiber lookup. Our events have all of that, but React's internal scheduling (`discreteUpdates`, `batchedUpdates`) may interact with our microtask queue in unexpected ways.
+
+Fix: Investigate exactly where React's event processing drops the ball (we confirmed capture listeners fire, value tracker is set up, `updateValueIfChanged` returns true — but onChange never fires). Likely a microtask scheduling issue with `queueMicrotask` or `MessageChannel` timing. Once the native path works, remove all `__reactProps$` direct invocation code.
+
+**3. Form Submission**
+
+`form.submit()`, `form.reset()`, `form.elements`, `input.form` — none implemented. Real SPAs need these.
+
+Fix:
+- `input.form`: walk up ancestors to find `<form>`, cache result
+- `form.elements`: query all `input/select/textarea/button` descendants
+- `form.submit()`: dispatch `submit` event, if not prevented collect form data and navigate
+- `form.reset()`: reset all controlled element properties to attribute defaults
+
+#### P1 — High (needed for most SPAs)
+
+**4. Event.composed + composedPath()**
+
+Web Components and some frameworks check `event.composed`. Our Event constructor accepts it but doesn't expose it. `composedPath()` should return the event propagation path.
+
+**5. element.closest() and element.matches()**
+
+These exist in the native bindings path but may be missing or broken in the QuickJS `dom_bridge.rs` path. Verify both work. Many frameworks use `closest()` for event delegation and `matches()` for conditional logic.
+
+**6. Live HTMLCollections**
+
+`getElementsByTagName`, `getElementsByClassName`, `form.elements` return static arrays. Spec says they should be live (auto-update as DOM changes). Some legacy code and frameworks depend on this.
+
+#### P2 — Medium (nice-to-have)
+
+**7. innerText vs textContent**
+
+`innerText` should exclude `display:none` and `visibility:hidden` content. Currently returns same as `textContent`. Needs CSS integration.
+
+**8. Document Metadata**
+
+`document.cookie` (functional read/write synced with reqwest cookie jar), `document.title` (get/set from `<title>` element), `document.referrer`, `document.characterSet`.
+
+**9. Geometry Stubs**
+
+`getBoundingClientRect` returns plausible defaults. `getClientRects`, `offsetWidth/Height` etc. already return reasonable values. Could be improved with style-aware sizing.
+
+#### Implementation Order
+
+1. Property vs Attribute (P0-1) — highest impact, unblocks all form-based SPAs
+2. Investigate React dispatch gap (P0-2) — remove the hack once root cause found
+3. Form APIs (P0-3) — form.submit, form.elements, input.form
+4. Event.composed (P1-4) — small fix
+5. closest/matches verification (P1-5) — likely already works, just verify
+6. Live collections (P1-6) — proxy-based wrapper around querySelectorAll
+
+#### Verification
+
+- Existing `react_controlled_input` test (9 tests) covers the input tracking path
+- Add tests for property-vs-attribute separation
+- Add form submission tests
+- Run ProtonMail signup end-to-end after each P0 fix
+- `./dev.sh test && ./dev.sh check` must pass throughout
+
 **Phase S6 — Container-Based Session Architecture COMPLETE.** Engine runs as a separate process (`braille-engine` binary) communicating via JSON-line protocol over stdin/stdout. Wire protocol extended with `HostMessage` (Command | FetchResults) and `EngineMessage` (NeedFetch | CommandResult) for fetch delegation — engine has zero network access, CLI does all HTTP. `FetchResult`/`FetchOutcome` types for per-request success/failure. Daemon refactored from thread-per-session to process-per-session: `engine_process.rs` spawns `braille-engine` child processes, handles multi-round fetch delegation loop. `session_thread.rs` deleted. Engine binary contains its own inline Session (Engine + history). On Mac (dev), daemon holds engine process handles; on Linux (future), podman replaces daemon. New files: `crates/engine/src/bin/braille_engine.rs` (engine REPL binary), `crates/cli/src/engine_process.rs` (spawn/communicate with engine). 5 engine REPL integration tests (goto, snap, type, fetch error, invalid JSON), 3 kitchen sink end-to-end tests (login flow, wrong password, settings persistence). **26 wire tests, 5 engine REPL tests, 44 CLI unit tests, 3 kitchen sink tests — all passing, zero clippy warnings.**
 
 **Phase S5 — Persistent Sessions (Daemon).** Long-lived daemon process with Unix domain socket IPC at `~/.braille/daemon.sock`. Wire protocol: `DaemonRequest`/`DaemonCommand`/`DaemonResponse` JSON-line messages over UDS. CLI is thin client — auto-starts daemon on first use. `braille new` creates a session, `braille <sid> goto/click/type/select/snap/back/forward/close` sends commands. Sessions persist across CLI invocations — DOM, JS globals, cookies, history all survive. `braille daemon start/stop/status` for management. Idle session reaping at 30 minutes. SIGTERM/SIGINT clean shutdown. (Refactored in S6: daemon now spawns engine child processes instead of session threads.)

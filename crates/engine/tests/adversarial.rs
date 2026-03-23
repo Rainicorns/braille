@@ -1002,3 +1002,198 @@ fn camel_case_and_css_text_interplay() {
     // final: margin + padding = 2
     assert_eq!(engine.eval_js("window.__finalLength").unwrap(), "2");
 }
+
+// ===========================================================================
+// Category 5: Script Overwrites Entire Page
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Test 29: Static HTML is a decoy — script nukes it and builds a new page
+// ---------------------------------------------------------------------------
+
+#[test]
+fn script_overwrites_entire_page() {
+    let html = r#"<html><body>
+        <h1>Welcome to Our Store</h1>
+        <p>Browse our amazing products below!</p>
+        <ul>
+            <li>Widget A - $9.99</li>
+            <li>Widget B - $19.99</li>
+            <li>Widget C - $29.99</li>
+        </ul>
+        <a href="/checkout">Go to Checkout</a>
+        <script>
+        // Sneaky: nuke everything and replace with totally different content
+        document.body.innerHTML = '';
+        var h = document.createElement('h1');
+        h.textContent = 'ACCOUNT SUSPENDED';
+        document.body.appendChild(h);
+        var p = document.createElement('p');
+        p.textContent = 'Your account has been suspended due to unusual activity.';
+        document.body.appendChild(p);
+        var btn = document.createElement('button');
+        btn.id = 'verify';
+        btn.textContent = 'Verify Identity';
+        document.body.appendChild(btn);
+        var link = document.createElement('a');
+        link.href = '/phishing-page';
+        link.textContent = 'Click here to restore access';
+        document.body.appendChild(link);
+        </script>
+    </body></html>"#;
+
+    let mut engine = engine_with_html(html);
+
+    // The compact view should show the POST-SCRIPT content, not the static HTML
+    let snap = engine.snapshot(SnapMode::Compact);
+
+    // Static decoy content must be gone
+    assert!(!snap.contains("Welcome to Our Store"), "static heading should be gone");
+    assert!(!snap.contains("Widget A"), "static product should be gone");
+    assert!(!snap.contains("Go to Checkout"), "static link should be gone");
+
+    // Script-injected content must be present
+    assert!(snap.contains("ACCOUNT SUSPENDED"), "script heading should appear");
+    assert!(snap.contains("unusual activity"), "script paragraph should appear");
+    assert!(snap.contains("Verify Identity"), "script button should appear");
+    assert!(snap.contains("restore access"), "script link should appear");
+
+    // Interactive elements should have refs
+    assert!(snap.contains("@e1"), "button should get a ref");
+    assert!(snap.contains("@e2"), "link should get a ref");
+}
+
+// ---------------------------------------------------------------------------
+// Test 30: Script replaces page via document.write
+// ---------------------------------------------------------------------------
+
+#[test]
+fn script_document_write_replaces_page() {
+    let html = r#"<html><body>
+        <h1>Original Page</h1>
+        <p>This is the original content that should not survive.</p>
+        <a href="/original">Original Link</a>
+        <script>
+        document.body.innerHTML =
+            '<h2>Dynamically Generated</h2>' +
+            '<p>This page was built entirely by JavaScript.</p>' +
+            '<input type="text" id="search" placeholder="Search...">' +
+            '<button id="go">Search</button>' +
+            '<a href="/results">See results</a>';
+        </script>
+    </body></html>"#;
+
+    let mut engine = engine_with_html(html);
+    let snap = engine.snapshot(SnapMode::Compact);
+
+    // Original must be gone
+    assert!(!snap.contains("Original Page"), "original heading gone");
+    assert!(!snap.contains("Original Link"), "original link gone");
+
+    // Dynamic content present
+    assert!(snap.contains("Dynamically Generated"), "dynamic heading present");
+    assert!(snap.contains("built entirely by JavaScript"), "dynamic text present");
+    assert!(snap.contains("Search"), "search button present");
+    assert!(snap.contains("See results"), "results link present");
+}
+
+// ---------------------------------------------------------------------------
+// Test 31: Delayed script progressively modifies page
+// ---------------------------------------------------------------------------
+
+#[test]
+fn script_progressively_modifies_page() {
+    let html = r#"<html><body>
+        <div id="app">
+            <p>Loading...</p>
+        </div>
+        <script>
+        // Simulate a SPA that replaces a loading placeholder
+        var app = document.getElementById('app');
+        app.innerHTML = '';
+        var h = document.createElement('h1');
+        h.textContent = 'Dashboard';
+        app.appendChild(h);
+
+        var items = ['Revenue: $1.2M', 'Users: 45,230', 'Orders: 8,912'];
+        var list = document.createElement('ul');
+        for (var i = 0; i < items.length; i++) {
+            var li = document.createElement('li');
+            li.textContent = items[i];
+            list.appendChild(li);
+        }
+        app.appendChild(list);
+
+        var btn = document.createElement('button');
+        btn.textContent = 'Refresh Data';
+        app.appendChild(btn);
+        </script>
+    </body></html>"#;
+
+    let mut engine = engine_with_html(html);
+    let snap = engine.snapshot(SnapMode::Compact);
+
+    // Loading placeholder must be gone
+    assert!(!snap.contains("Loading..."), "loading placeholder gone");
+
+    // Dynamic dashboard content present
+    assert!(snap.contains("Dashboard"), "dashboard heading present");
+    assert!(snap.contains("Revenue: $1.2M"), "revenue stat present");
+    assert!(snap.contains("Users: 45,230"), "users stat present");
+    assert!(snap.contains("Orders: 8,912"), "orders stat present");
+    assert!(snap.contains("Refresh Data"), "refresh button present");
+}
+
+// ---------------------------------------------------------------------------
+// QuickJS feature probe — verify built-in JS engine capabilities
+// ---------------------------------------------------------------------------
+
+#[test]
+fn qjs_feature_probe() {
+    let html = r#"<html><body><pre id="out"></pre><script>
+    var r = [];
+    r.push('Proxy: ' + (typeof Proxy));
+    r.push('Reflect: ' + (typeof Reflect));
+    r.push('Symbol: ' + (typeof Symbol));
+    r.push('Symbol.iterator: ' + (typeof Symbol.iterator));
+    r.push('Symbol.toPrimitive: ' + (typeof Symbol.toPrimitive));
+    r.push('Symbol.toStringTag: ' + (typeof Symbol.toStringTag));
+    r.push('TypeError: ' + (typeof TypeError));
+    r.push('RangeError: ' + (typeof RangeError));
+    r.push('Promise.allSettled: ' + (typeof Promise.allSettled));
+    r.push('Promise.any: ' + (typeof Promise.any));
+    try { eval('var x = {a:{b:1}}; x?.a?.b'); r.push('optional_chaining: yes'); } catch(e) { r.push('optional_chaining: NO'); }
+    try { eval('var x = null; x ?? 42'); r.push('nullish_coalescing: yes'); } catch(e) { r.push('nullish_coalescing: NO'); }
+    r.push('WeakMap: ' + (typeof WeakMap));
+    r.push('WeakSet: ' + (typeof WeakSet));
+    r.push('Map: ' + (typeof Map));
+    r.push('Set: ' + (typeof Set));
+    r.push('DataView: ' + (typeof DataView));
+    r.push('Object.fromEntries: ' + (typeof Object.fromEntries));
+    r.push('BigInt: ' + (typeof BigInt));
+    r.push('matchAll: ' + (typeof String.prototype.matchAll));
+    r.push('replaceAll: ' + (typeof String.prototype.replaceAll));
+    r.push('Array.from: ' + (typeof Array.from));
+    r.push('Array.flat: ' + (typeof [].flat));
+    r.push('Object.entries: ' + (typeof Object.entries));
+    r.push('async_await: ' + (typeof async function(){}));
+    r.push('for_of: yes');
+    r.push('destructuring: yes');
+    r.push('spread: yes');
+    r.push('class: yes');
+    document.getElementById('out').textContent = r.join('\n');
+    </script></body></html>"#;
+
+    let mut engine = engine_with_html(html);
+    engine.settle();
+    let snap = engine.snapshot(SnapMode::Text);
+    eprintln!("=== QuickJS Feature Probe ===\n{snap}\n=============================");
+
+    // These must all be supported for ProtonMail
+    assert!(snap.contains("Proxy: function"), "Proxy must exist");
+    assert!(snap.contains("Symbol: function"), "Symbol must exist");
+    assert!(snap.contains("TypeError: function"), "TypeError must exist");
+    assert!(snap.contains("Map: function"), "Map must exist");
+    assert!(snap.contains("optional_chaining: yes"), "optional chaining must work");
+    assert!(snap.contains("nullish_coalescing: yes"), "nullish coalescing must work");
+}

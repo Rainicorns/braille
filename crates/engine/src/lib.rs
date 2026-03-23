@@ -167,10 +167,24 @@ impl Engine {
     }
 
     /// Flush microtasks, MutationObserver records, and recompute CSS styles.
-    /// Loops until quiescent (no pending MO records and no new microtasks)
-    /// or a maximum iteration count is reached.
+    /// Advances virtual time up to 1 second to fire short timers (setTimeout(0),
+    /// RAF, debounces) while leaving long-interval polling frozen.
     pub fn settle(&mut self) {
+        self.settle_inner(1000);
+    }
+
+    /// Like settle(), but does NOT advance virtual time. Only processes
+    /// microtasks, mutation observers, and timers that are already due.
+    /// Use this during fetch interleaving to avoid firing interval timers
+    /// repeatedly (e.g., version polling).
+    pub fn settle_no_advance(&mut self) {
+        self.settle_inner(0);
+    }
+
+    fn settle_inner(&mut self, time_budget_ms: u64) {
         if let Some(runtime) = self.runtime.as_mut() {
+            let starting_time = runtime.current_time_ms();
+
             for _ in 0..100 {
                 // 1. Flush microtask queue (Promises from event handlers)
                 runtime.run_jobs();
@@ -192,16 +206,17 @@ impl Engine {
 
                 // 4. No MO and no ready timers at current time — try advancing clock
                 if !had_mo && !fired_timers {
-                    if runtime.has_pending_timers() && !runtime.has_pending_fetches() {
-                        // Advance virtual clock to next deadline and loop.
-                        // Skip if there are pending fetches — the caller must
-                        // service those first, otherwise we'd fire timeouts
-                        // (e.g. webpack's chunk-load retry) prematurely.
-                        if runtime.advance_timers_to_next_deadline() {
-                            continue;
+                    if time_budget_ms > 0 && runtime.has_pending_timers() && !runtime.has_pending_fetches() {
+                        // Only advance if the next deadline is within our time budget
+                        if let Some(next) = runtime.next_timer_deadline() {
+                            if next <= starting_time + time_budget_ms
+                                && runtime.advance_timers_to_next_deadline()
+                            {
+                                continue;
+                            }
                         }
                     }
-                    // Truly quiescent (or waiting on fetches)
+                    // Truly quiescent (or waiting on fetches, or next timer is beyond budget)
                     break;
                 }
             }

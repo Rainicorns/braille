@@ -1,5 +1,11 @@
 use super::node::{DomAttribute, Node, NodeData, NodeId, ShadowRootMode};
 
+/// Work item for iterative HTML serialization.
+enum Work {
+    Open(NodeId),
+    Close(String),
+}
+
 #[derive(Debug)]
 pub struct DomTree {
     nodes: Vec<Node>,
@@ -171,14 +177,17 @@ impl DomTree {
         }
     }
 
-    /// Recursively collects text content from all descendant Text nodes.
+    /// Iteratively collects text content from all descendant Text nodes.
     /// Per spec, only Text node data is included (not Comment or PI).
     fn collect_descendant_text(&self, node_id: NodeId, result: &mut String) {
-        for &child_id in &self.nodes[node_id].children {
+        let mut stack: Vec<NodeId> = self.nodes[node_id].children.iter().rev().copied().collect();
+        while let Some(child_id) = stack.pop() {
             match &self.nodes[child_id].data {
                 NodeData::Text { content } | NodeData::CDATASection { content } => result.push_str(content),
                 NodeData::Element { .. } | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
-                    self.collect_descendant_text(child_id, result);
+                    for &grandchild in self.nodes[child_id].children.iter().rev() {
+                        stack.push(grandchild);
+                    }
                 }
                 // Skip Comment, Doctype, Document
                 _ => {}
@@ -439,11 +448,20 @@ impl DomTree {
         let new_id = self.alloc_node(data);
 
         if deep {
-            // Clone needed: clone_node/append_child mutate self.nodes
-            let child_ids: Vec<NodeId> = self.nodes[node_id].children.clone();
-            for child_id in child_ids {
-                let cloned_child = self.clone_node(child_id, true);
-                self.append_child(new_id, cloned_child);
+            // Iterative deep clone using explicit stack of (src_id, dst_parent_id)
+            let mut stack: Vec<(NodeId, NodeId)> = self.nodes[node_id]
+                .children
+                .iter()
+                .rev()
+                .map(|&c| (c, new_id))
+                .collect();
+            while let Some((src_id, dst_parent)) = stack.pop() {
+                let child_data = self.nodes[src_id].data.clone();
+                let cloned_id = self.alloc_node(child_data);
+                self.append_child(dst_parent, cloned_id);
+                for &grandchild in self.nodes[src_id].children.iter().rev() {
+                    stack.push((grandchild, cloned_id));
+                }
             }
         }
 
@@ -498,56 +516,84 @@ impl DomTree {
 
     pub fn serialize_children_html(&self, nid: NodeId) -> String {
         let mut out = String::new();
-        for &child in &self.nodes[nid].children {
-            out.push_str(&self.serialize_node_html(child));
-        }
+        let mut stack: Vec<Work> = self.nodes[nid].children.iter().rev().map(|&c| Work::Open(c)).collect();
+        self.serialize_iterative(&mut stack, &mut out);
         out
     }
 
     pub fn serialize_node_html(&self, nid: NodeId) -> String {
-        let nd = &self.nodes[nid];
-        match &nd.data {
-            NodeData::Text { content } => Self::escape_html(content),
-            NodeData::Comment { content } => format!("<!--{}-->", content),
-            NodeData::Doctype { name, .. } => format!("<!DOCTYPE {}>", name),
-            NodeData::Element {
-                tag_name, attributes, ..
-            } => {
-                let mut o = String::new();
-                o.push('<');
-                o.push_str(tag_name);
-                for a in attributes {
-                    o.push(' ');
-                    o.push_str(&a.qualified_name());
-                    o.push_str("=\"");
-                    o.push_str(&Self::escape_html(&a.value));
-                    o.push('"');
+        let mut out = String::new();
+        let mut stack = vec![Work::Open(nid)];
+        self.serialize_iterative(&mut stack, &mut out);
+        out
+    }
+
+    fn serialize_iterative(&self, stack: &mut Vec<Work>, out: &mut String) {
+        while let Some(work) = stack.pop() {
+            match work {
+                Work::Open(nid) => {
+                    let nd = &self.nodes[nid];
+                    match &nd.data {
+                        NodeData::Text { content } => {
+                            out.push_str(&Self::escape_html(content));
+                        }
+                        NodeData::Comment { content } => {
+                            out.push_str("<!--");
+                            out.push_str(content);
+                            out.push_str("-->");
+                        }
+                        NodeData::Doctype { name, .. } => {
+                            out.push_str("<!DOCTYPE ");
+                            out.push_str(name);
+                            out.push('>');
+                        }
+                        NodeData::Element {
+                            tag_name, attributes, ..
+                        } => {
+                            out.push('<');
+                            out.push_str(tag_name);
+                            for a in attributes {
+                                out.push(' ');
+                                out.push_str(&a.qualified_name());
+                                out.push_str("=\"");
+                                out.push_str(&Self::escape_html(&a.value));
+                                out.push('"');
+                            }
+                            out.push('>');
+                            if !Self::is_void_element(tag_name) {
+                                stack.push(Work::Close(tag_name.clone()));
+                                for &c in nd.children.iter().rev() {
+                                    stack.push(Work::Open(c));
+                                }
+                            }
+                        }
+                        NodeData::ProcessingInstruction { target, data } => {
+                            out.push_str("<?");
+                            out.push_str(target);
+                            if !data.is_empty() {
+                                out.push(' ');
+                                out.push_str(data);
+                            }
+                            out.push_str("?>");
+                        }
+                        NodeData::CDATASection { content } => {
+                            out.push_str("<![CDATA[");
+                            out.push_str(content);
+                            out.push_str("]]>");
+                        }
+                        NodeData::Attr { .. } => {} // Attr nodes are not serialized as children
+                        NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
+                            for &c in nd.children.iter().rev() {
+                                stack.push(Work::Open(c));
+                            }
+                        }
+                    }
                 }
-                o.push('>');
-                if Self::is_void_element(tag_name) {
-                    return o;
+                Work::Close(tag_name) => {
+                    out.push_str("</");
+                    out.push_str(&tag_name);
+                    out.push('>');
                 }
-                for &c in &nd.children {
-                    o.push_str(&self.serialize_node_html(c));
-                }
-                o.push_str("</");
-                o.push_str(tag_name);
-                o.push('>');
-                o
-            }
-            NodeData::ProcessingInstruction { target, data } => format!(
-                "<?{}{}?>",
-                target,
-                if data.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", data)
-                }
-            ),
-            NodeData::CDATASection { content } => format!("<![CDATA[{}]]>", content),
-            NodeData::Attr { .. } => String::new(), // Attr nodes are not serialized as children
-            NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
-                self.serialize_children_html(nid)
             }
         }
     }
@@ -562,8 +608,31 @@ impl DomTree {
     }
 
     pub fn import_subtree(&mut self, source: &DomTree, src_nid: NodeId) -> NodeId {
+        let root_id = self.import_single_node(source, src_nid);
+
+        // Iterative deep import using explicit stack of (src_id_in_source, dst_parent_in_self)
+        let mut stack: Vec<(NodeId, NodeId)> = source
+            .get_node(src_nid)
+            .children
+            .iter()
+            .rev()
+            .map(|&c| (c, root_id))
+            .collect();
+        while let Some((src_id, dst_parent)) = stack.pop() {
+            let new_id = self.import_single_node(source, src_id);
+            self.append_child(dst_parent, new_id);
+            for &child_id in source.get_node(src_id).children.iter().rev() {
+                stack.push((child_id, new_id));
+            }
+        }
+
+        root_id
+    }
+
+    /// Import a single node from a source tree (no children).
+    fn import_single_node(&mut self, source: &DomTree, src_nid: NodeId) -> NodeId {
         let src_node = source.get_node(src_nid);
-        let new_id = match &src_node.data {
+        match &src_node.data {
             NodeData::Element {
                 tag_name,
                 attributes,
@@ -586,12 +655,7 @@ impl DomTree {
             NodeData::CDATASection { content } => self.create_cdata_section(content),
             NodeData::Document => panic!("cannot import Document node"),
             NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => self.create_document_fragment(),
-        };
-        for &child_id in &src_node.children {
-            let new_child = self.import_subtree(source, child_id);
-            self.append_child(new_id, new_child);
         }
-        new_id
     }
 
     // -----------------------------------------------------------------------
@@ -890,113 +954,114 @@ impl DomTree {
     /// Two nodes are equal if they have the same type, same type-specific data,
     /// same number of children, and each child is recursively equal.
     pub fn is_equal_node(&self, a: NodeId, b: NodeId) -> bool {
-        if a == b {
-            return true;
-        }
-        let node_a = &self.nodes[a];
-        let node_b = &self.nodes[b];
+        let mut stack: Vec<(NodeId, NodeId)> = vec![(a, b)];
+        while let Some((a, b)) = stack.pop() {
+            if a == b {
+                continue;
+            }
+            let node_a = &self.nodes[a];
+            let node_b = &self.nodes[b];
 
-        // Must be same nodeType
-        if self.node_type(a) != self.node_type(b) {
-            return false;
-        }
+            // Must be same nodeType
+            if self.node_type(a) != self.node_type(b) {
+                return false;
+            }
 
-        // Compare type-specific data
-        match (&node_a.data, &node_b.data) {
-            (
-                NodeData::Element {
-                    tag_name: t1,
-                    attributes: a1,
-                    namespace: ns1,
-                },
-                NodeData::Element {
-                    tag_name: t2,
-                    attributes: a2,
-                    namespace: ns2,
-                },
-            ) => {
-                // Compare localName, namespace, and prefix (we store them in tag_name)
-                if t1 != t2 || ns1 != ns2 {
-                    return false;
+            // Compare type-specific data
+            match (&node_a.data, &node_b.data) {
+                (
+                    NodeData::Element {
+                        tag_name: t1,
+                        attributes: a1,
+                        namespace: ns1,
+                    },
+                    NodeData::Element {
+                        tag_name: t2,
+                        attributes: a2,
+                        namespace: ns2,
+                    },
+                ) => {
+                    // Compare localName, namespace, and prefix (we store them in tag_name)
+                    if t1 != t2 || ns1 != ns2 {
+                        return false;
+                    }
+                    // Compare attributes: same count, and each attr in a1 has a match in a2
+                    if a1.len() != a2.len() {
+                        return false;
+                    }
+                    for attr in a1 {
+                        let found = a2.iter().any(|a| {
+                            a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value
+                        });
+                        if !found {
+                            return false;
+                        }
+                    }
                 }
-                // Compare attributes: same count, and each attr in a1 has a match in a2
-                if a1.len() != a2.len() {
-                    return false;
-                }
-                for attr in a1 {
-                    let found = a2.iter().any(|a| {
-                        a.local_name == attr.local_name && a.namespace == attr.namespace && a.value == attr.value
-                    });
-                    if !found {
+                (
+                    NodeData::Doctype {
+                        name: n1,
+                        public_id: p1,
+                        system_id: s1,
+                    },
+                    NodeData::Doctype {
+                        name: n2,
+                        public_id: p2,
+                        system_id: s2,
+                    },
+                ) => {
+                    if n1 != n2 || p1 != p2 || s1 != s2 {
                         return false;
                     }
                 }
-            }
-            (
-                NodeData::Doctype {
-                    name: n1,
-                    public_id: p1,
-                    system_id: s1,
-                },
-                NodeData::Doctype {
-                    name: n2,
-                    public_id: p2,
-                    system_id: s2,
-                },
-            ) => {
-                if n1 != n2 || p1 != p2 || s1 != s2 {
-                    return false;
+                (NodeData::Text { content: c1 }, NodeData::Text { content: c2 })
+                | (NodeData::CDATASection { content: c1 }, NodeData::CDATASection { content: c2 }) => {
+                    if c1 != c2 {
+                        return false;
+                    }
                 }
-            }
-            (NodeData::Text { content: c1 }, NodeData::Text { content: c2 })
-            | (NodeData::CDATASection { content: c1 }, NodeData::CDATASection { content: c2 }) => {
-                if c1 != c2 {
-                    return false;
+                (NodeData::Comment { content: c1 }, NodeData::Comment { content: c2 }) => {
+                    if c1 != c2 {
+                        return false;
+                    }
                 }
-            }
-            (NodeData::Comment { content: c1 }, NodeData::Comment { content: c2 }) => {
-                if c1 != c2 {
-                    return false;
+                (
+                    NodeData::ProcessingInstruction { target: t1, data: d1 },
+                    NodeData::ProcessingInstruction { target: t2, data: d2 },
+                ) => {
+                    if t1 != t2 || d1 != d2 {
+                        return false;
+                    }
                 }
-            }
-            (
-                NodeData::ProcessingInstruction { target: t1, data: d1 },
-                NodeData::ProcessingInstruction { target: t2, data: d2 },
-            ) => {
-                if t1 != t2 || d1 != d2 {
-                    return false;
+                (
+                    NodeData::Attr {
+                        local_name: l1,
+                        namespace: n1,
+                        prefix: p1,
+                        value: v1,
+                    },
+                    NodeData::Attr {
+                        local_name: l2,
+                        namespace: n2,
+                        prefix: p2,
+                        value: v2,
+                    },
+                ) => {
+                    if l1 != l2 || n1 != n2 || p1 != p2 || v1 != v2 {
+                        return false;
+                    }
                 }
+                (NodeData::Document, NodeData::Document) => {}
+                (NodeData::DocumentFragment, NodeData::DocumentFragment) => {}
+                _ => return false,
             }
-            (
-                NodeData::Attr {
-                    local_name: l1,
-                    namespace: n1,
-                    prefix: p1,
-                    value: v1,
-                },
-                NodeData::Attr {
-                    local_name: l2,
-                    namespace: n2,
-                    prefix: p2,
-                    value: v2,
-                },
-            ) => {
-                if l1 != l2 || n1 != n2 || p1 != p2 || v1 != v2 {
-                    return false;
-                }
-            }
-            (NodeData::Document, NodeData::Document) => {}
-            (NodeData::DocumentFragment, NodeData::DocumentFragment) => {}
-            _ => return false,
-        }
 
-        // Compare children recursively
-        if node_a.children.len() != node_b.children.len() {
-            return false;
-        }
-        for (child_a, child_b) in node_a.children.iter().zip(node_b.children.iter()) {
-            if !self.is_equal_node(*child_a, *child_b) {
+            // Compare children: must have same count, then push pairs for comparison
+            if node_a.children.len() != node_b.children.len() {
                 return false;
+            }
+            for (child_a, child_b) in node_a.children.iter().zip(node_b.children.iter()) {
+                stack.push((*child_a, *child_b));
             }
         }
 
@@ -1011,63 +1076,64 @@ impl DomTree {
     ///
     /// Only "exclusive Text nodes" are touched (not CDATASection, Comment, etc.).
     pub fn normalize(&mut self, node_id: NodeId) {
-        // We process each direct child of node_id, then recurse into non-Text children.
-        // Because normalize is recursive and merging/removing changes the children list,
-        // we use index-based iteration and re-read children as we go.
+        // Iterative normalization using an explicit work stack.
+        let mut work_stack: Vec<NodeId> = vec![node_id];
 
-        let mut i = 0;
-        loop {
-            // Clone needed: remove_child/normalize below mutate self.nodes[node_id].children
-            let children = self.nodes[node_id].children.clone();
-            if i >= children.len() {
-                break;
-            }
-            let child_id = children[i];
-
-            if matches!(&self.nodes[child_id].data, NodeData::Text { .. }) {
-                // Check if the text node is empty
-                let is_empty = match &self.nodes[child_id].data {
-                    NodeData::Text { content } => content.is_empty(),
-                    _ => false,
-                };
-
-                if is_empty {
-                    // Remove empty text node
-                    self.remove_child(node_id, child_id);
-                    // Don't increment i — the next child slides into this position
-                    continue;
+        while let Some(current_node) = work_stack.pop() {
+            let mut i = 0;
+            loop {
+                // Clone needed: remove_child below mutates self.nodes[current_node].children
+                let children = self.nodes[current_node].children.clone();
+                if i >= children.len() {
+                    break;
                 }
+                let child_id = children[i];
 
-                // Merge with any following adjacent Text nodes
-                loop {
-                    // Clone needed: remove_child below mutates self.nodes[node_id].children
-                    let children = self.nodes[node_id].children.clone();
-                    let next_idx = self.find_child_index(node_id, child_id).map(|pos| pos + 1);
-                    let next_id = next_idx.and_then(|idx| children.get(idx).copied());
+                if matches!(&self.nodes[child_id].data, NodeData::Text { .. }) {
+                    // Check if the text node is empty
+                    let is_empty = match &self.nodes[child_id].data {
+                        NodeData::Text { content } => content.is_empty(),
+                        _ => false,
+                    };
 
-                    match next_id {
-                        Some(next) if matches!(&self.nodes[next].data, NodeData::Text { .. }) => {
-                            // Get next sibling's text data
-                            let next_text = match &self.nodes[next].data {
-                                NodeData::Text { content } => content.clone(),
-                                _ => unreachable!(),
-                            };
-                            // Append to current text node
-                            if let NodeData::Text { ref mut content } = self.nodes[child_id].data {
-                                content.push_str(&next_text);
-                            }
-                            // Remove the next sibling
-                            self.remove_child(node_id, next);
-                        }
-                        _ => break,
+                    if is_empty {
+                        // Remove empty text node
+                        self.remove_child(current_node, child_id);
+                        // Don't increment i — the next child slides into this position
+                        continue;
                     }
-                }
 
-                i += 1;
-            } else {
-                // Recurse into non-Text child
-                self.normalize(child_id);
-                i += 1;
+                    // Merge with any following adjacent Text nodes
+                    loop {
+                        // Clone needed: remove_child below mutates self.nodes[current_node].children
+                        let children = self.nodes[current_node].children.clone();
+                        let next_idx = self.find_child_index(current_node, child_id).map(|pos| pos + 1);
+                        let next_id = next_idx.and_then(|idx| children.get(idx).copied());
+
+                        match next_id {
+                            Some(next) if matches!(&self.nodes[next].data, NodeData::Text { .. }) => {
+                                // Get next sibling's text data
+                                let next_text = match &self.nodes[next].data {
+                                    NodeData::Text { content } => content.clone(),
+                                    _ => unreachable!(),
+                                };
+                                // Append to current text node
+                                if let NodeData::Text { ref mut content } = self.nodes[child_id].data {
+                                    content.push_str(&next_text);
+                                }
+                                // Remove the next sibling
+                                self.remove_child(current_node, next);
+                            }
+                            _ => break,
+                        }
+                    }
+
+                    i += 1;
+                } else {
+                    // Push non-Text child onto work stack instead of recursing
+                    work_stack.push(child_id);
+                    i += 1;
+                }
             }
         }
     }
@@ -1816,5 +1882,39 @@ mod tests {
             _ => panic!("expected Text"),
         }
         assert!(tree.get_node(cloned).parent.is_none());
+    }
+
+    #[test]
+    fn deep_nesting_does_not_stack_overflow() {
+        // 10,000 nested divs — verifies iterative tree walking
+        let mut tree = DomTree::new();
+        let root = tree.create_element("div");
+        tree.append_child(tree.document(), root);
+        let mut parent = root;
+        for _ in 0..10_000 {
+            let child = tree.create_element("div");
+            tree.append_child(parent, child);
+            parent = child;
+        }
+        // Add text at the deepest level
+        let text = tree.create_text("deep");
+        tree.append_child(parent, text);
+
+        // All these should complete without stack overflow
+        let text_content = tree.get_text_content(root);
+        assert_eq!(text_content, "deep");
+
+        let html = tree.serialize_node_html(root);
+        assert!(html.contains("deep"));
+        assert!(html.contains("<div>"));
+
+        let cloned = tree.clone_node(root, true);
+        assert_eq!(tree.get_text_content(cloned), "deep");
+
+        let equal = tree.is_equal_node(root, cloned);
+        assert!(equal);
+
+        tree.normalize(root);
+        assert_eq!(tree.get_text_content(root), "deep");
     }
 }

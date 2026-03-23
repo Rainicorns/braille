@@ -313,14 +313,22 @@ fn fetch_and_load(
         eprintln!("[JS ERROR] {err}");
     }
 
-    // Interleave settle + fetch until quiescent (handles dynamic script loading)
-    for _ in 0..30 {
-        session.engine.settle();
+    // Interleave settle + fetch until quiescent (handles dynamic script loading).
+    // Use settle_no_advance to avoid firing interval timers (version polling)
+    // repeatedly. Only advance time at the very end.
+    for round in 0..30 {
+        session.engine.settle_no_advance();
         if !session.engine.has_pending_fetches() {
+            eprintln!("[settle/fetch] quiescent after {round} rounds");
             break;
         }
+        eprintln!("[settle/fetch] round {round} — has pending fetches");
         resolve_pending_fetches(session, reader, writer);
     }
+    // Final settle — no time advance. The page is loaded; interval timers
+    // (polling) should not fire during initial load. Time advances will happen
+    // when the user interacts (click, type) and we call settle().
+    session.engine.settle_no_advance();
 
     session.navigate(page_data.url);
 
@@ -328,28 +336,57 @@ fn fetch_and_load(
 }
 
 /// Service all pending fetch requests from the engine's JS runtime.
+/// Fetches all pending URLs in parallel, resolves them, settles (to fire
+/// timers like React's scheduler), then repeats for any NEW fetches.
+/// Stops as soon as a wave produces no new unique URLs.
 fn resolve_pending_fetches(
     session: &mut Session,
     reader: &mut impl BufRead,
     writer: &mut impl Write,
 ) {
-    for _ in 0..50 {
+    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for wave in 0..50 {
         if !session.engine.has_pending_fetches() {
             break;
         }
         let pending = session.engine.pending_fetches();
-        let requests: Vec<FetchRequest> = pending
-            .into_iter()
-            .map(|req| FetchRequest {
+
+        // Partition into new vs repeat requests
+        let mut batch = Vec::new();
+        let mut has_new = false;
+        for req in pending {
+            let key = format!("{} {}", req.method, req.url);
+            let is_new = seen_urls.insert(key);
+            if is_new {
+                has_new = true;
+            }
+            eprintln!("  [fetch w{wave}{}] {} {}",
+                if is_new { "" } else { " repeat" },
+                req.method, &req.url[..req.url.len().min(120)]);
+            // Log request headers for API calls (helps debug auth/session issues)
+            if req.url.contains("/api/") {
+                if req.headers.is_empty() {
+                    eprintln!("    (no headers)");
+                }
+                for (h, v) in &req.headers {
+                    eprintln!("    {h}: {}", &v[..v.len().min(80)]);
+                }
+                if let Some(b) = &req.body {
+                    eprintln!("    body: {}", &b[..b.len().min(120)]);
+                }
+            }
+            batch.push(FetchRequest {
                 id: req.id,
                 url: req.url,
                 method: req.method,
                 headers: req.headers,
                 body: req.body,
-            })
-            .collect();
+            });
+        }
 
-        let results = request_fetches(reader, writer, requests);
+        // Fetch everything in parallel (new + repeats all go out together)
+        let results = request_fetches(reader, writer, batch);
         for result in results {
             match result.outcome {
                 FetchOutcome::Ok(data) => {
@@ -360,6 +397,13 @@ fn resolve_pending_fetches(
                 }
             }
         }
-        session.engine.settle();
+
+        // Settle (no time advance) to fire ready timers like React's scheduler
+        session.engine.settle_no_advance();
+
+        // If this wave had no new URLs, we're done — only polling remains
+        if !has_new {
+            break;
+        }
     }
 }

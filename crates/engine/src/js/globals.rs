@@ -234,7 +234,7 @@ fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
                 method = (init && init.method) ? init.method : input.method;
                 var h = (init && init.headers) ? new Headers(init.headers) : input.headers;
                 var arr = [];
-                h.forEach(function(v, k) { arr.push([k, v]); });
+                h.forEach(function(v, k) { arr.push([k, String(v)]); });
                 headers = JSON.stringify(arr);
                 body = (init && init.body !== undefined) ? init.body : input.body;
             } else {
@@ -245,10 +245,10 @@ fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
                     var h = init.headers;
                     if (typeof h.forEach === 'function') {
                         var arr = [];
-                        h.forEach(function(v, k) { arr.push([k, v]); });
+                        h.forEach(function(v, k) { arr.push([k, String(v)]); });
                         headers = JSON.stringify(arr);
                     } else if (typeof h === 'object') {
-                        headers = JSON.stringify(Object.entries(h));
+                        headers = JSON.stringify(Object.entries(h).map(function(e) { return [e[0], String(e[1])]; }));
                     }
                 }
                 body = (init && init.body != null) ? String(init.body) : null;
@@ -383,7 +383,7 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this.target = null;
                 this.currentTarget = null;
                 this.eventPhase = 0;
-                this.isTrusted = false;
+                this.isTrusted = true;
                 this.timeStamp = 0;
                 this._stopPropagation = false;
                 this._stopImmediate = false;
@@ -672,12 +672,14 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             };
         })();
 
-        // Performance
+        // Performance — real monotonic timer anchored to engine start
+        var __perf_start = Date.now();
         globalThis.performance = {
-            now: function() { return 0; },
+            now: function() { return Date.now() - __perf_start; },
+            timeOrigin: Date.now(),
             mark: function(){}, measure: function(){},
             getEntriesByType: function(){return [];}, getEntriesByName: function(){return [];},
-            timing: { navigationStart: 0 },
+            timing: { navigationStart: __perf_start },
         };
 
         // URL
@@ -941,7 +943,139 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             removeEventListener(type, cb) { if (this._listeners[type]) this._listeners[type] = this._listeners[type].filter(function(f){return f!==cb;}); }
         };
 
-        globalThis.XMLHttpRequest = class XMLHttpRequest { open(){} send(){} setRequestHeader(){} addEventListener(){} removeEventListener(){} };
+        globalThis.XMLHttpRequest = (function() {
+            function XMLHttpRequest() {
+                this.readyState = 0;
+                this.status = 0;
+                this.statusText = '';
+                this.responseText = '';
+                this.response = '';
+                this.responseURL = '';
+                this.responseType = '';
+                this.withCredentials = false;
+                this.timeout = 0;
+                this.upload = { addEventListener: function(){}, removeEventListener: function(){} };
+                this.onreadystatechange = null;
+                this.onload = null;
+                this.onerror = null;
+                this.onprogress = null;
+                this.onloadend = null;
+                this.onabort = null;
+                this.onloadstart = null;
+                this.ontimeout = null;
+                this._method = 'GET';
+                this._url = '';
+                this._headers = {};
+                this._responseHeaders = {};
+                this._listeners = {};
+                this._aborted = false;
+            }
+            XMLHttpRequest.UNSENT = 0;
+            XMLHttpRequest.OPENED = 1;
+            XMLHttpRequest.HEADERS_RECEIVED = 2;
+            XMLHttpRequest.LOADING = 3;
+            XMLHttpRequest.DONE = 4;
+            XMLHttpRequest.prototype.UNSENT = 0;
+            XMLHttpRequest.prototype.OPENED = 1;
+            XMLHttpRequest.prototype.HEADERS_RECEIVED = 2;
+            XMLHttpRequest.prototype.LOADING = 3;
+            XMLHttpRequest.prototype.DONE = 4;
+
+            XMLHttpRequest.prototype.open = function(method, url, async_) {
+                this._method = method;
+                this._url = url;
+                this._headers = {};
+                this._responseHeaders = {};
+                this._aborted = false;
+                this.readyState = 1;
+                this.status = 0;
+                this.statusText = '';
+                this.responseText = '';
+                this.response = '';
+                this._fireReadyStateChange();
+            };
+            XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+                this._headers[name] = value;
+            };
+            XMLHttpRequest.prototype.send = function(body) {
+                if (this._aborted) return;
+                var self = this;
+                var opts = { method: self._method, headers: self._headers };
+                if (body !== undefined && body !== null && self._method !== 'GET' && self._method !== 'HEAD') {
+                    opts.body = body;
+                }
+                self.readyState = 1;
+
+                fetch(self._url, opts).then(function(resp) {
+                    if (self._aborted) return;
+                    self.status = resp.status;
+                    self.statusText = resp.statusText || '';
+                    self.responseURL = resp.url || self._url;
+                    // Store response headers
+                    self._responseHeaders = {};
+                    if (resp.headers && typeof resp.headers.forEach === 'function') {
+                        resp.headers.forEach(function(val, key) {
+                            self._responseHeaders[key.toLowerCase()] = val;
+                        });
+                    }
+                    self.readyState = 2;
+                    self._fireReadyStateChange();
+                    return resp.text();
+                }).then(function(text) {
+                    if (self._aborted) return;
+                    self.responseText = text || '';
+                    self.response = self.responseType === 'json' ? JSON.parse(self.responseText) : self.responseText;
+                    self.readyState = 4;
+                    self._fireReadyStateChange();
+                    self._fireEvent('load');
+                    self._fireEvent('loadend');
+                }).catch(function(err) {
+                    if (self._aborted) return;
+                    self.readyState = 4;
+                    self.status = 0;
+                    self._fireReadyStateChange();
+                    self._fireEvent('error');
+                    self._fireEvent('loadend');
+                });
+            };
+            XMLHttpRequest.prototype.abort = function() {
+                this._aborted = true;
+                this.readyState = 0;
+                this._fireEvent('abort');
+            };
+            XMLHttpRequest.prototype.getResponseHeader = function(name) {
+                return this._responseHeaders[name.toLowerCase()] || null;
+            };
+            XMLHttpRequest.prototype.getAllResponseHeaders = function() {
+                var result = '';
+                for (var key in this._responseHeaders) {
+                    result += key + ': ' + this._responseHeaders[key] + '\r\n';
+                }
+                return result;
+            };
+            XMLHttpRequest.prototype.overrideMimeType = function() {};
+            XMLHttpRequest.prototype.addEventListener = function(type, cb) {
+                if (!this._listeners[type]) this._listeners[type] = [];
+                this._listeners[type].push(cb);
+            };
+            XMLHttpRequest.prototype.removeEventListener = function(type, cb) {
+                if (this._listeners[type]) this._listeners[type] = this._listeners[type].filter(function(f){return f!==cb;});
+            };
+            XMLHttpRequest.prototype._fireReadyStateChange = function() {
+                if (typeof this.onreadystatechange === 'function') {
+                    this.onreadystatechange({type: 'readystatechange', target: this});
+                }
+                this._fireEvent('readystatechange');
+            };
+            XMLHttpRequest.prototype._fireEvent = function(type) {
+                var evt = {type: type, target: this, loaded: this.responseText ? this.responseText.length : 0, total: 0, lengthComputable: false};
+                var handler = this['on' + type];
+                if (typeof handler === 'function' && type !== 'readystatechange') handler.call(this, evt);
+                var cbs = this._listeners[type];
+                if (cbs) { for (var i = 0; i < cbs.length; i++) cbs[i].call(this, evt); }
+            };
+            return XMLHttpRequest;
+        })();
         globalThis.DOMParser = class DOMParser { parseFromString(s,t) { return document; } };
         globalThis.HTMLElement = class HTMLElement {};
         globalThis.HTMLIFrameElement = class HTMLIFrameElement extends HTMLElement {};
@@ -955,6 +1089,36 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.HTMLOptionElement = class HTMLOptionElement extends HTMLElement {};
         globalThis.Element = class Element {};
         globalThis.Node = class Node {};
+        // Value descriptors on HTML*Element prototypes for React's inputValueTracking.
+        // React uses node.constructor.prototype to find native get/set for 'value'
+        // and 'checked'. These must exist so React can set up change detection.
+        var _valDesc = {
+            get: function() {
+                if (this.__props && this.__props._value !== undefined) return this.__props._value;
+                return (this.getAttribute && this.getAttribute('value')) || '';
+            },
+            set: function(v) {
+                if (!this.__props) this.__props = {};
+                this.__props._value = String(v);
+                // Also sync to attribute so Rust-side snapshot can read the current value
+                if (this.__nid !== undefined) __n_setAttribute(this.__nid, 'value', String(v));
+            },
+            configurable: true,
+        };
+        Object.defineProperty(HTMLInputElement.prototype, 'value', _valDesc);
+        Object.defineProperty(HTMLTextAreaElement.prototype, 'value', _valDesc);
+        Object.defineProperty(HTMLSelectElement.prototype, 'value', _valDesc);
+        Object.defineProperty(HTMLInputElement.prototype, 'checked', {
+            get: function() {
+                if (this.__props && this.__props._checked !== undefined) return this.__props._checked;
+                return this.hasAttribute && this.hasAttribute('checked');
+            },
+            set: function(v) {
+                if (!this.__props) this.__props = {};
+                this.__props._checked = !!v;
+            },
+            configurable: true,
+        });
         globalThis.DocumentFragment = class DocumentFragment {};
         globalThis.ShadowRoot = class ShadowRoot {};
         globalThis.CSSStyleSheet = class CSSStyleSheet { insertRule(){return 0;} deleteRule(){} get cssRules(){return [];} };

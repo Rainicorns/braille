@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/wire", "crates/cli"]
+members = ["crates/engine", "crates/wire", "crates/cli", "crates/spike-quickjs"]
 resolver = "2"
 
 [workspace.lints.rust]

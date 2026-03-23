@@ -183,7 +183,18 @@ fn set_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
     } else {
         name
     };
+    // Capture old value for attributeChangedCallback
+    let old_value_for_ce = el.tree.borrow().get_attribute(el.node_id, &name).map(|s| s.to_string());
     super::mutation_observer::set_attribute_with_observer(ctx, &el.tree, el.node_id, &name, &value);
+    // Custom element attributeChangedCallback
+    super::custom_elements::invoke_attribute_changed_callback(
+        &el.tree,
+        el.node_id,
+        &name,
+        old_value_for_ce.as_deref(),
+        Some(&value),
+        ctx,
+    );
     // Compile inline event handler if this is an on* attribute
     if name.starts_with("on") && name.len() > 2 {
         let tree_ptr = std::rc::Rc::as_ptr(&el.tree) as usize;
@@ -209,7 +220,20 @@ fn remove_attribute_fn(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> J
     } else {
         name
     };
+    // Capture old value for attributeChangedCallback
+    let old_value_for_ce = el.tree.borrow().get_attribute(el.node_id, &name).map(|s| s.to_string());
     super::mutation_observer::remove_attribute_with_observer(ctx, &el.tree, el.node_id, &name);
+    // Custom element attributeChangedCallback
+    if old_value_for_ce.is_some() {
+        super::custom_elements::invoke_attribute_changed_callback(
+            &el.tree,
+            el.node_id,
+            &name,
+            old_value_for_ce.as_deref(),
+            None,
+            ctx,
+        );
+    }
     // Clean up shared attr_node_cache and set ownerElement to null on cached Attr
     {
         let cache = crate::js::realm_state::attr_node_cache(ctx);

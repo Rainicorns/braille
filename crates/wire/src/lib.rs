@@ -15,7 +15,10 @@ pub enum Command {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub enum SnapMode {
+    /// Compact text + interactive elements — token-efficient, the default for LLM agents.
     #[default]
+    Compact,
+    /// Full accessibility tree with roles, indentation, and element hierarchy.
     Accessibility,
     Interactive,
     Links,
@@ -76,6 +79,111 @@ pub struct FetchResponseData {
     pub headers: Vec<(String, String)>,
     pub body: String,
     pub url: String,
+}
+
+// --- Engine REPL protocol types ---
+
+/// Message sent from the host (CLI) to the engine process over stdin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum HostMessage {
+    /// Execute a command.
+    Command(DaemonCommand),
+    /// Here are the HTTP responses you asked for.
+    FetchResults(Vec<FetchResult>),
+}
+
+/// Message sent from the engine process to the host (CLI) over stdout.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum EngineMessage {
+    /// I need these URLs fetched.
+    NeedFetch(Vec<FetchRequest>),
+    /// Here's the final result.
+    CommandResult(DaemonResponse),
+}
+
+/// Result of a single fetch request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FetchResult {
+    pub id: u64,
+    pub outcome: FetchOutcome,
+}
+
+/// Whether a fetch succeeded or failed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum FetchOutcome {
+    Ok(FetchResponseData),
+    Err(String),
+}
+
+// --- Daemon IPC types ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DaemonRequest {
+    pub session_id: Option<String>,
+    pub command: DaemonCommand,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DaemonCommand {
+    NewSession,
+    Goto { url: String, mode: SnapMode },
+    Click { selector: String },
+    Type { selector: String, text: String },
+    Select { selector: String, value: String },
+    Snap { mode: SnapMode },
+    Back,
+    Forward,
+    Console,
+    Close,
+    DaemonStop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DaemonResponse {
+    pub success: bool,
+    pub session_id: Option<String>,
+    pub content: Option<String>,
+    pub error: Option<String>,
+    /// Console output (log/warn/error) captured since last command.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub console: Vec<String>,
+}
+
+impl DaemonResponse {
+    pub fn ok(content: String) -> Self {
+        DaemonResponse {
+            success: true,
+            session_id: None,
+            content: Some(content),
+            error: None,
+            console: Vec::new(),
+        }
+    }
+
+    pub fn ok_with_session(session_id: String, content: Option<String>) -> Self {
+        DaemonResponse {
+            success: true,
+            session_id: Some(session_id),
+            content,
+            error: None,
+            console: Vec::new(),
+        }
+    }
+
+    pub fn err(message: String) -> Self {
+        DaemonResponse {
+            success: false,
+            session_id: None,
+            content: None,
+            error: Some(message),
+            console: Vec::new(),
+        }
+    }
+
+    pub fn with_console(mut self, console: Vec<String>) -> Self {
+        self.console = console;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -181,5 +289,127 @@ mod tests {
     #[test]
     fn engine_action_error_roundtrip() {
         assert_roundtrip!(EngineAction::Error("Element not found".into()), EngineAction);
+    }
+
+    #[test]
+    fn daemon_request_new_session_roundtrip() {
+        assert_roundtrip!(
+            DaemonRequest { session_id: None, command: DaemonCommand::NewSession },
+            DaemonRequest
+        );
+    }
+
+    #[test]
+    fn daemon_request_goto_roundtrip() {
+        assert_roundtrip!(
+            DaemonRequest {
+                session_id: Some("sess_abc12345".into()),
+                command: DaemonCommand::Goto { url: "https://example.com".into(), mode: SnapMode::Compact },
+            },
+            DaemonRequest
+        );
+    }
+
+    #[test]
+    fn daemon_command_type_roundtrip() {
+        assert_roundtrip!(
+            DaemonCommand::Type { selector: "#email".into(), text: "test@example.com".into() },
+            DaemonCommand
+        );
+    }
+
+    #[test]
+    fn daemon_response_ok_roundtrip() {
+        assert_roundtrip!(DaemonResponse::ok("page content".into()), DaemonResponse);
+    }
+
+    #[test]
+    fn daemon_response_err_roundtrip() {
+        assert_roundtrip!(DaemonResponse::err("not found".into()), DaemonResponse);
+    }
+
+    #[test]
+    fn daemon_response_with_session_roundtrip() {
+        assert_roundtrip!(
+            DaemonResponse::ok_with_session("sess_abc12345".into(), Some("content".into())),
+            DaemonResponse
+        );
+    }
+
+    // --- Engine REPL protocol tests ---
+
+    #[test]
+    fn host_message_command_roundtrip() {
+        assert_roundtrip!(
+            HostMessage::Command(DaemonCommand::Goto {
+                url: "https://example.com".into(),
+                mode: SnapMode::Compact,
+            }),
+            HostMessage
+        );
+    }
+
+    #[test]
+    fn host_message_fetch_results_roundtrip() {
+        assert_roundtrip!(
+            HostMessage::FetchResults(vec![
+                FetchResult {
+                    id: 1,
+                    outcome: FetchOutcome::Ok(FetchResponseData {
+                        status: 200,
+                        status_text: "OK".into(),
+                        headers: vec![("content-type".into(), "text/html".into())],
+                        body: "<html></html>".into(),
+                        url: "https://example.com".into(),
+                    }),
+                },
+                FetchResult {
+                    id: 2,
+                    outcome: FetchOutcome::Err("network error".into()),
+                },
+            ]),
+            HostMessage
+        );
+    }
+
+    #[test]
+    fn engine_message_need_fetch_roundtrip() {
+        assert_roundtrip!(
+            EngineMessage::NeedFetch(vec![FetchRequest {
+                id: 42,
+                url: "https://example.com/api".into(),
+                method: "GET".into(),
+                headers: vec![],
+                body: None,
+            }]),
+            EngineMessage
+        );
+    }
+
+    #[test]
+    fn engine_message_command_result_roundtrip() {
+        assert_roundtrip!(
+            EngineMessage::CommandResult(DaemonResponse::ok("snapshot content".into())),
+            EngineMessage
+        );
+    }
+
+    #[test]
+    fn fetch_outcome_ok_roundtrip() {
+        assert_roundtrip!(
+            FetchOutcome::Ok(FetchResponseData {
+                status: 404,
+                status_text: "Not Found".into(),
+                headers: vec![],
+                body: "".into(),
+                url: "https://example.com/missing".into(),
+            }),
+            FetchOutcome
+        );
+    }
+
+    #[test]
+    fn fetch_outcome_err_roundtrip() {
+        assert_roundtrip!(FetchOutcome::Err("timeout".into()), FetchOutcome);
     }
 }

@@ -150,6 +150,16 @@ impl DomTree {
         }
     }
 
+    /// Returns the list of attribute names for the given element node.
+    pub fn attribute_names(&self, node_id: NodeId) -> Vec<String> {
+        let node = self.get_node(node_id);
+        if let NodeData::Element { ref attributes, .. } = node.data {
+            attributes.iter().map(|a| a.qualified_name()).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Returns true if the Element has any attributes at all.
     pub fn has_attributes(&self, node_id: NodeId) -> bool {
         let node = self.get_node(node_id);

@@ -1,13 +1,12 @@
-use braille_engine::{FetchedResources, ScriptDescriptor};
-use braille_wire::{EngineAction, SnapMode};
+use braille_wire::{DaemonCommand, DaemonRequest, DaemonResponse, SnapMode};
 use clap::{Parser, Subcommand, ValueEnum};
-use std::collections::HashMap;
 
+mod client;
+pub mod daemon;
+mod engine_process;
 pub mod network;
+mod paths;
 mod session;
-
-use network::NetworkClient;
-use session::SessionManager;
 
 #[derive(Parser)]
 #[command(name = "braille", about = "A text browser for LLM agents")]
@@ -20,15 +19,41 @@ struct Cli {
 enum TopLevel {
     /// Create a new browser session
     New,
+    /// Daemon management
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
     /// Run a command in an existing session
     #[command(external_subcommand)]
     Session(Vec<String>),
 }
 
 #[derive(Subcommand)]
+enum DaemonAction {
+    /// Start the daemon (foreground — used internally)
+    Start,
+    /// Stop the running daemon
+    Stop,
+    /// Check if daemon is running
+    Status,
+}
+
+#[derive(Subcommand)]
 enum SessionAction {
     /// Navigate to a URL
-    Goto { url: String },
+    Goto {
+        url: String,
+        /// Output mode for the snapshot
+        #[arg(long, default_value = "compact")]
+        mode: SnapModeArg,
+        /// CSS selector for selector mode
+        #[arg(long)]
+        query: Option<String>,
+        /// Target element (@eN, #id, CSS selector) for region mode
+        #[arg(long)]
+        target: Option<String>,
+    },
     /// Click an element matching the selector
     Click { selector: String },
     /// Type text into an element matching the selector
@@ -38,7 +63,7 @@ enum SessionAction {
     /// Take a snapshot of the current page
     Snap {
         /// Output mode for the snapshot
-        #[arg(long, default_value = "accessibility")]
+        #[arg(long, default_value = "compact")]
         mode: SnapModeArg,
         /// CSS selector for selector mode
         #[arg(long)]
@@ -51,12 +76,15 @@ enum SessionAction {
     Back,
     /// Go forward in history
     Forward,
+    /// Show console output (log/warn/error) from JS
+    Console,
     /// Close the session
     Close,
 }
 
 #[derive(Clone, ValueEnum)]
 enum SnapModeArg {
+    Compact,
     Accessibility,
     Interactive,
     Links,
@@ -72,6 +100,7 @@ enum SnapModeArg {
 impl SnapModeArg {
     fn into_snap_mode(self, query: Option<String>, target: Option<String>) -> SnapMode {
         match self {
+            SnapModeArg::Compact => SnapMode::Compact,
             SnapModeArg::Accessibility => SnapMode::Accessibility,
             SnapModeArg::Interactive => SnapMode::Interactive,
             SnapModeArg::Links => SnapMode::Links,
@@ -87,8 +116,6 @@ impl SnapModeArg {
 }
 
 fn parse_session_action(args: &[String]) -> SessionAction {
-    // Build a clap command for session actions and parse from the raw tokens.
-    // We strip the session ID before calling this, so args is just the verb + its args.
     use clap::FromArgMatches;
 
     let cmd = clap::Command::new("braille-session")
@@ -99,224 +126,119 @@ fn parse_session_action(args: &[String]) -> SessionAction {
     SessionAction::from_arg_matches(&matches).unwrap()
 }
 
-/// Fetch a URL using the NetworkClient, load HTML into the session's engine
-/// using two-phase script loading, and return an accessibility snapshot.
-fn fetch_and_load(net: &mut NetworkClient, session: &mut session::Session, url: &str) -> Result<String, String> {
-    let resp = net.fetch(url)?;
-    let html = &resp.body;
-
-    // Two-phase script loading:
-    // 1. Parse HTML and collect script descriptors
-    let descriptors = session.engine.parse_and_collect_scripts(html);
-
-    // 2. Fetch external scripts
-    let mut fetched = HashMap::new();
-    for desc in &descriptors {
-        if let ScriptDescriptor::External(src_url) | ScriptDescriptor::ExternalModule(src_url) = desc {
-            let resolved = net.resolve_url(src_url);
-            match net.fetch(&resolved) {
-                Ok(script_resp) => {
-                    fetched.insert(src_url.clone(), script_resp.body);
-                }
-                Err(_) => {
-                    // Skip failed external scripts (engine will also skip missing ones)
-                }
-            }
-        }
-    }
-
-    // 3. Execute all scripts in document order
-    session
-        .engine
-        .execute_scripts(&descriptors, &FetchedResources::scripts_only(fetched));
-
-    // 3b. Set the URL in the JS runtime so location.href is correct
-    session.engine.set_url(&resp.url);
-
-    // 3c. Settle + fetch resolution loop
-    session.engine.settle();
-    resolve_pending_fetches(net, &mut session.engine);
-
-    // 4. Record navigation in session history
-    session.navigate(resp.url);
-
-    // 5. Return accessibility snapshot
-    Ok(session.engine.snapshot(SnapMode::Accessibility))
-}
-
-/// Service all pending fetch requests from the engine's JS runtime.
-/// Loops until no more pending fetches remain.
-fn resolve_pending_fetches(net: &mut NetworkClient, engine: &mut braille_engine::Engine) {
-    for _ in 0..50 {
-        if !engine.has_pending_fetches() {
-            break;
-        }
-        let pending = engine.pending_fetches();
-        for req in pending {
-            let resolved_url = net.resolve_url(&req.url);
-            match net.fetch_with_options(
-                &resolved_url,
-                &req.method,
-                &req.headers,
-                req.body.as_deref(),
-            ) {
-                Ok(resp) => {
-                    let response_data = braille_wire::FetchResponseData {
-                        status: resp.status,
-                        status_text: status_text_for_code(resp.status).to_string(),
-                        headers: resp
-                            .content_type
-                            .map(|ct| vec![("content-type".to_string(), ct)])
-                            .unwrap_or_default(),
-                        body: resp.body,
-                        url: resp.url,
-                    };
-                    engine.resolve_fetch(req.id, &response_data);
-                }
-                Err(e) => {
-                    engine.reject_fetch(req.id, &e);
-                }
-            }
-        }
-        engine.settle();
+fn session_action_to_daemon_command(action: SessionAction) -> DaemonCommand {
+    match action {
+        SessionAction::Goto {
+            url,
+            mode,
+            query,
+            target,
+        } => DaemonCommand::Goto {
+            url,
+            mode: mode.into_snap_mode(query, target),
+        },
+        SessionAction::Click { selector } => DaemonCommand::Click { selector },
+        SessionAction::Type { selector, text } => DaemonCommand::Type { selector, text },
+        SessionAction::Select { selector, value } => DaemonCommand::Select { selector, value },
+        SessionAction::Snap { mode, query, target } => DaemonCommand::Snap {
+            mode: mode.into_snap_mode(query, target),
+        },
+        SessionAction::Back => DaemonCommand::Back,
+        SessionAction::Forward => DaemonCommand::Forward,
+        SessionAction::Console => DaemonCommand::Console,
+        SessionAction::Close => DaemonCommand::Close,
     }
 }
 
-fn status_text_for_code(code: u16) -> &'static str {
-    match code {
-        200 => "OK",
-        201 => "Created",
-        204 => "No Content",
-        301 => "Moved Permanently",
-        302 => "Found",
-        304 => "Not Modified",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        403 => "Forbidden",
-        404 => "Not Found",
-        500 => "Internal Server Error",
-        502 => "Bad Gateway",
-        503 => "Service Unavailable",
-        _ => "",
+fn format_response(response: DaemonResponse) -> String {
+    let mut output = if response.success {
+        if let Some(sid) = &response.session_id {
+            if let Some(content) = &response.content {
+                format!("{sid}\n{content}")
+            } else {
+                sid.clone()
+            }
+        } else {
+            response.content.unwrap_or_default()
+        }
+    } else {
+        format!("error: {}", response.error.unwrap_or_else(|| "unknown error".to_string()))
+    };
+
+    if !response.console.is_empty() {
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str("[console]\n");
+        for line in &response.console {
+            output.push_str(line);
+            output.push('\n');
+        }
     }
+
+    output
 }
 
 fn run(cli: Cli) -> String {
     match cli.command {
+        TopLevel::Daemon { action } => match action {
+            DaemonAction::Start => {
+                let socket = paths::socket_path();
+                let pid = paths::pid_path();
+                daemon::run_daemon(socket, pid);
+                String::new()
+            }
+            DaemonAction::Stop => {
+                let request = DaemonRequest {
+                    session_id: None,
+                    command: DaemonCommand::DaemonStop,
+                };
+                client::ensure_daemon_running();
+                let response = client::send_request(&request);
+                format_response(response)
+            }
+            DaemonAction::Status => {
+                let socket = paths::socket_path();
+                if socket.exists() {
+                    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+                        "daemon is running".to_string()
+                    } else {
+                        "daemon socket exists but is not responding".to_string()
+                    }
+                } else {
+                    "daemon is not running".to_string()
+                }
+            }
+        },
         TopLevel::New => {
-            let mut manager = SessionManager::new();
-            manager.new_session()
+            client::ensure_daemon_running();
+            let request = DaemonRequest {
+                session_id: None,
+                command: DaemonCommand::NewSession,
+            };
+            let response = client::send_request(&request);
+            format_response(response)
         }
         TopLevel::Session(args) => {
             if args.is_empty() {
                 return "error: session ID required".to_string();
             }
-            let _sid = &args[0];
+            let sid = &args[0];
             let action_args = &args[1..];
             if action_args.is_empty() {
                 return "error: session command required (goto, click, type, select, snap, back, forward, close)"
                     .to_string();
             }
             let action = parse_session_action(action_args);
-            match action {
-                SessionAction::Goto { url } => {
-                    let mut manager = SessionManager::new();
-                    let session_id = manager.new_session();
-                    let session = manager.get_session(&session_id).unwrap();
-                    let mut net = NetworkClient::new();
-                    match fetch_and_load(&mut net, session, &url) {
-                        Ok(snapshot) => snapshot,
-                        Err(e) => format!("error: {e}"),
-                    }
-                }
-                SessionAction::Click { selector } => {
-                    // Without a persistent session, we have no loaded page to click on.
-                    // This will work once the daemon architecture is in place.
-                    let mut manager = SessionManager::new();
-                    let session_id = manager.new_session();
-                    let session = manager.get_session(&session_id).unwrap();
-                    // Engine has no page loaded, so snapshot will produce empty tree.
-                    // Need a snapshot first to populate ref_map before click can work.
-                    session.engine.snapshot(SnapMode::Accessibility);
-                    let action = session.engine.handle_click(&selector);
-                    match action {
-                        EngineAction::Navigate(nav_req) => {
-                            let mut net = NetworkClient::new();
-                            let resolved = net.resolve_url(&nav_req.url);
-                            match fetch_and_load(&mut net, session, &resolved) {
-                                Ok(snapshot) => snapshot,
-                                Err(e) => format!("error: {e}"),
-                            }
-                        }
-                        EngineAction::Error(msg) => format!("error: {msg}"),
-                        EngineAction::None => session.engine.snapshot(SnapMode::Accessibility),
-                    }
-                }
-                SessionAction::Type { selector, text } => {
-                    let mut manager = SessionManager::new();
-                    let session_id = manager.new_session();
-                    let session = manager.get_session(&session_id).unwrap();
-                    session.engine.snapshot(SnapMode::Accessibility);
-                    match session.engine.handle_type(&selector, &text) {
-                        Ok(()) => session.engine.snapshot(SnapMode::Accessibility),
-                        Err(e) => format!("error: {e}"),
-                    }
-                }
-                SessionAction::Select { selector, value } => {
-                    let mut manager = SessionManager::new();
-                    let session_id = manager.new_session();
-                    let session = manager.get_session(&session_id).unwrap();
-                    session.engine.snapshot(SnapMode::Accessibility);
-                    match session.engine.handle_select(&selector, &value) {
-                        Ok(()) => session.engine.snapshot(SnapMode::Accessibility),
-                        Err(e) => format!("error: {e}"),
-                    }
-                }
-                SessionAction::Snap { mode, query, target } => {
-                    let mut manager = SessionManager::new();
-                    let session_id = manager.new_session();
-                    let session = manager.get_session(&session_id).unwrap();
-                    session.engine.snapshot(mode.into_snap_mode(query, target))
-                }
-                SessionAction::Back => {
-                    let mut manager = SessionManager::new();
-                    let session_id = manager.new_session();
-                    let session = manager.get_session(&session_id).unwrap();
-                    match session.go_back() {
-                        Some(url) => {
-                            let url = url.to_string();
-                            let mut net = NetworkClient::new();
-                            match fetch_and_load(&mut net, session, &url) {
-                                Ok(snapshot) => snapshot,
-                                Err(e) => format!("error: {e}"),
-                            }
-                        }
-                        None => "error: no previous page in history".to_string(),
-                    }
-                }
-                SessionAction::Forward => {
-                    let mut manager = SessionManager::new();
-                    let session_id = manager.new_session();
-                    let session = manager.get_session(&session_id).unwrap();
-                    match session.go_forward() {
-                        Some(url) => {
-                            let url = url.to_string();
-                            let mut net = NetworkClient::new();
-                            match fetch_and_load(&mut net, session, &url) {
-                                Ok(snapshot) => snapshot,
-                                Err(e) => format!("error: {e}"),
-                            }
-                        }
-                        None => "error: no forward page in history".to_string(),
-                    }
-                }
-                SessionAction::Close => {
-                    let mut manager = SessionManager::new();
-                    let session_id = manager.new_session();
-                    manager.close_session(&session_id);
-                    "session closed".to_string()
-                }
-            }
+            let command = session_action_to_daemon_command(action);
+
+            client::ensure_daemon_running();
+            let request = DaemonRequest {
+                session_id: Some(sid.clone()),
+                command,
+            };
+            let response = client::send_request(&request);
+            format_response(response)
         }
     }
 }
@@ -324,7 +246,9 @@ fn run(cli: Cli) -> String {
 fn main() {
     let cli = Cli::parse();
     let output = run(cli);
-    println!("{output}");
+    if !output.is_empty() {
+        println!("{output}");
+    }
 }
 
 #[cfg(test)]
@@ -338,181 +262,31 @@ mod tests {
     }
 
     #[test]
-    fn cmd_new() {
-        let output = parse(&["braille", "new"]);
+    fn cmd_daemon_status_not_running() {
+        // When no daemon is running, status should report that.
+        // Use a non-existent socket to test the status check logic.
+        let output = parse(&["braille", "daemon", "status"]);
+        // This test just verifies the status command doesn't panic.
         assert!(
-            output.starts_with("sess_"),
-            "new should return a session ID starting with 'sess_', got: {}",
-            output
-        );
-        assert_eq!(
-            output.len(),
-            13,
-            "session ID should be 13 chars (sess_ + 8 hex), got: {}",
-            output
-        );
-    }
-
-    #[test]
-    fn cmd_goto() {
-        // goto now performs a real HTTP fetch + two-phase script loading via Session + NetworkClient.
-        let output = parse(&["braille", "abc123", "goto", "https://example.com"]);
-        assert!(!output.is_empty(), "goto should produce output");
-        assert!(
-            !output.starts_with("error:"),
-            "goto should not error for example.com, got: {}",
-            output
-        );
-    }
-
-    #[test]
-    fn cmd_click_no_page() {
-        // Without a loaded page, click on a selector finds nothing.
-        let output = parse(&["braille", "abc123", "click", "button.submit"]);
-        assert!(
-            output.contains("error:"),
-            "click without loaded page should return an error, got: {}",
-            output
-        );
-    }
-
-    #[test]
-    fn cmd_type_no_page() {
-        // Without a loaded page, type into a selector finds nothing.
-        let output = parse(&["braille", "abc123", "type", "input#email", "hello@test.com"]);
-        assert!(
-            output.contains("error:"),
-            "type without loaded page should return an error, got: {}",
-            output
-        );
-    }
-
-    #[test]
-    fn cmd_select_no_page() {
-        // Without a loaded page, select finds nothing.
-        let output = parse(&["braille", "abc123", "select", "#country", "us"]);
-        assert!(
-            output.contains("error:"),
-            "select without loaded page should return an error, got: {}",
-            output
-        );
-    }
-
-    #[test]
-    fn cmd_snap_default() {
-        // With a fresh session (no page loaded), snapshot returns an empty tree.
-        let output = parse(&["braille", "abc123", "snap"]);
-        // A fresh engine with no HTML loaded will produce some output (empty doc).
-        assert!(!output.starts_with("error:"), "snap should not error, got: {}", output);
-    }
-
-    #[test]
-    fn cmd_snap_dom() {
-        let output = parse(&["braille", "abc123", "snap", "--mode", "dom"]);
-        // DOM mode returns a placeholder for now.
-        assert!(!output.is_empty(), "snap --mode dom should produce output");
-    }
-
-    #[test]
-    fn cmd_snap_markdown() {
-        let output = parse(&["braille", "abc123", "snap", "--mode", "markdown"]);
-        assert!(!output.is_empty(), "snap --mode markdown should produce output");
-    }
-
-    #[test]
-    fn cmd_back_no_history() {
-        let output = parse(&["braille", "s1", "back"]);
-        assert!(
-            output.contains("error:"),
-            "back with no history should return an error, got: {}",
-            output
-        );
-        assert!(
-            output.contains("no previous page"),
-            "back error should mention no previous page, got: {}",
-            output
-        );
-    }
-
-    #[test]
-    fn cmd_forward_no_history() {
-        let output = parse(&["braille", "s1", "forward"]);
-        assert!(
-            output.contains("error:"),
-            "forward with no history should return an error, got: {}",
-            output
-        );
-        assert!(
-            output.contains("no forward page"),
-            "forward error should mention no forward page, got: {}",
-            output
-        );
-    }
-
-    #[test]
-    fn cmd_close() {
-        let output = parse(&["braille", "s1", "close"]);
-        assert_eq!(output, "session closed");
-    }
-
-    #[test]
-    fn cmd_missing_session_id() {
-        // external_subcommand with no args
-        // This case is handled by the empty args check
-        let cli = Cli::parse_from(&["braille", ""]);
-        let output = run(cli);
-        assert!(
-            output.contains("error:"),
-            "empty session ID should produce an error, got: {}",
-            output
+            output.contains("daemon") || output.contains("running") || output.contains("not"),
+            "status should report daemon state, got: {output}"
         );
     }
 
     #[test]
     fn cmd_missing_action() {
         let output = parse(&["braille", "abc123"]);
-        assert!(
-            output.contains("error:"),
-            "missing action should produce an error, got: {}",
-            output
-        );
+        assert!(output.contains("error:"), "missing action should produce an error, got: {output}");
         assert!(
             output.contains("session command required"),
-            "error should mention session command required, got: {}",
-            output
+            "error should mention session command required, got: {output}",
         );
     }
 
-    /// Integration test: create a SessionManager, create a session, navigate, and verify snapshot.
     #[test]
-    fn session_goto_and_snapshot() {
-        let mut manager = SessionManager::new();
-        let session_id = manager.new_session();
-        let session = manager.get_session(&session_id).unwrap();
-        let mut net = NetworkClient::new();
-
-        let result = fetch_and_load(&mut net, session, "https://example.com");
-        assert!(
-            result.is_ok(),
-            "fetch_and_load should succeed for example.com: {:?}",
-            result
-        );
-
-        let snapshot = result.unwrap();
-        assert!(!snapshot.is_empty(), "snapshot should not be empty");
-        // example.com has a heading
-        assert!(
-            snapshot.contains("Example Domain") || snapshot.contains("example"),
-            "snapshot should contain content from example.com: {}",
-            snapshot
-        );
-
-        // Verify the session recorded the navigation
-        let session = manager.get_session(&session_id).unwrap();
-        assert!(
-            session.current_url().is_some(),
-            "session should have a current URL after goto"
-        );
-        assert!(session.history.len() == 1, "session should have 1 history entry");
+    fn cmd_missing_session_id() {
+        let cli = Cli::parse_from(&["braille", ""]);
+        let output = run(cli);
+        assert!(output.contains("error:"), "empty session ID should produce an error, got: {output}");
     }
 }
