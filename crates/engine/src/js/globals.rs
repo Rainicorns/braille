@@ -425,6 +425,46 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.WheelEvent = class WheelEvent extends MouseEvent { constructor(t,o){super(t,o);} };
         globalThis.CompositionEvent = class CompositionEvent extends UIEvent { constructor(t,o){super(t,o);} };
         globalThis.ErrorEvent = class ErrorEvent extends Event { constructor(t,o){super(t,o);this.message=o&&o.message||'';this.filename=o&&o.filename||'';} };
+        globalThis.PointerEvent = class PointerEvent extends MouseEvent {
+            constructor(t,o){super(t,o);this.pointerId=(o&&o.pointerId)||0;this.width=(o&&o.width)||1;this.height=(o&&o.height)||1;this.pressure=(o&&o.pressure)||0;this.tiltX=(o&&o.tiltX)||0;this.tiltY=(o&&o.tiltY)||0;this.pointerType=(o&&o.pointerType)||'mouse';this.isPrimary=(o&&o.isPrimary)!==undefined?o.isPrimary:true;}
+        };
+        globalThis.TouchEvent = class TouchEvent extends UIEvent {
+            constructor(t,o){super(t,o);this.touches=(o&&o.touches)||[];this.targetTouches=(o&&o.targetTouches)||[];this.changedTouches=(o&&o.changedTouches)||[];}
+        };
+        globalThis.Touch = class Touch {
+            constructor(o){this.identifier=(o&&o.identifier)||0;this.target=(o&&o.target)||null;this.clientX=(o&&o.clientX)||0;this.clientY=(o&&o.clientY)||0;this.pageX=(o&&o.pageX)||0;this.pageY=(o&&o.pageY)||0;}
+        };
+        globalThis.ClipboardEvent = class ClipboardEvent extends Event {
+            constructor(t,o){super(t,o);this.clipboardData=(o&&o.clipboardData)||{getData:function(){return '';},setData:function(){},types:[]};}
+        };
+        globalThis.DragEvent = class DragEvent extends MouseEvent {
+            constructor(t,o){super(t,o);this.dataTransfer=(o&&o.dataTransfer)||{getData:function(){return '';},setData:function(){},setDragImage:function(){},dropEffect:'none',effectAllowed:'all',types:[],files:[]};}
+        };
+        globalThis.PopStateEvent = class PopStateEvent extends Event {
+            constructor(t,o){super(t,o);this.state=(o&&o.state)||null;}
+        };
+        globalThis.HashChangeEvent = class HashChangeEvent extends Event {
+            constructor(t,o){super(t,o);this.oldURL=(o&&o.oldURL)||'';this.newURL=(o&&o.newURL)||'';}
+        };
+        globalThis.PromiseRejectionEvent = class PromiseRejectionEvent extends Event {
+            constructor(t,o){super(t,o);this.promise=(o&&o.promise)||null;this.reason=(o&&o.reason)||undefined;}
+        };
+        globalThis.StorageEvent = class StorageEvent extends Event {
+            constructor(t,o){super(t,o);this.key=(o&&o.key)||null;this.oldValue=(o&&o.oldValue)||null;this.newValue=(o&&o.newValue)||null;this.url=(o&&o.url)||'';this.storageArea=(o&&o.storageArea)||null;}
+        };
+
+        // Window dimensions
+        window.innerWidth = 1280;
+        window.innerHeight = 800;
+        window.outerWidth = 1280;
+        window.outerHeight = 900;
+        window.devicePixelRatio = 1;
+        window.scrollX = 0;
+        window.scrollY = 0;
+        window.pageXOffset = 0;
+        window.pageYOffset = 0;
+        window.screen = { width: 1280, height: 800, availWidth: 1280, availHeight: 800, colorDepth: 24, pixelDepth: 24, orientation: { type: 'landscape-primary', angle: 0, addEventListener: function(){}, removeEventListener: function(){} } };
+        window.visualViewport = { width: 1280, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1, addEventListener: function(){}, removeEventListener: function(){} };
 
         // Navigator
         globalThis.navigator = {
@@ -565,7 +605,34 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
                 }
             });
         };
-        globalThis.matchMedia = function(q) { return { matches: false, media: q, addListener: function(){}, removeListener: function(){}, addEventListener: function(){}, removeEventListener: function(){} }; };
+        globalThis.matchMedia = function(q) {
+            var matches = false;
+            var m;
+            if ((m = q.match(/\(\s*min-width\s*:\s*(\d+)px\s*\)/))) {
+                matches = 1280 >= parseInt(m[1]);
+            } else if ((m = q.match(/\(\s*max-width\s*:\s*(\d+)px\s*\)/))) {
+                matches = 1280 <= parseInt(m[1]);
+            } else if ((m = q.match(/\(\s*min-height\s*:\s*(\d+)px\s*\)/))) {
+                matches = 800 >= parseInt(m[1]);
+            } else if ((m = q.match(/\(\s*max-height\s*:\s*(\d+)px\s*\)/))) {
+                matches = 800 <= parseInt(m[1]);
+            } else if (/prefers-color-scheme\s*:\s*dark/.test(q)) {
+                matches = false;
+            } else if (/prefers-color-scheme\s*:\s*light/.test(q)) {
+                matches = true;
+            } else if (/prefers-reduced-motion\s*:\s*reduce/.test(q)) {
+                matches = false;
+            }
+            return {
+                matches: matches, media: q,
+                onchange: null,
+                addListener: function(cb) { /* deprecated, never fires */ },
+                removeListener: function(cb) {},
+                addEventListener: function(type, cb) {},
+                removeEventListener: function(type, cb) {},
+                dispatchEvent: function() { return true; },
+            };
+        };
         globalThis.requestAnimationFrame = function(cb) { return setTimeout(cb, 0); };
         globalThis.cancelAnimationFrame = function(id) { clearTimeout(id); };
         globalThis.requestIdleCallback = function(cb) { return setTimeout(cb, 0); };
@@ -597,9 +664,51 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             }
         };
 
-        // Observer stubs
-        globalThis.ResizeObserver = class { observe(){} unobserve(){} disconnect(){} };
-        globalThis.IntersectionObserver = class { constructor(cb,opts){} observe(){} unobserve(){} disconnect(){} };
+        // Observer stubs with initial callback firing
+        globalThis.ResizeObserver = class {
+            constructor(cb) { this._cb = cb; }
+            observe(target) {
+                var cb = this._cb;
+                if (typeof cb === 'function' && target && typeof target.getBoundingClientRect === 'function') {
+                    setTimeout(function() {
+                        var rect = target.getBoundingClientRect();
+                        var w = rect.width, h = rect.height;
+                        cb([{
+                            target: target,
+                            contentRect: rect,
+                            borderBoxSize: [{inlineSize: w, blockSize: h}],
+                            contentBoxSize: [{inlineSize: w, blockSize: h}],
+                            devicePixelContentBoxSize: [{inlineSize: w, blockSize: h}],
+                        }], this);
+                    }.bind(this), 0);
+                }
+            }
+            unobserve() {}
+            disconnect() {}
+        };
+        globalThis.IntersectionObserver = class {
+            constructor(cb, opts) { this._cb = cb; this._opts = opts || {}; }
+            observe(target) {
+                var cb = this._cb;
+                if (typeof cb === 'function' && target && typeof target.getBoundingClientRect === 'function') {
+                    setTimeout(function() {
+                        var rect = target.getBoundingClientRect();
+                        cb([{
+                            target: target,
+                            isIntersecting: true,
+                            intersectionRatio: 1.0,
+                            boundingClientRect: rect,
+                            intersectionRect: rect,
+                            rootBounds: {top:0,left:0,width:1280,height:800,right:1280,bottom:800,x:0,y:0},
+                            time: performance.now(),
+                        }], this);
+                    }.bind(this), 0);
+                }
+            }
+            unobserve() {}
+            disconnect() {}
+            takeRecords() { return []; }
+        };
         // MutationObserver — functional implementation
         (function() {
             var observers = [];
@@ -1077,7 +1186,30 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             };
             return XMLHttpRequest;
         })();
-        globalThis.DOMParser = class DOMParser { parseFromString(s,t) { return document; } };
+        globalThis.DOMParser = class DOMParser {
+            parseFromString(str, type) {
+                var div = document.createElement('div');
+                div.innerHTML = str;
+                return {
+                    documentElement: div,
+                    body: div,
+                    head: null,
+                    title: '',
+                    readyState: 'complete',
+                    querySelector: function(sel) { return div.querySelector(sel); },
+                    querySelectorAll: function(sel) { return div.querySelectorAll(sel); },
+                    getElementById: function(id) {
+                        var el = div.querySelector('#' + id);
+                        return el || null;
+                    },
+                    getElementsByTagName: function(tag) { return div.getElementsByTagName(tag); },
+                    getElementsByClassName: function(cls) { return div.getElementsByClassName(cls); },
+                    createDocumentFragment: function() { return document.createDocumentFragment(); },
+                    createElement: function(tag) { return document.createElement(tag); },
+                    createTextNode: function(text) { return document.createTextNode(text); },
+                };
+            }
+        };
         globalThis.HTMLElement = class HTMLElement {};
         globalThis.HTMLIFrameElement = class HTMLIFrameElement extends HTMLElement {};
         globalThis.HTMLInputElement = class HTMLInputElement extends HTMLElement {};

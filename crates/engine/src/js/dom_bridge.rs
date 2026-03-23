@@ -784,11 +784,27 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             value: {
                 get: function() {
                     if (this.__props && this.__props._value !== undefined) return this.__props._value;
+                    if (this.tagName === 'SELECT') {
+                        var opts = this.querySelectorAll('option');
+                        for (var i = 0; i < opts.length; i++) {
+                            if ((opts[i].__props && opts[i].__props._selected) || opts[i].hasAttribute('selected')) {
+                                return opts[i].getAttribute('value') || opts[i].textContent || '';
+                            }
+                        }
+                        return opts.length > 0 ? (opts[0].getAttribute('value') || opts[0].textContent || '') : '';
+                    }
                     return this.getAttribute('value') || '';
                 },
                 set: function(v) {
                     if (!this.__props) this.__props = {};
                     this.__props._value = String(v);
+                    if (this.tagName === 'SELECT') {
+                        var opts = this.querySelectorAll('option');
+                        for (var i = 0; i < opts.length; i++) {
+                            if (!opts[i].__props) opts[i].__props = {};
+                            opts[i].__props._selected = ((opts[i].getAttribute('value') || opts[i].textContent || '') === String(v));
+                        }
+                    }
                     // Also sync to attribute so Rust-side snapshot can read the current value
                     __n_setAttribute(this.__nid, 'value', String(v));
                 },
@@ -1085,8 +1101,8 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             offsetLeft: { get: function() { return 0; }, configurable: true },
             offsetWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
             offsetHeight: { get: function() { return this.getBoundingClientRect().height; }, configurable: true },
-            clientWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
-            clientHeight: { get: function() { return this.getBoundingClientRect().height; }, configurable: true },
+            clientWidth: { get: function() { if (this.tagName === 'HTML') return 1280; return this.getBoundingClientRect().width; }, configurable: true },
+            clientHeight: { get: function() { if (this.tagName === 'HTML') return 800; return this.getBoundingClientRect().height; }, configurable: true },
             clientTop: { get: function() { return 0; }, configurable: true },
             clientLeft: { get: function() { return 0; }, configurable: true },
             offsetParent: { get: function() { return this.parentNode; }, configurable: true },
@@ -1215,6 +1231,93 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         Object.defineProperty(EP, 'method', {
             get: function() { return (this.getAttribute('method') || 'get').toLowerCase(); },
             set: function(v) { this.setAttribute('method', String(v)); },
+            configurable: true
+        });
+
+        // <select> selectedIndex property
+        Object.defineProperty(EP, 'selectedIndex', {
+            get: function() {
+                if (this.tagName !== 'SELECT') return -1;
+                var opts = this.querySelectorAll('option');
+                for (var i = 0; i < opts.length; i++) {
+                    if (opts[i].__props && opts[i].__props._selected) return i;
+                    if (opts[i].hasAttribute('selected')) return i;
+                }
+                return opts.length > 0 ? 0 : -1;
+            },
+            set: function(idx) {
+                if (this.tagName !== 'SELECT') return;
+                var opts = this.querySelectorAll('option');
+                for (var i = 0; i < opts.length; i++) {
+                    if (!opts[i].__props) opts[i].__props = {};
+                    opts[i].__props._selected = (i === idx);
+                }
+            },
+            configurable: true
+        });
+
+        // <select> options property
+        Object.defineProperty(EP, 'options', {
+            get: function() {
+                if (this.tagName !== 'SELECT') return undefined;
+                var sel = this;
+                var opts = this.querySelectorAll('option');
+                return new Proxy(opts, {
+                    get: function(arr, p) {
+                        if (p === 'length') return arr.length;
+                        if (p === 'selectedIndex') return sel.selectedIndex;
+                        if (p === 'item') return function(i) { return arr[i] || null; };
+                        if (p === 'namedItem') return function(name) {
+                            for (var i = 0; i < arr.length; i++) {
+                                if (arr[i].getAttribute('name') === name || arr[i].getAttribute('id') === name) return arr[i];
+                            }
+                            return null;
+                        };
+                        if (typeof p === 'string' && !isNaN(p)) return arr[parseInt(p)];
+                        if (p === Symbol.iterator) return function() { return arr[Symbol.iterator](); };
+                        return arr[p];
+                    }
+                });
+            },
+            configurable: true
+        });
+
+        // <option> text property
+        Object.defineProperty(EP, 'text', {
+            get: function() {
+                if (this.tagName === 'OPTION') return (this.textContent || '').trim();
+                return undefined;
+            },
+            set: function(v) {
+                if (this.tagName === 'OPTION') this.textContent = String(v);
+            },
+            configurable: true
+        });
+
+        // <option> index property
+        Object.defineProperty(EP, 'index', {
+            get: function() {
+                if (this.tagName !== 'OPTION') return undefined;
+                var parent = this.parentNode;
+                if (!parent || parent.tagName !== 'SELECT') return 0;
+                var opts = parent.querySelectorAll('option');
+                for (var i = 0; i < opts.length; i++) {
+                    if (opts[i].__nid === this.__nid) return i;
+                }
+                return 0;
+            },
+            configurable: true
+        });
+
+        // <option> label property
+        Object.defineProperty(EP, 'label', {
+            get: function() {
+                if (this.tagName !== 'OPTION') return '';
+                return this.getAttribute('label') || (this.textContent || '').trim();
+            },
+            set: function(v) {
+                if (this.tagName === 'OPTION') this.setAttribute('label', String(v));
+            },
             configurable: true
         });
 
@@ -1678,6 +1781,26 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             referrer: { value: '', writable: true, configurable: true },
             characterSet: { value: 'UTF-8', configurable: true },
             contentType: { value: 'text/html', configurable: true },
+            hidden: { value: false, configurable: true },
+            visibilityState: { value: 'visible', configurable: true },
+            implementation: { value: {
+                createHTMLDocument: function(title) {
+                    var div = document.createElement('div');
+                    return {
+                        documentElement: div, body: div, head: null,
+                        title: title || '', readyState: 'complete',
+                        querySelector: function(sel) { return div.querySelector(sel); },
+                        querySelectorAll: function(sel) { return div.querySelectorAll(sel); },
+                        getElementById: function(id) { return div.querySelector('#' + id) || null; },
+                        getElementsByTagName: function(tag) { return div.getElementsByTagName(tag); },
+                        getElementsByClassName: function(cls) { return div.getElementsByClassName(cls); },
+                        createElement: function(tag) { return document.createElement(tag); },
+                        createTextNode: function(text) { return document.createTextNode(text); },
+                        createDocumentFragment: function() { return document.createDocumentFragment(); },
+                    };
+                },
+                hasFeature: function() { return true; },
+            }, configurable: true },
         });
     })();
     "#).unwrap_or_else(|e| {
