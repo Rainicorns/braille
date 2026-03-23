@@ -1245,6 +1245,15 @@ fn discover_tests(dir: &Path) -> Vec<PathBuf> {
 // ---------------------------------------------------------------------------
 
 fn main() {
+    // Run in a thread with a larger stack to avoid stack overflow from deep QuickJS recursion
+    let child = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024) // 32 MB
+        .spawn(main_inner)
+        .expect("failed to spawn test thread");
+    child.join().unwrap();
+}
+
+fn main_inner() {
     let args = Arguments::from_args();
 
     let _testharness_js = load_testharness_js(); // Keep for future use

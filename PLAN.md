@@ -7,6 +7,84 @@ A browser for those who read, not see.
 **Spike:** [SPIKE.md](./SPIKE.md) — COMPLETE (46 tests, core loop proven)
 **API Reference:** [REFERENCE.md](./REFERENCE.md) — Boa and html5ever API details
 
+## Current Work — 17 Real Web Platform Implementations (IN PROGRESS)
+
+### What Was Done
+
+All 17 items from the plan are implemented in code. Plus additional fixes discovered during testing:
+
+**Batch A (globals.rs) — COMPLETE:**
+- Item 13: `navigator.vendor: 'Google Inc.'`
+- Item 9: Real clipboard buffer (`writeText/readText/read/write` with closure-backed `_buf`)
+- Item 10: MutationObserver `attributeFilter` (auto-sets `attributes: true`, filters records by `attributeName`)
+- Item 16: Real UTF-8 TextEncoder (`encode`, `encodeInto`, `encoding` getter) + real UTF-8 TextDecoder (multi-byte decode)
+- Item 17: Full `structuredClone` (circular refs via `seen` Map, Date, RegExp, Map, Set, ArrayBuffer, TypedArrays, Error, throws DataCloneError on functions/symbols)
+
+**Batch B (dom_bridge.rs) — COMPLETE:**
+- Item 2: `Element.getClientRects()` → returns `[getBoundingClientRect()]`
+- Item 5: Pointer capture (`setPointerCapture/releasePointerCapture/hasPointerCapture` with `__pointerCaptures` map)
+- Item 4: Full form constraint validation API (`validity` getter with ValidityState, `validationMessage`, `setCustomValidity`, `checkValidity` fires `invalid` event, `reportValidity`)
+- Item 6: `<dialog>` APIs (`showModal/show/close`, `open`/`returnValue` defineProperties)
+- Item 7: `<details>/<summary>` toggle on click (toggles `open` attr, fires `toggle` event)
+- Item 8: `document.doctype` via native `__n_getDoctypeInfo` Rust function walking DOM for Doctype nodes
+- Item 11: Real Range API (`BrailleRange` with all methods, `globalThis.Range`, updated `getSelection` with range tracking)
+- Item 12: Fullscreen API (`requestFullscreen`, `exitFullscreen`, `fullscreenElement`, `fullscreenEnabled`)
+- Item 14: `document.domain` with superdomain validation
+- Item 15: `EP.animate` with `finish()` + `onfinish`; `document.getAnimations()`
+
+**Batch C (cross-file) — COMPLETE:**
+- Item 1: `document.currentScript` — `Option<NodeId>` added to `ScriptDescriptor::Inline/External`, set/cleared in `execute_scripts`, `execute_scripts_lossy`, and `__braille_maybe_load_script`
+- Item 3: `window.onunhandledrejection` — `set_host_promise_rejection_tracker` on rquickjs Runtime, thread-local `PENDING_REJECTIONS`, drain function in `flush_jobs` dispatches `PromiseRejectionEvent`
+
+**Additional fixes beyond the original plan:**
+- `Event.preventDefault()` now spec-compliant: no-op when `cancelable === false`
+- `FormData` constructor now accepts a form element, iterates controls to populate entries
+- Implicit form submission: `EP.click` on `<button type="submit">` fires `submit` event on parent form
+- `html5lib_tree_construction.rs`: added `ShadowRoot` match arm
+- Attribute-reflecting properties on EP: `tabIndex`, `title`, `lang`, `dir`, `hidden`, `name`, `type`, `disabled`, `placeholder`, `href`, `src`, `rel`
+- `getBoundingClientRect` returns 0×0 for empty elements without explicit dimensions (was 100×20)
+- Textarea `.value` setter now updates DOM text content so snapshots reflect the value
+- WPT DOM test runner: spawned in thread with 32MB stack to avoid stack overflow
+
+### What Still Fails
+
+**WPT DOM tests (`cargo test -p braille-engine --test wpt_dom`):**
+- ~166 failures out of ~353 tests. Same count (171) before this work — we actually fixed 5.
+- **Stack overflow** kills the test process before completion. The 32MB thread stack helps but doesn't fully fix it. A specific test (or cumulative effect of running many tests with QuickJS) overflows.
+- Next step: identify which test causes the overflow (run `--test-threads=1` and find the last test before abort), then either skip it or fix the recursion depth.
+- The 166 failures are WPT spec-compliance issues (missing `EventTarget` constructor, historical DOM feature removal, passive-by-default, relatedTarget retargeting, CharacterData methods, etc.) — not regressions from this work.
+
+### Test Results Summary (after this work)
+
+| Test suite | Result |
+|---|---|
+| `cargo test -p braille-engine --lib` | **369 passed**, 0 failed |
+| `--test html5lib_tree_construction` | **1778 passed**, 0 failed |
+| `--test frameworks` | **31 passed**, 0 failed |
+| `--test react_controlled_input` | **9 passed**, 0 failed |
+| `--test smoke_integration` | **20 passed**, 0 failed |
+| `--test adversarial` | **32 passed**, 0 failed |
+| `--test dom_bridge` | **63 passed**, 0 failed |
+| `--test snapshot_views` | **16 passed**, 0 failed |
+| `--test link_onload` | **8 passed**, 0 failed |
+| `--test webpack_chunks` | **3 passed**, 0 failed |
+| `./dev.sh check` (clippy) | **0 warnings** |
+| `./dev.sh test` | **All pass** |
+| `--test wpt_dom` | ~166 fail + stack overflow (pre-existing) |
+
+### Files Modified
+
+| File | Changes |
+|---|---|
+| `crates/engine/src/js/globals.rs` | navigator.vendor, clipboard, MutationObserver attributeFilter, TextEncoder/TextDecoder UTF-8, structuredClone, getSelection with Range, unhandledrejection drain, preventDefault cancelable check, FormData form constructor |
+| `crates/engine/src/js/dom_bridge.rs` | getClientRects, pointer capture, validation API, dialog/details APIs, doctype native fn, Range API, fullscreen, domain, animate, currentScript in dynamic scripts, form submission, attribute-reflecting properties (tabIndex/title/lang/dir/hidden/name/type/disabled/placeholder/href/src/rel), getBoundingClientRect sizing, textarea value sync |
+| `crates/engine/src/lib.rs` | ScriptDescriptor::Inline/External now have Option<NodeId>, collect_script_descriptors captures node_id, execute_scripts/execute_scripts_lossy set/clear document.currentScript |
+| `crates/engine/src/js/runtime.rs` | PENDING_REJECTIONS thread-local, set_host_promise_rejection_tracker in JsRuntime::new, flush_jobs drains rejections |
+| `crates/engine/src/bin/braille_engine.rs` | Updated pattern match for ScriptDescriptor::External(url, _) |
+| `crates/engine/tests/html5lib_tree_construction.rs` | Added ShadowRoot match arm |
+| `crates/engine/tests/proton_debug.rs` | Updated pattern matches for ScriptDescriptor |
+| `crates/engine/tests/wpt_dom.rs` | 32MB stack thread for main |
+
 ## Status
 
 All 6 phases complete (840+ tests). html5lib-tests tree-construction suite: **1778 passed, 0 failed, 0 ignored** out of 1778 test cases (**100% pass rate**). html5lib-tests serializer suite: **204 passed, 0 failed, 26 ignored** (core + optionaltags fully passing; options/injectmeta/whitespace skipped as non-default serializer config). Fixed foster parenting text merge (8 tests), template contents with DocumentFragment (112 tests), test harness trailing newline (1 test), annotation-xml integration point polyfill (4 tests), and selectedcontent cloning polyfill (4 tests). Two polyfills in parser.rs are marked `POLYFILL` for removal when html5ever handles them internally: `is_mathml_annotation_xml_integration_point` flag storage and `polyfill_selectedcontent` post-processing (workaround for html5ever issue #712). The engine has a full DOM API surface (~75 methods), CSS cascade with selector matching wired into the load pipeline, full event system (addEventListener/dispatchEvent with capture/bubble/at-target, standalone EventTarget, window in propagation path), getComputedStyle, HTMLElement-specific properties (input.value/checked/type/disabled, select.value/selectedIndex/options, option.value/selected/text, a.href, form.action/method/elements, element.dataset/hidden/tabIndex/title/lang/dir, focus/blur/click stubs, getBoundingClientRect stub), and JS bindings for querySelector, innerHTML, classList, element.style, node mutation, window/console, and more. **Smart Snapshot Views + Page Settling + Timer Execution COMPLETE** — `Engine::settle()` flushes microtask queue + MutationObserver records + timers in a loop until quiescent (max 100 iterations), then recomputes CSS. Timer execution uses virtual clock: `TimerEntry`/`TimerState` in RealmState, settle advances `current_time_ms` to fire all pending timers (setTimeout removed after firing, setInterval re-queued, 10s virtual cap). `handle_click` calls `settle()` after dispatching click event. SnapMode expanded with 7 new views: Interactive (flat list of clickable/typeable elements), Links (`<a>` with href), Forms (form structure with inputs/values), Headings (h1-h6 outline), Text (readable content, no structure), Selector(String) (CSS query matches), Region(String) (subtree snapshot). Ref assignment (`assign_refs()`) extracted as separate pass — `@eN` refs are stable across all view modes. CLI supports `--mode interactive|links|forms|headings|text|selector|region` with `--query` and `--target` flags. CLI has all commands routed through session manager, network client with cookie jar, navigation history, and external script loading. 16 verification tests in `snapshot_views.rs` cover settle+Promise, settle+setTimeout, all view modes, ref stability, selector/region views, and timer lifecycle. Full integration smoke tests (20) and CSS edge case tests (32) verify end-to-end behavior.

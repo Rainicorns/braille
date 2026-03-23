@@ -379,6 +379,24 @@ fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // getDoctypeInfo() -> JSON with name, publicId, systemId, nodeId or empty
+    g.set("__n_getDoctypeInfo", Function::new(ctx.clone(), || -> String {
+        with_tree(|tree| {
+            let doc = tree.document();
+            for &child_id in &tree.get_node(doc).children {
+                if let NodeData::Doctype { name, public_id, system_id } = &tree.get_node(child_id).data {
+                    return serde_json::json!({
+                        "name": name,
+                        "publicId": public_id,
+                        "systemId": system_id,
+                        "nodeId": child_id
+                    }).to_string();
+                }
+            }
+            String::new()
+        })
+    }).unwrap()).unwrap();
+
     // getInnerHTML(nodeId) -> string
     g.set("__n_getInnerHTML", Function::new(ctx.clone(), |node_id: u32| -> String {
         with_tree(|tree| {
@@ -506,11 +524,27 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             __dispatch(this.__nid, event);
             return !event.defaultPrevented;
         };
+        // Pointer capture
+        var __pointerCaptures = {};
+        EP.setPointerCapture = function(pointerId) { __pointerCaptures[pointerId] = this.__nid; };
+        EP.releasePointerCapture = function(pointerId) { if (__pointerCaptures[pointerId] === this.__nid) delete __pointerCaptures[pointerId]; };
+        EP.hasPointerCapture = function(pointerId) { return __pointerCaptures[pointerId] === this.__nid; };
+
         EP.click = function() {
             var event = new MouseEvent('click', {bubbles: true, cancelable: true});
             event.target = this;
             event.currentTarget = this;
             __dispatch(this.__nid, event);
+
+            // <details>/<summary> toggle
+            if (this.tagName === 'SUMMARY') {
+                var details = this.parentNode;
+                if (details && details.tagName === 'DETAILS') {
+                    if (details.hasAttribute('open')) details.removeAttribute('open');
+                    else details.setAttribute('open', '');
+                    details.dispatchEvent(new Event('toggle', {bubbles: false}));
+                }
+            }
 
             // Deliver React onClick/onSubmit via __reactProps$.
             // Our capture/bubble dispatch fires React's native listeners but
@@ -542,7 +576,37 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 }
                 node = node.parentNode;
             }
+
+            // Implicit form submission: <button type="submit"> or <input type="submit"> inside a <form>
+            if (!event.defaultPrevented) {
+                var tag = this.tagName;
+                var btype = (this.getAttribute('type') || '').toLowerCase();
+                if ((tag === 'BUTTON' && (btype === 'submit' || btype === '')) || (tag === 'INPUT' && btype === 'submit')) {
+                    var form = this.form;
+                    if (form) {
+                        var submitEvt = new Event('submit', {bubbles: true, cancelable: true});
+                        submitEvt.submitter = this;
+                        form.dispatchEvent(submitEvt);
+                    }
+                }
+            }
         };
+        // <dialog> element APIs
+        EP.showModal = function() {
+            if (this.tagName === 'DIALOG') { this.setAttribute('open', ''); if (!this.__props) this.__props = {}; this.__props._dialogModal = true; }
+        };
+        EP.show = function() {
+            if (this.tagName === 'DIALOG') this.setAttribute('open', '');
+        };
+        EP.close = function(returnValue) {
+            if (this.tagName === 'DIALOG') {
+                this.removeAttribute('open');
+                if (!this.__props) this.__props = {};
+                if (returnValue !== undefined) this.__props._returnValue = String(returnValue);
+                this.dispatchEvent(new Event('close', {bubbles: false}));
+            }
+        };
+
         EP.querySelector = function(sel) {
             var id = __n_querySelector(this.__nid, sel);
             return id >= 0 ? __w(id) : null;
@@ -619,23 +683,30 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             // Also check computed style for display:none
             var compDisplay = __n_getComputedStyle(this.__nid, 'display');
             if (compDisplay === 'none') return {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
-            var w = 100, h = 20;
+            var w = 0, h = 0, found = false;
             // Try inline style first
             var wm = s.match(/(?:^|;)\s*width\s*:\s*(\d+)/);
             var hm = s.match(/(?:^|;)\s*height\s*:\s*(\d+)/);
-            if (wm) w = parseInt(wm[1]);
-            if (hm) h = parseInt(hm[1]);
+            if (wm) { w = parseInt(wm[1]); found = true; }
+            if (hm) { h = parseInt(hm[1]); found = true; }
             // Fall back to computed style if inline didn't have dimensions
             if (!wm) {
                 var cw = __n_getComputedStyle(this.__nid, 'width');
-                if (cw) { var pw = parseInt(cw); if (!isNaN(pw)) w = pw; }
+                if (cw) { var pw = parseInt(cw); if (!isNaN(pw)) { w = pw; found = true; } }
             }
             if (!hm) {
                 var ch = __n_getComputedStyle(this.__nid, 'height');
-                if (ch) { var ph = parseInt(ch); if (!isNaN(ph)) h = ph; }
+                if (ch) { var ph = parseInt(ch); if (!isNaN(ph)) { h = ph; found = true; } }
+            }
+            // If no explicit dimensions, use content-based defaults for visible elements
+            if (!found) {
+                var tag = this.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'IMG') { w = 100; h = 20; }
+                else if (__n_getTextContent(this.__nid).trim()) { w = 100; h = 20; }
             }
             return {top:0,left:0,width:w,height:h,right:w,bottom:h,x:0,y:0};
         };
+        EP.getClientRects = function() { return [this.getBoundingClientRect()]; };
         // focus/blur defined later after defineProperties to track activeElement
         EP.scrollIntoView = function() {};
         EP.matches = function(sel) { return __n_matchesSelector(this.__nid, sel); };
@@ -732,7 +803,11 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             return el;
         };
         EP.getAnimations = function() { return []; };
-        EP.animate = function() { return { finished: Promise.resolve(), cancel: function(){}, play: function(){}, pause: function(){} }; };
+        EP.animate = function() {
+            var anim = { finished: Promise.resolve(), cancel: function(){}, play: function(){}, pause: function(){}, onfinish: null };
+            anim.finish = function() { if (typeof anim.onfinish === 'function') anim.onfinish(); };
+            return anim;
+        };
         EP.attachShadow = function() { return document.createDocumentFragment(); };
         EP.getAttributeNode = function(name) {
             if (!this.hasAttribute(name)) return null;
@@ -807,6 +882,8 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                     }
                     // Also sync to attribute so Rust-side snapshot can read the current value
                     __n_setAttribute(this.__nid, 'value', String(v));
+                    // For textarea, also update text content so the snapshot can see it
+                    if (this.tagName === 'TEXTAREA') __n_setTextContent(this.__nid, String(v));
                 },
                 configurable: true
             },
@@ -1153,6 +1230,152 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 },
                 configurable: true
             },
+            // Attribute-reflecting properties
+            tabIndex: {
+                get: function() {
+                    var v = this.getAttribute('tabindex');
+                    if (v !== null) return parseInt(v) || 0;
+                    var tag = this.tagName;
+                    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'A' || tag === 'AREA') return 0;
+                    return -1;
+                },
+                set: function(v) { this.setAttribute('tabindex', String(v)); },
+                configurable: true
+            },
+            title: {
+                get: function() { return this.getAttribute('title') || ''; },
+                set: function(v) { this.setAttribute('title', String(v)); },
+                configurable: true
+            },
+            lang: {
+                get: function() { return this.getAttribute('lang') || ''; },
+                set: function(v) { this.setAttribute('lang', String(v)); },
+                configurable: true
+            },
+            dir: {
+                get: function() { return this.getAttribute('dir') || ''; },
+                set: function(v) { this.setAttribute('dir', String(v)); },
+                configurable: true
+            },
+            hidden: {
+                get: function() { return this.hasAttribute('hidden'); },
+                set: function(v) { if (v) this.setAttribute('hidden', ''); else this.removeAttribute('hidden'); },
+                configurable: true
+            },
+            name: {
+                get: function() { return this.getAttribute('name') || ''; },
+                set: function(v) { this.setAttribute('name', String(v)); },
+                configurable: true
+            },
+            type: {
+                get: function() {
+                    if (this.tagName === 'INPUT') return (this.getAttribute('type') || 'text').toLowerCase();
+                    if (this.tagName === 'BUTTON') return (this.getAttribute('type') || 'submit').toLowerCase();
+                    return this.getAttribute('type') || '';
+                },
+                set: function(v) { this.setAttribute('type', String(v)); },
+                configurable: true
+            },
+            disabled: {
+                get: function() { return this.hasAttribute('disabled'); },
+                set: function(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); },
+                configurable: true
+            },
+            placeholder: {
+                get: function() { return this.getAttribute('placeholder') || ''; },
+                set: function(v) { this.setAttribute('placeholder', String(v)); },
+                configurable: true
+            },
+            href: {
+                get: function() { return this.getAttribute('href') || ''; },
+                set: function(v) { this.setAttribute('href', String(v)); },
+                configurable: true
+            },
+            src: {
+                get: function() { return this.getAttribute('src') || ''; },
+                set: function(v) { this.setAttribute('src', String(v)); },
+                configurable: true
+            },
+            rel: {
+                get: function() { return this.getAttribute('rel') || ''; },
+                set: function(v) { this.setAttribute('rel', String(v)); },
+                configurable: true
+            },
+            validity: {
+                get: function() {
+                    var el = this;
+                    var val = el.value || '';
+                    var tag = el.tagName;
+                    if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+                        return { valid: true, valueMissing: false, typeMismatch: false, patternMismatch: false,
+                            tooLong: false, tooShort: false, rangeUnderflow: false, rangeOverflow: false,
+                            stepMismatch: false, badInput: false, customError: false };
+                    }
+                    var customMsg = (el.__props && el.__props._customValidity) || '';
+                    var customError = customMsg.length > 0;
+                    var valueMissing = !!(el.hasAttribute('required') && val === '');
+                    var typeMismatch = false;
+                    var inputType = (el.getAttribute('type') || '').toLowerCase();
+                    if (val && inputType === 'email') typeMismatch = !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+                    if (val && inputType === 'url') typeMismatch = !/^https?:\/\/.+/.test(val);
+                    var patternMismatch = false;
+                    var pat = el.getAttribute('pattern');
+                    if (pat && val) { try { patternMismatch = !new RegExp('^(?:' + pat + ')$').test(val); } catch(e) {} }
+                    var tooLong = false, tooShort = false;
+                    var maxl = el.getAttribute('maxlength'); if (maxl !== null && val.length > parseInt(maxl)) tooLong = true;
+                    var minl = el.getAttribute('minlength'); if (minl !== null && val.length > 0 && val.length < parseInt(minl)) tooShort = true;
+                    var rangeUnderflow = false, rangeOverflow = false;
+                    var mn = el.getAttribute('min'); if (mn !== null && val !== '' && parseFloat(val) < parseFloat(mn)) rangeUnderflow = true;
+                    var mx = el.getAttribute('max'); if (mx !== null && val !== '' && parseFloat(val) > parseFloat(mx)) rangeOverflow = true;
+                    var valid = !valueMissing && !typeMismatch && !patternMismatch && !tooLong && !tooShort && !rangeUnderflow && !rangeOverflow && !customError;
+                    return { valid: valid, valueMissing: valueMissing, typeMismatch: typeMismatch,
+                        patternMismatch: patternMismatch, tooLong: tooLong, tooShort: tooShort,
+                        rangeUnderflow: rangeUnderflow, rangeOverflow: rangeOverflow,
+                        stepMismatch: false, badInput: false, customError: customError };
+                },
+                configurable: true
+            },
+            validationMessage: {
+                get: function() {
+                    var v = this.validity;
+                    if (v.valid) return '';
+                    if (v.customError) return (this.__props && this.__props._customValidity) || '';
+                    if (v.valueMissing) return 'Please fill out this field.';
+                    if (v.typeMismatch) return 'Please enter a valid value.';
+                    if (v.patternMismatch) return 'Please match the requested format.';
+                    if (v.tooShort) return 'Please use at least ' + this.getAttribute('minlength') + ' characters.';
+                    if (v.tooLong) return 'Please use no more than ' + this.getAttribute('maxlength') + ' characters.';
+                    if (v.rangeUnderflow) return 'Value must be greater than or equal to ' + this.getAttribute('min') + '.';
+                    if (v.rangeOverflow) return 'Value must be less than or equal to ' + this.getAttribute('max') + '.';
+                    return '';
+                },
+                configurable: true
+            },
+        });
+
+        // open property for DIALOG and DETAILS
+        Object.defineProperty(EP, 'open', {
+            get: function() {
+                if (this.tagName === 'DIALOG' || this.tagName === 'DETAILS') return this.hasAttribute('open');
+                return undefined;
+            },
+            set: function(v) {
+                if (this.tagName === 'DIALOG' || this.tagName === 'DETAILS') {
+                    if (v) this.setAttribute('open', '');
+                    else this.removeAttribute('open');
+                }
+            },
+            configurable: true
+        });
+        Object.defineProperty(EP, 'returnValue', {
+            get: function() {
+                if (this.tagName !== 'DIALOG') return undefined;
+                return (this.__props && this.__props._returnValue) || '';
+            },
+            set: function(v) {
+                if (this.tagName === 'DIALOG') { if (!this.__props) this.__props = {}; this.__props._returnValue = String(v); }
+            },
+            configurable: true
         });
 
         // --- Form-related properties and methods ---
@@ -1197,8 +1420,19 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             evt.target = this;
             this.dispatchEvent(evt);
         };
-        EP.checkValidity = function() { return true; };
-        EP.reportValidity = function() { return true; };
+        EP.setCustomValidity = function(msg) {
+            if (!this.__props) this.__props = {};
+            this.__props._customValidity = String(msg);
+        };
+        EP.checkValidity = function() {
+            var v = this.validity;
+            if (!v.valid) {
+                this.dispatchEvent(new Event('invalid', {bubbles: false, cancelable: true}));
+                return false;
+            }
+            return true;
+        };
+        EP.reportValidity = function() { return this.checkValidity(); };
 
         // elements property for <form>: returns descendant controls with named access
         Object.defineProperty(EP, 'elements', {
@@ -1476,13 +1710,16 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 return resp.text();
             }).then(function(code) {
                 __braille_script_log.push('EVAL: ' + shortSrc + ' len=' + code.length);
+                document.currentScript = node;
                 (0, eval)(code);
+                document.currentScript = null;
                 __braille_script_log.push('OK: ' + shortSrc);
                 if (typeof node.onload === 'function') {
                     node.onload({type: 'load', target: node});
                 }
                 node.dispatchEvent(new Event('load'));
             }).catch(function(err) {
+                document.currentScript = null;
                 __braille_script_log.push('ERR: ' + shortSrc + ' -> ' + String(err).substring(0, 100));
                 if (typeof node.onerror === 'function') {
                     node.onerror({type: 'error', target: node, message: String(err)});
@@ -1538,6 +1775,10 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             __braille_maybe_load_link(newChild);
             return newChild;
         };
+
+        // Fullscreen tracking
+        var __fullscreenElement = null;
+        EP.requestFullscreen = function() { __fullscreenElement = this; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
 
         // Override document methods
         var doc = globalThis.document;
@@ -1630,18 +1871,57 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             return __w(nid);
         };
 
-        doc.createRange = function() {
-            return {
-                setStart: function(){}, setEnd: function(){},
-                setStartBefore: function(){}, setStartAfter: function(){},
-                setEndBefore: function(){}, setEndAfter: function(){},
-                selectNode: function(){}, selectNodeContents: function(){},
-                collapse: function(){}, cloneRange: function(){ return doc.createRange(); },
-                detach: function(){}, toString: function(){ return ''; },
-                commonAncestorContainer: null, collapsed: true, startContainer: null,
-                startOffset: 0, endContainer: null, endOffset: 0,
-            };
+        function BrailleRange() {
+            this.startContainer = null; this.startOffset = 0;
+            this.endContainer = null; this.endOffset = 0;
+            this.collapsed = true; this.commonAncestorContainer = null;
+        }
+        BrailleRange.START_TO_START = 0; BrailleRange.START_TO_END = 1;
+        BrailleRange.END_TO_END = 2; BrailleRange.END_TO_START = 3;
+        BrailleRange.prototype.setStart = function(node, offset) { this.startContainer = node; this.startOffset = offset; this._update(); };
+        BrailleRange.prototype.setEnd = function(node, offset) { this.endContainer = node; this.endOffset = offset; this._update(); };
+        BrailleRange.prototype.setStartBefore = function(node) { this.startContainer = node.parentNode; this.startOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) : 0; this._update(); };
+        BrailleRange.prototype.setStartAfter = function(node) { this.startContainer = node.parentNode; this.startOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1 : 0; this._update(); };
+        BrailleRange.prototype.setEndBefore = function(node) { this.endContainer = node.parentNode; this.endOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) : 0; this._update(); };
+        BrailleRange.prototype.setEndAfter = function(node) { this.endContainer = node.parentNode; this.endOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1 : 0; this._update(); };
+        BrailleRange.prototype.selectNode = function(node) { this.setStartBefore(node); this.setEndAfter(node); };
+        BrailleRange.prototype.selectNodeContents = function(node) { this.startContainer = node; this.startOffset = 0; this.endContainer = node; this.endOffset = node.childNodes ? node.childNodes.length : 0; this._update(); };
+        BrailleRange.prototype.collapse = function(toStart) { if (toStart || toStart === undefined) { this.endContainer = this.startContainer; this.endOffset = this.startOffset; } else { this.startContainer = this.endContainer; this.startOffset = this.endOffset; } this.collapsed = true; };
+        BrailleRange.prototype.cloneRange = function() { var r = new BrailleRange(); r.startContainer = this.startContainer; r.startOffset = this.startOffset; r.endContainer = this.endContainer; r.endOffset = this.endOffset; r._update(); return r; };
+        BrailleRange.prototype.detach = function() {};
+        BrailleRange.prototype.getBoundingClientRect = function() {
+            var el = this.startContainer;
+            if (el && el.nodeType === 3) el = el.parentNode;
+            return el && el.getBoundingClientRect ? el.getBoundingClientRect() : {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
         };
+        BrailleRange.prototype.getClientRects = function() { return [this.getBoundingClientRect()]; };
+        BrailleRange.prototype.toString = function() {
+            if (this.startContainer && this.endContainer && this.startContainer === this.endContainer && this.startContainer.nodeType === 3) {
+                return (this.startContainer.textContent || '').substring(this.startOffset, this.endOffset);
+            }
+            return this.startContainer ? (this.startContainer.textContent || '') : '';
+        };
+        BrailleRange.prototype.createContextualFragment = function(html) {
+            var temp = document.createElement('div');
+            __n_setInnerHTML(temp.__nid, html);
+            var frag = document.createDocumentFragment();
+            while (temp.firstChild) frag.appendChild(temp.firstChild);
+            return frag;
+        };
+        BrailleRange.prototype._update = function() {
+            this.collapsed = (this.startContainer === this.endContainer && this.startOffset === this.endOffset);
+            // Walk ancestors of startContainer and endContainer to find common ancestor
+            if (this.startContainer && this.endContainer) {
+                var ancestors = [];
+                var cur = this.startContainer;
+                while (cur) { ancestors.push(cur); cur = cur.parentNode; }
+                cur = this.endContainer;
+                while (cur) { if (ancestors.indexOf(cur) >= 0) { this.commonAncestorContainer = cur; return; } cur = cur.parentNode; }
+            }
+            this.commonAncestorContainer = null;
+        };
+        globalThis.Range = BrailleRange;
+        doc.createRange = function() { return new BrailleRange(); };
 
         // window.addEventListener / removeEventListener
         window.addEventListener = function(type, cb, opts) {
@@ -1707,6 +1987,8 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             return node;
         };
         doc.adoptNode = function(node) { return node; };
+        doc.exitFullscreen = function() { __fullscreenElement = null; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
+        doc.getAnimations = function() { return []; };
 
         window.dispatchEvent = function(event) {
             event.target = window;
@@ -1778,6 +2060,26 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 },
                 configurable: true
             },
+            currentScript: { value: null, writable: true, configurable: true },
+            doctype: {
+                get: function() {
+                    var json = __n_getDoctypeInfo();
+                    if (!json) return null;
+                    var info = JSON.parse(json);
+                    return { name: info.name, publicId: info.publicId, systemId: info.systemId, nodeType: 10, nodeName: info.name };
+                },
+                configurable: true
+            },
+            domain: {
+                get: function() { return doc.__domain || location.hostname; },
+                set: function(v) {
+                    var cur = location.hostname;
+                    if (cur === v || cur.endsWith('.' + v)) doc.__domain = v;
+                },
+                configurable: true
+            },
+            fullscreenElement: { get: function() { return __fullscreenElement; }, configurable: true },
+            fullscreenEnabled: { value: true, configurable: true },
             referrer: { value: '', writable: true, configurable: true },
             characterSet: { value: 'UTF-8', configurable: true },
             contentType: { value: 'text/html', configurable: true },

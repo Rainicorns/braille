@@ -21,10 +21,10 @@ use braille_wire::SnapMode;
 /// Represents a script to be executed — either inline or external (needing fetch).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScriptDescriptor {
-    /// Classic script text content, ready to execute.
-    Inline(String),
-    /// A classic script src URL that needs to be fetched by the host.
-    External(String),
+    /// Classic script text content, ready to execute. Second field is the script element's NodeId.
+    Inline(String, Option<NodeId>),
+    /// A classic script src URL that needs to be fetched by the host. Second field is the script element's NodeId.
+    External(String, Option<NodeId>),
     /// ES module inline script (`<script type="module">...</script>`).
     InlineModule(String),
     /// ES module external script (`<script type="module" src="...">`).
@@ -42,7 +42,7 @@ impl ScriptDescriptor {
     /// Returns the external URL if this is an External or ExternalModule descriptor.
     pub fn external_url(&self) -> Option<&str> {
         match self {
-            Self::External(url) | Self::ExternalModule(url) => Some(url),
+            Self::External(url, _) | Self::ExternalModule(url) => Some(url),
             _ => None,
         }
     }
@@ -357,9 +357,9 @@ impl Engine {
                             // Explicit JS MIME type — treat as classic script
                             let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
                             if let Some(url) = src {
-                                descriptors.push(ScriptDescriptor::External(url));
+                                descriptors.push(ScriptDescriptor::External(url, Some(node_id)));
                             } else {
-                                descriptors.push(ScriptDescriptor::Inline(tree.get_text_content(node_id)));
+                                descriptors.push(ScriptDescriptor::Inline(tree.get_text_content(node_id), Some(node_id)));
                             }
                         }
                         // else: data block (ld+json, etc.) — skip entirely
@@ -367,9 +367,9 @@ impl Engine {
                         // No type attribute — classic script
                         let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
                         if let Some(url) = src {
-                            descriptors.push(ScriptDescriptor::External(url));
+                            descriptors.push(ScriptDescriptor::External(url, Some(node_id)));
                         } else {
-                            descriptors.push(ScriptDescriptor::Inline(tree.get_text_content(node_id)));
+                            descriptors.push(ScriptDescriptor::Inline(tree.get_text_content(node_id), Some(node_id)));
                         }
                     }
                     continue; // don't descend into script children
@@ -420,16 +420,24 @@ impl Engine {
 
         for descriptor in descriptors {
             match descriptor {
-                ScriptDescriptor::Inline(text) => {
+                ScriptDescriptor::Inline(text, nid) => {
                     if !text.trim().is_empty() {
+                        if let Some(nid) = nid {
+                            let _ = runtime.eval(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
+                        }
                         runtime.eval(text).unwrap();
+                        let _ = runtime.eval("document.currentScript = null");
                         runtime.notify_mutation_observers();
                     }
                 }
-                ScriptDescriptor::External(url) => {
+                ScriptDescriptor::External(url, nid) => {
                     if let Some(script_content) = fetched.scripts.get(url) {
                         if !script_content.trim().is_empty() {
+                            if let Some(nid) = nid {
+                                let _ = runtime.eval(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
+                            }
                             runtime.eval(script_content).unwrap();
+                            let _ = runtime.eval("document.currentScript = null");
                             runtime.notify_mutation_observers();
                         }
                     }
@@ -523,14 +531,18 @@ impl Engine {
                 continue;
             }
             let is_module = descriptor.is_module();
+            let script_nid = match descriptor {
+                ScriptDescriptor::Inline(_, nid) | ScriptDescriptor::External(_, nid) => *nid,
+                _ => None,
+            };
             let code = match descriptor {
-                ScriptDescriptor::Inline(text) | ScriptDescriptor::InlineModule(text) => {
+                ScriptDescriptor::Inline(text, _) | ScriptDescriptor::InlineModule(text) => {
                     if text.trim().is_empty() {
                         continue;
                     }
                     text.clone()
                 }
-                ScriptDescriptor::External(url) | ScriptDescriptor::ExternalModule(url) => {
+                ScriptDescriptor::External(url, _) | ScriptDescriptor::ExternalModule(url) => {
                     match fetched.scripts.get(url) {
                         Some(content) if !content.trim().is_empty() => content.clone(),
                         _ => continue,
@@ -538,6 +550,12 @@ impl Engine {
                 }
                 ScriptDescriptor::ImportMap(_) => unreachable!(),
             };
+            // Set document.currentScript for classic scripts
+            if !is_module {
+                if let Some(nid) = script_nid {
+                    let _ = runtime.eval(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
+                }
+            }
             let result = if is_module {
                 let specifier = match descriptor {
                     ScriptDescriptor::ExternalModule(url) => Some(url.as_str()),
@@ -549,6 +567,10 @@ impl Engine {
             } else {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.eval(&code)))
             };
+            // Clear document.currentScript
+            if !is_module {
+                let _ = runtime.eval("document.currentScript = null");
+            }
             match result {
                 Ok(Ok(_)) => {
                     runtime.notify_mutation_observers();
@@ -1061,7 +1083,7 @@ mod tests {
 
         assert_eq!(descriptors.len(), 1);
         match &descriptors[0] {
-            ScriptDescriptor::Inline(text) => {
+            ScriptDescriptor::Inline(text, _) => {
                 assert!(text.contains("console.log"), "inline script text: {}", text);
             }
             other => panic!("expected Inline, got {:?}", other),
@@ -1080,7 +1102,7 @@ mod tests {
 
         assert_eq!(descriptors.len(), 1);
         match &descriptors[0] {
-            ScriptDescriptor::External(url) => {
+            ScriptDescriptor::External(url, _) => {
                 assert_eq!(url, "https://example.com/app.js");
             }
             other => panic!("expected External, got {:?}", other),
@@ -1102,15 +1124,15 @@ mod tests {
         assert_eq!(descriptors.len(), 3, "should find 3 scripts");
 
         match &descriptors[0] {
-            ScriptDescriptor::Inline(text) => assert!(text.contains("var x = 1")),
+            ScriptDescriptor::Inline(text, _) => assert!(text.contains("var x = 1")),
             _ => panic!("first script should be Inline"),
         }
         match &descriptors[1] {
-            ScriptDescriptor::External(url) => assert_eq!(url, "https://cdn.example.com/lib.js"),
+            ScriptDescriptor::External(url, _) => assert_eq!(url, "https://cdn.example.com/lib.js"),
             _ => panic!("second script should be External"),
         }
         match &descriptors[2] {
-            ScriptDescriptor::Inline(text) => assert!(text.contains("var y = 2")),
+            ScriptDescriptor::Inline(text, _) => assert!(text.contains("var y = 2")),
             _ => panic!("third script should be Inline"),
         }
     }
@@ -1279,7 +1301,7 @@ mod tests {
 
         assert_eq!(descriptors.len(), 1);
         match &descriptors[0] {
-            ScriptDescriptor::External(url) => {
+            ScriptDescriptor::External(url, _) => {
                 assert_eq!(url, "https://example.com/real.js");
             }
             other => panic!("should be External when src is present, got {:?}", other),

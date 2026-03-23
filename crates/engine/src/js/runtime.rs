@@ -9,6 +9,10 @@ use crate::dom::NodeId;
 
 use super::state::EngineState;
 
+thread_local! {
+    static PENDING_REJECTIONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
 /// The JS runtime wrapper. Owns a QuickJS Runtime + Context and provides
 /// a high-level API that hides JS engine details from the rest of the engine.
 pub struct JsRuntime {
@@ -24,6 +28,18 @@ impl JsRuntime {
         let runtime = Runtime::new().expect("failed to create QuickJS runtime");
         runtime.set_memory_limit(256 * 1024 * 1024);
         runtime.set_max_stack_size(64 * 1024 * 1024);
+
+        // Track unhandled promise rejections
+        runtime.set_host_promise_rejection_tracker(Some(Box::new(
+            |_ctx: rquickjs::Ctx<'_>, _promise: rquickjs::Value<'_>, reason: rquickjs::Value<'_>, is_handled: bool| {
+                if !is_handled {
+                    let reason_str = js_value_to_string(&reason);
+                    PENDING_REJECTIONS.with(|pr| {
+                        pr.borrow_mut().push(reason_str);
+                    });
+                }
+            },
+        )));
 
         let context = Context::full(&runtime).expect("failed to create QuickJS context");
         let state = Rc::new(RefCell::new(EngineState::new()));
@@ -409,6 +425,22 @@ impl JsRuntime {
     fn flush_jobs(&self) {
         while self.runtime.is_job_pending() {
             let _ = self.runtime.execute_pending_job();
+        }
+        // Drain any pending unhandled promise rejections
+        let rejections: Vec<String> = PENDING_REJECTIONS.with(|pr| pr.borrow_mut().drain(..).collect());
+        if !rejections.is_empty() {
+            // Push reasons to JS array and invoke the drain function
+            self.context.with(|ctx| {
+                for reason in &rejections {
+                    let escaped = reason.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "\\r");
+                    let _ = ctx.eval::<(), _>(format!("__braille_pending_rejections.push('{escaped}')"));
+                }
+                let _ = ctx.eval::<(), _>("if(typeof __braille_drain_rejections==='function')__braille_drain_rejections()");
+            });
+            // Flush any jobs that the rejection handlers may have queued
+            while self.runtime.is_job_pending() {
+                let _ = self.runtime.execute_pending_job();
+            }
         }
     }
 }

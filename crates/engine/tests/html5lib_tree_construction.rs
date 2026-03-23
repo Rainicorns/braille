@@ -239,6 +239,11 @@ fn serialize_node(tree: &DomTree, node_id: NodeId, depth: usize, out: &mut Strin
         NodeData::CDATASection { content } => {
             out.push_str(&format!("| {indent}\"{content}\"\n"));
         }
+        NodeData::ShadowRoot { .. } => {
+            for &child_id in &node.children {
+                serialize_node(tree, child_id, depth, out);
+            }
+        }
     }
 }
 

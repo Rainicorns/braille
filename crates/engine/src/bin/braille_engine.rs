@@ -264,7 +264,7 @@ fn fetch_and_load(
     let mut next_id = 1u64;
 
     for desc in &descriptors {
-        if let ScriptDescriptor::External(src_url) | ScriptDescriptor::ExternalModule(src_url) = desc {
+        if let ScriptDescriptor::External(src_url, _) | ScriptDescriptor::ExternalModule(src_url) = desc {
             script_requests.push(FetchRequest {
                 id: next_id,
                 url: src_url.clone(),

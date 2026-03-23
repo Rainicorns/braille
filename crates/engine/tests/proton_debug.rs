@@ -52,8 +52,8 @@ fn proton_login_debug() {
     eprintln!("[2] Found {} script descriptors:", descriptors.len());
     for (i, desc) in descriptors.iter().enumerate() {
         match desc {
-            ScriptDescriptor::Inline(t) => eprintln!("    [{i}] Inline ({} bytes)", t.len()),
-            ScriptDescriptor::External(u) => eprintln!("    [{i}] External: {u}"),
+            ScriptDescriptor::Inline(t, _) => eprintln!("    [{i}] Inline ({} bytes)", t.len()),
+            ScriptDescriptor::External(u, _) => eprintln!("    [{i}] External: {u}"),
             ScriptDescriptor::InlineModule(t) => eprintln!("    [{i}] InlineModule ({} bytes)", t.len()),
             ScriptDescriptor::ExternalModule(u) => eprintln!("    [{i}] ExternalModule: {u}"),
             ScriptDescriptor::ImportMap(t) => eprintln!("    [{i}] ImportMap ({} bytes)", t.len()),
@@ -65,7 +65,7 @@ fn proton_login_debug() {
     let mut scripts: HashMap<String, String> = HashMap::new();
     for desc in &descriptors {
         let url = match desc {
-            ScriptDescriptor::External(u) | ScriptDescriptor::ExternalModule(u) => u,
+            ScriptDescriptor::External(u, _) | ScriptDescriptor::ExternalModule(u) => u,
             _ => continue,
         };
         let resolved = resolve_url(base_url, url);

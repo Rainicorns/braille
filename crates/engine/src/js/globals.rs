@@ -388,7 +388,7 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this._stopPropagation = false;
                 this._stopImmediate = false;
             }
-            preventDefault() { this.defaultPrevented = true; }
+            preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
             stopPropagation() { this._stopPropagation = true; }
             stopImmediatePropagation() { this._stopImmediate = true; this._stopPropagation = true; }
             composedPath() { return this._path || []; }
@@ -476,7 +476,16 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             cookieEnabled: true,
             maxTouchPoints: 0,
             hardwareConcurrency: 1,
-            clipboard: { writeText: function() { return Promise.resolve(); } },
+            vendor: 'Google Inc.',
+            clipboard: (function() {
+                var _buf = '';
+                return {
+                    writeText: function(text) { _buf = String(text); return Promise.resolve(); },
+                    readText: function() { return Promise.resolve(_buf); },
+                    read: function() { return Promise.resolve([]); },
+                    write: function() { return Promise.resolve(); },
+                };
+            })(),
             mediaDevices: {},
             serviceWorker: { register: function() { return Promise.resolve(); } },
             permissions: { query: function() { return Promise.resolve({state:'granted'}); } },
@@ -637,7 +646,23 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.cancelAnimationFrame = function(id) { clearTimeout(id); };
         globalThis.requestIdleCallback = function(cb) { return setTimeout(cb, 0); };
         globalThis.cancelIdleCallback = function(id) { clearTimeout(id); };
-        globalThis.getSelection = function() { return { rangeCount: 0, removeAllRanges: function(){}, addRange: function(){} }; };
+        globalThis.getSelection = function() {
+            var _ranges = [];
+            return {
+                get rangeCount() { return _ranges.length; },
+                getRangeAt: function(i) { return _ranges[i] || null; },
+                addRange: function(r) { _ranges.push(r); },
+                removeAllRanges: function() { _ranges = []; },
+                removeRange: function(r) { var i = _ranges.indexOf(r); if (i >= 0) _ranges.splice(i, 1); },
+                collapse: function(node, offset) { _ranges = []; if (typeof Range !== 'undefined') { var r = new Range(); r.setStart(node, offset || 0); r.collapse(true); _ranges.push(r); } },
+                collapseToStart: function() { if (_ranges.length) { _ranges[0].collapse(true); _ranges = [_ranges[0]]; } },
+                collapseToEnd: function() { if (_ranges.length) { _ranges[0].collapse(false); _ranges = [_ranges[0]]; } },
+                toString: function() { return _ranges.length ? _ranges[0].toString() : ''; },
+                isCollapsed: true,
+                anchorNode: null, anchorOffset: 0, focusNode: null, focusOffset: 0,
+                type: 'None',
+            };
+        };
 
         // MessageChannel — React 18 scheduler uses this for async rendering
         globalThis.MessageChannel = class MessageChannel {
@@ -736,6 +761,7 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
                         }
                         if (!match) continue;
                         if (record.type === 'attributes' && !entry.options.attributes) continue;
+                        if (record.type === 'attributes' && Array.isArray(entry.options.attributeFilter) && entry.options.attributeFilter.indexOf(record.attributeName) < 0) continue;
                         if (record.type === 'childList' && !entry.options.childList) continue;
                         if (record.type === 'characterData' && !entry.options.characterData) continue;
                         obs._records.push(record);
@@ -760,7 +786,9 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this._cb = cb; this._records = []; this._targets = [];
             };
             MutationObserver.prototype.observe = function(target, options) {
-                this._targets.push({target: target, options: options || {}});
+                options = options || {};
+                if (options.attributeFilter && options.attributes === undefined) options.attributes = true;
+                this._targets.push({target: target, options: options});
                 if (observers.indexOf(this) < 0) observers.push(this);
             };
             MutationObserver.prototype.disconnect = function() {
@@ -843,9 +871,67 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             [Symbol.iterator]() { return this.entries(); }
         };
 
-        // Encoding
-        globalThis.TextEncoder = class TextEncoder { encode(s) { return new Uint8Array(Array.from(s||'').map(function(c){return c.charCodeAt(0);})); } };
-        globalThis.TextDecoder = class TextDecoder { decode(buf) { if(!buf)return''; return Array.from(new Uint8Array(buf)).map(function(b){return String.fromCharCode(b);}).join(''); } };
+        // Encoding — real UTF-8
+        globalThis.TextEncoder = class TextEncoder {
+            get encoding() { return 'utf-8'; }
+            encode(s) {
+                s = String(s || '');
+                var bytes = [];
+                for (var i = 0; i < s.length; i++) {
+                    var cp = s.codePointAt(i);
+                    if (cp < 0x80) {
+                        bytes.push(cp);
+                    } else if (cp < 0x800) {
+                        bytes.push(0xC0 | (cp >> 6), 0x80 | (cp & 0x3F));
+                    } else if (cp < 0x10000) {
+                        bytes.push(0xE0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F));
+                    } else {
+                        bytes.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3F), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F));
+                        i++; // skip surrogate pair second half
+                    }
+                }
+                return new Uint8Array(bytes);
+            }
+            encodeInto(source, destination) {
+                var encoded = this.encode(source);
+                var written = Math.min(encoded.length, destination.length);
+                for (var i = 0; i < written; i++) destination[i] = encoded[i];
+                // Count how many source chars were consumed for 'written' bytes
+                var read = 0, byteCount = 0;
+                for (read = 0; read < source.length && byteCount < written; read++) {
+                    var cp = source.codePointAt(read);
+                    var size = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+                    if (byteCount + size > written) break;
+                    byteCount += size;
+                    if (cp >= 0x10000) read++; // skip surrogate pair
+                }
+                return { read: read, written: byteCount };
+            }
+        };
+        globalThis.TextDecoder = class TextDecoder {
+            constructor(label) { this._label = (label || 'utf-8').toLowerCase(); }
+            get encoding() { return this._label; }
+            decode(buf) {
+                if (!buf) return '';
+                var bytes = new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer || buf);
+                var result = '', i = 0;
+                while (i < bytes.length) {
+                    var b = bytes[i];
+                    if (b < 0x80) { result += String.fromCodePoint(b); i++; }
+                    else if ((b & 0xE0) === 0xC0) {
+                        var cp = ((b & 0x1F) << 6) | (bytes[i+1] & 0x3F);
+                        result += String.fromCodePoint(cp); i += 2;
+                    } else if ((b & 0xF0) === 0xE0) {
+                        var cp = ((b & 0x0F) << 12) | ((bytes[i+1] & 0x3F) << 6) | (bytes[i+2] & 0x3F);
+                        result += String.fromCodePoint(cp); i += 3;
+                    } else if ((b & 0xF8) === 0xF0) {
+                        var cp = ((b & 0x07) << 18) | ((bytes[i+1] & 0x3F) << 12) | ((bytes[i+2] & 0x3F) << 6) | (bytes[i+3] & 0x3F);
+                        result += String.fromCodePoint(cp); i += 4;
+                    } else { result += '\uFFFD'; i++; }
+                }
+                return result;
+            }
+        };
         // Real base64 btoa/atob
         globalThis.btoa = function(s) {
             var T = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -1273,7 +1359,28 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
             tee() { return [new ReadableStream(this._src), new ReadableStream(this._src)]; }
         };
         globalThis.FormData = class FormData {
-            constructor() { this._entries = []; }
+            constructor(form) {
+                this._entries = [];
+                if (form && form.querySelectorAll) {
+                    var controls = form.querySelectorAll('input, textarea, select');
+                    for (var i = 0; i < controls.length; i++) {
+                        var c = controls[i];
+                        var name = c.getAttribute('name');
+                        if (!name) continue;
+                        var tag = c.tagName;
+                        if (tag === 'INPUT') {
+                            var type = (c.getAttribute('type') || 'text').toLowerCase();
+                            if (type === 'checkbox' || type === 'radio') {
+                                if (c.checked) this._entries.push([name, c.value || 'on']);
+                            } else if (type !== 'file' && type !== 'submit' && type !== 'button' && type !== 'reset' && type !== 'image') {
+                                this._entries.push([name, c.value || '']);
+                            }
+                        } else if (tag === 'TEXTAREA' || tag === 'SELECT') {
+                            this._entries.push([name, c.value || '']);
+                        }
+                    }
+                }
+            }
             append(n,v) { this._entries.push([n,String(v)]); }
             get(n) { var e=this._entries.find(function(e){return e[0]===n;}); return e?e[1]:null; }
             getAll(n) { return this._entries.filter(function(e){return e[0]===n;}).map(function(e){return e[1];}); }
@@ -1341,7 +1448,41 @@ fn register_dom_stubs(ctx: &Ctx<'_>) {
         })();
 
         globalThis.queueMicrotask = function(cb) { Promise.resolve().then(cb); };
-        globalThis.structuredClone = globalThis.structuredClone || function(v) { return JSON.parse(JSON.stringify(v)); };
+        // Unhandled promise rejection support
+        globalThis.__braille_pending_rejections = [];
+        globalThis.__braille_drain_rejections = function() {
+            var arr = __braille_pending_rejections.splice(0);
+            for (var i = 0; i < arr.length; i++) {
+                var evt = new PromiseRejectionEvent('unhandledrejection', {
+                    cancelable: true, promise: null, reason: arr[i]
+                });
+                window.dispatchEvent(evt);
+                if (typeof window.onunhandledrejection === 'function') {
+                    window.onunhandledrejection(evt);
+                }
+            }
+        };
+        globalThis.structuredClone = globalThis.structuredClone || function(v) {
+            var seen = new Map();
+            function clone(val) {
+                if (val === null || typeof val !== 'object' && typeof val !== 'function') return val;
+                if (typeof val === 'function' || typeof val === 'symbol') throw new DOMException('could not be cloned', 'DataCloneError');
+                if (seen.has(val)) return seen.get(val);
+                if (val instanceof Date) { var d = new Date(val.getTime()); seen.set(val, d); return d; }
+                if (val instanceof RegExp) { var r = new RegExp(val.source, val.flags); seen.set(val, r); return r; }
+                if (val instanceof Map) { var m = new Map(); seen.set(val, m); val.forEach(function(v, k) { m.set(clone(k), clone(v)); }); return m; }
+                if (val instanceof Set) { var s = new Set(); seen.set(val, s); val.forEach(function(v) { s.add(clone(v)); }); return s; }
+                if (val instanceof ArrayBuffer) { var ab = val.slice(0); seen.set(val, ab); return ab; }
+                if (ArrayBuffer.isView(val)) { var buf = val.buffer.slice(0); var c = new val.constructor(buf, val.byteOffset, val.length); seen.set(val, c); return c; }
+                if (val instanceof Error) { var e = new Error(val.message); e.stack = val.stack; e.name = val.name; seen.set(val, e); return e; }
+                if (Array.isArray(val)) { var a = []; seen.set(val, a); for (var i = 0; i < val.length; i++) a[i] = clone(val[i]); return a; }
+                var o = {}; seen.set(val, o);
+                var keys = Object.keys(val);
+                for (var i = 0; i < keys.length; i++) o[keys[i]] = clone(val[keys[i]]);
+                return o;
+            }
+            return clone(v);
+        };
         globalThis.WeakRef = globalThis.WeakRef || class WeakRef { constructor(t){this._t=t;} deref(){return this._t;} };
         globalThis.FinalizationRegistry = globalThis.FinalizationRegistry || class FinalizationRegistry { register(){} };
 
