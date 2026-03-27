@@ -1460,7 +1460,7 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                         var isRange = inputType === 'range';
                         var defMin = isRange ? 0 : null;
                         var defMax = isRange ? 100 : null;
-                        var defStep = isRange ? 1 : null;
+                        var defStep = 1;
                         if (val !== '') {
                             var nv = parseFloat(val);
                             if (isNaN(nv) || !isFinite(nv)) {
