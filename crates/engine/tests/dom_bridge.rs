@@ -739,3 +739,129 @@ fn dynamic_script_no_src_does_not_fetch() {
 
     assert!(!e.has_pending_fetches(), "inline script should not trigger fetch");
 }
+
+// =========================================================================
+// Live HTMLCollection tests
+// =========================================================================
+
+#[test]
+fn getelements_by_tag_name_is_live_on_add() {
+    let mut e = engine_with_html("<html><body><p>first</p></body></html>");
+    let result = e.eval_js(r#"
+        var col = document.getElementsByTagName('p');
+        var before = col.length;
+        var p2 = document.createElement('p');
+        p2.textContent = 'second';
+        document.body.appendChild(p2);
+        before + ',' + col.length;
+    "#);
+    assert_eq!(result.unwrap(), "1,2");
+}
+
+#[test]
+fn getelements_by_tag_name_is_live_on_remove() {
+    let mut e = engine_with_html("<html><body><p id='a'>one</p><p id='b'>two</p></body></html>");
+    let result = e.eval_js(r#"
+        var col = document.getElementsByTagName('p');
+        var before = col.length;
+        var a = document.getElementById('a');
+        a.parentNode.removeChild(a);
+        before + ',' + col.length;
+    "#);
+    assert_eq!(result.unwrap(), "2,1");
+}
+
+#[test]
+fn getelements_by_class_name_is_live_on_add() {
+    let mut e = engine_with_html("<html><body><div class='x'>a</div></body></html>");
+    let result = e.eval_js(r#"
+        var col = document.getElementsByClassName('x');
+        var before = col.length;
+        var d = document.createElement('div');
+        d.className = 'x';
+        document.body.appendChild(d);
+        before + ',' + col.length;
+    "#);
+    assert_eq!(result.unwrap(), "1,2");
+}
+
+#[test]
+fn getelements_by_class_name_is_live_on_remove() {
+    let mut e = engine_with_html("<html><body><div class='x' id='a'>a</div><div class='x'>b</div></body></html>");
+    let result = e.eval_js(r#"
+        var col = document.getElementsByClassName('x');
+        var before = col.length;
+        var a = document.getElementById('a');
+        a.parentNode.removeChild(a);
+        before + ',' + col.length;
+    "#);
+    assert_eq!(result.unwrap(), "2,1");
+}
+
+#[test]
+fn element_getelements_by_tag_name_is_live() {
+    let mut e = engine_with_html("<html><body><div id='container'><span>a</span></div></body></html>");
+    let result = e.eval_js(r#"
+        var container = document.getElementById('container');
+        var col = container.getElementsByTagName('span');
+        var before = col.length;
+        var s = document.createElement('span');
+        container.appendChild(s);
+        before + ',' + col.length;
+    "#);
+    assert_eq!(result.unwrap(), "1,2");
+}
+
+#[test]
+fn form_elements_is_live_on_add() {
+    let mut e = engine_with_html("<html><body><form id='f'><input name='a'></form></body></html>");
+    let result = e.eval_js(r#"
+        var form = document.getElementById('f');
+        var els = form.elements;
+        var before = els.length;
+        var inp = document.createElement('input');
+        inp.setAttribute('name', 'b');
+        form.appendChild(inp);
+        before + ',' + els.length;
+    "#);
+    assert_eq!(result.unwrap(), "1,2");
+}
+
+#[test]
+fn form_elements_is_live_on_remove() {
+    let mut e = engine_with_html("<html><body><form id='f'><input id='i1' name='a'><input name='b'></form></body></html>");
+    let result = e.eval_js(r#"
+        var form = document.getElementById('f');
+        var els = form.elements;
+        var before = els.length;
+        var i1 = document.getElementById('i1');
+        i1.parentNode.removeChild(i1);
+        before + ',' + els.length;
+    "#);
+    assert_eq!(result.unwrap(), "2,1");
+}
+
+#[test]
+fn form_elements_named_access() {
+    let mut e = engine_with_html("<html><body><form id='f'><input name='email' value='test@example.com'></form></body></html>");
+    let result = e.eval_js(r#"
+        var form = document.getElementById('f');
+        var els = form.elements;
+        els.namedItem('email').value;
+    "#);
+    assert_eq!(result.unwrap(), "test@example.com");
+}
+
+#[test]
+fn live_collection_index_access_updates() {
+    let mut e = engine_with_html("<html><body><p>first</p></body></html>");
+    let result = e.eval_js(r#"
+        var col = document.getElementsByTagName('p');
+        var first = col[0].textContent;
+        var p2 = document.createElement('p');
+        p2.textContent = 'second';
+        document.body.appendChild(p2);
+        first + ',' + col[1].textContent;
+    "#);
+    assert_eq!(result.unwrap(), "first,second");
+}
