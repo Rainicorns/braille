@@ -1917,4 +1917,91 @@ mod tests {
         tree.normalize(root);
         assert_eq!(tree.get_text_content(root), "deep");
     }
+
+    // --- compareDocumentPosition tests ---
+
+    const DISCONNECTED: u16 = 0x01;
+    const PRECEDING: u16 = 0x02;
+    const FOLLOWING: u16 = 0x04;
+    const CONTAINS: u16 = 0x08;
+    const CONTAINED_BY: u16 = 0x10;
+    const IMPLEMENTATION_SPECIFIC: u16 = 0x20;
+
+    #[test]
+    fn compare_document_position_same_node() {
+        let mut tree = DomTree::new();
+        let div = tree.create_element("div");
+        tree.append_child(tree.document(), div);
+        assert_eq!(tree.compare_document_position(div, div), 0);
+    }
+
+    #[test]
+    fn compare_document_position_parent_child() {
+        let mut tree = DomTree::new();
+        let parent = tree.create_element("div");
+        let child = tree.create_element("span");
+        tree.append_child(tree.document(), parent);
+        tree.append_child(parent, child);
+
+        // parent.compareDocumentPosition(child): child is contained by parent, follows
+        let result = tree.compare_document_position(parent, child);
+        assert_eq!(result, CONTAINED_BY | FOLLOWING);
+
+        // child.compareDocumentPosition(parent): parent contains child, precedes
+        let result = tree.compare_document_position(child, parent);
+        assert_eq!(result, CONTAINS | PRECEDING);
+    }
+
+    #[test]
+    fn compare_document_position_sibling_order() {
+        let mut tree = DomTree::new();
+        let parent = tree.create_element("div");
+        let first = tree.create_element("span");
+        let second = tree.create_element("p");
+        tree.append_child(tree.document(), parent);
+        tree.append_child(parent, first);
+        tree.append_child(parent, second);
+
+        // first.compareDocumentPosition(second): second follows first
+        let result = tree.compare_document_position(first, second);
+        assert_eq!(result, FOLLOWING);
+
+        // second.compareDocumentPosition(first): first precedes second
+        let result = tree.compare_document_position(second, first);
+        assert_eq!(result, PRECEDING);
+    }
+
+    #[test]
+    fn compare_document_position_disconnected() {
+        let mut tree = DomTree::new();
+        let a = tree.create_element("div");
+        let b = tree.create_element("span");
+        // Both detached (not appended to document), but they share no common root
+        // Actually in DomTree, detached nodes have no parent, so root_of(a) == a, root_of(b) == b
+
+        let result = tree.compare_document_position(a, b);
+        assert!(result & DISCONNECTED != 0);
+        assert!(result & IMPLEMENTATION_SPECIFIC != 0);
+        // Must be either PRECEDING or FOLLOWING but not both
+        assert!((result & PRECEDING != 0) ^ (result & FOLLOWING != 0));
+    }
+
+    #[test]
+    fn compare_document_position_deep_ancestor() {
+        let mut tree = DomTree::new();
+        let root = tree.create_element("div");
+        let mid = tree.create_element("section");
+        let deep = tree.create_element("span");
+        tree.append_child(tree.document(), root);
+        tree.append_child(root, mid);
+        tree.append_child(mid, deep);
+
+        // root.compareDocumentPosition(deep): deep is a descendant
+        let result = tree.compare_document_position(root, deep);
+        assert_eq!(result, CONTAINED_BY | FOLLOWING);
+
+        // deep.compareDocumentPosition(root): root is an ancestor
+        let result = tree.compare_document_position(deep, root);
+        assert_eq!(result, CONTAINS | PRECEDING);
+    }
 }
