@@ -2119,16 +2119,7 @@ mod tests {
         assert_eq!(s, "true");
     }
 
-    #[test]
-    fn textarea_validity_too_long() {
-        let mut engine = Engine::new();
-        engine.load_html(r#"<html><body><textarea id="t" maxlength="3"></textarea></body></html>"#);
-        let runtime = engine.runtime.as_mut().unwrap();
-        // Bypass truncation by setting __props directly
-        runtime.eval(r#"var t = document.getElementById("t"); if (!t.__props) t.__props = {}; t.__props._value = "hello";"#).unwrap();
-        let s = runtime.eval_to_string(r#"String(document.getElementById("t").validity.tooLong)"#).unwrap();
-        assert_eq!(s, "true");
-    }
+    // Old cheating test removed — honest version at bottom of file uses handle_type()
 
     // -- textarea.cols --
 
@@ -2350,6 +2341,39 @@ mod tests {
         assert_eq!(
             refresh.url.as_deref(),
             Some("https://other.com/page")
+        );
+    }
+
+    #[test]
+    fn textarea_validity_too_long() {
+        let html = r#"
+        <html><body>
+          <textarea id="t" maxlength="3"></textarea>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        engine.snapshot(SnapMode::Accessibility);
+
+        // Use the public .value setter via handle_type (not __props._value directly)
+        engine.handle_type("#t", "hello").unwrap();
+
+        let too_long = engine.eval_js(
+            "document.getElementById('t').validity.tooLong"
+        ).unwrap();
+        assert_eq!(
+            too_long, "true",
+            "textarea with maxlength=3 and value='hello' should have validity.tooLong=true, got: {}",
+            too_long
+        );
+
+        let valid = engine.eval_js(
+            "document.getElementById('t').validity.valid"
+        ).unwrap();
+        assert_eq!(
+            valid, "false",
+            "textarea with tooLong should not be valid, got: {}",
+            valid
         );
     }
 }

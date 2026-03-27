@@ -9,7 +9,68 @@
 //! dispatch, Proxy, input.value, form submission, etc.
 
 use braille_engine::Engine;
-use braille_wire::SnapMode;
+use braille_wire::{FetchResponseData, SnapMode};
+
+/// Service all pending fetches on the engine with mock data, matching URLs to responses.
+fn service_spa_fetches(engine: &mut Engine) {
+    for _ in 0..20 {
+        if !engine.has_pending_fetches() {
+            break;
+        }
+        let pending = engine.pending_fetches();
+        for req in pending {
+            let (status, body) = match req.url.as_str() {
+                url if url.ends_with("/api/users/1") => (200, r#"{"id":1,"name":"Alice","email":"alice@example.com","bio":"Software engineer"}"#.to_string()),
+                url if url.ends_with("/api/users") => (200, r#"[{"id":1,"name":"Alice","email":"alice@example.com"},{"id":2,"name":"Bob","email":"bob@example.com"},{"id":3,"name":"Charlie","email":"charlie@test.com"}]"#.to_string()),
+                url if url.contains("/api/search") => {
+                    // Extract query parameter
+                    let query = url.split("?q=").nth(1).unwrap_or("").to_string();
+                    let query = urlencoding_decode(&query);
+                    let all_users = vec![
+                        ("Alice", "alice@example.com"),
+                        ("Bob", "bob@example.com"),
+                        ("Charlie", "charlie@test.com"),
+                    ];
+                    let results: Vec<String> = all_users.iter()
+                        .filter(|(name, _)| name.to_lowercase().contains(&query.to_lowercase()))
+                        .map(|(name, email)| format!(r#"{{"id":1,"name":"{}","email":"{}"}}"#, name, email))
+                        .collect();
+                    (200, format!("[{}]", results.join(",")))
+                }
+                url if url.ends_with("/api/contact") => (200, r#"{"success":true,"message":"Message sent!"}"#.to_string()),
+                _ => (404, r#"{"error":"Not found"}"#.to_string()),
+            };
+            engine.resolve_fetch(req.id, &FetchResponseData {
+                status,
+                status_text: if status == 200 { "OK".to_string() } else { "Not Found".to_string() },
+                headers: vec![("content-type".to_string(), "application/json".to_string())],
+                body,
+                url: req.url.clone(),
+            });
+        }
+        engine.settle();
+    }
+}
+
+fn urlencoding_decode(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.bytes();
+    while let Some(b) = chars.next() {
+        if b == b'%' {
+            let h = chars.next().unwrap_or(0);
+            let l = chars.next().unwrap_or(0);
+            let hex = String::from_utf8(vec![h, l]).unwrap_or_default();
+            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                result.push(byte as char);
+            }
+        } else if b == b'+' {
+            result.push(' ');
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
+}
 
 fn load_framework_test(filename: &str) -> (Engine, String) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -333,8 +394,8 @@ fn spa_history_back_returns_to_previous_page() {
     let snap_search = engine.snapshot(SnapMode::Accessibility);
     assert!(snap_search.contains("Search Users"), "should be on Search");
 
-    // Go back
-    engine.eval_js("window.history.back()").unwrap();
+    // Go back using the in-app back button
+    engine.handle_click("#nav-back");
     engine.settle();
     let snap_users = engine.snapshot(SnapMode::Accessibility);
     assert!(
@@ -348,7 +409,8 @@ fn spa_history_back_returns_to_previous_page() {
 fn spa_404_for_unknown_route() {
     let (mut engine, _snap) = load_spa();
 
-    engine.eval_js("window.__test.navigate('/nonexistent')").unwrap();
+    // Click the dead link in the nav bar to navigate to /nonexistent
+    engine.handle_click("#nav-nonexistent");
     engine.settle();
     let snap = engine.snapshot(SnapMode::Accessibility);
 
@@ -370,9 +432,10 @@ fn spa_fetch_users_populates_list() {
     engine.handle_click("#nav-users");
     engine.settle();
 
-    // Click "Load Users" button
+    // Click "Load Users" button — this triggers a real fetch("/api/users")
     engine.handle_click("#load-users");
     engine.settle();
+    service_spa_fetches(&mut engine);
     let snap = engine.snapshot(SnapMode::Accessibility);
 
     assert!(snap.contains("Alice"), "should show Alice: {}", snap);
@@ -389,10 +452,12 @@ fn spa_click_user_shows_detail() {
     engine.settle();
     engine.handle_click("#load-users");
     engine.settle();
+    service_spa_fetches(&mut engine);
 
-    // Click on Alice
+    // Click on Alice — triggers fetch("/api/users/1")
     engine.handle_click("#user-1");
     engine.settle();
+    service_spa_fetches(&mut engine);
     let snap = engine.snapshot(SnapMode::Accessibility);
 
     assert!(snap.contains("Alice"), "should show user name: {}", snap);
@@ -416,8 +481,10 @@ fn spa_user_detail_back_to_list() {
     engine.settle();
     engine.handle_click("#load-users");
     engine.settle();
+    service_spa_fetches(&mut engine);
     engine.handle_click("#user-1");
     engine.settle();
+    service_spa_fetches(&mut engine);
 
     // Click back button
     engine.handle_click("#back-to-users");
@@ -440,10 +507,11 @@ fn spa_search_finds_user() {
     engine.handle_click("#nav-search");
     engine.settle();
 
-    // Type search query and submit
+    // Type search query and submit — triggers fetch("/api/search?q=ali")
     engine.handle_type("#search-input", "ali").unwrap();
     engine.handle_click("#search-btn");
     engine.settle();
+    service_spa_fetches(&mut engine);
     let snap = engine.snapshot(SnapMode::Accessibility);
 
     assert!(
@@ -463,6 +531,7 @@ fn spa_search_no_results() {
     engine.handle_type("#search-input", "zzzzz").unwrap();
     engine.handle_click("#search-btn");
     engine.settle();
+    service_spa_fetches(&mut engine);
     let snap = engine.snapshot(SnapMode::Accessibility);
 
     assert!(
@@ -504,12 +573,13 @@ fn spa_contact_form_submit_uses_formdata() {
     engine.handle_type("#contact-name", "Test User").unwrap();
     engine.handle_type("#contact-email", "test@example.com").unwrap();
 
-    // Submit the form
+    // Submit the form — triggers fetch POST to /api/contact
     engine.handle_click("#contact-submit");
     engine.settle();
+    service_spa_fetches(&mut engine);
     let snap = engine.snapshot(SnapMode::Accessibility);
 
-    // Check the success message (from mock API response)
+    // Check the success message (from resolved fetch response)
     assert!(
         snap.contains("Message sent!"),
         "should show success message: {}",
@@ -543,6 +613,7 @@ fn spa_contact_form_reset_and_resubmit() {
     engine.handle_type("#contact-name", "First").unwrap();
     engine.handle_click("#contact-submit");
     engine.settle();
+    service_spa_fetches(&mut engine);
 
     let snap1 = engine.snapshot(SnapMode::Accessibility);
     assert!(snap1.contains("Message sent!"), "first submit should succeed");
@@ -573,12 +644,14 @@ fn spa_full_user_journey() {
     engine.settle();
     engine.handle_click("#load-users");
     engine.settle();
+    service_spa_fetches(&mut engine);
     let users = engine.snapshot(SnapMode::Accessibility);
     assert!(users.contains("Alice"), "users loaded");
 
     // 3. View user detail
     engine.handle_click("#user-1");
     engine.settle();
+    service_spa_fetches(&mut engine);
     let detail = engine.snapshot(SnapMode::Accessibility);
     assert!(detail.contains("Software engineer"), "user detail shown");
 
@@ -588,6 +661,7 @@ fn spa_full_user_journey() {
     engine.handle_type("#search-input", "bob").unwrap();
     engine.handle_click("#search-btn");
     engine.settle();
+    service_spa_fetches(&mut engine);
     let search = engine.snapshot(SnapMode::Accessibility);
     assert!(search.contains("Bob"), "search found Bob");
 
@@ -597,6 +671,7 @@ fn spa_full_user_journey() {
     engine.handle_type("#contact-name", "Journey User").unwrap();
     engine.handle_click("#contact-submit");
     engine.settle();
+    service_spa_fetches(&mut engine);
     let contact = engine.snapshot(SnapMode::Accessibility);
     assert!(contact.contains("Message sent!"), "contact form submitted");
 

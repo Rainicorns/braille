@@ -129,76 +129,6 @@ var Router = (function() {
 })();
 
 // ============================================================================
-// Fake fetch data store (simulates server responses for testing)
-// We intercept fetch and return mock data so tests don't need a real server.
-// ============================================================================
-var mockData = {
-  "/api/users": JSON.stringify([
-    { id: 1, name: "Alice", email: "alice@example.com" },
-    { id: 2, name: "Bob", email: "bob@example.com" },
-    { id: 3, name: "Charlie", email: "charlie@test.com" }
-  ]),
-  "/api/users/1": JSON.stringify({ id: 1, name: "Alice", email: "alice@example.com", bio: "Software engineer" }),
-  "/api/search": JSON.stringify([]),
-  "/api/contact": JSON.stringify({ success: true, message: "Message sent!" })
-};
-
-// Wrap native fetch to intercept and return mock data synchronously via resolved promises
-var _realFetch = fetch;
-var mockFetch = function(url, opts) {
-  opts = opts || {};
-  var method = (opts.method || "GET").toUpperCase();
-  var key = url;
-
-  // For POST, record the request body for later inspection
-  if (method === "POST" && opts.body) {
-    window.__lastPostBody = opts.body;
-    window.__lastPostUrl = url;
-  }
-
-  // For search queries, generate dynamic results
-  if (url.indexOf("/api/search") === 0) {
-    var qIdx = url.indexOf("?q=");
-    var query = qIdx >= 0 ? decodeURIComponent(url.substring(qIdx + 3)) : "";
-    var allUsers = JSON.parse(mockData["/api/users"]);
-    var results = query ? allUsers.filter(function(u) {
-      return u.name.toLowerCase().indexOf(query.toLowerCase()) >= 0;
-    }) : [];
-    // Return a resolved promise wrapping a mock Response
-    return Promise.resolve({
-      ok: true,
-      status: 200,
-      json: function() { return Promise.resolve(results); },
-      text: function() { return Promise.resolve(JSON.stringify(results)); },
-      headers: { get: function() { return "application/json"; } }
-    });
-  }
-
-  // Resolve with mock data if available
-  if (mockData[key]) {
-    return Promise.resolve({
-      ok: true,
-      status: 200,
-      json: function() { return Promise.resolve(JSON.parse(mockData[key])); },
-      text: function() { return Promise.resolve(mockData[key]); },
-      headers: { get: function() { return "application/json"; } }
-    });
-  }
-
-  // 404 for unknown endpoints
-  return Promise.resolve({
-    ok: false,
-    status: 404,
-    json: function() { return Promise.resolve({ error: "Not found" }); },
-    text: function() { return Promise.resolve('{"error":"Not found"}'); },
-    headers: { get: function() { return "application/json"; } }
-  });
-};
-// Override both the global `fetch` and `window.fetch` so all call sites use the mock
-fetch = mockFetch;
-window.fetch = mockFetch;
-
-// ============================================================================
 // Shared state store (simulates React context / global state)
 // ============================================================================
 var Store = (function() {
@@ -308,7 +238,14 @@ function NavBar() {
     " | ",
     link("Search", "/search"),
     " | ",
-    link("Contact", "/contact")
+    link("Contact", "/contact"),
+    " | ",
+    link("Nowhere", "/nonexistent"),
+    " | ",
+    h("button", {
+      id: "nav-back",
+      onclick: function() { window.history.back(); }
+    }, "Back")
   );
 }
 

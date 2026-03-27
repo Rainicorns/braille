@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head><title>Preact onChange Delegation</title></head>
+<body>
+<div id="app"></div>
+<script>
+// Minimal Preact-like VDOM with event delegation at the document root.
+// Real Preact/React attach a single listener on the root and dispatch
+// to the correct handler via event.target lookup — no per-element binding.
+var App = (function() {
+  var rootEl = document.getElementById("app");
+  var state = { value: "" };
+
+  // --- Event delegation registry (mimics Preact's approach) ---
+  var delegatedHandlers = {}; // nodeId -> { eventType -> handler }
+
+  document.addEventListener("input", function(e) {
+    var target = e.target;
+    if (target && target.__delegateId && delegatedHandlers[target.__delegateId]) {
+      var handler = delegatedHandlers[target.__delegateId]["input"];
+      if (handler) handler(e);
+    }
+  });
+
+  var nextDelegateId = 1;
+
+  function h(tag, props, children) {
+    return { tag: tag, props: props || {}, children: children || [] };
+  }
+
+  function render(vnode, container) {
+    container.innerHTML = "";
+    mount(vnode, container);
+  }
+
+  function mount(vnode, container) {
+    if (typeof vnode === "string" || typeof vnode === "number") {
+      container.appendChild(document.createTextNode(String(vnode)));
+      return;
+    }
+    var el = document.createElement(vnode.tag);
+    var props = vnode.props;
+    for (var key in props) {
+      if (key === "onInput") {
+        // Register via delegation, NOT addEventListener on this element
+        var id = nextDelegateId++;
+        el.__delegateId = id;
+        if (!delegatedHandlers[id]) delegatedHandlers[id] = {};
+        delegatedHandlers[id]["input"] = props[key];
+      } else if (key.indexOf("on") === 0) {
+        el.addEventListener(key.substring(2).toLowerCase(), props[key]);
+      } else if (key !== "children") {
+        el.setAttribute(key, String(props[key]));
+      }
+    }
+    for (var i = 0; i < (vnode.children || []).length; i++) {
+      mount(vnode.children[i], el);
+    }
+    container.appendChild(el);
+  }
+
+  function update() {
+    render(view(), rootEl);
+  }
+
+  function view() {
+    return h("div", { id: "container" }, [
+      h("label", { id: "label" }, ["Typed: " + state.value]),
+      h("input", {
+        type: "text",
+        id: "field",
+        value: state.value,
+        onInput: function(e) {
+          state.value = e.target.value;
+          update();
+        }
+      })
+    ]);
+  }
+
+  update();
+  return { getState: function() { return state; } };
+})();
+</script>
+</body>
+</html>
