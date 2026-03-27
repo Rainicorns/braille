@@ -1450,28 +1450,83 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                     var tooLong = false, tooShort = false;
                     var maxl = el.getAttribute('maxlength'); if (maxl !== null && val.length > parseInt(maxl)) tooLong = true;
                     var minl = el.getAttribute('minlength'); if (minl !== null && val.length > 0 && val.length < parseInt(minl)) tooShort = true;
-                    var rangeUnderflow = false, rangeOverflow = false;
-                    var mn = el.getAttribute('min'); if (mn !== null && val !== '' && parseFloat(val) < parseFloat(mn)) rangeUnderflow = true;
-                    var mx = el.getAttribute('max'); if (mx !== null && val !== '' && parseFloat(val) > parseFloat(mx)) rangeOverflow = true;
-                    var badInput = false;
-                    if (val !== '' && (inputType === 'number' || inputType === 'range')) {
-                        badInput = isNaN(parseFloat(val)) || !isFinite(Number(val));
-                    } else if (val !== '' && inputType === 'date') {
-                        badInput = isNaN(new Date(val).getTime());
-                    }
-                    var stepMismatch = false;
-                    if (val !== '' && !badInput && (inputType === 'number' || inputType === 'range')) {
-                        var stepAttr = el.getAttribute('step');
-                        if (stepAttr !== null && stepAttr.toLowerCase() === 'any') {
-                            stepMismatch = false;
-                        } else {
-                            var step = stepAttr !== null ? parseFloat(stepAttr) : (inputType === 'number' ? 1 : 1);
-                            if (!isNaN(step) && step > 0) {
-                                var base = mn !== null ? parseFloat(mn) : 0;
-                                var diff = Math.abs((parseFloat(val) - base) % step);
-                                if (diff > 1e-10 && Math.abs(diff - step) > 1e-10) stepMismatch = true;
+                    var rangeUnderflow = false, rangeOverflow = false, stepMismatch = false, badInput = false;
+                    var mn = el.getAttribute('min');
+                    var mx = el.getAttribute('max');
+                    var stepAttr = el.getAttribute('step');
+                    var numericTypes = { number: 1, range: 1 };
+                    var dateTimeTypes = { date: 1, time: 1, 'datetime-local': 1, month: 1, week: 1 };
+                    if (tag === 'INPUT' && inputType in numericTypes) {
+                        var isRange = inputType === 'range';
+                        var defMin = isRange ? 0 : null;
+                        var defMax = isRange ? 100 : null;
+                        var defStep = isRange ? 1 : null;
+                        if (val !== '') {
+                            var nv = parseFloat(val);
+                            if (isNaN(nv) || !isFinite(nv)) {
+                                if (!isRange) badInput = true;
+                            } else {
+                                var minVal = mn !== null ? parseFloat(mn) : defMin;
+                                var maxVal = mx !== null ? parseFloat(mx) : defMax;
+                                if (minVal !== null && nv < minVal) rangeUnderflow = true;
+                                if (maxVal !== null && nv > maxVal) rangeOverflow = true;
+                                var stepVal = stepAttr !== null ? parseFloat(stepAttr) : defStep;
+                                if (stepVal !== null && stepAttr !== 'any' && !isNaN(stepVal) && stepVal > 0) {
+                                    var base = minVal !== null ? minVal : 0;
+                                    var diff = Math.abs((nv - base) % stepVal);
+                                    if (diff > 1e-10 && Math.abs(diff - stepVal) > 1e-10) stepMismatch = true;
+                                }
                             }
                         }
+                    } else if (tag === 'INPUT' && inputType in dateTimeTypes) {
+                        if (val !== '') {
+                            var dtValid = true;
+                            var dtVal = 0, dtMin = null, dtMax = null;
+                            if (inputType === 'date') {
+                                if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { badInput = true; dtValid = false; }
+                                else { dtVal = new Date(val + 'T00:00:00Z').getTime(); if (isNaN(dtVal)) { badInput = true; dtValid = false; } }
+                                if (dtValid && mn !== null) { dtMin = new Date(mn + 'T00:00:00Z').getTime(); }
+                                if (dtValid && mx !== null) { dtMax = new Date(mx + 'T00:00:00Z').getTime(); }
+                            } else if (inputType === 'time') {
+                                if (!/^\d{2}:\d{2}(:\d{2})?$/.test(val)) { badInput = true; dtValid = false; }
+                                else {
+                                    var tp = val.split(':'); dtVal = parseInt(tp[0]) * 3600 + parseInt(tp[1]) * 60 + (tp[2] ? parseInt(tp[2]) : 0);
+                                    if (parseInt(tp[0]) > 23 || parseInt(tp[1]) > 59 || (tp[2] && parseInt(tp[2]) > 59)) { badInput = true; dtValid = false; }
+                                }
+                                if (dtValid && mn !== null) { var mp = mn.split(':'); dtMin = parseInt(mp[0]) * 3600 + parseInt(mp[1]) * 60 + (mp[2] ? parseInt(mp[2]) : 0); }
+                                if (dtValid && mx !== null) { var xp = mx.split(':'); dtMax = parseInt(xp[0]) * 3600 + parseInt(xp[1]) * 60 + (xp[2] ? parseInt(xp[2]) : 0); }
+                            } else if (inputType === 'datetime-local') {
+                                if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(val)) { badInput = true; dtValid = false; }
+                                else { dtVal = new Date(val + 'Z').getTime(); if (isNaN(dtVal)) { badInput = true; dtValid = false; } }
+                                if (dtValid && mn !== null) { dtMin = new Date(mn + 'Z').getTime(); }
+                                if (dtValid && mx !== null) { dtMax = new Date(mx + 'Z').getTime(); }
+                            } else if (inputType === 'month') {
+                                if (!/^\d{4}-\d{2}$/.test(val)) { badInput = true; dtValid = false; }
+                                else {
+                                    var mParts = val.split('-'); dtVal = parseInt(mParts[0]) * 12 + parseInt(mParts[1]);
+                                    if (parseInt(mParts[1]) < 1 || parseInt(mParts[1]) > 12) { badInput = true; dtValid = false; }
+                                }
+                                if (dtValid && mn !== null) { var mnP = mn.split('-'); dtMin = parseInt(mnP[0]) * 12 + parseInt(mnP[1]); }
+                                if (dtValid && mx !== null) { var mxP = mx.split('-'); dtMax = parseInt(mxP[0]) * 12 + parseInt(mxP[1]); }
+                            } else if (inputType === 'week') {
+                                if (!/^\d{4}-W\d{2}$/.test(val)) { badInput = true; dtValid = false; }
+                                else {
+                                    var wParts = val.split('-W'); dtVal = parseInt(wParts[0]) * 53 + parseInt(wParts[1]);
+                                    if (parseInt(wParts[1]) < 1 || parseInt(wParts[1]) > 53) { badInput = true; dtValid = false; }
+                                }
+                                if (dtValid && mn !== null) { var wnP = mn.split('-W'); dtMin = parseInt(wnP[0]) * 53 + parseInt(wnP[1]); }
+                                if (dtValid && mx !== null) { var wxP = mx.split('-W'); dtMax = parseInt(wxP[0]) * 53 + parseInt(wxP[1]); }
+                            }
+                            if (dtValid) {
+                                if (dtMin !== null && !isNaN(dtMin) && dtVal < dtMin) rangeUnderflow = true;
+                                if (dtMax !== null && !isNaN(dtMax) && dtVal > dtMax) rangeOverflow = true;
+                            }
+                        }
+                    } else if (tag === 'INPUT' && inputType === 'color') {
+                        if (val !== '' && !/^#[0-9a-fA-F]{6}$/.test(val)) badInput = true;
+                    } else {
+                        if (mn !== null && val !== '' && parseFloat(val) < parseFloat(mn)) rangeUnderflow = true;
+                        if (mx !== null && val !== '' && parseFloat(val) > parseFloat(mx)) rangeOverflow = true;
                     }
                     var valid = !valueMissing && !typeMismatch && !patternMismatch && !tooLong && !tooShort && !rangeUnderflow && !rangeOverflow && !stepMismatch && !badInput && !customError;
                     return { valid: valid, valueMissing: valueMissing, typeMismatch: typeMismatch,
@@ -2359,5 +2414,488 @@ fn import_node_recursive(
     let children: Vec<NodeId> = src_node.children.clone();
     for &child_id in &children {
         import_node_recursive(dst, src, child_id, new_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dom::DomTree;
+    use crate::js::runtime::JsRuntime;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn make_runtime() -> JsRuntime {
+        let tree = Rc::new(RefCell::new(DomTree::new()));
+        {
+            let mut t = tree.borrow_mut();
+            let html = t.create_element("html");
+            let body = t.create_element("body");
+            let doc = t.document();
+            t.append_child(doc, html);
+            t.append_child(html, body);
+        }
+        JsRuntime::new(tree)
+    }
+
+    fn validity_field(rt: &mut JsRuntime, setup: &str, field: &str) -> String {
+        rt.eval(setup).unwrap();
+        rt.eval_to_string(&format!(
+            "String(document.querySelector('input').validity.{field})"
+        ))
+        .unwrap()
+    }
+
+    // -----------------------------------------------------------------------
+    // number
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn number_valid_value() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','number'); i.setAttribute('value','42'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn number_bad_input() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','number'); i.setAttribute('value','abc'); document.body.appendChild(i);"#,
+            "badInput",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn number_range_underflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','number'); i.setAttribute('min','10'); i.setAttribute('value','5'); document.body.appendChild(i);"#,
+            "rangeUnderflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn number_range_overflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','number'); i.setAttribute('max','10'); i.setAttribute('value','15'); document.body.appendChild(i);"#,
+            "rangeOverflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn number_step_mismatch() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','number'); i.setAttribute('step','3'); i.setAttribute('min','0'); i.setAttribute('value','5'); document.body.appendChild(i);"#,
+            "stepMismatch",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn number_step_valid() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','number'); i.setAttribute('step','3'); i.setAttribute('min','0'); i.setAttribute('value','6'); document.body.appendChild(i);"#,
+            "stepMismatch",
+        );
+        assert_eq!(v, "false");
+    }
+
+    #[test]
+    fn number_step_any_skips_check() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','number'); i.setAttribute('step','any'); i.setAttribute('min','0'); i.setAttribute('value','5.5'); document.body.appendChild(i);"#,
+            "stepMismatch",
+        );
+        assert_eq!(v, "false");
+    }
+
+    // -----------------------------------------------------------------------
+    // range
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn range_valid_value() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','range'); i.setAttribute('value','50'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn range_underflow_default_min() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','range'); i.setAttribute('value','-1'); document.body.appendChild(i);"#,
+            "rangeUnderflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn range_overflow_default_max() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','range'); i.setAttribute('value','101'); document.body.appendChild(i);"#,
+            "rangeOverflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn range_step_mismatch() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','range'); i.setAttribute('value','5.5'); document.body.appendChild(i);"#,
+            "stepMismatch",
+        );
+        assert_eq!(v, "true");
+    }
+
+    // -----------------------------------------------------------------------
+    // date
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn date_valid() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','date'); i.setAttribute('value','2024-01-15'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn date_bad_format() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','date'); i.setAttribute('value','01-15-2024'); document.body.appendChild(i);"#,
+            "badInput",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn date_range_underflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','date'); i.setAttribute('min','2024-06-01'); i.setAttribute('value','2024-01-15'); document.body.appendChild(i);"#,
+            "rangeUnderflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn date_range_overflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','date'); i.setAttribute('max','2024-06-01'); i.setAttribute('value','2024-12-15'); document.body.appendChild(i);"#,
+            "rangeOverflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    // -----------------------------------------------------------------------
+    // time
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn time_valid_hhmm() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','time'); i.setAttribute('value','14:30'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn time_valid_hhmmss() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','time'); i.setAttribute('value','14:30:45'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn time_bad_format() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','time'); i.setAttribute('value','2:30pm'); document.body.appendChild(i);"#,
+            "badInput",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn time_range_underflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','time'); i.setAttribute('min','09:00'); i.setAttribute('value','08:00'); document.body.appendChild(i);"#,
+            "rangeUnderflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn time_range_overflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','time'); i.setAttribute('max','17:00'); i.setAttribute('value','18:00'); document.body.appendChild(i);"#,
+            "rangeOverflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    // -----------------------------------------------------------------------
+    // datetime-local
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn datetime_local_valid() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','datetime-local'); i.setAttribute('value','2024-01-15T14:30'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn datetime_local_bad_format() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','datetime-local'); i.setAttribute('value','2024-01-15 14:30'); document.body.appendChild(i);"#,
+            "badInput",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn datetime_local_range_underflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','datetime-local'); i.setAttribute('min','2024-06-01T00:00'); i.setAttribute('value','2024-01-15T14:30'); document.body.appendChild(i);"#,
+            "rangeUnderflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn datetime_local_range_overflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','datetime-local'); i.setAttribute('max','2024-06-01T00:00'); i.setAttribute('value','2024-12-15T14:30'); document.body.appendChild(i);"#,
+            "rangeOverflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    // -----------------------------------------------------------------------
+    // month
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn month_valid() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','month'); i.setAttribute('value','2024-01'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn month_bad_format() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','month'); i.setAttribute('value','Jan 2024'); document.body.appendChild(i);"#,
+            "badInput",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn month_range_underflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','month'); i.setAttribute('min','2024-06'); i.setAttribute('value','2024-01'); document.body.appendChild(i);"#,
+            "rangeUnderflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn month_range_overflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','month'); i.setAttribute('max','2024-06'); i.setAttribute('value','2024-12'); document.body.appendChild(i);"#,
+            "rangeOverflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    // -----------------------------------------------------------------------
+    // week
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn week_valid() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','week'); i.setAttribute('value','2024-W03'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn week_bad_format() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','week'); i.setAttribute('value','2024-3'); document.body.appendChild(i);"#,
+            "badInput",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn week_range_underflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','week'); i.setAttribute('min','2024-W20'); i.setAttribute('value','2024-W03'); document.body.appendChild(i);"#,
+            "rangeUnderflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn week_range_overflow() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','week'); i.setAttribute('max','2024-W20'); i.setAttribute('value','2024-W40'); document.body.appendChild(i);"#,
+            "rangeOverflow",
+        );
+        assert_eq!(v, "true");
+    }
+
+    // -----------------------------------------------------------------------
+    // color
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn color_valid() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','color'); i.setAttribute('value','#ff0000'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn color_bad_input_short_hex() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','color'); i.setAttribute('value','#fff'); document.body.appendChild(i);"#,
+            "badInput",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn color_bad_input_no_hash() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','color'); i.setAttribute('value','ff0000'); document.body.appendChild(i);"#,
+            "badInput",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn color_bad_input_invalid_chars() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','color'); i.setAttribute('value','#gggggg'); document.body.appendChild(i);"#,
+            "badInput",
+        );
+        assert_eq!(v, "true");
+    }
+
+    // -----------------------------------------------------------------------
+    // empty values should not trigger type-specific validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn number_empty_is_valid() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','number'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
+    }
+
+    #[test]
+    fn date_empty_is_valid() {
+        let mut rt = make_runtime();
+        let v = validity_field(
+            &mut rt,
+            r#"var i = document.createElement('input'); i.setAttribute('type','date'); document.body.appendChild(i);"#,
+            "valid",
+        );
+        assert_eq!(v, "true");
     }
 }
