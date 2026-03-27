@@ -1400,6 +1400,33 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 this.dispatchEvent(evt);
             }
         };
+        EP.requestSubmit = function(submitter) {
+            if (this.tagName !== 'FORM') return;
+            // If submitter is provided, validate it
+            if (submitter !== undefined && submitter !== null) {
+                if (!submitter.form || submitter.form !== this) {
+                    throw new DOMException(
+                        "The specified element is not a submit button of this form",
+                        "NotFoundError"
+                    );
+                }
+            }
+            // Run constraint validation on all controls
+            var controls = this.querySelectorAll('input, textarea, select');
+            var allValid = true;
+            for (var i = 0; i < controls.length; i++) {
+                if (!controls[i].checkValidity()) {
+                    allValid = false;
+                }
+            }
+            if (!allValid) return;
+            // Fire the submit event (cancelable)
+            var evt = new Event('submit', {bubbles: true, cancelable: true});
+            evt.submitter = submitter || null;
+            var dispatched = this.dispatchEvent(evt);
+            // If preventDefault was called, do not submit
+            if (!dispatched) return;
+        };
         EP.reset = function() {
             if (this.tagName !== 'FORM') return;
             // Clear dirty flags on all descendant controls

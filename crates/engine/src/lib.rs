@@ -1456,4 +1456,148 @@ mod tests {
             "load_html_with_scripts should compute styles"
         );
     }
+
+    #[test]
+    fn test_request_submit_validates_before_submitting() {
+        let html = r#"
+        <html><body>
+          <form id="myform">
+            <input name="email" type="email" required value="" />
+            <button type="submit">Submit</button>
+          </form>
+          <script>
+            var submitted = false;
+            var form = document.getElementById('myform');
+            form.addEventListener('submit', function(e) {
+              submitted = true;
+              e.preventDefault();
+            });
+            form.requestSubmit();
+            window.__submitted = submitted;
+          </script>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+
+        // Validation should fail (required email is empty), so submit event should NOT fire
+        let result = engine.eval_js("window.__submitted").unwrap();
+        assert_eq!(result, "false", "requestSubmit should not fire submit when validation fails");
+    }
+
+    #[test]
+    fn test_request_submit_fires_submit_when_valid() {
+        let html = r#"
+        <html><body>
+          <form id="myform">
+            <input name="email" type="email" value="test@example.com" />
+            <button type="submit">Submit</button>
+          </form>
+          <script>
+            var submitted = false;
+            var form = document.getElementById('myform');
+            form.addEventListener('submit', function(e) {
+              submitted = true;
+              e.preventDefault();
+            });
+            form.requestSubmit();
+            window.__submitted = submitted;
+          </script>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+
+        // Validation passes, submit event should fire
+        let result = engine.eval_js("window.__submitted").unwrap();
+        assert_eq!(result, "true", "requestSubmit should fire submit when form is valid");
+    }
+
+    #[test]
+    fn test_request_submit_respects_prevent_default() {
+        let html = r#"
+        <html><body>
+          <form id="myform">
+            <input name="name" value="hello" />
+          </form>
+          <script>
+            var submitFired = false;
+            var preventDefaultCalled = false;
+            var form = document.getElementById('myform');
+            form.addEventListener('submit', function(e) {
+              submitFired = true;
+              preventDefaultCalled = true;
+              e.preventDefault();
+            });
+            form.requestSubmit();
+            window.__submitFired = submitFired;
+            window.__preventDefaultCalled = preventDefaultCalled;
+          </script>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+
+        let fired = engine.eval_js("window.__submitFired").unwrap();
+        assert_eq!(fired, "true", "submit event should fire");
+        let prevented = engine.eval_js("window.__preventDefaultCalled").unwrap();
+        assert_eq!(prevented, "true", "preventDefault should have been called");
+    }
+
+    #[test]
+    fn test_request_submit_with_submitter() {
+        let html = r#"
+        <html><body>
+          <form id="myform">
+            <input name="name" value="hello" />
+            <button id="btn" type="submit">Go</button>
+          </form>
+          <script>
+            var capturedSubmitter = null;
+            var form = document.getElementById('myform');
+            var btn = document.getElementById('btn');
+            form.addEventListener('submit', function(e) {
+              capturedSubmitter = e.submitter;
+              e.preventDefault();
+            });
+            form.requestSubmit(btn);
+            window.__submitterTag = capturedSubmitter ? capturedSubmitter.tagName : 'none';
+            window.__submitterId = capturedSubmitter ? capturedSubmitter.id : 'none';
+          </script>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+
+        let tag = engine.eval_js("window.__submitterTag").unwrap();
+        assert_eq!(tag, "BUTTON", "submitter should be the button element");
+        let id = engine.eval_js("window.__submitterId").unwrap();
+        assert_eq!(id, "btn", "submitter should have id=btn");
+    }
+
+    #[test]
+    fn test_request_submit_fires_invalid_on_failed_validation() {
+        let html = r#"
+        <html><body>
+          <form id="myform">
+            <input id="inp" name="email" type="email" required value="" />
+          </form>
+          <script>
+            var invalidFired = false;
+            var inp = document.getElementById('inp');
+            inp.addEventListener('invalid', function(e) {
+              invalidFired = true;
+            });
+            var form = document.getElementById('myform');
+            form.requestSubmit();
+            window.__invalidFired = invalidFired;
+          </script>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+
+        let result = engine.eval_js("window.__invalidFired").unwrap();
+        assert_eq!(result, "true", "invalid event should fire on failed validation");
+    }
 }
