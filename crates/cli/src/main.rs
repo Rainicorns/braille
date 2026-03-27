@@ -7,6 +7,8 @@ mod engine_process;
 pub mod network;
 mod paths;
 mod session;
+#[allow(dead_code)] // Foundation module — not wired into CLI commands yet.
+mod session_store;
 
 #[derive(Parser)]
 #[command(name = "braille", about = "A text browser for LLM agents")]
