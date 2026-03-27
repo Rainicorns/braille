@@ -1456,4 +1456,37 @@ mod tests {
             "load_html_with_scripts should compute styles"
         );
     }
+
+    #[test]
+    fn textarea_validity_too_long() {
+        let html = r#"
+        <html><body>
+          <textarea id="t" maxlength="3"></textarea>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        engine.snapshot(SnapMode::Accessibility);
+
+        // Use the public .value setter via handle_type (not __props._value directly)
+        engine.handle_type("#t", "hello").unwrap();
+
+        let too_long = engine.eval_js(
+            "document.getElementById('t').validity.tooLong"
+        ).unwrap();
+        assert_eq!(
+            too_long, "true",
+            "textarea with maxlength=3 and value='hello' should have validity.tooLong=true, got: {}",
+            too_long
+        );
+
+        let valid = engine.eval_js(
+            "document.getElementById('t').validity.valid"
+        ).unwrap();
+        assert_eq!(
+            valid, "false",
+            "textarea with tooLong should not be valid, got: {}",
+            valid
+        );
+    }
 }

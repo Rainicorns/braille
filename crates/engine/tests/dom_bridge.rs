@@ -739,3 +739,41 @@ fn dynamic_script_no_src_does_not_fetch() {
 
     assert!(!e.has_pending_fetches(), "inline script should not trigger fetch");
 }
+
+// =========================================================================
+// Preact-style onChange via event delegation (not hand-coded fake)
+// =========================================================================
+
+#[test]
+fn react_onchange_via_delegation_not_hack() {
+    // Load a minimal Preact-style fixture with real VDOM event delegation.
+    // The fixture registers an onInput handler via document-level delegation
+    // (single listener on document, dispatches based on event.target).
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests/frameworks/preact_onchange.html");
+    let html = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+
+    let mut engine = Engine::new();
+    engine.load_html(&html);
+    let snap = engine.snapshot(SnapMode::Accessibility);
+
+    // Initial state: empty
+    assert!(snap.contains("Typed:"), "should show label: {}", snap);
+
+    // Type into the input via the public handle_type API
+    engine.handle_type("#field", "hello").unwrap();
+    engine.settle();
+    let snap2 = engine.snapshot(SnapMode::Accessibility);
+
+    // The delegated onInput handler should have updated state and re-rendered
+    assert!(
+        snap2.contains("Typed: hello"),
+        "delegated onChange should update the label to show typed text: {}",
+        snap2
+    );
+}
