@@ -1855,4 +1855,238 @@ mod tests {
             result
         );
     }
+
+    // -----------------------------------------------------------------------
+    // textarea property tests
+    // -----------------------------------------------------------------------
+
+    fn eval_js_via_runtime(html: &str, js: &str) -> String {
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval_to_string(js).unwrap()
+    }
+
+    // -- textarea.defaultValue --
+
+    #[test]
+    fn textarea_default_value_returns_text_content() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t">hello world</textarea></body></html>"#,
+            r#"document.getElementById("t").defaultValue"#,
+        );
+        assert_eq!(s, "hello world");
+    }
+
+    #[test]
+    fn textarea_default_value_setter_replaces_text_content() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t">old</textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("t").defaultValue = "new text""#).unwrap();
+        let s = runtime.eval_to_string(r#"document.getElementById("t").defaultValue"#).unwrap();
+        assert_eq!(s, "new text");
+    }
+
+    #[test]
+    fn input_default_value_reflects_value_attribute() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><input id="i" value="initial" /></body></html>"#,
+            r#"document.getElementById("i").defaultValue"#,
+        );
+        assert_eq!(s, "initial");
+    }
+
+    // -- textarea.maxLength --
+
+    #[test]
+    fn textarea_maxlength_defaults_to_minus_one() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t"></textarea></body></html>"#,
+            r#"String(document.getElementById("t").maxLength)"#,
+        );
+        assert_eq!(s, "-1");
+    }
+
+    #[test]
+    fn textarea_maxlength_reflects_attribute() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t" maxlength="10"></textarea></body></html>"#,
+            r#"String(document.getElementById("t").maxLength)"#,
+        );
+        assert_eq!(s, "10");
+    }
+
+    #[test]
+    fn textarea_maxlength_setter_updates_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t"></textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("t").maxLength = 5"#).unwrap();
+        let s = runtime.eval_to_string(r#"String(document.getElementById("t").maxLength)"#).unwrap();
+        assert_eq!(s, "5");
+    }
+
+    #[test]
+    fn textarea_value_truncated_by_maxlength() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t" maxlength="5"></textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("t").value = "hello world""#).unwrap();
+        let s = runtime.eval_to_string(r#"document.getElementById("t").value"#).unwrap();
+        assert_eq!(s, "hello");
+    }
+
+    // -- textarea.minLength --
+
+    #[test]
+    fn textarea_minlength_defaults_to_minus_one() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t"></textarea></body></html>"#,
+            r#"String(document.getElementById("t").minLength)"#,
+        );
+        assert_eq!(s, "-1");
+    }
+
+    #[test]
+    fn textarea_minlength_setter_updates_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t"></textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("t").minLength = 3"#).unwrap();
+        let s = runtime.eval_to_string(r#"String(document.getElementById("t").minLength)"#).unwrap();
+        assert_eq!(s, "3");
+    }
+
+    #[test]
+    fn textarea_validity_too_short() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t" minlength="5"></textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("t").value = "hi""#).unwrap();
+        let s = runtime.eval_to_string(r#"String(document.getElementById("t").validity.tooShort)"#).unwrap();
+        assert_eq!(s, "true");
+    }
+
+    #[test]
+    fn textarea_validity_too_long() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t" maxlength="3"></textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        // Bypass truncation by setting __props directly
+        runtime.eval(r#"var t = document.getElementById("t"); if (!t.__props) t.__props = {}; t.__props._value = "hello";"#).unwrap();
+        let s = runtime.eval_to_string(r#"String(document.getElementById("t").validity.tooLong)"#).unwrap();
+        assert_eq!(s, "true");
+    }
+
+    // -- textarea.cols --
+
+    #[test]
+    fn textarea_cols_defaults_to_20() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t"></textarea></body></html>"#,
+            r#"String(document.getElementById("t").cols)"#,
+        );
+        assert_eq!(s, "20");
+    }
+
+    #[test]
+    fn textarea_cols_reflects_attribute() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t" cols="40"></textarea></body></html>"#,
+            r#"String(document.getElementById("t").cols)"#,
+        );
+        assert_eq!(s, "40");
+    }
+
+    #[test]
+    fn textarea_cols_setter_updates_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t"></textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("t").cols = 60"#).unwrap();
+        let s = runtime.eval_to_string(r#"String(document.getElementById("t").cols)"#).unwrap();
+        assert_eq!(s, "60");
+    }
+
+    // -- textarea.rows --
+
+    #[test]
+    fn textarea_rows_defaults_to_2() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t"></textarea></body></html>"#,
+            r#"String(document.getElementById("t").rows)"#,
+        );
+        assert_eq!(s, "2");
+    }
+
+    #[test]
+    fn textarea_rows_reflects_attribute() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t" rows="10"></textarea></body></html>"#,
+            r#"String(document.getElementById("t").rows)"#,
+        );
+        assert_eq!(s, "10");
+    }
+
+    #[test]
+    fn textarea_rows_setter_updates_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t"></textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("t").rows = 8"#).unwrap();
+        let s = runtime.eval_to_string(r#"String(document.getElementById("t").rows)"#).unwrap();
+        assert_eq!(s, "8");
+    }
+
+    // -- textarea.wrap --
+
+    #[test]
+    fn textarea_wrap_defaults_to_soft() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t"></textarea></body></html>"#,
+            r#"document.getElementById("t").wrap"#,
+        );
+        assert_eq!(s, "soft");
+    }
+
+    #[test]
+    fn textarea_wrap_reflects_attribute() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t" wrap="hard"></textarea></body></html>"#,
+            r#"document.getElementById("t").wrap"#,
+        );
+        assert_eq!(s, "hard");
+    }
+
+    #[test]
+    fn textarea_wrap_setter_updates_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t"></textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("t").wrap = "hard""#).unwrap();
+        let s = runtime.eval_to_string(r#"document.getElementById("t").wrap"#).unwrap();
+        assert_eq!(s, "hard");
+    }
+
+    // -- textarea.textLength --
+
+    #[test]
+    fn textarea_text_length_returns_value_length() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><textarea id="t"></textarea></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("t").value = "hello""#).unwrap();
+        let s = runtime.eval_to_string(r#"String(document.getElementById("t").textLength)"#).unwrap();
+        assert_eq!(s, "5");
+    }
+
+    #[test]
+    fn textarea_text_length_zero_when_empty() {
+        let s = eval_js_via_runtime(
+            r#"<html><body><textarea id="t"></textarea></body></html>"#,
+            r#"String(document.getElementById("t").textLength)"#,
+        );
+        assert_eq!(s, "0");
+    }
 }
