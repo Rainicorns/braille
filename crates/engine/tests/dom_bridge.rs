@@ -924,6 +924,89 @@ fn click_on_label_activates_associated_control() {
     assert_eq!(result, "true");
 }
 
+// =========================================================================
+// Property vs Attribute separation (HTML spec compliance)
+// =========================================================================
+
+#[test]
+fn input_value_property_does_not_update_attribute() {
+    // Per HTML spec: setting .value property should NOT change getAttribute('value')
+    let mut e = engine_with_html(r#"<html><body><input id="i" /></body></html>"#);
+    let result = e.eval_js(r#"
+        var el = document.getElementById('i');
+        el.value = 'hello';
+        el.getAttribute('value')
+    "#).unwrap();
+    assert_eq!(result, "null", "getAttribute('value') should be null after setting .value property");
+}
+
+#[test]
+fn input_value_property_preserves_existing_attribute() {
+    // Setting .value should not change an existing value attribute
+    let mut e = engine_with_html(r#"<html><body><input id="i" value="initial" /></body></html>"#);
+    let result = e.eval_js(r#"
+        var el = document.getElementById('i');
+        el.value = 'changed';
+        JSON.stringify([el.value, el.getAttribute('value')])
+    "#).unwrap();
+    assert_eq!(result, r#"["changed","initial"]"#);
+}
+
+#[test]
+fn input_set_attribute_value_updates_property_when_not_dirty() {
+    // setAttribute('value', ...) should update .value if the property hasn't been set directly
+    let mut e = engine_with_html(r#"<html><body><input id="i" /></body></html>"#);
+    let result = e.eval_js(r#"
+        var el = document.getElementById('i');
+        el.setAttribute('value', 'from-attr');
+        el.value
+    "#).unwrap();
+    assert_eq!(result, "from-attr");
+}
+
+#[test]
+fn input_set_attribute_value_does_not_override_dirty_property() {
+    // setAttribute('value', ...) should NOT override .value if it was set directly (dirty)
+    let mut e = engine_with_html(r#"<html><body><input id="i" /></body></html>"#);
+    let result = e.eval_js(r#"
+        var el = document.getElementById('i');
+        el.value = 'dirty';
+        el.setAttribute('value', 'from-attr');
+        el.value
+    "#).unwrap();
+    assert_eq!(result, "dirty");
+}
+
+#[test]
+fn input_default_value_reads_and_writes_attribute() {
+    let mut e = engine_with_html(r#"<html><body><input id="i" value="initial" /></body></html>"#);
+    // defaultValue reads the attribute
+    let result = e.eval_js(r#"document.getElementById('i').defaultValue"#).unwrap();
+    assert_eq!(result, "initial");
+    // Setting defaultValue updates the attribute
+    let result = e.eval_js(r#"
+        var el = document.getElementById('i');
+        el.defaultValue = 'new-default';
+        el.getAttribute('value')
+    "#).unwrap();
+    assert_eq!(result, "new-default");
+}
+
+#[test]
+fn input_default_checked_reads_and_writes_attribute() {
+    let mut e = engine_with_html(r#"<html><body><input id="c" type="checkbox" /></body></html>"#);
+    // defaultChecked initially false
+    let result = e.eval_js(r#"document.getElementById('c').defaultChecked"#).unwrap();
+    assert_eq!(result, "false");
+    // Setting defaultChecked updates the attribute
+    let result = e.eval_js(r#"
+        var el = document.getElementById('c');
+        el.defaultChecked = true;
+        el.hasAttribute('checked')
+    "#).unwrap();
+    assert_eq!(result, "true");
+}
+
 #[test]
 fn click_on_label_with_descendant_control_activates_it() {
     let mut e = engine_with_html(r#"<html><body>
@@ -1203,4 +1286,56 @@ fn live_collection_index_access_updates() {
         first + ',' + col[1].textContent;
     "#);
     assert_eq!(result.unwrap(), "first,second");
+}
+
+#[test]
+fn checked_property_does_not_update_attribute() {
+    // Per HTML spec: setting .checked property should NOT change the checked attribute
+    let mut e = engine_with_html(r#"<html><body><input id="c" type="checkbox" /></body></html>"#);
+    let result = e.eval_js(r#"
+        var el = document.getElementById('c');
+        el.checked = true;
+        JSON.stringify([el.checked, el.hasAttribute('checked')])
+    "#).unwrap();
+    assert_eq!(result, r#"[true,false]"#);
+}
+
+#[test]
+fn checked_property_does_not_remove_existing_attribute() {
+    // Setting .checked = false shouldn't remove the checked attribute
+    let mut e = engine_with_html(r#"<html><body><input id="c" type="checkbox" checked /></body></html>"#);
+    let result = e.eval_js(r#"
+        var el = document.getElementById('c');
+        el.checked = false;
+        JSON.stringify([el.checked, el.hasAttribute('checked')])
+    "#).unwrap();
+    assert_eq!(result, r#"[false,true]"#);
+}
+
+#[test]
+fn textarea_value_property_does_not_update_value_attribute() {
+    // textarea.value should update text content but NOT a value attribute
+    let mut e = engine_with_html(r#"<html><body><textarea id="t"></textarea></body></html>"#);
+    let result = e.eval_js(r#"
+        var el = document.getElementById('t');
+        el.value = 'typed text';
+        JSON.stringify([el.value, el.getAttribute('value')])
+    "#).unwrap();
+    assert_eq!(result, r#"["typed text",null]"#);
+}
+
+#[test]
+fn select_value_property_does_not_update_attribute() {
+    let mut e = engine_with_html(r#"<html><body>
+        <select id="s">
+            <option value="a">A</option>
+            <option value="b">B</option>
+        </select>
+    </body></html>"#);
+    let result = e.eval_js(r#"
+        var el = document.getElementById('s');
+        el.value = 'b';
+        JSON.stringify([el.value, el.getAttribute('value')])
+    "#).unwrap();
+    assert_eq!(result, r#"["b",null]"#);
 }

@@ -229,12 +229,18 @@ impl Engine {
     pub fn snapshot(&mut self, mode: SnapMode) -> String {
         use crate::a11y::serialize;
 
+        // Temporarily sync JS-side dirty property values into the DOM tree so the
+        // serializer can see them. We record which nodes were patched so we can
+        // restore the original attribute values afterward to maintain spec correctness
+        // (the value attribute should not be changed by .value property assignment).
+        let patched = self.sync_dirty_values_to_tree();
+
         // Always do a full ref assignment first so @eN is stable across views
         let tree = self.tree.borrow();
         let (ref_map, reverse) = serialize::assign_refs(&tree);
         self.ref_map = ref_map;
 
-        match mode {
+        let result = match mode {
             SnapMode::Compact => {
                 let (output, ref_map) = serialize::serialize_compact(&tree, self.focused_element);
                 self.ref_map = ref_map;
@@ -260,6 +266,44 @@ impl Engine {
             }
             SnapMode::Dom => "[DOM mode not yet implemented]".to_string(),
             SnapMode::Markdown => "[Markdown mode not yet implemented]".to_string(),
+        };
+
+        // Drop the immutable borrow before restoring
+        drop(tree);
+
+        // Restore original attribute values
+        self.restore_patched_values(patched);
+
+        result
+    }
+
+    /// Temporarily sync JS-side dirty property values into the DOM tree's value attributes.
+    /// Returns a list of (NodeId, Option<original_value>) so we can restore them.
+    fn sync_dirty_values_to_tree(&mut self) -> Vec<(NodeId, Option<String>)> {
+        let mut patched = Vec::new();
+        if let Some(runtime) = self.runtime.as_mut() {
+            if let Ok(json) = runtime.eval_to_string("__braille_collect_dirty_values()") {
+                if let Ok(pairs) = serde_json::from_str::<Vec<(usize, String)>>(&json) {
+                    let mut tree = self.tree.borrow_mut();
+                    for (nid, val) in pairs {
+                        let original = tree.get_attribute(nid, "value");
+                        patched.push((nid, original));
+                        tree.set_attribute(nid, "value", &val);
+                    }
+                }
+            }
+        }
+        patched
+    }
+
+    /// Restore original attribute values after snapshot.
+    fn restore_patched_values(&mut self, patched: Vec<(NodeId, Option<String>)>) {
+        let mut tree = self.tree.borrow_mut();
+        for (nid, original) in patched {
+            match original {
+                Some(val) => tree.set_attribute(nid, "value", &val),
+                None => { tree.remove_attribute(nid, "value"); },
+            }
         }
     }
 
