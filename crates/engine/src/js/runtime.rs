@@ -342,31 +342,11 @@ impl JsRuntime {
                         el._valueTracker.setValue('');
                     }}
 
-                    // Also check for Preact's __handlers pattern
-                    var __preactKey = Object.keys(el).find(function(k) {{
-                        return k.indexOf('__preactProps') === 0 || k === '__handlers';
-                    }});
-
-                    // Also directly call React's onChange if available as a fallback.
-                    // Even with proper event delegation, React's event system may
-                    // not process our synthetic events identically to browser events.
-                    var __reactPropsKey = Object.keys(el).find(function(k) {{
-                        return k.indexOf('__reactProps$') === 0;
-                    }});
-                    if (__reactPropsKey && el[__reactPropsKey] && typeof el[__reactPropsKey].onChange === 'function') {{
-                        var synth = {{
-                            type: 'change', target: el, currentTarget: el,
-                            bubbles: true, cancelable: false, defaultPrevented: false,
-                            preventDefault: function() {{}}, stopPropagation: function() {{}},
-                            persist: function() {{}},
-                            nativeEvent: new Event('change', {{bubbles: true}}),
-                        }};
-                        el[__reactPropsKey].onChange(synth);
-                    }}
-                    // Also call Preact onChange if available
-                    if (__preactKey && el[__preactKey] && typeof el[__preactKey].onChange === 'function') {{
-                        el[__preactKey].onChange({{ type: 'change', target: el, currentTarget: el, bubbles: true, preventDefault: function(){{}}, stopPropagation: function(){{}}, persist: function(){{}} }});
-                    }}
+                    // Remember the element's id so we can re-find it after re-renders.
+                    // React/framework onChange handlers may re-render the DOM, creating
+                    // new elements and detaching the old ones. Blur events need to fire
+                    // on the new (attached) element, not the detached original.
+                    var elId = el.getAttribute('id');
 
                     // Focus the element and dispatch focusin so React tracks it
                     // as the active element for change detection.
@@ -385,24 +365,23 @@ impl JsRuntime {
                     changeEvt.target = el;
                     el.dispatchEvent(changeEvt);
 
-                    // Fire blur/focusout so framework validators (onBlur) trigger
-                    el.blur();
-                    var blurEvt = new FocusEvent('focusout', {{bubbles: true}});
-                    blurEvt.target = el;
-                    el.dispatchEvent(blurEvt);
-                    var blurEvt2 = new FocusEvent('blur', {{bubbles: false}});
-                    blurEvt2.target = el;
-                    el.dispatchEvent(blurEvt2);
-
-                    // Invoke React's onBlur if available
-                    if (__reactPropsKey && el[__reactPropsKey] && typeof el[__reactPropsKey].onBlur === 'function') {{
-                        el[__reactPropsKey].onBlur({{
-                            type: 'blur', target: el, currentTarget: el,
-                            bubbles: false, defaultPrevented: false,
-                            preventDefault: function() {{}}, stopPropagation: function() {{}},
-                            persist: function() {{}},
-                        }});
+                    // Re-resolve element: event handlers above may have re-rendered
+                    // the DOM (e.g., React controlled inputs), replacing el with a
+                    // new node. We need to fire blur on the current (attached) element.
+                    var blurEl = el;
+                    if (elId) {{
+                        var fresh = document.getElementById(elId);
+                        if (fresh) blurEl = fresh;
                     }}
+
+                    // Fire blur/focusout so framework validators (onBlur) trigger
+                    blurEl.blur();
+                    var blurEvt = new FocusEvent('focusout', {{bubbles: true}});
+                    blurEvt.target = blurEl;
+                    blurEl.dispatchEvent(blurEvt);
+                    var blurEvt2 = new FocusEvent('blur', {{bubbles: false}});
+                    blurEvt2.target = blurEl;
+                    blurEl.dispatchEvent(blurEvt2);
                 }})()"#,
                 nid = node_id
             );
