@@ -1022,3 +1022,59 @@ fn select_length_undefined_for_non_select() {
     let mut e = engine_with_html(r#"<html><body><div id="d"></div></body></html>"#);
     assert_eq!(e.eval_js("String(document.getElementById('d').length)").unwrap(), "undefined");
 }
+
+// =========================================================================
+// input.form attribute support
+// =========================================================================
+
+#[test]
+fn input_form_getter_uses_form_attribute() {
+    let mut e = engine_with_html(
+        r#"<html><body><form id="myform"><input type="text" /></form><input id="ext" form="myform" /></body></html>"#,
+    );
+    let result = e.eval_js(r#"document.getElementById("ext").form.id"#).unwrap();
+    assert_eq!(result, "myform");
+}
+
+#[test]
+fn input_form_getter_returns_null_for_invalid_form_attribute() {
+    let mut e = engine_with_html(
+        r#"<html><body><input id="ext" form="nonexistent" /></body></html>"#,
+    );
+    let result = e.eval_js(r#"document.getElementById("ext").form === null"#).unwrap();
+    assert_eq!(result, "true");
+}
+
+#[test]
+fn input_form_getter_falls_back_to_ancestor() {
+    let mut e = engine_with_html(
+        r#"<html><body><form id="f"><input id="inp" type="text" /></form></body></html>"#,
+    );
+    let result = e.eval_js(r#"document.getElementById("inp").form.id"#).unwrap();
+    assert_eq!(result, "f");
+}
+
+#[test]
+fn form_elements_includes_external_inputs_with_form_attribute() {
+    let mut e = engine_with_html(
+        r#"<html><body><form id="myform"><input type="text" name="inside" /></form><input type="text" name="outside" form="myform" /></body></html>"#,
+    );
+    let result = e.eval_js(r#"document.getElementById("myform").elements.length"#).unwrap();
+    assert_eq!(result, "2");
+}
+
+#[test]
+fn form_elements_external_inputs_have_correct_names() {
+    let mut e = engine_with_html(
+        r#"<html><body><form id="myform"><input name="a" /></form><input name="b" form="myform" /><textarea name="c" form="myform"></textarea></body></html>"#,
+    );
+    let result = e.eval_js(r#"
+        var elems = document.getElementById("myform").elements;
+        var names = [];
+        for (var i = 0; i < elems.length; i++) {
+            names.push(elems[i].name);
+        }
+        names.join(",");
+    "#).unwrap();
+    assert_eq!(result, "a,b,c");
+}

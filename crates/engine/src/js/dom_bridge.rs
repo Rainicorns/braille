@@ -1669,9 +1669,17 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         });
 
         // --- Form-related properties and methods ---
-        // form property: walk up to find ancestor <form>
+        // form property: check form attribute first, then walk up ancestors
         Object.defineProperty(EP, 'form', {
             get: function() {
+                // Per HTML spec: if element has a form attribute, use getElementById to find the form
+                var formAttr = __n_getAttribute(this.__nid, 'form');
+                if (formAttr && formAttr !== '') {
+                    var formNid = __n_getElementById(formAttr);
+                    if (formNid >= 0 && __n_getTagName(formNid) === 'FORM') return __w(formNid);
+                    return null;
+                }
+                // Fallback: walk up ancestors to find enclosing <form>
                 var cur = __n_getParent(this.__nid);
                 while (cur >= 0) {
                     if (__n_getTagName(cur) === 'FORM') return __w(cur);
@@ -1751,12 +1759,28 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         };
         EP.reportValidity = function() { return this.checkValidity(); };
 
-        // elements property for <form>: returns descendant controls with named access
+        // elements property for <form>: returns descendant controls + form-associated external controls
         Object.defineProperty(EP, 'elements', {
             get: function() {
                 if (this.tagName !== 'FORM') return undefined;
                 var controls = this.querySelectorAll('input, textarea, select, button');
-                return new Proxy(controls, {
+                // Also include external elements that reference this form via form="<id>"
+                var formId = this.getAttribute('id');
+                var allControls = [];
+                for (var i = 0; i < controls.length; i++) { allControls.push(controls[i]); }
+                if (formId) {
+                    var externals = document.querySelectorAll('input[form="' + formId + '"], textarea[form="' + formId + '"], select[form="' + formId + '"], button[form="' + formId + '"]');
+                    for (var j = 0; j < externals.length; j++) {
+                        // Skip elements already in descendants
+                        var dup = false;
+                        for (var k = 0; k < allControls.length; k++) {
+                            if (allControls[k] === externals[j]) { dup = true; break; }
+                        }
+                        if (!dup) allControls.push(externals[j]);
+                    }
+                }
+                allControls.length = allControls.length; // ensure length is correct
+                return new Proxy(allControls, {
                     get: function(arr, prop) {
                         if (prop in arr) return arr[prop];
                         if (typeof prop === 'string' && isNaN(prop)) {

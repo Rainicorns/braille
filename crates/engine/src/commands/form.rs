@@ -5,13 +5,14 @@ use braille_wire::{HttpMethod, NavigateRequest};
 impl Engine {
     /// Collect form data and build a NavigateRequest for form submission.
     /// `button_id` is the NodeId of the clicked submit button.
-    /// Returns Err with a clear message if no ancestor form element is found.
+    /// Returns Err with a clear message if no associated form element is found.
     pub fn handle_form_submit(&self, button_id: NodeId) -> Result<NavigateRequest, String> {
         let tree = self.tree.borrow();
 
-        // 1. Find the ancestor <form> element using find_ancestor
-        let form_id = tree
-            .find_ancestor(button_id, "form")
+        // 1. Find the associated <form> element.
+        //    First check if the button has a `form` attribute pointing to a form by ID.
+        //    Fall back to ancestor walking.
+        let form_id = find_associated_form(&tree, button_id)
             .ok_or_else(|| format!("no parent <form> found for submit button (node {})", button_id))?;
 
         // 2. Get form's action attribute (default to current URL or "")
@@ -67,15 +68,63 @@ impl Engine {
     }
 }
 
-/// Collect name=value pairs from all form controls within a form element.
-/// Finds all <input>, <select>, <textarea> descendants and reads their name and value attributes.
+/// Find the form associated with an element.
+/// First checks for a `form` attribute pointing to a form by ID,
+/// then falls back to ancestor walking.
+fn find_associated_form(tree: &DomTree, element_id: NodeId) -> Option<NodeId> {
+    // Check for form attribute
+    if let Some(form_attr) = tree.get_attribute(element_id, "form") {
+        if !form_attr.is_empty() {
+            if let Some(target_id) = tree.get_element_by_id(&form_attr) {
+                if let crate::dom::NodeData::Element { ref tag_name, .. } = tree.get_node(target_id).data {
+                    if tag_name.eq_ignore_ascii_case("form") {
+                        return Some(target_id);
+                    }
+                }
+            }
+            return None;
+        }
+    }
+    // Fallback: walk up ancestors
+    tree.find_ancestor(element_id, "form")
+}
+
+/// Find all elements in the document that reference the given form via form="<id>" attribute.
+/// Only returns elements with the given tag names.
+fn find_form_associated_elements(tree: &DomTree, form_id: NodeId, tag: &str) -> Vec<NodeId> {
+    let form_id_attr = match tree.get_attribute(form_id, "id") {
+        Some(id) if !id.is_empty() => id,
+        _ => return Vec::new(),
+    };
+
+    let doc = tree.document();
+    let all_of_tag = tree.find_descendants_by_tag(doc, tag);
+    let mut results = Vec::new();
+    for el_id in all_of_tag {
+        // Only include elements NOT already descendants of this form
+        if tree.find_ancestor(el_id, "form") == Some(form_id) {
+            continue;
+        }
+        if let Some(ref attr_val) = tree.get_attribute(el_id, "form") {
+            if attr_val == &form_id_attr {
+                results.push(el_id);
+            }
+        }
+    }
+    results
+}
+
+/// Collect name=value pairs from all form controls associated with a form element.
+/// Finds all <input>, <select>, <textarea> descendants and also elements that
+/// reference the form via a `form` attribute.
 /// Skips inputs without a name attribute.
 /// For checkboxes/radios, only includes them if they have a "checked" attribute.
 pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String)> {
     let mut data = Vec::new();
 
-    // Find all input elements
-    let inputs = tree.find_descendants_by_tag(form_id, "input");
+    // Find all input elements (descendants + form-associated)
+    let mut inputs = tree.find_descendants_by_tag(form_id, "input");
+    inputs.extend(find_form_associated_elements(tree, form_id, "input"));
     for input_id in inputs {
         // Skip if no name attribute
         let name = match tree.get_attribute(input_id, "name") {
@@ -100,8 +149,9 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
         data.push((name, value));
     }
 
-    // Find all select elements
-    let selects = tree.find_descendants_by_tag(form_id, "select");
+    // Find all select elements (descendants + form-associated)
+    let mut selects = tree.find_descendants_by_tag(form_id, "select");
+    selects.extend(find_form_associated_elements(tree, form_id, "select"));
     for select_id in selects {
         // Skip if no name attribute
         let name = match tree.get_attribute(select_id, "name") {
@@ -115,8 +165,9 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
         data.push((name, value));
     }
 
-    // Find all textarea elements
-    let textareas = tree.find_descendants_by_tag(form_id, "textarea");
+    // Find all textarea elements (descendants + form-associated)
+    let mut textareas = tree.find_descendants_by_tag(form_id, "textarea");
+    textareas.extend(find_form_associated_elements(tree, form_id, "textarea"));
     for textarea_id in textareas {
         // Skip if no name attribute
         let name = match tree.get_attribute(textarea_id, "name") {
@@ -601,6 +652,112 @@ mod tests {
         let encoded = url_encode_form_data(&data);
 
         assert_eq!(encoded, "param=a%26b%3Dc");
+    }
+
+    #[test]
+    fn collect_form_data_includes_external_inputs_with_form_attribute() {
+        let mut tree = DomTree::new();
+        let body = tree.create_element("body");
+        let form = tree.create_element_with_attrs(
+            "form",
+            vec![DomAttribute::new("id", "myform"), DomAttribute::new("action", "/submit")],
+        );
+        let inside_input = tree.create_element_with_attrs(
+            "input",
+            vec![
+                DomAttribute::new("type", "text"),
+                DomAttribute::new("name", "inside"),
+                DomAttribute::new("value", "val1"),
+            ],
+        );
+        let outside_input = tree.create_element_with_attrs(
+            "input",
+            vec![
+                DomAttribute::new("type", "text"),
+                DomAttribute::new("name", "outside"),
+                DomAttribute::new("value", "val2"),
+                DomAttribute::new("form", "myform"),
+            ],
+        );
+
+        tree.append_child(tree.document(), body);
+        tree.append_child(body, form);
+        tree.append_child(form, inside_input);
+        tree.append_child(body, outside_input);
+
+        let data = collect_form_data(&tree, form);
+
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0], ("inside".to_string(), "val1".to_string()));
+        assert_eq!(data[1], ("outside".to_string(), "val2".to_string()));
+    }
+
+    #[test]
+    fn collect_form_data_external_select_and_textarea_with_form_attribute() {
+        let mut tree = DomTree::new();
+        let body = tree.create_element("body");
+        let form = tree.create_element_with_attrs(
+            "form",
+            vec![DomAttribute::new("id", "myform")],
+        );
+        let external_select = tree.create_element_with_attrs(
+            "select",
+            vec![
+                DomAttribute::new("name", "color"),
+                DomAttribute::new("value", "blue"),
+                DomAttribute::new("form", "myform"),
+            ],
+        );
+        let external_textarea = tree.create_element_with_attrs(
+            "textarea",
+            vec![
+                DomAttribute::new("name", "notes"),
+                DomAttribute::new("value", "hello"),
+                DomAttribute::new("form", "myform"),
+            ],
+        );
+
+        tree.append_child(tree.document(), body);
+        tree.append_child(body, form);
+        tree.append_child(body, external_select);
+        tree.append_child(body, external_textarea);
+
+        let data = collect_form_data(&tree, form);
+
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0], ("color".to_string(), "blue".to_string()));
+        assert_eq!(data[1], ("notes".to_string(), "hello".to_string()));
+    }
+
+    #[test]
+    fn handle_form_submit_button_with_form_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(
+            r#"
+            <html><body>
+                <form id="myform" action="/submit" method="post">
+                    <input type="text" name="inside" value="val1" />
+                </form>
+                <input type="text" name="outside" value="val2" form="myform" />
+                <button type="submit" id="submit-btn" form="myform">Submit</button>
+            </body></html>
+        "#,
+        );
+
+        let tree = engine.tree.borrow();
+        let button_id = tree.get_element_by_id("submit-btn").unwrap();
+        drop(tree);
+
+        let request = engine.handle_form_submit(button_id);
+
+        assert!(request.is_ok(), "expected Ok, got {:?}", request);
+        let request = request.unwrap();
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.url, "/submit");
+        assert_eq!(
+            request.body,
+            Some("inside=val1&outside=val2".to_string())
+        );
     }
 
     #[test]
