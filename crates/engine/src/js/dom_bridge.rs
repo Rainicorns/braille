@@ -2085,6 +2085,30 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             contentType: { value: 'text/html', configurable: true },
             hidden: { value: false, configurable: true },
             visibilityState: { value: 'visible', configurable: true },
+            forms: { get: function() {
+                return new Proxy([], {
+                    get: function(t, p) {
+                        var live = doc.querySelectorAll('form');
+                        if (p === 'length') return live.length;
+                        if (p === 'item') return function(i) { return live[i] || null; };
+                        if (p === 'namedItem') return function(name) {
+                            for (var i = 0; i < live.length; i++) {
+                                if (live[i].getAttribute('name') === name || live[i].getAttribute('id') === name) return live[i];
+                            }
+                            return null;
+                        };
+                        if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
+                        if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
+                        if (typeof p === 'string') {
+                            for (var i = 0; i < live.length; i++) {
+                                if (live[i].getAttribute('id') === p || live[i].getAttribute('name') === p) return live[i];
+                            }
+                        }
+                        if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                        return live[p];
+                    }
+                });
+            }, configurable: true },
             implementation: { value: {
                 createHTMLDocument: function(title) {
                     var div = document.createElement('div');

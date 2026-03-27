@@ -1105,3 +1105,66 @@ fn event_prevent_default_and_return_value() {
     assert!(snap.contains("nonCancelable=true"), "non-cancelable: {}", snap);
     assert!(snap.contains("noListeners=true"), "no listeners: {}", snap);
 }
+
+// ---------------------------------------------------------------------------
+// document.forms: indexed access, length, and named access
+// ---------------------------------------------------------------------------
+
+#[test]
+fn document_forms_length_and_indexed_access() {
+    let html = r#"
+    <html><body>
+      <form id="login" name="loginForm"></form>
+      <form id="signup" name="signupForm"></form>
+      <div>not a form</div>
+      <script>
+        var p = document.createElement("p");
+        p.textContent = "len=" + document.forms.length +
+            " first=" + document.forms[0].id +
+            " second=" + document.forms[1].id;
+        document.body.appendChild(p);
+      </script>
+    </body></html>"#;
+
+    let snap = snap(html);
+    assert!(snap.contains("len=2"), "forms.length should be 2: {}", snap);
+    assert!(snap.contains("first=login"), "forms[0].id should be login: {}", snap);
+    assert!(snap.contains("second=signup"), "forms[1].id should be signup: {}", snap);
+}
+
+#[test]
+fn document_forms_named_access() {
+    let html = r#"
+    <html><body>
+      <form id="login" name="loginForm"></form>
+      <form id="signup" name="signupForm"></form>
+      <script>
+        var byId = document.forms["login"];
+        var byName = document.forms["signupForm"];
+        var p = document.createElement("p");
+        p.textContent = "byId=" + (byId ? byId.id : "null") +
+            " byName=" + (byName ? byName.id : "null");
+        document.body.appendChild(p);
+      </script>
+    </body></html>"#;
+
+    let snap = snap(html);
+    assert!(snap.contains("byId=login"), "forms['login'] should find by id: {}", snap);
+    assert!(snap.contains("byName=signup"), "forms['signupForm'] should find by name: {}", snap);
+}
+
+#[test]
+fn document_forms_empty_when_no_forms() {
+    let html = r#"
+    <html><body>
+      <div>No forms here</div>
+      <script>
+        var p = document.createElement("p");
+        p.textContent = "len=" + document.forms.length;
+        document.body.appendChild(p);
+      </script>
+    </body></html>"#;
+
+    let snap = snap(html);
+    assert!(snap.contains("len=0"), "forms.length should be 0: {}", snap);
+}
