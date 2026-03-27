@@ -1327,11 +1327,31 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                     var rangeUnderflow = false, rangeOverflow = false;
                     var mn = el.getAttribute('min'); if (mn !== null && val !== '' && parseFloat(val) < parseFloat(mn)) rangeUnderflow = true;
                     var mx = el.getAttribute('max'); if (mx !== null && val !== '' && parseFloat(val) > parseFloat(mx)) rangeOverflow = true;
-                    var valid = !valueMissing && !typeMismatch && !patternMismatch && !tooLong && !tooShort && !rangeUnderflow && !rangeOverflow && !customError;
+                    var badInput = false;
+                    if (val !== '' && (inputType === 'number' || inputType === 'range')) {
+                        badInput = isNaN(parseFloat(val)) || !isFinite(Number(val));
+                    } else if (val !== '' && inputType === 'date') {
+                        badInput = isNaN(new Date(val).getTime());
+                    }
+                    var stepMismatch = false;
+                    if (val !== '' && !badInput && (inputType === 'number' || inputType === 'range')) {
+                        var stepAttr = el.getAttribute('step');
+                        if (stepAttr !== null && stepAttr.toLowerCase() === 'any') {
+                            stepMismatch = false;
+                        } else {
+                            var step = stepAttr !== null ? parseFloat(stepAttr) : (inputType === 'number' ? 1 : 1);
+                            if (!isNaN(step) && step > 0) {
+                                var base = mn !== null ? parseFloat(mn) : 0;
+                                var diff = Math.abs((parseFloat(val) - base) % step);
+                                if (diff > 1e-10 && Math.abs(diff - step) > 1e-10) stepMismatch = true;
+                            }
+                        }
+                    }
+                    var valid = !valueMissing && !typeMismatch && !patternMismatch && !tooLong && !tooShort && !rangeUnderflow && !rangeOverflow && !stepMismatch && !badInput && !customError;
                     return { valid: valid, valueMissing: valueMissing, typeMismatch: typeMismatch,
                         patternMismatch: patternMismatch, tooLong: tooLong, tooShort: tooShort,
                         rangeUnderflow: rangeUnderflow, rangeOverflow: rangeOverflow,
-                        stepMismatch: false, badInput: false, customError: customError };
+                        stepMismatch: stepMismatch, badInput: badInput, customError: customError };
                 },
                 configurable: true
             },
@@ -1347,6 +1367,8 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                     if (v.tooLong) return 'Please use no more than ' + this.getAttribute('maxlength') + ' characters.';
                     if (v.rangeUnderflow) return 'Value must be greater than or equal to ' + this.getAttribute('min') + '.';
                     if (v.rangeOverflow) return 'Value must be less than or equal to ' + this.getAttribute('max') + '.';
+                    if (v.stepMismatch) return 'Please enter a valid value. The nearest valid values are those aligned with the step.';
+                    if (v.badInput) return 'Please enter a valid value.';
                     return '';
                 },
                 configurable: true
