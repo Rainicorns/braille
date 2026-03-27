@@ -872,7 +872,10 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 },
                 set: function(v) {
                     if (!this.__props) this.__props = {};
-                    this.__props._value = String(v);
+                    var s = String(v);
+                    var ml = this.getAttribute('maxlength');
+                    if (ml !== null) { var n = parseInt(ml, 10); if (!isNaN(n) && n >= 0 && s.length > n) s = s.substring(0, n); }
+                    this.__props._value = s;
                     if (this.tagName === 'SELECT') {
                         var opts = this.querySelectorAll('option');
                         for (var i = 0; i < opts.length; i++) {
@@ -881,15 +884,95 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                         }
                     }
                     // Also sync to attribute so Rust-side snapshot can read the current value
-                    __n_setAttribute(this.__nid, 'value', String(v));
+                    __n_setAttribute(this.__nid, 'value', s);
                     // For textarea, also update text content so the snapshot can see it
-                    if (this.tagName === 'TEXTAREA') __n_setTextContent(this.__nid, String(v));
+                    if (this.tagName === 'TEXTAREA') __n_setTextContent(this.__nid, s);
                 },
                 configurable: true
             },
             defaultValue: {
-                get: function() { return this.getAttribute('value') || ''; },
-                set: function(v) { this.setAttribute('value', String(v)); },
+                get: function() {
+                    if (this.tagName === 'TEXTAREA') return __n_getTextContent(this.__nid);
+                    return this.getAttribute('value') || '';
+                },
+                set: function(v) {
+                    if (this.tagName === 'TEXTAREA') {
+                        __n_setTextContent(this.__nid, String(v));
+                    } else {
+                        this.setAttribute('value', String(v));
+                    }
+                },
+                configurable: true
+            },
+            maxLength: {
+                get: function() {
+                    var v = this.getAttribute('maxlength');
+                    if (v === null) return -1;
+                    var n = parseInt(v, 10);
+                    return isNaN(n) || n < 0 ? -1 : n;
+                },
+                set: function(v) {
+                    var n = parseInt(v, 10);
+                    if (isNaN(n) || n < 0) { this.removeAttribute('maxlength'); return; }
+                    this.setAttribute('maxlength', String(n));
+                },
+                configurable: true
+            },
+            minLength: {
+                get: function() {
+                    var v = this.getAttribute('minlength');
+                    if (v === null) return -1;
+                    var n = parseInt(v, 10);
+                    return isNaN(n) || n < 0 ? -1 : n;
+                },
+                set: function(v) {
+                    var n = parseInt(v, 10);
+                    if (isNaN(n) || n < 0) { this.removeAttribute('minlength'); return; }
+                    this.setAttribute('minlength', String(n));
+                },
+                configurable: true
+            },
+            cols: {
+                get: function() {
+                    var v = this.getAttribute('cols');
+                    if (v === null) return 20;
+                    var n = parseInt(v, 10);
+                    return isNaN(n) || n <= 0 ? 20 : n;
+                },
+                set: function(v) {
+                    var n = parseInt(v, 10);
+                    if (isNaN(n) || n <= 0) n = 20;
+                    this.setAttribute('cols', String(n));
+                },
+                configurable: true
+            },
+            rows: {
+                get: function() {
+                    var v = this.getAttribute('rows');
+                    if (v === null) return 2;
+                    var n = parseInt(v, 10);
+                    return isNaN(n) || n <= 0 ? 2 : n;
+                },
+                set: function(v) {
+                    var n = parseInt(v, 10);
+                    if (isNaN(n) || n <= 0) n = 2;
+                    this.setAttribute('rows', String(n));
+                },
+                configurable: true
+            },
+            wrap: {
+                get: function() { return this.getAttribute('wrap') || 'soft'; },
+                set: function(v) { this.setAttribute('wrap', String(v)); },
+                configurable: true
+            },
+            textLength: {
+                get: function() {
+                    var val = '';
+                    if (this.__props && this.__props._value !== undefined) val = this.__props._value;
+                    else if (this.tagName === 'TEXTAREA') val = __n_getTextContent(this.__nid);
+                    else val = this.getAttribute('value') || '';
+                    return val.length;
+                },
                 configurable: true
             },
             checked: {
