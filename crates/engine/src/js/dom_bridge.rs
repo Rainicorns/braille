@@ -1746,15 +1746,6 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             configurable: true
         });
 
-        // length property for <form>: returns number of form controls
-        Object.defineProperty(EP, 'length', {
-            get: function() {
-                if (this.tagName !== 'FORM') return undefined;
-                return this.querySelectorAll('input, textarea, select, button').length;
-            },
-            configurable: true
-        });
-
         // <select> selectedIndex property
         Object.defineProperty(EP, 'selectedIndex', {
             get: function() {
@@ -1819,12 +1810,17 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             configurable: true
         });
 
-        // <select> length property (number of options)
+        // length property for <select> (number of options) and <form> (number of controls)
         Object.defineProperty(EP, 'length', {
             get: function() {
-                if (this.tagName !== 'SELECT') return undefined;
-                var opts = this.querySelectorAll('option');
-                return opts.length;
+                if (this.tagName === 'SELECT') {
+                    var opts = this.querySelectorAll('option');
+                    return opts.length;
+                }
+                if (this.tagName === 'FORM') {
+                    return this.querySelectorAll('input, textarea, select, button').length;
+                }
+                return undefined;
             },
             configurable: true
         });
