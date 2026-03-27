@@ -2899,6 +2899,7 @@ mod tests {
             "valid",
         );
         assert_eq!(v, "true");
+    }
 
     use crate::Engine;
 
