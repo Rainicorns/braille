@@ -400,4 +400,79 @@ mod tests {
         );
         assert!(err.contains("@text"), "Error should contain selector, got: {}", err);
     }
+
+    #[test]
+    fn type_fires_input_event() {
+        let html = r#"<html><body>
+            <input id="i" type="text">
+            <script>
+                window.__inputFired = false;
+                document.getElementById('i').addEventListener('input', function(e) {
+                    window.__inputFired = true;
+                    window.__inputBubbles = e.bubbles;
+                });
+            </script>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+
+        engine.handle_type("#i", "hello").unwrap();
+
+        let fired = engine.eval_js("window.__inputFired").unwrap();
+        assert_eq!(fired, "true", "input event should have fired");
+        let bubbles = engine.eval_js("window.__inputBubbles").unwrap();
+        assert_eq!(bubbles, "true", "input event should bubble");
+    }
+
+    #[test]
+    fn type_fires_change_event() {
+        let html = r#"<html><body>
+            <input id="i" type="text">
+            <script>
+                window.__changeFired = false;
+                document.getElementById('i').addEventListener('change', function(e) {
+                    window.__changeFired = true;
+                    window.__changeBubbles = e.bubbles;
+                });
+            </script>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+
+        engine.handle_type("#i", "hello").unwrap();
+
+        let fired = engine.eval_js("window.__changeFired").unwrap();
+        assert_eq!(fired, "true", "change event should have fired");
+        let bubbles = engine.eval_js("window.__changeBubbles").unwrap();
+        assert_eq!(bubbles, "true", "change event should bubble");
+    }
+
+    #[test]
+    fn type_fires_input_and_change_on_textarea() {
+        let html = r#"<html><body>
+            <textarea id="t"></textarea>
+            <script>
+                window.__inputFired = false;
+                window.__changeFired = false;
+                document.getElementById('t').addEventListener('input', function() {
+                    window.__inputFired = true;
+                });
+                document.getElementById('t').addEventListener('change', function() {
+                    window.__changeFired = true;
+                });
+            </script>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+
+        engine.handle_type("#t", "hello").unwrap();
+
+        let input_fired = engine.eval_js("window.__inputFired").unwrap();
+        assert_eq!(input_fired, "true", "input event should fire on textarea");
+        let change_fired = engine.eval_js("window.__changeFired").unwrap();
+        assert_eq!(change_fired, "true", "change event should fire on textarea");
+    }
 }
