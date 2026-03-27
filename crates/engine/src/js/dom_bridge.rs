@@ -1759,38 +1759,48 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         };
         EP.reportValidity = function() { return this.checkValidity(); };
 
-        // elements property for <form>: returns descendant controls + form-associated external controls
+        // elements property for <form>: returns live HTMLFormControlsCollection
         Object.defineProperty(EP, 'elements', {
             get: function() {
                 if (this.tagName !== 'FORM') return undefined;
-                var controls = this.querySelectorAll('input, textarea, select, button');
-                // Also include external elements that reference this form via form="<id>"
-                var formId = this.getAttribute('id');
-                var allControls = [];
-                for (var i = 0; i < controls.length; i++) { allControls.push(controls[i]); }
-                if (formId) {
-                    var externals = document.querySelectorAll('input[form="' + formId + '"], textarea[form="' + formId + '"], select[form="' + formId + '"], button[form="' + formId + '"]');
-                    for (var j = 0; j < externals.length; j++) {
-                        // Skip elements already in descendants
-                        var dup = false;
-                        for (var k = 0; k < allControls.length; k++) {
-                            if (allControls[k] === externals[j]) { dup = true; break; }
+                var self = this;
+                return new Proxy([], {
+                    get: function(t, prop) {
+                        var descendantControls = self.querySelectorAll('input, textarea, select, button');
+                        var allControls = [];
+                        for (var i = 0; i < descendantControls.length; i++) { allControls.push(descendantControls[i]); }
+                        // Also include external elements that reference this form via form="<id>"
+                        var formId = self.getAttribute('id');
+                        if (formId) {
+                            var externals = document.querySelectorAll('input[form="' + formId + '"], textarea[form="' + formId + '"], select[form="' + formId + '"], button[form="' + formId + '"]');
+                            for (var j = 0; j < externals.length; j++) {
+                                var dup = false;
+                                for (var k = 0; k < allControls.length; k++) {
+                                    if (allControls[k] === externals[j]) { dup = true; break; }
+                                }
+                                if (!dup) allControls.push(externals[j]);
+                            }
                         }
-                        if (!dup) allControls.push(externals[j]);
-                    }
-                }
-                allControls.length = allControls.length; // ensure length is correct
-                return new Proxy(allControls, {
-                    get: function(arr, prop) {
-                        if (prop in arr) return arr[prop];
+                        var controls = allControls;
+                        if (prop === 'length') return controls.length;
+                        if (prop === 'item') return function(i) { return controls[i] || null; };
+                        if (prop === Symbol.iterator) return function() { return controls[Symbol.iterator](); };
+                        if (typeof prop === 'string' && !isNaN(prop)) return controls[parseInt(prop)];
+                        if (prop === 'forEach') return function(cb) { for (var i = 0; i < controls.length; i++) cb(controls[i], i); };
+                        if (prop === 'namedItem') return function(name) {
+                            for (var i = 0; i < controls.length; i++) {
+                                if (controls[i].getAttribute('name') === name || controls[i].getAttribute('id') === name) return controls[i];
+                            }
+                            return null;
+                        };
+                        // Named access by string key
                         if (typeof prop === 'string' && isNaN(prop)) {
-                            // Named access: find by name attribute
-                            for (var i = 0; i < arr.length; i++) {
-                                if (arr[i].getAttribute('name') === prop || arr[i].getAttribute('id') === prop) return arr[i];
+                            for (var i = 0; i < controls.length; i++) {
+                                if (controls[i].getAttribute('name') === prop || controls[i].getAttribute('id') === prop) return controls[i];
                             }
                             return undefined;
                         }
-                        return arr[prop];
+                        return controls[prop];
                     }
                 });
             },
