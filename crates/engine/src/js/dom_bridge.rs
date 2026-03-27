@@ -1010,6 +1010,8 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                     __n_setAttribute(this.__nid, 'value', String(v));
                     // For textarea, also update text content so the snapshot can see it
                     if (this.tagName === 'TEXTAREA') __n_setTextContent(this.__nid, String(v));
+                    // Fire input event (bubbles, not cancelable) per spec
+                    this.dispatchEvent(new Event('input', {bubbles: true, cancelable: false}));
                 },
                 configurable: true
             },
@@ -2897,5 +2899,119 @@ mod tests {
             "valid",
         );
         assert_eq!(v, "true");
+
+    use crate::Engine;
+
+    #[test]
+    fn js_value_setter_fires_input_event() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body>
+            <input id="i" type="text">
+            <script>
+                window.__inputFired = false;
+                window.__inputBubbles = null;
+                document.getElementById('i').addEventListener('input', function(e) {
+                    window.__inputFired = true;
+                    window.__inputBubbles = e.bubbles;
+                });
+            </script>
+        </body></html>"#);
+
+        engine.eval_js("document.getElementById('i').value = 'hello'").unwrap();
+
+        let fired = engine.eval_js("window.__inputFired").unwrap();
+        assert_eq!(fired, "true", "input event should fire when value is set via JS");
+        let bubbles = engine.eval_js("window.__inputBubbles").unwrap();
+        assert_eq!(bubbles, "true", "input event should bubble");
+    }
+
+    #[test]
+    fn js_value_setter_fires_input_event_on_textarea() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body>
+            <textarea id="t"></textarea>
+            <script>
+                window.__inputFired = false;
+                document.getElementById('t').addEventListener('input', function() {
+                    window.__inputFired = true;
+                });
+            </script>
+        </body></html>"#);
+
+        engine.eval_js("document.getElementById('t').value = 'hello'").unwrap();
+
+        let fired = engine.eval_js("window.__inputFired").unwrap();
+        assert_eq!(fired, "true", "input event should fire on textarea value set");
+    }
+
+    #[test]
+    fn invalid_event_fires_on_check_validity() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body>
+            <input id="i" type="text" required>
+            <script>
+                window.__invalidFired = false;
+                window.__invalidBubbles = null;
+                window.__invalidCancelable = null;
+                document.getElementById('i').addEventListener('invalid', function(e) {
+                    window.__invalidFired = true;
+                    window.__invalidBubbles = e.bubbles;
+                    window.__invalidCancelable = e.cancelable;
+                });
+            </script>
+        </body></html>"#);
+
+        // checkValidity on a required empty input should fire invalid
+        let result = engine.eval_js("document.getElementById('i').checkValidity()").unwrap();
+        assert_eq!(result, "false", "checkValidity should return false for empty required input");
+
+        let fired = engine.eval_js("window.__invalidFired").unwrap();
+        assert_eq!(fired, "true", "invalid event should fire when checkValidity fails");
+        let bubbles = engine.eval_js("window.__invalidBubbles").unwrap();
+        assert_eq!(bubbles, "false", "invalid event should NOT bubble");
+        let cancelable = engine.eval_js("window.__invalidCancelable").unwrap();
+        assert_eq!(cancelable, "true", "invalid event should be cancelable");
+    }
+
+    #[test]
+    fn invalid_event_does_not_fire_on_valid_input() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body>
+            <input id="i" type="text" required value="filled">
+            <script>
+                window.__invalidFired = false;
+                document.getElementById('i').addEventListener('invalid', function() {
+                    window.__invalidFired = true;
+                });
+            </script>
+        </body></html>"#);
+
+        let result = engine.eval_js("document.getElementById('i').checkValidity()").unwrap();
+        assert_eq!(result, "true", "checkValidity should return true for filled required input");
+
+        let fired = engine.eval_js("window.__invalidFired").unwrap();
+        assert_eq!(fired, "false", "invalid event should NOT fire when input is valid");
+    }
+
+    #[test]
+    fn invalid_event_fires_with_custom_validity() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body>
+            <input id="i" type="text">
+            <script>
+                window.__invalidFired = false;
+                var el = document.getElementById('i');
+                el.setCustomValidity('custom error');
+                el.addEventListener('invalid', function() {
+                    window.__invalidFired = true;
+                });
+            </script>
+        </body></html>"#);
+
+        let result = engine.eval_js("document.getElementById('i').checkValidity()").unwrap();
+        assert_eq!(result, "false", "checkValidity should return false with custom validity");
+
+        let fired = engine.eval_js("window.__invalidFired").unwrap();
+        assert_eq!(fired, "true", "invalid event should fire with setCustomValidity");
     }
 }

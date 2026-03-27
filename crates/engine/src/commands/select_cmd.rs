@@ -69,6 +69,14 @@ impl Engine {
         // 7. Set "selected" attribute on the matching option
         tree.set_attribute(matching_option, "selected", "selected");
 
+        // Drop mutable borrow before firing events
+        drop(tree);
+
+        // 8. Fire input and change events on the <select> element
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.fire_input_events(node_id);
+        }
+
         Ok(())
     }
 }
@@ -442,5 +450,39 @@ mod tests {
             assert!(!tree.has_attribute(options[0], "selected"));
             assert!(tree.has_attribute(options[1], "selected"));
         }
+    }
+
+    #[test]
+    fn select_fires_input_and_change_events() {
+        let html = r#"<html><body>
+            <select id="s">
+                <option value="a">A</option>
+                <option value="b">B</option>
+            </select>
+            <script>
+                window.__inputFired = false;
+                window.__changeFired = false;
+                document.getElementById('s').addEventListener('input', function(e) {
+                    window.__inputFired = true;
+                    window.__inputBubbles = e.bubbles;
+                });
+                document.getElementById('s').addEventListener('change', function(e) {
+                    window.__changeFired = true;
+                    window.__changeBubbles = e.bubbles;
+                });
+            </script>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+
+        engine.handle_select("#s", "b").unwrap();
+
+        let input_fired = engine.eval_js("window.__inputFired").unwrap();
+        assert_eq!(input_fired, "true", "input event should fire on select change");
+        let change_fired = engine.eval_js("window.__changeFired").unwrap();
+        assert_eq!(change_fired, "true", "change event should fire on select change");
+        let bubbles = engine.eval_js("window.__changeBubbles").unwrap();
+        assert_eq!(bubbles, "true", "change event should bubble");
     }
 }
