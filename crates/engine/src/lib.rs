@@ -916,6 +916,108 @@ impl Engine {
         }
         self.pending_url = Some(url.to_string());
     }
+
+    /// Check the DOM for `<meta http-equiv="refresh">` tags and return the
+    /// parsed redirect information if one is found.
+    ///
+    /// The `content` attribute format is either:
+    /// - `SECONDS; url=URL` — redirect to URL after SECONDS
+    /// - `SECONDS` — refresh the current page after SECONDS
+    ///
+    /// If a URL is present and relative, it is resolved against `base_url`.
+    /// If `base_url` is None, relative URLs are returned as-is.
+    pub fn check_meta_refresh(&self, base_url: Option<&str>) -> Option<MetaRefresh> {
+        let tree = self.tree.borrow();
+        let metas = tree.get_elements_by_tag_name("meta");
+        for meta_id in metas {
+            let node = tree.get_node(meta_id);
+            if let NodeData::Element { attributes, .. } = &node.data {
+                let is_refresh = attributes.iter().any(|a| {
+                    a.local_name.eq_ignore_ascii_case("http-equiv")
+                        && a.value.eq_ignore_ascii_case("refresh")
+                });
+                if !is_refresh {
+                    continue;
+                }
+                let content = attributes
+                    .iter()
+                    .find(|a| a.local_name.eq_ignore_ascii_case("content"))
+                    .map(|a| a.value.as_str());
+                if let Some(content) = content {
+                    return Some(parse_meta_refresh_content(content, base_url));
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Parsed result of a `<meta http-equiv="refresh">` tag.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetaRefresh {
+    /// Delay in seconds before the redirect/refresh.
+    pub delay_seconds: u32,
+    /// The target URL, or None if the page should refresh itself.
+    pub url: Option<String>,
+}
+
+/// Parse the `content` attribute value of a meta refresh tag.
+///
+/// Handles formats like:
+/// - `"5"` — refresh same page after 5 seconds
+/// - `"2; url=/path"` — redirect to /path after 2 seconds
+/// - `"0;url=https://example.com"` — immediate redirect (space around ; is optional)
+/// - `"2; URL=/path"` — case-insensitive "url=" prefix
+fn parse_meta_refresh_content(content: &str, base_url: Option<&str>) -> MetaRefresh {
+    let content = content.trim();
+
+    // Split on ';' or ',' (both are valid separators per the spec)
+    let (delay_str, rest) = match content.find(|c| c == ';' || c == ',') {
+        Some(pos) => (&content[..pos], Some(content[pos + 1..].trim())),
+        None => (content, None),
+    };
+
+    let delay_seconds = delay_str.trim().parse::<u32>().unwrap_or(0);
+
+    let url = rest.and_then(|rest| {
+        // Strip optional "url=" prefix (case-insensitive)
+        let rest_lower = rest.to_ascii_lowercase();
+        let url_str = if rest_lower.starts_with("url=") {
+            rest[4..].trim()
+        } else if rest_lower.starts_with("url =") {
+            rest[5..].trim()
+        } else {
+            // No url= prefix but there's content after the semicolon — treat as URL anyway
+            rest
+        };
+
+        // Strip surrounding quotes if present
+        let url_str = url_str
+            .strip_prefix('\'')
+            .and_then(|s| s.strip_suffix('\''))
+            .or_else(|| url_str.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+            .unwrap_or(url_str);
+
+        if url_str.is_empty() {
+            return None;
+        }
+
+        // Resolve relative URLs against base_url
+        if let Some(base) = base_url {
+            if let Ok(base_parsed) = url::Url::parse(base) {
+                if let Ok(resolved) = base_parsed.join(url_str) {
+                    return Some(resolved.to_string());
+                }
+            }
+        }
+
+        Some(url_str.to_string())
+    });
+
+    MetaRefresh {
+        delay_seconds,
+        url,
+    }
 }
 
 #[cfg(test)]
@@ -2132,5 +2234,117 @@ mod tests {
             r#"String(document.getElementById("t").textLength)"#,
         );
         assert_eq!(s, "0");
+    }
+
+    // ---- meta refresh tests ----
+
+    #[test]
+    fn test_meta_refresh_with_url() {
+        let html = r#"
+        <html><head>
+          <meta http-equiv="refresh" content="2; url=/.within.website/x/cmd/anubis/api/pass-challenge?challenge=abc&amp;id=123&amp;redir=%2F">
+        </head><body><p>Redirecting...</p></body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        let refresh = engine.check_meta_refresh(None);
+
+        assert!(refresh.is_some(), "should detect meta refresh");
+        let refresh = refresh.unwrap();
+        assert_eq!(refresh.delay_seconds, 2);
+        assert!(refresh.url.is_some(), "should have a URL");
+        assert!(
+            refresh.url.as_ref().unwrap().contains("pass-challenge"),
+            "URL should contain path: {:?}",
+            refresh.url
+        );
+    }
+
+    #[test]
+    fn test_meta_refresh_relative_url_resolution() {
+        let html = r#"
+        <html><head>
+          <meta http-equiv="refresh" content="0; url=/login">
+        </head><body></body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        let refresh = engine.check_meta_refresh(Some("https://example.com/page"));
+
+        assert!(refresh.is_some());
+        let refresh = refresh.unwrap();
+        assert_eq!(refresh.delay_seconds, 0);
+        assert_eq!(refresh.url.as_deref(), Some("https://example.com/login"));
+    }
+
+    #[test]
+    fn test_meta_refresh_no_url() {
+        let html = r#"
+        <html><head>
+          <meta http-equiv="refresh" content="5">
+        </head><body></body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        let refresh = engine.check_meta_refresh(None);
+
+        assert!(refresh.is_some());
+        let refresh = refresh.unwrap();
+        assert_eq!(refresh.delay_seconds, 5);
+        assert!(refresh.url.is_none(), "should have no URL for plain refresh");
+    }
+
+    #[test]
+    fn test_meta_refresh_missing_returns_none() {
+        let html = r#"
+        <html><head>
+          <meta charset="utf-8">
+        </head><body><p>No refresh here</p></body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        let refresh = engine.check_meta_refresh(None);
+
+        assert!(refresh.is_none(), "should return None when no meta refresh");
+    }
+
+    #[test]
+    fn test_meta_refresh_case_insensitive() {
+        let html = r#"
+        <html><head>
+          <meta HTTP-EQUIV="Refresh" content="3; URL=/destination">
+        </head><body></body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        let refresh = engine.check_meta_refresh(Some("https://example.com/"));
+
+        assert!(refresh.is_some());
+        let refresh = refresh.unwrap();
+        assert_eq!(refresh.delay_seconds, 3);
+        assert_eq!(
+            refresh.url.as_deref(),
+            Some("https://example.com/destination")
+        );
+    }
+
+    #[test]
+    fn test_meta_refresh_absolute_url() {
+        let html = r#"
+        <html><head>
+          <meta http-equiv="refresh" content="0; url=https://other.com/page">
+        </head><body></body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        let refresh = engine.check_meta_refresh(Some("https://example.com/"));
+
+        assert!(refresh.is_some());
+        let refresh = refresh.unwrap();
+        assert_eq!(refresh.delay_seconds, 0);
+        assert_eq!(
+            refresh.url.as_deref(),
+            Some("https://other.com/page")
+        );
     }
 }
