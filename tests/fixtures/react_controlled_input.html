@@ -165,18 +165,49 @@
         };
 
         // --- Event delegation on root (like React 17+) ---
-        // Only register once
+        // React 17+ registers capture-phase listeners for ALL supported events
+        // on the root container. We simulate the key ones here.
         if (!root.__eventsRegistered) {
             root.__eventsRegistered = true;
-            // React registers on root container with capture=true
+
+            // Helper: walk up from target to find __reactProps$ and invoke handler
+            function dispatchReactHandler(e, handlerName) {
+                var target = e.target;
+                var node = target;
+                while (node && node !== root.parentNode) {
+                    var pk = Object.keys(node).find(function(k) { return k.indexOf('__reactProps$') === 0; });
+                    if (pk && node[pk] && typeof node[pk][handlerName] === 'function') {
+                        node[pk][handlerName]({
+                            type: e.type, target: target, currentTarget: node,
+                            preventDefault: function() { e.preventDefault(); },
+                            stopPropagation: function() { e.stopPropagation(); },
+                            persist: function() {},
+                            nativeEvent: e,
+                        });
+                        return;
+                    }
+                    node = node.parentNode;
+                }
+            }
+
+            // React registers capture listeners on root for each event type
             root.addEventListener('input', function(e) {
                 var target = e.target;
                 if (target && target._valueTracker && updateValueIfChanged(target)) {
-                    var pk = Object.keys(target).find(function(k) { return k.indexOf('__reactProps$') === 0; });
-                    if (pk && target[pk] && typeof target[pk].onChange === 'function') {
-                        target[pk].onChange({ type: 'change', target: target, currentTarget: target, preventDefault: function(){}, stopPropagation: function(){}, persist: function(){} });
-                    }
+                    dispatchReactHandler(e, 'onChange');
                 }
+            }, true);
+
+            root.addEventListener('click', function(e) {
+                dispatchReactHandler(e, 'onClick');
+            }, true);
+
+            root.addEventListener('blur', function(e) {
+                dispatchReactHandler(e, 'onBlur');
+            }, true);
+
+            root.addEventListener('focusout', function(e) {
+                dispatchReactHandler(e, 'onBlur');
             }, true);
         }
     }

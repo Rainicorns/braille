@@ -546,37 +546,6 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 }
             }
 
-            // Deliver React onClick/onSubmit via __reactProps$.
-            // Our capture/bubble dispatch fires React's native listeners but
-            // React's internal event processing may not complete in headless mode.
-            var node = this;
-            while (node && node.__nid !== undefined) {
-                var pk = Object.keys(node).find(function(k) { return k.indexOf('__reactProps$') === 0; });
-                if (pk && node[pk]) {
-                    var synth = {
-                        type: 'click', target: this, currentTarget: node,
-                        bubbles: true, cancelable: true, defaultPrevented: false,
-                        preventDefault: function() { this.defaultPrevented = true; },
-                        stopPropagation: function() { this._stopped = true; },
-                        nativeEvent: event, persist: function() {},
-                    };
-                    if (typeof node[pk].onClick === 'function') {
-                        node[pk].onClick(synth);
-                        if (synth._stopped) break;
-                    }
-                    if (node.tagName === 'FORM' && typeof node[pk].onSubmit === 'function') {
-                        var s2 = {
-                            type: 'submit', target: this, currentTarget: node,
-                            bubbles: true, cancelable: true, defaultPrevented: false,
-                            preventDefault: function() { this.defaultPrevented = true; },
-                            stopPropagation: function() {}, persist: function() {},
-                        };
-                        node[pk].onSubmit(s2);
-                    }
-                }
-                node = node.parentNode;
-            }
-
             // Implicit form submission: <button type="submit"> or <input type="submit"> inside a <form>
             if (!event.defaultPrevented) {
                 var tag = this.tagName;
