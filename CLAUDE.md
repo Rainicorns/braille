@@ -59,6 +59,13 @@ cargo test -p braille-engine --test anubis_challenges  # Anubis TDD suite
 ./dev.sh test                       # full suite
 ```
 
+## Code Structure
+
+- **New tests go in `crates/engine/tests/`**, not inline in source files. The `mod tests` block at the bottom of `lib.rs` has 482 tests and is a merge conflict magnet. Use the public API (`eval_js`, `handle_click`, `handle_type`, `snapshot`, etc.) from external test files.
+- **`lib.rs` is too big.** Engine struct, script execution, meta refresh, cookies, and tests are all in one file. When adding new Engine functionality, consider whether it belongs in its own module.
+- **`dom_bridge.rs` is too big.** New JS bindings should go in `js/bindings/` (one file per API surface), not appended to dom_bridge.rs.
+- These splits haven't been done yet — but don't make the problem worse. Add new code in the right place.
+
 ## Code Style
 
 - Zero clippy warnings. Workspace lints enforce `warnings = "deny"`.
