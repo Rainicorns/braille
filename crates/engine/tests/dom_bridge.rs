@@ -739,3 +739,203 @@ fn dynamic_script_no_src_does_not_fetch() {
 
     assert!(!e.has_pending_fetches(), "inline script should not trigger fetch");
 }
+
+// =========================================================================
+// Label association: htmlFor, control, labels, click-on-label
+// =========================================================================
+
+#[test]
+fn label_html_for_getter_reflects_for_attribute() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl" for="username">Name</label>
+        <input id="username" />
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('lbl').htmlFor"#).unwrap();
+    assert_eq!(result, "username");
+}
+
+#[test]
+fn label_html_for_getter_returns_empty_when_no_for() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl">Name <input /></label>
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('lbl').htmlFor"#).unwrap();
+    assert_eq!(result, "");
+}
+
+#[test]
+fn label_html_for_setter_updates_for_attribute() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl">Name</label>
+        <input id="email" />
+    </body></html>"#);
+    e.eval_js(r#"document.getElementById('lbl').htmlFor = 'email'"#).unwrap();
+    let result = e.eval_js(r#"document.getElementById('lbl').getAttribute('for')"#).unwrap();
+    assert_eq!(result, "email");
+}
+
+#[test]
+fn label_html_for_undefined_on_non_label() {
+    let mut e = engine_with_html(r#"<html><body><div id="d"></div></body></html>"#);
+    let result = e.eval_js(r#"typeof document.getElementById('d').htmlFor"#).unwrap();
+    assert_eq!(result, "undefined");
+}
+
+#[test]
+fn label_control_returns_element_by_for_attribute() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl" for="inp">Name</label>
+        <input id="inp" />
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('lbl').control.id"#).unwrap();
+    assert_eq!(result, "inp");
+}
+
+#[test]
+fn label_control_returns_first_labelable_descendant() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl">Name <span><input id="inner" /></span></label>
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('lbl').control.id"#).unwrap();
+    assert_eq!(result, "inner");
+}
+
+#[test]
+fn label_control_returns_null_when_no_control_found() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl" for="nonexistent">Name</label>
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('lbl').control === null"#).unwrap();
+    assert_eq!(result, "true");
+}
+
+#[test]
+fn label_control_returns_null_when_no_descendant() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl">Just text</label>
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('lbl').control === null"#).unwrap();
+    assert_eq!(result, "true");
+}
+
+#[test]
+fn label_control_undefined_on_non_label() {
+    let mut e = engine_with_html(r#"<html><body><div id="d"></div></body></html>"#);
+    let result = e.eval_js(r#"typeof document.getElementById('d').control"#).unwrap();
+    assert_eq!(result, "undefined");
+}
+
+#[test]
+fn input_labels_returns_label_with_for_attribute() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl" for="inp">Name</label>
+        <input id="inp" />
+    </body></html>"#);
+    let result = e.eval_js(r#"
+        var labels = document.getElementById('inp').labels;
+        labels.length + ':' + labels[0].id
+    "#).unwrap();
+    assert_eq!(result, "1:lbl");
+}
+
+#[test]
+fn input_labels_returns_ancestor_label() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl">Name <input id="inp" /></label>
+    </body></html>"#);
+    let result = e.eval_js(r#"
+        var labels = document.getElementById('inp').labels;
+        labels.length + ':' + labels[0].id
+    "#).unwrap();
+    assert_eq!(result, "1:lbl");
+}
+
+#[test]
+fn input_labels_returns_multiple_labels() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl1" for="inp">First</label>
+        <label id="lbl2" for="inp">Second</label>
+        <input id="inp" />
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('inp').labels.length"#).unwrap();
+    assert_eq!(result, "2");
+}
+
+#[test]
+fn input_labels_returns_empty_for_no_labels() {
+    let mut e = engine_with_html(r#"<html><body>
+        <input id="inp" />
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('inp').labels.length"#).unwrap();
+    assert_eq!(result, "0");
+}
+
+#[test]
+fn input_labels_undefined_on_non_labelable() {
+    let mut e = engine_with_html(r#"<html><body><div id="d"></div></body></html>"#);
+    let result = e.eval_js(r#"typeof document.getElementById('d').labels"#).unwrap();
+    assert_eq!(result, "undefined");
+}
+
+#[test]
+fn input_labels_works_for_select() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl" for="sel">Pick</label>
+        <select id="sel"><option>A</option></select>
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('sel').labels.length"#).unwrap();
+    assert_eq!(result, "1");
+}
+
+#[test]
+fn input_labels_works_for_textarea() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl" for="ta">Bio</label>
+        <textarea id="ta"></textarea>
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('ta').labels.length"#).unwrap();
+    assert_eq!(result, "1");
+}
+
+#[test]
+fn input_labels_works_for_button() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl" for="btn">Action</label>
+        <button id="btn">Go</button>
+    </body></html>"#);
+    let result = e.eval_js(r#"document.getElementById('btn').labels.length"#).unwrap();
+    assert_eq!(result, "1");
+}
+
+#[test]
+fn click_on_label_activates_associated_control() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl" for="cb">Check me</label>
+        <input id="cb" type="checkbox" />
+    </body></html>"#);
+    e.eval_js(r#"
+        window.__clicked = false;
+        document.getElementById('cb').addEventListener('click', function() {
+            window.__clicked = true;
+        });
+    "#).unwrap();
+    e.eval_js(r#"document.getElementById('lbl').click()"#).unwrap();
+    let result = e.eval_js(r#"window.__clicked"#).unwrap();
+    assert_eq!(result, "true");
+}
+
+#[test]
+fn click_on_label_with_descendant_control_activates_it() {
+    let mut e = engine_with_html(r#"<html><body>
+        <label id="lbl">Check me <input id="cb" type="checkbox" /></label>
+    </body></html>"#);
+    e.eval_js(r#"
+        window.__clicked = false;
+        document.getElementById('cb').addEventListener('click', function() {
+            window.__clicked = true;
+        });
+    "#).unwrap();
+    e.eval_js(r#"document.getElementById('lbl').click()"#).unwrap();
+    let result = e.eval_js(r#"window.__clicked"#).unwrap();
+    assert_eq!(result, "true");
+}

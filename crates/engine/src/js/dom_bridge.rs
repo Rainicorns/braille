@@ -458,6 +458,120 @@ fn register_native_functions(ctx: &Ctx<'_>) {
             }
         })
     }).unwrap()).unwrap();
+
+    // __n_findLabelControl(labelNodeId) -> nodeId or -1
+    // For <label>: if `for` attribute is set, find element by ID; otherwise find first labelable descendant.
+    g.set("__n_findLabelControl", Function::new(ctx.clone(), |label_id: u32| -> i32 {
+        with_tree(|tree| {
+            let node = tree.get_node(label_id as NodeId);
+            // Only meaningful for <label> elements
+            if let NodeData::Element { tag_name, .. } = &node.data {
+                if !tag_name.eq_ignore_ascii_case("label") {
+                    return -1;
+                }
+            } else {
+                return -1;
+            }
+
+            // Check `for` attribute
+            if let Some(for_id) = tree.get_attribute(label_id as NodeId, "for") {
+                if !for_id.is_empty() {
+                    return tree.get_element_by_id(&for_id).map(|nid| nid as i32).unwrap_or(-1);
+                }
+            }
+
+            // Find first labelable descendant
+            fn find_first_labelable(tree: &DomTree, node_id: NodeId) -> Option<NodeId> {
+                let node = tree.get_node(node_id);
+                for &child_id in &node.children {
+                    let child = tree.get_node(child_id);
+                    if let NodeData::Element { tag_name, .. } = &child.data {
+                        let tag = tag_name.to_lowercase();
+                        if matches!(tag.as_str(), "input" | "select" | "textarea" | "button") {
+                            return Some(child_id);
+                        }
+                    }
+                    if let Some(found) = find_first_labelable(tree, child_id) {
+                        return Some(found);
+                    }
+                }
+                None
+            }
+
+            find_first_labelable(tree, label_id as NodeId).map(|nid| nid as i32).unwrap_or(-1)
+        })
+    }).unwrap()).unwrap();
+
+    // __n_findLabelsForControl(controlNodeId) -> array of label nodeIds
+    // Returns labels whose `for` matches this element's id, or labels that are ancestors of this element.
+    g.set("__n_findLabelsForControl", Function::new(ctx.clone(), |control_id: u32| -> Vec<u32> {
+        with_tree(|tree| {
+            let node = tree.get_node(control_id as NodeId);
+            // Only meaningful for labelable elements
+            let is_labelable = if let NodeData::Element { tag_name, .. } = &node.data {
+                let tag = tag_name.to_lowercase();
+                matches!(tag.as_str(), "input" | "select" | "textarea" | "button")
+            } else {
+                false
+            };
+            if !is_labelable {
+                return Vec::new();
+            }
+
+            let mut labels = Vec::new();
+
+            // Get the control's id attribute
+            let control_id_attr = tree.get_attribute(control_id as NodeId, "id");
+
+            // Walk all nodes to find <label> elements
+            fn collect_labels(
+                tree: &DomTree,
+                node_id: NodeId,
+                control_id: NodeId,
+                control_id_attr: &Option<String>,
+                labels: &mut Vec<u32>,
+            ) {
+                let node = tree.get_node(node_id);
+                if let NodeData::Element { tag_name, .. } = &node.data {
+                    if tag_name.eq_ignore_ascii_case("label") {
+                        // Check `for` attribute matches control's id
+                        if let Some(for_id) = tree.get_attribute(node_id, "for") {
+                            if let Some(ref cid) = control_id_attr {
+                                if !for_id.is_empty() && &for_id == cid {
+                                    labels.push(node_id as u32);
+                                    // Don't return early — still need to search children for other labels
+                                }
+                            }
+                        } else {
+                            // No `for` attribute: check if control is a descendant of this label
+                            fn is_descendant(tree: &DomTree, ancestor: NodeId, target: NodeId) -> bool {
+                                let node = tree.get_node(ancestor);
+                                for &child_id in &node.children {
+                                    if child_id == target {
+                                        return true;
+                                    }
+                                    if is_descendant(tree, child_id, target) {
+                                        return true;
+                                    }
+                                }
+                                false
+                            }
+                            if is_descendant(tree, node_id, control_id) {
+                                labels.push(node_id as u32);
+                            }
+                        }
+                    }
+                }
+                let children: Vec<NodeId> = tree.get_node(node_id).children.clone();
+                for child_id in children {
+                    collect_labels(tree, child_id, control_id, control_id_attr, labels);
+                }
+            }
+
+            collect_labels(tree, tree.document(), control_id as NodeId, &control_id_attr, &mut labels);
+            labels
+        })
+    }).unwrap()).unwrap();
 }
 
 fn register_js_wrappers(ctx: &Ctx<'_>) {
@@ -587,6 +701,18 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                         var submitEvt = new Event('submit', {bubbles: true, cancelable: true});
                         submitEvt.submitter = this;
                         form.dispatchEvent(submitEvt);
+                    }
+                }
+            }
+
+            // Label activation: clicking a label focuses/clicks its associated control
+            if (!event.defaultPrevented && this.tagName === 'LABEL') {
+                var controlId = __n_findLabelControl(this.__nid);
+                if (controlId >= 0) {
+                    var ctrl = __w(controlId);
+                    if (ctrl && ctrl.__nid !== this.__nid) {
+                        if (typeof ctrl.focus === 'function') ctrl.focus();
+                        ctrl.click();
                     }
                 }
             }
@@ -1600,6 +1726,42 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             },
             set: function(v) {
                 if (this.tagName === 'OPTION') this.setAttribute('label', String(v));
+            },
+            configurable: true
+        });
+
+        // --- Label association properties ---
+        // label.htmlFor — reflects the `for` attribute
+        Object.defineProperty(EP, 'htmlFor', {
+            get: function() {
+                if (this.tagName !== 'LABEL') return undefined;
+                return this.getAttribute('for') || '';
+            },
+            set: function(v) {
+                if (this.tagName === 'LABEL') this.setAttribute('for', String(v));
+            },
+            configurable: true
+        });
+
+        // label.control — returns the associated form control element
+        Object.defineProperty(EP, 'control', {
+            get: function() {
+                if (this.tagName !== 'LABEL') return undefined;
+                var id = __n_findLabelControl(this.__nid);
+                return id >= 0 ? __w(id) : null;
+            },
+            configurable: true
+        });
+
+        // input.labels — returns a NodeList of all <label> elements associated with this input
+        Object.defineProperty(EP, 'labels', {
+            get: function() {
+                var tag = this.tagName;
+                if (tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA' && tag !== 'BUTTON') return undefined;
+                // Hidden inputs have no labels per spec
+                if (tag === 'INPUT' && (this.getAttribute('type') || '').toLowerCase() === 'hidden') return [];
+                var ids = __n_findLabelsForControl(this.__nid);
+                return ids.map(__w);
             },
             configurable: true
         });
