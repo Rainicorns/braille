@@ -1,5 +1,6 @@
 pub mod a11y;
 pub mod commands;
+pub mod cookies;
 pub mod css;
 pub mod dom;
 mod fetch;
@@ -77,6 +78,10 @@ pub struct Engine {
     pub(crate) focused_element: Option<NodeId>,
     /// URL to set on the JS runtime when it is next created (before scripts run).
     pub(crate) pending_url: Option<String>,
+    /// HTTP-level cookie jar for Set-Cookie ↔ document.cookie sync.
+    pub(crate) http_cookie_jar: Vec<cookies::StoredCookie>,
+    /// Whether cookies need syncing to JS on next runtime creation.
+    pub(crate) cookies_pending_js_sync: bool,
 }
 
 impl Default for Engine {
@@ -93,6 +98,8 @@ impl Engine {
             ref_map: HashMap::new(),
             focused_element: None,
             pending_url: None,
+            http_cookie_jar: Vec::new(),
+            cookies_pending_js_sync: false,
         }
     }
 

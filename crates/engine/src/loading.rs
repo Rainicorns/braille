@@ -30,6 +30,7 @@ impl Engine {
 
         // 4. Store the runtime
         self.runtime = Some(runtime);
+        if self.cookies_pending_js_sync { self.sync_cookies_to_js(); }
 
         // 5. Reset focus when loading new page
         self.focused_element = None;
@@ -130,6 +131,7 @@ impl Engine {
         Self::fire_window_load(&mut runtime);
 
         self.runtime = Some(runtime);
+        if self.cookies_pending_js_sync { self.sync_cookies_to_js(); }
         self.focused_element = None;
 
         // Compute CSS styles after script execution
@@ -262,6 +264,7 @@ impl Engine {
         Self::fire_window_load(&mut runtime);
 
         self.runtime = Some(runtime);
+        if self.cookies_pending_js_sync { self.sync_cookies_to_js(); }
         self.focused_element = None;
         crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
         errors
@@ -387,6 +390,7 @@ impl Engine {
 
         self.tree = tree;
         self.runtime = Some(runtime);
+        if self.cookies_pending_js_sync { self.sync_cookies_to_js(); }
         self.focused_element = None;
         crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
         errors

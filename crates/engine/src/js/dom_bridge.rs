@@ -2499,7 +2499,7 @@ fn wrapper_and_dispatch_js() -> &'static str {
                     var parts = [];
                     for (var name in _cookieJar) {
                         var c = _cookieJar[name];
-                        if (c.expires && c.expires < now) { delete _cookieJar[name]; continue; }
+                        if (c.expires && c.expires <= now) { delete _cookieJar[name]; continue; }
                         parts.push(name + '=' + c.value);
                     }
                     return parts.join('; ');
