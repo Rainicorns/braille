@@ -1,0 +1,510 @@
+//! DOM bridge web API tests: React reconciler requirements, script IDL, CSS, Intl, crypto.
+use braille_engine::Engine;
+use braille_wire::{FetchResponseData, SnapMode};
+
+fn engine_with_html(html: &str) -> Engine {
+    let mut e = Engine::new();
+    e.load_html(html);
+    e
+}
+
+// =========================================================================
+// Tier 4: DOM bridge completeness — React reconciler requirements
+// =========================================================================
+
+#[test]
+fn childnodes_includes_text_nodes() {
+    let mut e = engine_with_html("<html><body><div id='d'>hello<span>world</span></div></body></html>");
+    let result = e.eval_js(
+        "var d = document.getElementById('d'); d.childNodes.length"
+    );
+    assert_eq!(result.unwrap(), "2", "childNodes should include text + element");
+    let result = e.eval_js("document.getElementById('d').childNodes[0].nodeType");
+    assert_eq!(result.unwrap(), "3", "first childNode should be text (nodeType 3)");
+}
+
+#[test]
+fn firstchild_lastchild() {
+    let mut e = engine_with_html("<html><body><div id='d'><span>a</span><b>b</b></div></body></html>");
+    let result = e.eval_js("document.getElementById('d').firstChild.tagName");
+    assert_eq!(result.unwrap(), "SPAN");
+    let result = e.eval_js("document.getElementById('d').lastChild.tagName");
+    assert_eq!(result.unwrap(), "B");
+}
+
+#[test]
+fn firstchild_lastchild_null() {
+    let mut e = engine_with_html("<html><body><div id='d'></div></body></html>");
+    let result = e.eval_js("document.getElementById('d').firstChild === null");
+    assert_eq!(result.unwrap(), "true");
+    let result = e.eval_js("document.getElementById('d').lastChild === null");
+    assert_eq!(result.unwrap(), "true");
+}
+
+#[test]
+fn nextsibling_previoussibling() {
+    let mut e = engine_with_html("<html><body><div id='p'><span id='a'>a</span><b id='b'>b</b><i id='c'>c</i></div></body></html>");
+    let result = e.eval_js("document.getElementById('a').nextSibling.tagName");
+    assert_eq!(result.unwrap(), "B");
+    let result = e.eval_js("document.getElementById('c').previousSibling.tagName");
+    assert_eq!(result.unwrap(), "B");
+    let result = e.eval_js("document.getElementById('a').previousSibling === null");
+    assert_eq!(result.unwrap(), "true");
+    let result = e.eval_js("document.getElementById('c').nextSibling === null");
+    assert_eq!(result.unwrap(), "true");
+}
+
+#[test]
+fn text_node_data_property() {
+    let mut e = engine_with_html("<html><body><div id='d'>hello</div></body></html>");
+    let result = e.eval_js("document.getElementById('d').firstChild.data");
+    assert_eq!(result.unwrap(), "hello");
+    // set data
+    e.eval_js("document.getElementById('d').firstChild.data = 'world';").unwrap();
+    let result = e.eval_js("document.getElementById('d').firstChild.data");
+    assert_eq!(result.unwrap(), "world");
+}
+
+#[test]
+fn nodevalue_for_text_and_comment() {
+    let mut e = engine_with_html("<html><body><div id='d'>text</div></body></html>");
+    // text node nodeValue
+    let result = e.eval_js("document.getElementById('d').firstChild.nodeValue");
+    assert_eq!(result.unwrap(), "text");
+    // element nodeValue is null
+    let result = e.eval_js("document.getElementById('d').nodeValue === null");
+    assert_eq!(result.unwrap(), "true");
+    // comment nodeValue
+    let result = e.eval_js("document.createComment('hi').nodeValue");
+    assert_eq!(result.unwrap(), "hi");
+}
+
+#[test]
+fn clone_node_shallow() {
+    let mut e = engine_with_html("<html><body><div id='d' class='x'><span>child</span></div></body></html>");
+    let result = e.eval_js(
+        "var orig = document.getElementById('d'); var cl = orig.cloneNode(false); cl.tagName + '|' + cl.getAttribute('class') + '|' + cl.childNodes.length"
+    );
+    assert_eq!(result.unwrap(), "DIV|x|0");
+}
+
+#[test]
+fn clone_node_deep() {
+    let mut e = engine_with_html("<html><body><div id='d'><span>child</span></div></body></html>");
+    let result = e.eval_js(
+        "var cl = document.getElementById('d').cloneNode(true); cl.childNodes.length + '|' + cl.firstChild.tagName"
+    );
+    assert_eq!(result.unwrap(), "1|SPAN");
+}
+
+#[test]
+fn replace_child() {
+    let mut e = engine_with_html("<html><body><div id='p'><span id='old'>old</span></div></body></html>");
+    e.eval_js("var p = document.getElementById('p'); var n = document.createElement('b'); n.textContent = 'new'; p.replaceChild(n, document.getElementById('old'));").unwrap();
+    let snap = e.snapshot(SnapMode::Text);
+    assert!(snap.contains("new"), "replaced child should appear: {snap}");
+    assert!(!snap.contains("old"), "old child should be gone: {snap}");
+}
+
+#[test]
+fn document_fragment_transfers_children() {
+    let mut e = engine_with_html("<html><body><div id='target'></div></body></html>");
+    e.eval_js(r#"
+        var frag = document.createDocumentFragment();
+        var a = document.createElement('span'); a.textContent = 'aaa';
+        var b = document.createElement('span'); b.textContent = 'bbb';
+        frag.appendChild(a);
+        frag.appendChild(b);
+        document.getElementById('target').appendChild(frag);
+    "#).unwrap();
+    let snap = e.snapshot(SnapMode::Text);
+    assert!(snap.contains("aaa"), "fragment child a should appear: {snap}");
+    assert!(snap.contains("bbb"), "fragment child b should appear: {snap}");
+    // Fragment should now be empty
+    let result = e.eval_js("frag.childNodes.length");
+    assert_eq!(result.unwrap(), "0");
+}
+
+#[test]
+fn innerhtml_getter() {
+    let mut e = engine_with_html("<html><body><div id='d'><b>bold</b> text</div></body></html>");
+    let result = e.eval_js("document.getElementById('d').innerHTML");
+    let html = result.unwrap();
+    assert!(html.contains("<b>bold</b>"), "innerHTML should contain <b>bold</b>, got: {html}");
+    assert!(html.contains("text"), "innerHTML should contain text, got: {html}");
+}
+
+#[test]
+fn matches_selector() {
+    let mut e = engine_with_html("<html><body><div id='d' class='foo bar'></div></body></html>");
+    let result = e.eval_js("document.getElementById('d').matches('.foo')");
+    assert_eq!(result.unwrap(), "true");
+    let result = e.eval_js("document.getElementById('d').matches('.baz')");
+    assert_eq!(result.unwrap(), "false");
+    let result = e.eval_js("document.getElementById('d').matches('div.bar')");
+    assert_eq!(result.unwrap(), "true");
+}
+
+#[test]
+fn has_child_nodes() {
+    let mut e = engine_with_html("<html><body><div id='full'><span>x</span></div><div id='empty'></div></body></html>");
+    let result = e.eval_js("document.getElementById('full').hasChildNodes()");
+    assert_eq!(result.unwrap(), "true");
+    let result = e.eval_js("document.getElementById('empty').hasChildNodes()");
+    assert_eq!(result.unwrap(), "false");
+}
+
+// =========================================================================
+// HTMLScriptElement IDL properties (noModule, async, defer)
+// =========================================================================
+
+#[test]
+fn nomodule_in_check() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("'noModule' in document.createElement('script')");
+    assert_eq!(result.unwrap(), "true");
+}
+
+#[test]
+fn nomodule_reflect() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js(r#"
+        var s = document.createElement('script');
+        s.noModule = true;
+        var has = s.hasAttribute('nomodule');
+        var get = s.noModule;
+        s.noModule = false;
+        var gone = !s.hasAttribute('nomodule');
+        has + ',' + get + ',' + gone
+    "#);
+    assert_eq!(result.unwrap(), "true,true,true");
+}
+
+#[test]
+fn async_defer_properties() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js(r#"
+        var s = document.createElement('script');
+        s.async = true;
+        var a = s.hasAttribute('async');
+        s.defer = true;
+        var d = s.hasAttribute('defer');
+        a + ',' + d
+    "#);
+    assert_eq!(result.unwrap(), "true,true");
+}
+
+#[test]
+fn reversed_in_ol() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("'reversed' in document.createElement('ol')");
+    assert_eq!(result.unwrap(), "true");
+}
+
+#[test]
+fn proton_browser_check() {
+    // Exact check from ProtonMail's public-index.js module 33759
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js(r#"
+        "reversed" in document.createElement("ol")
+        && Object.fromEntries
+        && "".trimStart
+        && window.crypto.subtle
+        ? 1 : 0
+    "#);
+    assert_eq!(result.unwrap(), "1");
+}
+
+// =========================================================================
+// CSS.supports()
+// =========================================================================
+
+#[test]
+fn css_supports_two_arg() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("CSS.supports('display', 'flex')");
+    assert_eq!(result.unwrap(), "true");
+}
+
+#[test]
+fn css_supports_one_arg() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("CSS.supports('(display: flex)')");
+    assert_eq!(result.unwrap(), "true");
+}
+
+#[test]
+fn css_supports_invalid() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("CSS.supports('', '')");
+    assert_eq!(result.unwrap(), "false");
+}
+
+#[test]
+fn css_escape() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("CSS.escape('foo.bar')");
+    assert_eq!(result.unwrap(), r"foo\.bar");
+}
+
+// =========================================================================
+// Intl
+// =========================================================================
+
+#[test]
+fn intl_typeof() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("typeof Intl === 'object'");
+    assert_eq!(result.unwrap(), "true");
+}
+
+#[test]
+fn intl_numberformat_basic() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("new Intl.NumberFormat('en').format(1234.5)");
+    assert_eq!(result.unwrap(), "1,234.5");
+}
+
+#[test]
+fn intl_pluralrules() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("new Intl.PluralRules('en').select(1)");
+    assert_eq!(result.unwrap(), "one");
+}
+
+#[test]
+fn intl_datetimeformat() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js("new Intl.DateTimeFormat('en').format(new Date(0))");
+    let val = result.unwrap();
+    assert!(!val.is_empty(), "DateTimeFormat should produce non-empty output");
+}
+
+// =========================================================================
+// Dynamic script loading
+// =========================================================================
+
+#[test]
+fn dynamic_script_load_fires_onload() {
+    let mut e = engine_with_html("<html><head></head><body></body></html>");
+    e.eval_js(r#"
+        var s = document.createElement('script');
+        s.src = 'https://example.com/chunk.js';
+        window.__script_loaded = false;
+        s.onload = function() { window.__script_loaded = true; };
+        document.head.appendChild(s);
+    "#).unwrap();
+
+    // Should have a pending fetch for the script
+    assert!(e.has_pending_fetches(), "should have pending fetch for script src");
+    let pending = e.pending_fetches();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].url, "https://example.com/chunk.js");
+
+    // Resolve the fetch with some JS code
+    e.resolve_fetch(pending[0].id, &FetchResponseData {
+        status: 200,
+        status_text: "OK".to_string(),
+        headers: vec![("content-type".to_string(), "application/javascript".to_string())],
+        body: "window.__chunk_ran = 42;".to_string(),
+        url: "https://example.com/chunk.js".to_string(),
+    });
+    e.settle();
+
+    // The script should have executed
+    assert_eq!(e.eval_js("window.__chunk_ran").unwrap(), "42");
+    // onload should have fired
+    assert_eq!(e.eval_js("window.__script_loaded").unwrap(), "true");
+}
+
+#[test]
+fn dynamic_script_eval_runs_code() {
+    let mut e = engine_with_html("<html><head></head><body></body></html>");
+
+    // Set up a global array that the "chunk" will push to (like webpack)
+    e.eval_js("window.__chunks = []; window.__chunks.push = function(v) { Array.prototype.push.call(this, v); };").unwrap();
+
+    e.eval_js(r#"
+        var s = document.createElement('script');
+        s.src = 'https://cdn.example.com/chunk.4599.js';
+        document.head.appendChild(s);
+    "#).unwrap();
+
+    let pending = e.pending_fetches();
+    assert_eq!(pending.len(), 1);
+
+    // The chunk pushes data onto the global array (webpack pattern)
+    e.resolve_fetch(pending[0].id, &FetchResponseData {
+        status: 200,
+        status_text: "OK".to_string(),
+        headers: vec![],
+        body: "window.__chunks.push([4599, {hello: 'world'}]);".to_string(),
+        url: "https://cdn.example.com/chunk.4599.js".to_string(),
+    });
+    e.settle();
+
+    assert_eq!(e.eval_js("window.__chunks.length").unwrap(), "1");
+    assert_eq!(e.eval_js("window.__chunks[0][0]").unwrap(), "4599");
+}
+
+#[test]
+fn dynamic_script_insertbefore_also_loads() {
+    let mut e = engine_with_html("<html><head><meta charset='utf-8'></head><body></body></html>");
+    e.eval_js(r#"
+        var s = document.createElement('script');
+        s.src = 'https://example.com/insert.js';
+        var meta = document.querySelector('meta');
+        document.head.insertBefore(s, meta);
+    "#).unwrap();
+
+    assert!(e.has_pending_fetches(), "insertBefore should trigger script load");
+    let pending = e.pending_fetches();
+    assert_eq!(pending[0].url, "https://example.com/insert.js");
+}
+
+#[test]
+fn dynamic_script_error_fires_onerror() {
+    let mut e = engine_with_html("<html><head></head><body></body></html>");
+    e.eval_js(r#"
+        var s = document.createElement('script');
+        s.src = 'https://example.com/missing.js';
+        window.__script_error = false;
+        s.onerror = function() { window.__script_error = true; };
+        document.head.appendChild(s);
+    "#).unwrap();
+
+    let pending = e.pending_fetches();
+    e.reject_fetch(pending[0].id, "Network error");
+    e.settle();
+
+    assert_eq!(e.eval_js("window.__script_error").unwrap(), "true");
+}
+
+#[test]
+fn message_channel_settles() {
+    // React's scheduler uses MessageChannel → setTimeout(0) → callback
+    let mut e = engine_with_html("<html><body></body></html>");
+    e.eval_js(r#"
+        window.__mc_result = 'not fired';
+        var ch = new MessageChannel();
+        ch.port1.onmessage = function(ev) {
+            window.__mc_result = 'fired: ' + ev.data;
+        };
+        ch.port2.postMessage('hello');
+    "#).unwrap();
+
+    // Before settle: the setTimeout(0) hasn't fired
+    assert_eq!(e.eval_js("window.__mc_result").unwrap(), "not fired");
+
+    // After settle: the timer fires, MessageChannel callback runs
+    e.settle();
+    assert_eq!(e.eval_js("window.__mc_result").unwrap(), "fired: hello");
+}
+
+#[test]
+fn settle_fires_chained_timers() {
+    // Verify that settle() processes cascading timers
+    let mut e = engine_with_html("<html><body></body></html>");
+    e.eval_js(r#"
+        window.__chain = [];
+        setTimeout(function() {
+            __chain.push('A');
+            setTimeout(function() {
+                __chain.push('B');
+                setTimeout(function() {
+                    __chain.push('C');
+                }, 0);
+            }, 0);
+        }, 0);
+    "#).unwrap();
+    e.settle();
+    assert_eq!(e.eval_js("__chain.join(',')").unwrap(), "A,B,C");
+}
+
+// =========================================================================
+// WebCrypto
+// =========================================================================
+
+#[test]
+fn crypto_get_random_values() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js(r#"
+        var a = new Uint8Array(16);
+        crypto.getRandomValues(a);
+        a.length + ',' + (a.some(function(x){ return x !== 0; }) ? 'random' : 'all-zero')
+    "#);
+    assert_eq!(result.unwrap(), "16,random");
+}
+
+#[test]
+fn crypto_subtle_digest_sha256() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    // SHA-256 of empty string = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    e.eval_js(r#"
+        var p; crypto.subtle.digest('SHA-256', new Uint8Array(0)).then(function(b){
+            var a = new Uint8Array(b), h = '';
+            for(var i=0;i<a.length;i++) h += (a[i]<16?'0':'') + a[i].toString(16);
+            p = h;
+        });
+    "#).unwrap();
+    e.settle();
+    assert_eq!(e.eval_js("p").unwrap(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+}
+
+#[test]
+fn crypto_subtle_aes_gcm_roundtrip() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    e.eval_js(r#"
+        var result = 'pending';
+        crypto.subtle.generateKey({name:'AES-GCM',length:256}, true, ['encrypt','decrypt'])
+        .then(function(key) {
+            var iv = crypto.getRandomValues(new Uint8Array(12));
+            var data = new TextEncoder().encode('hello world');
+            return crypto.subtle.encrypt({name:'AES-GCM',iv:iv}, key, data)
+            .then(function(ct) {
+                return crypto.subtle.decrypt({name:'AES-GCM',iv:iv}, key, ct);
+            });
+        })
+        .then(function(pt) {
+            result = new TextDecoder().decode(new Uint8Array(pt));
+        })
+        .catch(function(e) { result = 'ERROR: ' + e.message; });
+    "#).unwrap();
+    e.settle();
+    let val = e.eval_js("result");
+    assert_eq!(val.unwrap(), "hello world");
+}
+
+#[test]
+fn crypto_subtle_hmac_sign_verify() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    e.eval_js(r#"
+        var result = 'pending';
+        crypto.subtle.generateKey({name:'HMAC',hash:'SHA-256'}, false, ['sign','verify'])
+        .then(function(key) {
+            var data = new TextEncoder().encode('test message');
+            return crypto.subtle.sign({name:'HMAC'}, key, data)
+            .then(function(sig) {
+                return crypto.subtle.verify({name:'HMAC'}, key, sig, data);
+            });
+        })
+        .then(function(valid) { result = String(valid); })
+        .catch(function(e) { result = 'ERROR: ' + e.message; });
+    "#).unwrap();
+    e.settle();
+    assert_eq!(e.eval_js("result").unwrap(), "true");
+}
+
+#[test]
+fn dynamic_script_no_src_does_not_fetch() {
+    let mut e = engine_with_html("<html><head></head><body></body></html>");
+    e.eval_js(r#"
+        var s = document.createElement('script');
+        s.textContent = 'window.__inline = 1';
+        document.head.appendChild(s);
+    "#).unwrap();
+
+    assert!(!e.has_pending_fetches(), "inline script should not trigger fetch");
+}
+
+// =========================================================================
