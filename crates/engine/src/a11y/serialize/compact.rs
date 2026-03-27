@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::helpers::{
     collect_deep_text, element_role, get_interactive_value, heading_level, is_display_none,
-    is_visibility_hidden, normalize_compact, trim_trailing_newlines, BLOCK_ELEMENTS,
+    is_visibility_hidden, normalize_compact, BLOCK_ELEMENTS,
     INTERACTIVE_ELEMENTS, SKIP_ELEMENTS,
 };
 use super::refs::assign_refs;
