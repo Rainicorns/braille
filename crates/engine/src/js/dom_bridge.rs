@@ -231,6 +231,13 @@ fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // compareDocumentPosition(referenceId, otherId) -> u16 bitmask
+    g.set("__n_compareDocumentPosition", Function::new(ctx.clone(), |reference_id: u32, other_id: u32| -> u16 {
+        with_tree(|tree| {
+            tree.compare_document_position(reference_id as NodeId, other_id as NodeId)
+        })
+    }).unwrap()).unwrap();
+
     // closest(nodeId, selector) -> nodeId or -1
     g.set("__n_closest", Function::new(ctx.clone(), |node_id: u32, selector: String| -> i32 {
         with_tree(|tree| {
@@ -948,12 +955,7 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         EP.getRootNode = function() { return document; };
         EP.compareDocumentPosition = function(other) {
             if (!other || other.__nid === undefined || this.__nid === undefined) return 0;
-            if (this.__nid === other.__nid) return 0;
-            // Check if other is contained by this
-            if (__n_contains(this.__nid, other.__nid)) return 16 | 4; // CONTAINED_BY | FOLLOWING
-            // Check if this is contained by other
-            if (__n_contains(other.__nid, this.__nid)) return 8 | 2; // CONTAINS | PRECEDING
-            return 4; // FOLLOWING (simplified)
+            return __n_compareDocumentPosition(this.__nid, other.__nid);
         };
 
         Object.defineProperties(EP, {
@@ -2556,6 +2558,25 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                 hasFeature: function() { return true; },
             }, configurable: true },
         });
+        // Node constructor with constants (used by React, etc.)
+        var Node = function Node() {};
+        Node.prototype = EP;
+        Node.ELEMENT_NODE = 1;
+        Node.ATTRIBUTE_NODE = 2;
+        Node.TEXT_NODE = 3;
+        Node.CDATA_SECTION_NODE = 4;
+        Node.PROCESSING_INSTRUCTION_NODE = 7;
+        Node.COMMENT_NODE = 8;
+        Node.DOCUMENT_NODE = 9;
+        Node.DOCUMENT_TYPE_NODE = 10;
+        Node.DOCUMENT_FRAGMENT_NODE = 11;
+        Node.DOCUMENT_POSITION_DISCONNECTED = 1;
+        Node.DOCUMENT_POSITION_PRECEDING = 2;
+        Node.DOCUMENT_POSITION_FOLLOWING = 4;
+        Node.DOCUMENT_POSITION_CONTAINS = 8;
+        Node.DOCUMENT_POSITION_CONTAINED_BY = 16;
+        Node.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32;
+        globalThis.Node = Node;
     })();
     "#).unwrap_or_else(|e| {
         let msg = match e {
