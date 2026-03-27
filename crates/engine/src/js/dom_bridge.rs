@@ -1748,6 +1748,32 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             configurable: true
         });
 
+        // <select> selectedOptions property
+        Object.defineProperty(EP, 'selectedOptions', {
+            get: function() {
+                if (this.tagName !== 'SELECT') return [];
+                var opts = this.querySelectorAll('option');
+                var result = [];
+                for (var i = 0; i < opts.length; i++) {
+                    if (opts[i].hasAttribute('selected') || (opts[i].__props && opts[i].__props._selected)) {
+                        result.push(opts[i]);
+                    }
+                }
+                return result;
+            },
+            configurable: true
+        });
+
+        // <select> length property (number of options)
+        Object.defineProperty(EP, 'length', {
+            get: function() {
+                if (this.tagName !== 'SELECT') return undefined;
+                var opts = this.querySelectorAll('option');
+                return opts.length;
+            },
+            configurable: true
+        });
+
         // <option> text property
         Object.defineProperty(EP, 'text', {
             get: function() {
