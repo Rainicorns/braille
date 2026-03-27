@@ -739,3 +739,86 @@ fn dynamic_script_no_src_does_not_fetch() {
 
     assert!(!e.has_pending_fetches(), "inline script should not trigger fetch");
 }
+
+// =========================================================================
+// select.options, select.selectedOptions, select.length
+// =========================================================================
+
+#[test]
+fn select_options_returns_all_option_elements() {
+    let mut e = engine_with_html(r#"<html><body>
+        <select id="s">
+            <option value="a">A</option>
+            <option value="b">B</option>
+            <option value="c">C</option>
+        </select>
+    </body></html>"#);
+    assert_eq!(e.eval_js("document.getElementById('s').options.length").unwrap(), "3");
+}
+
+#[test]
+fn select_options_indexed_access() {
+    let mut e = engine_with_html(r#"<html><body>
+        <select id="s">
+            <option value="x">X</option>
+            <option value="y">Y</option>
+        </select>
+    </body></html>"#);
+    assert_eq!(
+        e.eval_js("document.getElementById('s').options[1].getAttribute('value')").unwrap(),
+        "y"
+    );
+}
+
+#[test]
+fn select_selected_options_returns_selected() {
+    let mut e = engine_with_html(r#"<html><body>
+        <select id="s">
+            <option value="a">A</option>
+            <option value="b" selected>B</option>
+            <option value="c">C</option>
+        </select>
+    </body></html>"#);
+    assert_eq!(e.eval_js("document.getElementById('s').selectedOptions.length").unwrap(), "1");
+    assert_eq!(
+        e.eval_js("document.getElementById('s').selectedOptions[0].getAttribute('value')").unwrap(),
+        "b"
+    );
+}
+
+#[test]
+fn select_selected_options_empty_when_none_explicitly_selected() {
+    let mut e = engine_with_html(r#"<html><body>
+        <select id="s">
+            <option value="a">A</option>
+            <option value="b">B</option>
+        </select>
+    </body></html>"#);
+    assert_eq!(e.eval_js("document.getElementById('s').selectedOptions.length").unwrap(), "0");
+}
+
+#[test]
+fn select_length_returns_number_of_options() {
+    let mut e = engine_with_html(r#"<html><body>
+        <select id="s">
+            <option value="a">A</option>
+            <option value="b">B</option>
+            <option value="c">C</option>
+        </select>
+    </body></html>"#);
+    assert_eq!(e.eval_js("document.getElementById('s').length").unwrap(), "3");
+}
+
+#[test]
+fn select_length_returns_zero_for_empty_select() {
+    let mut e = engine_with_html(r#"<html><body>
+        <select id="s"></select>
+    </body></html>"#);
+    assert_eq!(e.eval_js("document.getElementById('s').length").unwrap(), "0");
+}
+
+#[test]
+fn select_length_undefined_for_non_select() {
+    let mut e = engine_with_html(r#"<html><body><div id="d"></div></body></html>"#);
+    assert_eq!(e.eval_js("String(document.getElementById('d').length)").unwrap(), "undefined");
+}

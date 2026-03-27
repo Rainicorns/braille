@@ -117,6 +117,59 @@ fn get_options(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult
 }
 
 // ---------------------------------------------------------------------------
+// select.selectedOptions getter
+// ---------------------------------------------------------------------------
+
+fn get_selected_options(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    extract_element!(el, this, "selectedOptions getter");
+
+    let tree_rc = el.tree.clone();
+    let node_id = el.node_id;
+
+    if !matches!(&tree_rc.borrow().get_node(node_id).data, NodeData::Element { tag_name, .. } if tag_name.eq_ignore_ascii_case("select"))
+    {
+        // Non-select elements return an empty array-like
+        let arr = JsArray::new(ctx);
+        return Ok(arr.into());
+    }
+
+    let options = get_option_children(&tree_rc.borrow(), node_id);
+    let arr = JsArray::new(ctx);
+    {
+        let tree = tree_rc.borrow();
+        let mut selected_ids = Vec::new();
+        for &opt_id in &options {
+            if tree.get_attribute(opt_id, "selected").is_some() {
+                selected_ids.push(opt_id);
+            }
+        }
+        drop(tree);
+        for opt_id in selected_ids {
+            let js_obj = get_or_create_js_element(opt_id, tree_rc.clone(), ctx)?;
+            arr.push(js_obj, ctx)?;
+        }
+    }
+    Ok(arr.into())
+}
+
+// ---------------------------------------------------------------------------
+// select.length getter
+// ---------------------------------------------------------------------------
+
+fn get_select_length(this: &JsValue, _args: &[JsValue], _ctx: &mut Context) -> JsResult<JsValue> {
+    extract_element!(el, this, "length getter");
+
+    let tree = el.tree.borrow();
+
+    if !is_select(&tree, el.node_id) {
+        return Ok(JsValue::undefined());
+    }
+
+    let count = get_option_children(&tree, el.node_id).len();
+    Ok(JsValue::from(count as i32))
+}
+
+// ---------------------------------------------------------------------------
 // option.selected getter/setter
 // ---------------------------------------------------------------------------
 
@@ -219,6 +272,24 @@ pub(crate) fn register_select_props(class: &mut ClassBuilder) -> JsResult<()> {
     class.accessor(
         js_string!("options"),
         Some(options_getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
+    // selectedOptions getter (meaningful only on <select>)
+    let selected_options_getter = NativeFunction::from_fn_ptr(get_selected_options);
+    class.accessor(
+        js_string!("selectedOptions"),
+        Some(selected_options_getter.to_js_function(&realm)),
+        None,
+        Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
+    );
+
+    // length getter (meaningful only on <select>, returns number of options)
+    let length_getter = NativeFunction::from_fn_ptr(get_select_length);
+    class.accessor(
+        js_string!("length"),
+        Some(length_getter.to_js_function(&realm)),
         None,
         Attribute::CONFIGURABLE | Attribute::NON_ENUMERABLE,
     );
@@ -438,6 +509,84 @@ mod tests {
         let result2 = runtime.eval(r#"document.getElementById('opt').text"#).unwrap();
         let s2 = result2.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
         assert_eq!(s2, "Beta");
+    }
+
+    #[test]
+    fn select_selected_options_returns_selected() {
+        let mut engine = Engine::new();
+        engine.load_html(
+            r##"<html><body>
+            <select id="s">
+                <option value="a">A</option>
+                <option value="b" selected>B</option>
+                <option value="c">C</option>
+            </select>
+        </body></html>"##,
+        );
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime
+            .eval(r#"document.getElementById('s').selectedOptions.length"#)
+            .unwrap();
+        let n = result.to_number(&mut runtime.context).unwrap();
+        assert_eq!(n, 1.0);
+
+        // The selected option should have value "b"
+        let result2 = runtime
+            .eval(r#"document.getElementById('s').selectedOptions[0].value"#)
+            .unwrap();
+        let s = result2.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
+        assert_eq!(s, "b");
+    }
+
+    #[test]
+    fn select_selected_options_empty_when_none_selected() {
+        let mut engine = Engine::new();
+        engine.load_html(
+            r##"<html><body>
+            <select id="s">
+                <option value="a">A</option>
+                <option value="b">B</option>
+            </select>
+        </body></html>"##,
+        );
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime
+            .eval(r#"document.getElementById('s').selectedOptions.length"#)
+            .unwrap();
+        let n = result.to_number(&mut runtime.context).unwrap();
+        assert_eq!(n, 0.0);
+    }
+
+    #[test]
+    fn select_length_returns_option_count() {
+        let mut engine = Engine::new();
+        engine.load_html(
+            r##"<html><body>
+            <select id="s">
+                <option value="a">A</option>
+                <option value="b">B</option>
+                <option value="c">C</option>
+            </select>
+        </body></html>"##,
+        );
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval(r#"document.getElementById('s').length"#).unwrap();
+        let n = result.to_number(&mut runtime.context).unwrap();
+        assert_eq!(n, 3.0);
+    }
+
+    #[test]
+    fn select_length_returns_zero_for_empty_select() {
+        let mut engine = Engine::new();
+        engine.load_html(
+            r##"<html><body>
+            <select id="s"></select>
+        </body></html>"##,
+        );
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval(r#"document.getElementById('s').length"#).unwrap();
+        let n = result.to_number(&mut runtime.context).unwrap();
+        assert_eq!(n, 0.0);
     }
 
     #[test]
