@@ -681,8 +681,13 @@ impl Engine {
             let Some(url) = url_value.as_str() else {
                 continue;
             };
+            // Register the import map entry: bare specifier -> URL
+            runtime.add_import_map_entry(specifier, url);
+            // If the URL content has been fetched, register it as a module under the URL
             if let Some(content) = fetched.scripts.get(url) {
                 if !content.trim().is_empty() {
+                    let _ = runtime.register_module(url, content);
+                    // Also register under the bare specifier for direct lookup
                     let _ = runtime.register_module(specifier, content);
                 }
             }

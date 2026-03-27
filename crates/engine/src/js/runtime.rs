@@ -7,6 +7,7 @@ use rquickjs::{Context, Function, Module, Runtime};
 use crate::dom::tree::DomTree;
 use crate::dom::NodeId;
 
+use super::module_loader::{self, SharedModuleRegistry, BrailleResolver, BrailleLoader};
 use super::state::EngineState;
 
 thread_local! {
@@ -20,6 +21,7 @@ pub struct JsRuntime {
     context: Context,
     tree: Rc<RefCell<DomTree>>,
     pub(crate) state: Rc<RefCell<EngineState>>,
+    module_registry: SharedModuleRegistry,
 }
 
 impl JsRuntime {
@@ -41,6 +43,13 @@ impl JsRuntime {
             },
         )));
 
+        // Set up custom module loader with shared registry
+        let registry = module_loader::new_registry();
+        runtime.set_loader(
+            BrailleResolver { registry: Rc::clone(&registry) },
+            BrailleLoader { registry: Rc::clone(&registry) },
+        );
+
         let context = Context::full(&runtime).expect("failed to create QuickJS context");
         let state = Rc::new(RefCell::new(EngineState::new()));
 
@@ -49,6 +58,7 @@ impl JsRuntime {
             context,
             tree: Rc::clone(&tree),
             state: Rc::clone(&state),
+            module_registry: registry,
         };
 
         // Register all globals
@@ -92,12 +102,21 @@ impl JsRuntime {
     }
 
     /// Register a module in the loader without evaluating it.
+    /// Adds to the shared registry so the custom resolver/loader can find it.
     pub fn register_module(&mut self, specifier: &str, code: &str) -> Result<(), String> {
-        self.context.with(|ctx| {
-            let _module = Module::declare(ctx.clone(), specifier, code)
-                .map_err(|e| format_js_error(&ctx, e))?;
-            Ok::<_, String>(())
-        })
+        self.module_registry.borrow_mut().modules.insert(
+            specifier.to_string(),
+            code.to_string(),
+        );
+        Ok(())
+    }
+
+    /// Add an import map entry: bare specifier -> resolved specifier.
+    pub fn add_import_map_entry(&mut self, bare: &str, resolved: &str) {
+        self.module_registry.borrow_mut().import_map.insert(
+            bare.to_string(),
+            resolved.to_string(),
+        );
     }
 
     /// Returns a reference to the shared DomTree.
