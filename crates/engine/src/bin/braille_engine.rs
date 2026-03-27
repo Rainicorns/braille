@@ -83,8 +83,12 @@ fn main() {
 
         match msg {
             HostMessage::Command(cmd) => {
+                let is_close = matches!(cmd, DaemonCommand::Close);
                 let response = handle_command(&mut session, &mut reader, &mut writer, cmd);
                 send(&mut writer, &EngineMessage::CommandResult(response));
+                if is_close {
+                    break;
+                }
             }
             HostMessage::FetchResults(_) => {
                 send(
@@ -220,7 +224,10 @@ fn handle_command_inner(
             None => DaemonResponse::err("no forward page in history".to_string()),
         },
         DaemonCommand::Close => {
-            std::process::exit(0);
+            // Return response first — the caller needs confirmation before we exit.
+            // The main loop will send this via EngineMessage::CommandResult,
+            // then we rely on the host closing stdin (triggering EOF) to stop the loop.
+            DaemonResponse::ok("session closed".to_string())
         }
         DaemonCommand::NewSession | DaemonCommand::DaemonStop => {
             DaemonResponse::err("unexpected command for engine process".to_string())
