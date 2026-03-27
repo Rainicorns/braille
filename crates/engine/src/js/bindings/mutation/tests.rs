@@ -1,9 +1,7 @@
-#[cfg(test)]
-mod tests {
-    use crate::dom::{DomTree, NodeData};
-    use crate::js::runtime::JsRuntime;
-    use std::cell::RefCell;
-    use std::rc::Rc;
+use crate::dom::{DomTree, NodeData};
+use crate::js::runtime::JsRuntime;
+use std::cell::RefCell;
+use std::rc::Rc;
 
     fn make_mutation_test_tree() -> Rc<RefCell<DomTree>> {
         let tree = Rc::new(RefCell::new(DomTree::new()));
@@ -426,4 +424,3 @@ window.__debug = debug_log.join("\n");
         eprintln!("{}", debug);
         assert!(!debug.contains("FAIL"), "Element-remove harness test:\n{}", debug);
     }
-}

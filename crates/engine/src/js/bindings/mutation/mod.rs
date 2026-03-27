@@ -3,6 +3,7 @@ mod adoption;
 mod validation;
 mod operations;
 mod registration;
+#[cfg(test)]
 mod tests;
 
 // Re-export the public API so callers outside this module are unaffected.
