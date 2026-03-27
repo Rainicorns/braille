@@ -551,8 +551,8 @@ mod tests {
     }
 
     #[test]
-    fn value_set_then_read_via_get_attribute() {
-        // Setting .value should update the attribute, and getAttribute should see it
+    fn value_set_does_not_update_attribute() {
+        // Per HTML spec: setting .value property should NOT change getAttribute('value')
         let mut engine = Engine::new();
         engine.load_html(r#"<html><body><input id="i" /></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
@@ -560,23 +560,125 @@ mod tests {
         let result = runtime
             .eval(r#"document.getElementById("i").getAttribute("value")"#)
             .unwrap();
-        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
-        assert_eq!(s, "hello");
+        // getAttribute should return null (no value attribute was set in HTML)
+        assert!(result.is_null(), "getAttribute('value') should be null after setting .value property");
     }
 
     #[test]
-    fn set_value_then_snapshot_shows_updated_value() {
+    fn value_set_does_not_overwrite_existing_attribute() {
+        // Setting .value should not change an existing value attribute
         let mut engine = Engine::new();
-        engine.load_html(r#"<html><body><input id="i" value="old" /></body></html>"#);
+        engine.load_html(r#"<html><body><input id="i" value="initial" /></body></html>"#);
         let runtime = engine.runtime.as_mut().unwrap();
-        runtime.eval(r#"document.getElementById("i").value = "new""#).unwrap();
+        runtime.eval(r#"document.getElementById("i").value = "changed""#).unwrap();
+        // .value property returns the new value
+        let result = runtime.eval(r#"document.getElementById("i").value"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
+        assert_eq!(s, "changed");
+        // But getAttribute still returns the original
+        let result = runtime
+            .eval(r#"document.getElementById("i").getAttribute("value")"#)
+            .unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
+        assert_eq!(s, "initial");
+    }
 
-        // Take an accessibility snapshot and verify it contains the updated value
-        let snapshot = engine.snapshot(braille_wire::SnapMode::Accessibility);
-        assert!(
-            snapshot.contains("new"),
-            "Accessibility snapshot should contain the updated value 'new', got: {}",
-            snapshot
-        );
+    #[test]
+    fn set_attribute_value_updates_property_when_not_dirty() {
+        // setAttribute('value', ...) should update .value if the property hasn't been set directly
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><input id="i" /></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("i").setAttribute("value", "from-attr")"#).unwrap();
+        let result = runtime.eval(r#"document.getElementById("i").value"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
+        assert_eq!(s, "from-attr");
+    }
+
+    #[test]
+    fn set_attribute_value_does_not_override_dirty_property() {
+        // setAttribute('value', ...) should NOT override .value if it has been set directly (dirty)
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><input id="i" /></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        // Set the property first (makes it dirty)
+        runtime.eval(r#"document.getElementById("i").value = "dirty""#).unwrap();
+        // Then set the attribute
+        runtime.eval(r#"document.getElementById("i").setAttribute("value", "from-attr")"#).unwrap();
+        // Property should still be the dirty value
+        let result = runtime.eval(r#"document.getElementById("i").value"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
+        assert_eq!(s, "dirty");
+    }
+
+    #[test]
+    fn default_value_reads_and_writes_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><input id="i" value="initial" /></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        // defaultValue reads the attribute
+        let result = runtime.eval(r#"document.getElementById("i").defaultValue"#).unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
+        assert_eq!(s, "initial");
+        // Setting defaultValue updates the attribute
+        runtime.eval(r#"document.getElementById("i").defaultValue = "new-default""#).unwrap();
+        let result = runtime
+            .eval(r#"document.getElementById("i").getAttribute("value")"#)
+            .unwrap();
+        let s = result.to_string(&mut runtime.context).unwrap().to_std_string_escaped();
+        assert_eq!(s, "new-default");
+    }
+
+    #[test]
+    fn default_checked_reads_and_writes_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><input id="c" type="checkbox" /></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        // defaultChecked reads the attribute (initially false)
+        let result = runtime.eval(r#"document.getElementById("c").defaultChecked"#).unwrap();
+        assert_eq!(result.to_boolean(), false);
+        // Setting defaultChecked updates the attribute
+        runtime.eval(r#"document.getElementById("c").defaultChecked = true"#).unwrap();
+        let result = runtime
+            .eval(r#"document.getElementById("c").hasAttribute("checked")"#)
+            .unwrap();
+        assert_eq!(result.to_boolean(), true);
+        // .checked property should also reflect true (since not dirty)
+        let result = runtime.eval(r#"document.getElementById("c").checked"#).unwrap();
+        assert_eq!(result.to_boolean(), true);
+    }
+
+    #[test]
+    fn checked_set_does_not_update_attribute() {
+        // Per HTML spec: setting .checked property should NOT change the checked attribute
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><input id="c" type="checkbox" /></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("c").checked = true"#).unwrap();
+        // Property should be true
+        let result = runtime.eval(r#"document.getElementById("c").checked"#).unwrap();
+        assert_eq!(result.to_boolean(), true);
+        // But the attribute should NOT be set
+        let result = runtime
+            .eval(r#"document.getElementById("c").hasAttribute("checked")"#)
+            .unwrap();
+        assert_eq!(result.to_boolean(), false);
+    }
+
+    #[test]
+    fn checked_property_attribute_separation_with_existing_attr() {
+        // Element starts with checked attribute, setting .checked = false shouldn't remove attribute
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><input id="c" type="checkbox" checked /></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("c").checked = false"#).unwrap();
+        // Property should be false
+        let result = runtime.eval(r#"document.getElementById("c").checked"#).unwrap();
+        assert_eq!(result.to_boolean(), false);
+        // But the attribute should still be present (unchanged)
+        let result = runtime
+            .eval(r#"document.getElementById("c").hasAttribute("checked")"#)
+            .unwrap();
+        assert_eq!(result.to_boolean(), true);
     }
 }

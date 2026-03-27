@@ -880,9 +880,7 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
                             opts[i].__props._selected = ((opts[i].getAttribute('value') || opts[i].textContent || '') === String(v));
                         }
                     }
-                    // Also sync to attribute so Rust-side snapshot can read the current value
-                    __n_setAttribute(this.__nid, 'value', String(v));
-                    // For textarea, also update text content so the snapshot can see it
+                    // For textarea, update text content (textarea stores its value as text content, not as an attribute)
                     if (this.tagName === 'TEXTAREA') __n_setTextContent(this.__nid, String(v));
                 },
                 configurable: true
@@ -1579,6 +1577,19 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             return obj;
         }
         globalThis.__braille_get_element_wrapper = __w;
+
+        // Collect all dirty property values from cached wrappers.
+        // Returns a JSON string: [[nodeId, value], ...]
+        globalThis.__braille_collect_dirty_values = function() {
+            var result = [];
+            for (var nid in _cache) {
+                var el = _cache[nid];
+                if (el.__props && el.__props._value !== undefined) {
+                    result.push([parseInt(nid), String(el.__props._value)]);
+                }
+            }
+            return JSON.stringify(result);
+        };
 
         // Event dispatch with capture + bubble phases
         function __dispatch(nodeId, event) {
