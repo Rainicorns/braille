@@ -1700,6 +1700,61 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             configurable: true
         });
 
+        // enctype property (defaults to "application/x-www-form-urlencoded", validates values)
+        Object.defineProperty(EP, 'enctype', {
+            get: function() {
+                var v = (this.getAttribute('enctype') || '').toLowerCase();
+                if (v === 'application/x-www-form-urlencoded' || v === 'multipart/form-data' || v === 'text/plain') return v;
+                return 'application/x-www-form-urlencoded';
+            },
+            set: function(v) { this.setAttribute('enctype', String(v)); },
+            configurable: true
+        });
+
+        // encoding property (alias for enctype per spec)
+        Object.defineProperty(EP, 'encoding', {
+            get: function() { return this.enctype; },
+            set: function(v) { this.enctype = v; },
+            configurable: true
+        });
+
+        // noValidate property (boolean attribute)
+        Object.defineProperty(EP, 'noValidate', {
+            get: function() { return this.hasAttribute('novalidate'); },
+            set: function(v) { if (v) this.setAttribute('novalidate', ''); else this.removeAttribute('novalidate'); },
+            configurable: true
+        });
+
+        // target property
+        Object.defineProperty(EP, 'target', {
+            get: function() { return this.getAttribute('target') || ''; },
+            set: function(v) { this.setAttribute('target', String(v)); },
+            configurable: true
+        });
+
+        // acceptCharset property (reflects "accept-charset" attribute)
+        Object.defineProperty(EP, 'acceptCharset', {
+            get: function() { return this.getAttribute('accept-charset') || ''; },
+            set: function(v) { this.setAttribute('accept-charset', String(v)); },
+            configurable: true
+        });
+
+        // autocomplete property (defaults to "on")
+        Object.defineProperty(EP, 'autocomplete', {
+            get: function() { return this.getAttribute('autocomplete') || 'on'; },
+            set: function(v) { this.setAttribute('autocomplete', String(v)); },
+            configurable: true
+        });
+
+        // length property for <form>: returns number of form controls
+        Object.defineProperty(EP, 'length', {
+            get: function() {
+                if (this.tagName !== 'FORM') return undefined;
+                return this.querySelectorAll('input, textarea, select, button').length;
+            },
+            configurable: true
+        });
+
         // <select> selectedIndex property
         Object.defineProperty(EP, 'selectedIndex', {
             get: function() {
@@ -3064,5 +3119,217 @@ mod tests {
 
         let fired = engine.eval_js("window.__invalidFired").unwrap();
         assert_eq!(fired, "true", "invalid event should fire with setCustomValidity");
+    }
+
+    // -- form element properties --
+
+    // -- form.enctype --
+
+    #[test]
+    fn form_enctype_defaults_to_urlencoded() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").enctype"#).unwrap();
+        assert_eq!(result, "application/x-www-form-urlencoded");
+    }
+
+    #[test]
+    fn form_enctype_returns_valid_value() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f" enctype="multipart/form-data"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").enctype"#).unwrap();
+        assert_eq!(result, "multipart/form-data");
+    }
+
+    #[test]
+    fn form_enctype_invalid_falls_back_to_default() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f" enctype="bogus"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").enctype"#).unwrap();
+        assert_eq!(result, "application/x-www-form-urlencoded");
+    }
+
+    #[test]
+    fn form_enctype_setter_updates_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("f").enctype = "text/plain""#).unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").enctype"#).unwrap();
+        assert_eq!(result, "text/plain");
+    }
+
+    // -- form.encoding (alias for enctype) --
+
+    #[test]
+    fn form_encoding_is_alias_for_enctype() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f" enctype="multipart/form-data"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").encoding"#).unwrap();
+        assert_eq!(result, "multipart/form-data");
+    }
+
+    #[test]
+    fn form_encoding_setter_updates_enctype() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("f").encoding = "text/plain""#).unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").enctype"#).unwrap();
+        assert_eq!(result, "text/plain");
+    }
+
+    // -- form.noValidate --
+
+    #[test]
+    fn form_no_validate_false_when_absent() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").noValidate"#).unwrap();
+        assert_eq!(result, "false");
+    }
+
+    #[test]
+    fn form_no_validate_true_when_present() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f" novalidate></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").noValidate"#).unwrap();
+        assert_eq!(result, "true");
+    }
+
+    #[test]
+    fn form_no_validate_setter_adds_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("f").noValidate = true"#).unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").noValidate"#).unwrap();
+        assert_eq!(result, "true");
+    }
+
+    #[test]
+    fn form_no_validate_setter_removes_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f" novalidate></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("f").noValidate = false"#).unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").noValidate"#).unwrap();
+        assert_eq!(result, "false");
+    }
+
+    // -- form.target --
+
+    #[test]
+    fn form_target_defaults_to_empty() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").target"#).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn form_target_getter_returns_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f" target="_blank"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").target"#).unwrap();
+        assert_eq!(result, "_blank");
+    }
+
+    #[test]
+    fn form_target_setter_updates_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("f").target = "_self""#).unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").target"#).unwrap();
+        assert_eq!(result, "_self");
+    }
+
+    // -- form.acceptCharset --
+
+    #[test]
+    fn form_accept_charset_defaults_to_empty() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").acceptCharset"#).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn form_accept_charset_getter_returns_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f" accept-charset="UTF-8"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").acceptCharset"#).unwrap();
+        assert_eq!(result, "UTF-8");
+    }
+
+    #[test]
+    fn form_accept_charset_setter_updates_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("f").acceptCharset = "ISO-8859-1""#).unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").acceptCharset"#).unwrap();
+        assert_eq!(result, "ISO-8859-1");
+    }
+
+    // -- form.autocomplete --
+
+    #[test]
+    fn form_autocomplete_defaults_to_on() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").autocomplete"#).unwrap();
+        assert_eq!(result, "on");
+    }
+
+    #[test]
+    fn form_autocomplete_getter_returns_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f" autocomplete="off"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").autocomplete"#).unwrap();
+        assert_eq!(result, "off");
+    }
+
+    #[test]
+    fn form_autocomplete_setter_updates_attribute() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        runtime.eval(r#"document.getElementById("f").autocomplete = "off""#).unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").autocomplete"#).unwrap();
+        assert_eq!(result, "off");
+    }
+
+    // -- form.length --
+
+    #[test]
+    fn form_length_returns_number_of_controls() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"><input type="text"><select><option>A</option></select><textarea></textarea><button>Go</button><div>Not interactive</div></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").length"#).unwrap();
+        assert_eq!(result, "4");
+    }
+
+    #[test]
+    fn form_length_returns_zero_for_empty_form() {
+        let mut engine = Engine::new();
+        engine.load_html(r#"<html><body><form id="f"><p>No controls here</p></form></body></html>"#);
+        let runtime = engine.runtime.as_mut().unwrap();
+        let result = runtime.eval_to_string(r#"document.getElementById("f").length"#).unwrap();
+        assert_eq!(result, "0");
     }
 }
