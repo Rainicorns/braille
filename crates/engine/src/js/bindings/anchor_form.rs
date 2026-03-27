@@ -70,6 +70,7 @@ fn collect_descendants(tree: &crate::dom::DomTree, node_id: NodeId, results: &mu
     }
 }
 
+
 // ---------------------------------------------------------------------------
 // Anchor: a.href getter/setter
 // ---------------------------------------------------------------------------
@@ -177,6 +178,8 @@ fn get_form_elements(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> Js
     let tree_rc = el.tree.clone();
     let node_id = el.node_id;
 
+    let interactive_tags: &[&str] = &["input", "select", "textarea", "button"];
+
     // Collect all descendant NodeIds
     let descendants = {
         let tree = tree_rc.borrow();
@@ -185,8 +188,7 @@ fn get_form_elements(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> Js
         descs
     };
 
-    // Filter to interactive elements, then wrap as JsElement
-    let interactive_tags: &[&str] = &["input", "select", "textarea", "button"];
+    // Filter descendants to interactive elements
     let arr = JsArray::new(ctx);
 
     let tree = tree_rc.borrow();
@@ -196,6 +198,34 @@ fn get_form_elements(this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> Js
         if let NodeData::Element { ref tag_name, .. } = node.data {
             if interactive_tags.contains(&tag_name.to_ascii_lowercase().as_str()) {
                 interactive_ids.push(desc_id);
+            }
+        }
+    }
+
+    // Also find elements outside the form that reference it via form="<id>" attribute.
+    // Get this form's id attribute first.
+    let form_id_attr = tree.get_attribute(node_id, "id");
+    if let Some(ref form_id_str) = form_id_attr {
+        if !form_id_str.is_empty() {
+            // Search the entire document for interactive elements with form="<form_id>"
+            let doc = tree.document();
+            let mut all_descs = Vec::new();
+            collect_descendants(&tree, doc, &mut all_descs);
+            for candidate_id in all_descs {
+                // Skip elements that are already descendants of this form
+                if interactive_ids.contains(&candidate_id) {
+                    continue;
+                }
+                let node = tree.get_node(candidate_id);
+                if let NodeData::Element { ref tag_name, .. } = node.data {
+                    if interactive_tags.contains(&tag_name.to_ascii_lowercase().as_str()) {
+                        if let Some(ref attr_val) = tree.get_attribute(candidate_id, "form") {
+                            if attr_val == form_id_str {
+                                interactive_ids.push(candidate_id);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
