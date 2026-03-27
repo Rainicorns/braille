@@ -3151,47 +3151,9 @@ mod tests {
 
     use crate::Engine;
 
-    #[test]
-    fn js_value_setter_fires_input_event() {
-        let mut engine = Engine::new();
-        engine.load_html(r#"<html><body>
-            <input id="i" type="text">
-            <script>
-                window.__inputFired = false;
-                window.__inputBubbles = null;
-                document.getElementById('i').addEventListener('input', function(e) {
-                    window.__inputFired = true;
-                    window.__inputBubbles = e.bubbles;
-                });
-            </script>
-        </body></html>"#);
-
-        engine.eval_js("document.getElementById('i').value = 'hello'").unwrap();
-
-        let fired = engine.eval_js("window.__inputFired").unwrap();
-        assert_eq!(fired, "true", "input event should fire when value is set via JS");
-        let bubbles = engine.eval_js("window.__inputBubbles").unwrap();
-        assert_eq!(bubbles, "true", "input event should bubble");
-    }
-
-    #[test]
-    fn js_value_setter_fires_input_event_on_textarea() {
-        let mut engine = Engine::new();
-        engine.load_html(r#"<html><body>
-            <textarea id="t"></textarea>
-            <script>
-                window.__inputFired = false;
-                document.getElementById('t').addEventListener('input', function() {
-                    window.__inputFired = true;
-                });
-            </script>
-        </body></html>"#);
-
-        engine.eval_js("document.getElementById('t').value = 'hello'").unwrap();
-
-        let fired = engine.eval_js("window.__inputFired").unwrap();
-        assert_eq!(fired, "true", "input event should fire on textarea value set");
-    }
+    // NOTE: Per HTML spec, programmatically setting .value does NOT fire an input event.
+    // Only user interaction (typing) should fire input events. The property/attribute
+    // separation branch (worktree-agent-a778440a) correctly removed this behavior.
 
     #[test]
     fn invalid_event_fires_on_check_validity() {

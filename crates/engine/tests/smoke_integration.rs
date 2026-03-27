@@ -1069,7 +1069,8 @@ fn input_properties_comprehensive() {
     assert!(snap.contains("newName=email_field"), "set name: {}", snap);
     assert!(snap.contains("placeholder=Enter email"), "placeholder: {}", snap);
     assert!(snap.contains("value=test@example.com"), "value: {}", snap);
-    assert!(snap.contains("valueAttr=test@example.com"), "value attr: {}", snap);
+    // Per HTML spec, setting .value property does NOT update getAttribute('value')
+    assert!(snap.contains("valueAttr=null"), "value attr: {}", snap);
     assert!(snap.contains("defaultChecked=false"), "default checked: {}", snap);
     assert!(snap.contains("checkedTrue=true"), "set checked: {}", snap);
 }
