@@ -582,25 +582,45 @@ fn register_native_functions(ctx: &Ctx<'_>) {
 }
 
 fn register_js_wrappers(ctx: &Ctx<'_>) {
-    // This JS code sets up:
-    // 1. __braille_node_cache: Map<nodeId, elementWrapper> for identity
-    // 2. __braille_get_element_wrapper(nodeId): creates/retrieves element wrapper
-    // 3. Element prototype with methods calling native helpers
-    // 4. document.getElementById etc. overrides
-    // 5. Event listener storage and dispatch
-    // 6. __braille_click(nodeId) for Rust click_element calls
-    ctx.eval::<(), _>(r#"
-    (function() {
-        var _cache = {};
-        var _listeners = {};      // key: nodeId + ":" + eventType -> array of {cb, capture}
-        var _captureKeys = {};    // key: nodeId + ":" + eventType -> array of capture callbacks
-        var _bubbleKeys = {};     // key: nodeId + ":" + eventType -> array of bubble callbacks
-        var _winListeners = {};   // window bubble listeners
-        var _winCapture = {};     // window capture listeners
-        var _docCapture = {};     // document capture listeners
+    // Build the JS initialization as a single IIFE from separate chunks.
+    // Each chunk is returned by a dedicated function for maintainability.
+    let js = [
+        "(function() {\n",
+        "var _cache = {};\n",
+        "var _listeners = {};\n",
+        "var _captureKeys = {};\n",
+        "var _bubbleKeys = {};\n",
+        "var _winListeners = {};\n",
+        "var _winCapture = {};\n",
+        "var _docCapture = {};\n",
+        "var EP = {};\n",
+        element_prototype_js(),
+        form_bindings_js(),
+        label_bindings_js(),
+        wrapper_and_dispatch_js(),
+        "\n})();\n",
+    ].concat();
+    // Debug: dump JS around line 2002
+    ctx.eval::<(), _>(&*js).unwrap_or_else(|e| {
+        let msg = match e {
+            rquickjs::Error::Exception => {
+                let exc = ctx.catch();
+                if let Some(exc) = exc.as_exception() {
+                    format!("{}: {}", exc.message().unwrap_or_default(), exc.stack().unwrap_or_default())
+                } else {
+                    format!("{exc:?}")
+                }
+            }
+            other => format!("{other:?}"),
+        };
+        panic!("DOM bridge JS init failed: {msg}");
+    });
+}
 
-        // Element prototype
-        var EP = {};
+/// Core element prototype: DOM methods, event listeners, click behavior, dialog APIs,
+/// query methods, getBoundingClientRect, and all basic EP method definitions.
+fn element_prototype_js() -> &'static str {
+    r#"
         EP.getAttribute = function(name) {
             var v = __n_getAttribute(this.__nid, name);
             return __n_hasAttrValue(this.__nid, name) ? v : null;
@@ -1632,7 +1652,13 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             },
             configurable: true
         });
+    "#
+}
 
+/// Form-related properties and methods: form property, submit, reset, elements,
+/// constraint validation (validity, checkValidity, reportValidity, requestSubmit).
+fn form_bindings_js() -> &'static str {
+    r#"
         // --- Form-related properties and methods ---
         // form property: check form attribute first, then walk up ancestors
         Object.defineProperty(EP, 'form', {
@@ -1948,6 +1974,12 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             configurable: true
         });
 
+    "#
+}
+
+/// Label association properties: label.htmlFor, label.control, input.labels.
+fn label_bindings_js() -> &'static str {
+    r#"
         // --- Label association properties ---
         // label.htmlFor — reflects the `for` attribute
         Object.defineProperty(EP, 'htmlFor', {
@@ -1983,7 +2015,13 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
             },
             configurable: true
         });
+    "#
+}
 
+/// Wrapper factory, event dispatch with capture+bubble phases, and Node constants
+/// (compareDocumentPosition, DOCUMENT_POSITION_*).
+fn wrapper_and_dispatch_js() -> &'static str {
+    r#"
         // Tag → constructor map for React's node.constructor.prototype lookup
         var _ctorMap = {
             INPUT: HTMLInputElement, TEXTAREA: HTMLTextAreaElement,
@@ -2589,21 +2627,7 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         Node.DOCUMENT_POSITION_CONTAINED_BY = 16;
         Node.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32;
         globalThis.Node = Node;
-    })();
-    "#).unwrap_or_else(|e| {
-        let msg = match e {
-            rquickjs::Error::Exception => {
-                let exc = ctx.catch();
-                if let Some(exc) = exc.as_exception() {
-                    format!("{}: {}", exc.message().unwrap_or_default(), exc.stack().unwrap_or_default())
-                } else {
-                    format!("{exc:?}")
-                }
-            }
-            other => format!("{other:?}"),
-        };
-        panic!("DOM bridge JS init failed: {msg}");
-    });
+    "#
 }
 
 /// Recursively copy a node from a source tree into a destination tree.
