@@ -366,7 +366,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 createTextNode: function(text) { return document.createTextNode(text); },
                 createDocumentFragment: function() { return document.createDocumentFragment(); },
                 createEvent: function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; },
-                appendChild: function(child) { return rootEl.appendChild(child); },
+                createComment: function(text) { return document.createComment(text); },
+                createProcessingInstruction: function(t, d) { return document.createProcessingInstruction(t, d); },
+                createAttribute: function(n) { return document.createAttribute(n); },
+                createAttributeNS: function(ns, qn) { return document.createAttributeNS(ns, qn); },
+                get implementation() { return document.implementation; },
+                appendChild: function(child) { if (rootEl) return rootEl.appendChild(child); return child; },
                 addEventListener: function(type, cb, opts) {
                     if (typeof cb !== 'function') return;
                     var capture = !!(opts === true || (opts && opts.capture));
@@ -762,17 +767,21 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     return newDoc;
                 },
                 createDocumentType: function(qualifiedName, publicId, systemId) {
-                    return {
-                        nodeType: 10,
-                        nodeName: qualifiedName,
-                        name: qualifiedName,
-                        publicId: publicId || '',
-                        systemId: systemId || '',
-                        parentNode: null,
-                        parentElement: null,
-                        childNodes: [],
+                    // DocumentType is defined later in this IIFE but is available
+                    // via closure by the time any user code calls this function.
+                    var dt = Object.create(DocumentType.prototype);
+                    var props = {
+                        nodeType: 10, nodeName: String(qualifiedName),
+                        name: String(qualifiedName),
+                        publicId: String(publicId || ''),
+                        systemId: String(systemId || ''),
+                        parentNode: null, parentElement: null,
+                        childNodes: [], firstChild: null, lastChild: null,
+                        previousSibling: null, nextSibling: null,
                         ownerDocument: null
                     };
+                    for (var k in props) Object.defineProperty(dt, k, { value: props[k], writable: true, enumerable: true, configurable: true });
+                    return dt;
                 },
                 hasFeature: function() { return true; },
             }, configurable: true },
@@ -1031,6 +1040,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Document.prototype = Object.create(EP);
         Document.prototype.constructor = Document;
         globalThis.Document = Document;
+
+        // DOMImplementation constructor (for instanceof checks)
+        function DOMImplementation() {}
+        DOMImplementation.prototype = Object.getPrototypeOf(document.implementation) || {};
+        DOMImplementation.prototype.constructor = DOMImplementation;
+        Object.setPrototypeOf(document.implementation, DOMImplementation.prototype);
+        globalThis.DOMImplementation = DOMImplementation;
+
+        // DocumentType constructor (for instanceof checks)
+        function DocumentType() {}
+        DocumentType.prototype = Object.create(EP);
+        DocumentType.prototype.constructor = DocumentType;
+        globalThis.DocumentType = DocumentType;
 
         // Wire window event methods to EventTarget.prototype (spec: Window extends EventTarget)
         window.addEventListener = EventTarget.prototype.addEventListener;
