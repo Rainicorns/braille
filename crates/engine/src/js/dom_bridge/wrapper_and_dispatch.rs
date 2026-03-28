@@ -50,6 +50,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 cur = __n_getParent(cur);
             }
 
+            event._dispatching = true;
             event.target = __w(nodeId);
             event.eventPhase = 0;
 
@@ -70,69 +71,81 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 }
             }
 
-            // === CAPTURE PHASE (root → target) ===
-            // Window capture
-            event.eventPhase = 1;
-            event.currentTarget = window;
-            fireCbs(_winCapture[event.type], window);
-            if (event._stopImmediate || event._stopPropagation) return;
-
-            // Document capture
-            event.currentTarget = document;
-            fireCbs(_docCapture[event.type], document);
-            if (event._stopImmediate || event._stopPropagation) return;
-
-            // DOM elements capture: from root down to (but not including) target
-            for (var i = path.length - 1; i > 0; i--) {
-                var nid = path[i];
-                event.currentTarget = __w(nid);
-                fireCbs(_captureKeys[nid + ':' + event.type], event.currentTarget);
-                if (event._stopImmediate || event._stopPropagation) return;
-            }
-
-            // === AT-TARGET PHASE ===
-            event.eventPhase = 2;
-            var targetNid = path[0];
-            var targetEl = __w(targetNid);
-            event.currentTarget = targetEl;
-
-            // Inline event handler (e.g. onclick="...")
-            var attrHandler = __n_getAttribute(targetNid, 'on' + event.type);
-            if (attrHandler) {
-                (new Function('event', attrHandler)).call(targetEl, event);
-                if (event._stopImmediate) return;
-            }
-
-            // Fire both capture and bubble listeners at target (per spec)
-            fireCbs(_captureKeys[targetNid + ':' + event.type], targetEl);
-            if (event._stopImmediate) return;
-            fireCbs(_bubbleKeys[targetNid + ':' + event.type], targetEl);
-            if (event._stopImmediate) return;
-
-            if (!event.bubbles) return;
-
-            // === BUBBLE PHASE (target+1 → root → document → window) ===
-            event.eventPhase = 3;
-            for (var i = 1; i < path.length; i++) {
-                if (event._stopPropagation) break;
-                var nid = path[i];
-                event.currentTarget = __w(nid);
-                fireCbs(_bubbleKeys[nid + ':' + event.type], event.currentTarget);
-                if (event._stopImmediate) return;
-            }
-
-            // Document bubble
-            if (!event._stopPropagation) {
-                event.currentTarget = document;
-                fireCbs(doc.__listeners[event.type], document);
-                if (event._stopImmediate) return;
-            }
-
-            // Window bubble
-            if (!event._stopPropagation) {
+            // Run dispatch phases, then always clean up
+            function runPhases() {
+                // === CAPTURE PHASE (root → target) ===
+                // Window capture
+                event.eventPhase = 1;
                 event.currentTarget = window;
-                fireCbs(_winListeners[event.type], window);
+                fireCbs(_winCapture[event.type], window);
+                if (event._stopImmediate || event._stopPropagation) return;
+
+                // Document capture
+                event.currentTarget = document;
+                fireCbs(_docCapture[event.type], document);
+                if (event._stopImmediate || event._stopPropagation) return;
+
+                // DOM elements capture: from root down to (but not including) target
+                for (var i = path.length - 1; i > 0; i--) {
+                    var nid = path[i];
+                    event.currentTarget = __w(nid);
+                    fireCbs(_captureKeys[nid + ':' + event.type], event.currentTarget);
+                    if (event._stopImmediate || event._stopPropagation) return;
+                }
+
+                // === AT-TARGET PHASE ===
+                event.eventPhase = 2;
+                var targetNid = path[0];
+                var targetEl = __w(targetNid);
+                event.currentTarget = targetEl;
+
+                // Inline event handler (e.g. onclick="...")
+                var attrHandler = __n_getAttribute(targetNid, 'on' + event.type);
+                if (attrHandler) {
+                    (new Function('event', attrHandler)).call(targetEl, event);
+                    if (event._stopImmediate) return;
+                }
+
+                // Fire both capture and bubble listeners at target (per spec)
+                fireCbs(_captureKeys[targetNid + ':' + event.type], targetEl);
+                if (event._stopImmediate) return;
+                fireCbs(_bubbleKeys[targetNid + ':' + event.type], targetEl);
+                if (event._stopImmediate) return;
+
+                if (!event.bubbles) return;
+
+                // === BUBBLE PHASE (target+1 → root → document → window) ===
+                event.eventPhase = 3;
+                for (var i = 1; i < path.length; i++) {
+                    if (event._stopPropagation) break;
+                    var nid = path[i];
+                    event.currentTarget = __w(nid);
+                    fireCbs(_bubbleKeys[nid + ':' + event.type], event.currentTarget);
+                    if (event._stopImmediate) return;
+                }
+
+                // Document bubble
+                if (!event._stopPropagation) {
+                    event.currentTarget = document;
+                    fireCbs(doc.__listeners[event.type], document);
+                    if (event._stopImmediate) return;
+                }
+
+                // Window bubble
+                if (!event._stopPropagation) {
+                    event.currentTarget = window;
+                    fireCbs(_winListeners[event.type], window);
+                }
             }
+
+            runPhases();
+
+            // Per spec step 14: unset dispatching, stop propagation, and stop immediate flags
+            event._dispatching = false;
+            event._stopPropagation = false;
+            event._stopImmediate = false;
+            event.currentTarget = null;
+            event.eventPhase = 0;
         }
 
         // __braille_click(nodeId) — called from Rust
@@ -243,6 +256,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Override document methods
         var doc = globalThis.document;
         doc.__listeners = {};
+        doc.parentNode = null;
+        doc.parentElement = null;
         doc.getElementById = function(id) {
             var nid = __n_getElementById(id);
             return nid >= 0 ? __w(nid) : null;
@@ -407,6 +422,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
 
         doc.dispatchEvent = function(event) {
+            event._dispatching = true;
             event.target = document;
             event.currentTarget = document;
             var cbs = doc.__listeners[event.type];
@@ -414,6 +430,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 var snapshot = cbs.slice();
                 for (var i = 0; i < snapshot.length; i++) snapshot[i].call(document, event);
             }
+            event._dispatching = false;
+            event._stopPropagation = false;
+            event._stopImmediate = false;
+            event.currentTarget = null;
+            event.eventPhase = 0;
             return !event.defaultPrevented;
         };
         doc.createEvent = function(type) { return new Event(type); };
@@ -451,6 +472,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.getAnimations = function() { return []; };
 
         window.dispatchEvent = function(event) {
+            event._dispatching = true;
             event.target = window;
             event.currentTarget = window;
             var cbs = _winListeners[event.type];
@@ -458,6 +480,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 var snapshot = cbs.slice();
                 for (var i = 0; i < snapshot.length; i++) snapshot[i].call(window, event);
             }
+            event._dispatching = false;
+            event._stopPropagation = false;
+            event._stopImmediate = false;
+            event.currentTarget = null;
+            event.eventPhase = 0;
             return !event.defaultPrevented;
         };
 
@@ -591,21 +618,45 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Node constructor with constants (used by React, etc.)
         var Node = function Node() {};
         Node.prototype = EP;
+        // nodeType constants
         Node.ELEMENT_NODE = 1;
         Node.ATTRIBUTE_NODE = 2;
         Node.TEXT_NODE = 3;
         Node.CDATA_SECTION_NODE = 4;
+        Node.ENTITY_REFERENCE_NODE = 5;
+        Node.ENTITY_NODE = 6;
         Node.PROCESSING_INSTRUCTION_NODE = 7;
         Node.COMMENT_NODE = 8;
         Node.DOCUMENT_NODE = 9;
         Node.DOCUMENT_TYPE_NODE = 10;
         Node.DOCUMENT_FRAGMENT_NODE = 11;
+        Node.NOTATION_NODE = 12;
+        // document position constants
         Node.DOCUMENT_POSITION_DISCONNECTED = 1;
         Node.DOCUMENT_POSITION_PRECEDING = 2;
         Node.DOCUMENT_POSITION_FOLLOWING = 4;
         Node.DOCUMENT_POSITION_CONTAINS = 8;
         Node.DOCUMENT_POSITION_CONTAINED_BY = 16;
         Node.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32;
+        // Constants must also be on the prototype so instances inherit them
+        EP.ELEMENT_NODE = 1;
+        EP.ATTRIBUTE_NODE = 2;
+        EP.TEXT_NODE = 3;
+        EP.CDATA_SECTION_NODE = 4;
+        EP.ENTITY_REFERENCE_NODE = 5;
+        EP.ENTITY_NODE = 6;
+        EP.PROCESSING_INSTRUCTION_NODE = 7;
+        EP.COMMENT_NODE = 8;
+        EP.DOCUMENT_NODE = 9;
+        EP.DOCUMENT_TYPE_NODE = 10;
+        EP.DOCUMENT_FRAGMENT_NODE = 11;
+        EP.NOTATION_NODE = 12;
+        EP.DOCUMENT_POSITION_DISCONNECTED = 1;
+        EP.DOCUMENT_POSITION_PRECEDING = 2;
+        EP.DOCUMENT_POSITION_FOLLOWING = 4;
+        EP.DOCUMENT_POSITION_CONTAINS = 8;
+        EP.DOCUMENT_POSITION_CONTAINED_BY = 16;
+        EP.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32;
         globalThis.Node = Node;
     "#
 }

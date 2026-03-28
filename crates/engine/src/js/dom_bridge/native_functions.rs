@@ -21,6 +21,11 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         with_tree(|tree| tree.has_attribute(node_id as NodeId, &name))
     }).unwrap()).unwrap();
 
+    // hasAttributes(nodeId) -> bool (any attributes at all)
+    g.set("__n_hasAttributes", Function::new(ctx.clone(), |node_id: u32| -> bool {
+        with_tree(|tree| tree.has_attributes(node_id as NodeId))
+    }).unwrap()).unwrap();
+
     // setAttribute(nodeId, name, value)
     g.set("__n_setAttribute", Function::new(ctx.clone(), |node_id: u32, name: String, value: String| {
         with_tree_mut(|tree| tree.set_attribute(node_id as NodeId, &name, &value));
@@ -29,6 +34,26 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     // removeAttribute(nodeId, name)
     g.set("__n_removeAttribute", Function::new(ctx.clone(), |node_id: u32, name: String| {
         with_tree_mut(|tree| { tree.remove_attribute(node_id as NodeId, &name); });
+    }).unwrap()).unwrap();
+
+    // setAttributeNS(nodeId, namespace, qualifiedName, value)
+    g.set("__n_setAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, qualified_name: String, value: String| {
+        with_tree_mut(|tree| tree.set_attribute_ns(node_id as NodeId, &namespace, &qualified_name, &value));
+    }).unwrap()).unwrap();
+
+    // getAttributeNS(nodeId, namespace, localName) -> string (empty = not found)
+    g.set("__n_getAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| -> String {
+        with_tree(|tree| tree.get_attribute_ns(node_id as NodeId, &namespace, &local_name).unwrap_or_default())
+    }).unwrap()).unwrap();
+
+    // hasAttributeNS(nodeId, namespace, localName) -> bool
+    g.set("__n_hasAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| -> bool {
+        with_tree(|tree| tree.has_attribute_ns(node_id as NodeId, &namespace, &local_name))
+    }).unwrap()).unwrap();
+
+    // removeAttributeNS(nodeId, namespace, localName)
+    g.set("__n_removeAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| {
+        with_tree_mut(|tree| { tree.remove_attribute_ns(node_id as NodeId, &namespace, &local_name); });
     }).unwrap()).unwrap();
 
     // getTextContent(nodeId) -> string
@@ -310,6 +335,61 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         with_tree_mut(|tree| {
             tree.character_data_set(node_id as NodeId, &data);
         });
+    }).unwrap()).unwrap();
+
+    // charDataLength(nodeId) -> length in UTF-16 code units
+    g.set("__n_charDataLength", Function::new(ctx.clone(), |node_id: u32| -> u32 {
+        with_tree(|tree| {
+            tree.character_data_length(node_id as NodeId) as u32
+        })
+    }).unwrap()).unwrap();
+
+    // charDataAppend(nodeId, data)
+    g.set("__n_charDataAppend", Function::new(ctx.clone(), |node_id: u32, data: String| {
+        with_tree_mut(|tree| {
+            tree.character_data_append(node_id as NodeId, &data);
+        });
+    }).unwrap()).unwrap();
+
+    // charDataInsert(nodeId, offset, data) -> "" on success, error name on failure
+    g.set("__n_charDataInsert", Function::new(ctx.clone(), |node_id: u32, offset: u32, data: String| -> String {
+        with_tree_mut(|tree| {
+            match tree.character_data_insert(node_id as NodeId, offset as usize, &data) {
+                Ok(()) => String::new(),
+                Err(e) => e.to_string(),
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // charDataDelete(nodeId, offset, count) -> "" on success, error name on failure
+    g.set("__n_charDataDelete", Function::new(ctx.clone(), |node_id: u32, offset: u32, count: u32| -> String {
+        with_tree_mut(|tree| {
+            match tree.character_data_delete(node_id as NodeId, offset as usize, count as usize) {
+                Ok(()) => String::new(),
+                Err(e) => e.to_string(),
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // charDataReplace(nodeId, offset, count, data) -> "" on success, error name on failure
+    g.set("__n_charDataReplace", Function::new(ctx.clone(), |node_id: u32, offset: u32, count: u32, data: String| -> String {
+        with_tree_mut(|tree| {
+            match tree.character_data_replace(node_id as NodeId, offset as usize, count as usize, &data) {
+                Ok(()) => String::new(),
+                Err(e) => e.to_string(),
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // charDataSubstring(nodeId, offset, count) -> substring or throws
+    // Returns JSON: {"ok":"result"} or {"err":"IndexSizeError"}
+    g.set("__n_charDataSubstring", Function::new(ctx.clone(), |node_id: u32, offset: u32, count: u32| -> String {
+        with_tree(|tree| {
+            match tree.character_data_substring(node_id as NodeId, offset as usize, count as usize) {
+                Ok(s) => format!("{{\"ok\":{}}}", serde_json::to_string(&s).unwrap_or_default()),
+                Err(e) => format!("{{\"err\":\"{e}\"}}"),
+            }
+        })
     }).unwrap()).unwrap();
 
     // cloneNode(nodeId, deep) -> new nodeId

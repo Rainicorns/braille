@@ -19,19 +19,48 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this.cancelable = (opts && opts.cancelable) || false;
                 this.composed = (opts && opts.composed) || false;
                 this.defaultPrevented = false;
+                this.returnValue = true;
                 this.target = null;
                 this.currentTarget = null;
+                this.srcElement = null;
                 this.eventPhase = 0;
-                this.isTrusted = true;
-                this.timeStamp = 0;
+                this.isTrusted = false;
+                this.timeStamp = Date.now();
                 this._stopPropagation = false;
                 this._stopImmediate = false;
+                this._dispatching = false;
+                this._initialized = true;
             }
-            preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
+            get cancelBubble() { return this._stopPropagation; }
+            set cancelBubble(v) { if (v) this._stopPropagation = true; }
+            preventDefault() { if (this.cancelable) { this.defaultPrevented = true; this.returnValue = false; } }
             stopPropagation() { this._stopPropagation = true; }
             stopImmediatePropagation() { this._stopImmediate = true; this._stopPropagation = true; }
             composedPath() { return this._path || []; }
+            initEvent(type, bubbles, cancelable) {
+                if (arguments.length < 1) throw new TypeError("Failed to execute 'initEvent' on 'Event': 1 argument required, but only 0 present.");
+                if (this._dispatching) return;
+                this._stopPropagation = false;
+                this._stopImmediate = false;
+                this.defaultPrevented = false;
+                this.returnValue = true;
+                this.isTrusted = false;
+                this.target = null;
+                this.srcElement = null;
+                this.type = String(type);
+                this.bubbles = !!bubbles;
+                this.cancelable = !!cancelable;
+                this._initialized = true;
+            }
         };
+        Event.NONE = 0;
+        Event.CAPTURING_PHASE = 1;
+        Event.AT_TARGET = 2;
+        Event.BUBBLING_PHASE = 3;
+        Event.prototype.NONE = 0;
+        Event.prototype.CAPTURING_PHASE = 1;
+        Event.prototype.AT_TARGET = 2;
+        Event.prototype.BUBBLING_PHASE = 3;
         globalThis.CustomEvent = class CustomEvent extends Event {
             constructor(type, opts) { super(type, opts); this.detail = (opts && opts.detail) || null; }
         };

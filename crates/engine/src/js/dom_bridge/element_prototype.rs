@@ -1,20 +1,24 @@
 pub(crate) fn element_prototype_js() -> &'static str {
     r#"
         EP.getAttribute = function(name) {
+            name = String(name).toLowerCase();
             var v = __n_getAttribute(this.__nid, name);
             return __n_hasAttrValue(this.__nid, name) ? v : null;
         };
         EP.setAttribute = function(name, value) {
+            name = String(name).toLowerCase();
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
             __n_setAttribute(this.__nid, name, String(value));
             if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
         };
         EP.removeAttribute = function(name) {
+            name = String(name).toLowerCase();
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
             __n_removeAttribute(this.__nid, name);
             if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
         };
-        EP.hasAttribute = function(name) { return __n_hasAttribute(this.__nid, name); };
+        EP.hasAttribute = function(name) { return __n_hasAttribute(this.__nid, String(name).toLowerCase()); };
+        EP.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
 
         EP.addEventListener = function(type, cb, opts) {
             if (typeof cb !== 'function') return;
@@ -176,6 +180,29 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return oldChild;
         };
         EP.hasChildNodes = function() { return __n_getFirstChild(this.__nid) >= 0; };
+
+        // CharacterData methods
+        EP.substringData = function(offset, count) {
+            var r = JSON.parse(__n_charDataSubstring(this.__nid, offset >>> 0, count >>> 0));
+            if (r.err) throw new DOMException(r.err, r.err);
+            return r.ok;
+        };
+        EP.appendData = function(data) {
+            __n_charDataAppend(this.__nid, String(data));
+        };
+        EP.insertData = function(offset, data) {
+            var err = __n_charDataInsert(this.__nid, offset >>> 0, String(data));
+            if (err) throw new DOMException(err, err);
+        };
+        EP.deleteData = function(offset, count) {
+            var err = __n_charDataDelete(this.__nid, offset >>> 0, count >>> 0);
+            if (err) throw new DOMException(err, err);
+        };
+        EP.replaceData = function(offset, count, data) {
+            var err = __n_charDataReplace(this.__nid, offset >>> 0, count >>> 0, String(data));
+            if (err) throw new DOMException(err, err);
+        };
+
         EP.getBoundingClientRect = function() {
             // Return plausible non-zero defaults instead of all zeros
             var s = __n_getAttribute(this.__nid, 'style') || '';
@@ -282,10 +309,25 @@ pub(crate) fn element_prototype_js() -> &'static str {
             if (this.hasAttribute(name)) { this.removeAttribute(name); return false; }
             this.setAttribute(name, ''); return true;
         };
-        EP.setAttributeNS = function(ns, name, value) { this.setAttribute(name, String(value)); };
-        EP.getAttributeNS = function(ns, name) { return this.getAttribute(name); };
-        EP.removeAttributeNS = function(ns, name) { this.removeAttribute(name); };
-        EP.hasAttributeNS = function(ns, name) { return this.hasAttribute(name); };
+        EP.setAttributeNS = function(ns, qualifiedName, value) {
+            ns = (ns === null || ns === undefined) ? '' : String(ns);
+            __n_setAttributeNS(this.__nid, ns, String(qualifiedName), String(value));
+        };
+        EP.getAttributeNS = function(ns, localName) {
+            ns = (ns === null || ns === undefined) ? '' : String(ns);
+            if (__n_hasAttributeNS(this.__nid, ns, String(localName))) {
+                return __n_getAttributeNS(this.__nid, ns, String(localName));
+            }
+            return null;
+        };
+        EP.removeAttributeNS = function(ns, localName) {
+            ns = (ns === null || ns === undefined) ? '' : String(ns);
+            __n_removeAttributeNS(this.__nid, ns, String(localName));
+        };
+        EP.hasAttributeNS = function(ns, localName) {
+            ns = (ns === null || ns === undefined) ? '' : String(ns);
+            return __n_hasAttributeNS(this.__nid, ns, String(localName));
+        };
         EP.insertAdjacentHTML = function(position, html) {
             var temp = document.createElement('div');
             __n_setInnerHTML(temp.__nid, html);
@@ -545,7 +587,12 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 configurable: true
             },
             parentElement: {
-                get: function() { var p = __n_getParent(this.__nid); return p >= 0 ? __w(p) : null; },
+                get: function() {
+                    var p = __n_getParent(this.__nid);
+                    if (p < 0) return null;
+                    var nt = __n_getNodeType(p);
+                    return nt === 1 ? __w(p) : null;
+                },
                 configurable: true
             },
             children: {
@@ -592,7 +639,15 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 set: function(v) {
                     var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8) __n_setCharData(this.__nid, String(v));
+                    if (nt === 3 || nt === 8) __n_setCharData(this.__nid, v === null ? '' : String(v));
+                },
+                configurable: true
+            },
+            length: {
+                get: function() {
+                    var nt = __n_getNodeType(this.__nid);
+                    if (nt === 3 || nt === 8) return __n_charDataLength(this.__nid);
+                    return undefined;
                 },
                 configurable: true
             },
