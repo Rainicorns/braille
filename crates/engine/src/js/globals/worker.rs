@@ -55,8 +55,9 @@ pub(super) fn register_worker(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
                     this.onerror = null;
                     this._listeners = {};
                     this._terminated = false;
-                    this._workerId = 0;  // 0 = not yet assigned by host
+                    this._workerId = 0;
                     this._inline = false;
+                    this._workerScope = null;
 
                     // Resolve relative URLs
                     var resolvedUrl = url;
@@ -70,63 +71,88 @@ pub(super) fn register_worker(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
                         }
                     }
 
-                    // data: URLs can be executed inline without host delegation
+                    // data: URLs — extract code and run inline
                     if (typeof resolvedUrl === 'string' && resolvedUrl.indexOf('data:') === 0) {
-                        this._inline = true;
-                        this._workerId = -1;
-                        var workerSelf = this;
-                        // Extract code from data: URL (data:text/javascript,CODE or data:text/javascript;base64,CODE)
                         var commaIdx = resolvedUrl.indexOf(',');
                         if (commaIdx >= 0) {
                             var meta = resolvedUrl.substring(5, commaIdx);
                             var payload = resolvedUrl.substring(commaIdx + 1);
-                            var code;
-                            if (meta.indexOf('base64') >= 0) {
-                                code = atob(payload);
-                            } else {
-                                code = decodeURIComponent(payload);
-                            }
-                            // Execute in next microtask with worker-like scope
-                            setTimeout(function() {
-                                if (workerSelf._terminated) return;
-                                var workerPostMessage = function(data) {
-                                    if (workerSelf._terminated) return;
-                                    // Deliver asynchronously like a real worker would
-                                    setTimeout(function() {
-                                        var event = { type: 'message', data: data, origin: '', lastEventId: '', source: null, ports: [] };
-                                        workerSelf._dispatch('message', event);
-                                    }, 0);
-                                };
-                                // Create a worker-like scope and execute
-                                var workerScope = {
-                                    postMessage: workerPostMessage,
-                                    self: null,
-                                    onmessage: null,
-                                    _pendingMessages: []
-                                };
-                                workerScope.self = workerScope;
-                                workerSelf._workerScope = workerScope;
-                                var fn = new Function('postMessage', 'self', code);
-                                fn(workerPostMessage, workerScope);
-                            }, 0);
+                            var code = meta.indexOf('base64') >= 0 ? atob(payload) : decodeURIComponent(payload);
+                            this._initInline(code);
                         }
                         return;
                     }
 
+                    // Pre-fetched scripts — run inline without host delegation
+                    var scripts = globalThis.__braille_worker_scripts;
+                    if (scripts) {
+                        // Try resolved URL, original URL, and pathname
+                        var code = scripts[resolvedUrl] || scripts[url];
+                        if (!code) {
+                            try { code = scripts[new URL(resolvedUrl).pathname]; } catch(e) {}
+                        }
+                        if (code) {
+                            this._initInline(code);
+                            return;
+                        }
+                    }
+
+                    // Fall back to host delegation
                     this._tempId = nextTempId++;
                     pendingAssignments.push(this);
                     __braille_worker_spawn(resolvedUrl);
                 }
 
+                _initInline(code) {
+                    this._inline = true;
+                    this._workerId = -1;
+                    var workerSelf = this;
+
+                    var workerPostMessage = function(data) {
+                        if (workerSelf._terminated) return;
+                        setTimeout(function() {
+                            var event = { type: 'message', data: data, origin: '', lastEventId: '', source: null, ports: [] };
+                            workerSelf._dispatch('message', event);
+                        }, 0);
+                    };
+
+                    var workerScope = {
+                        postMessage: workerPostMessage,
+                        self: null,
+                        onmessage: null,
+                        _listeners: {},
+                        addEventListener: function(type, handler) {
+                            if (!workerScope._listeners[type]) workerScope._listeners[type] = [];
+                            workerScope._listeners[type].push(handler);
+                        },
+                        removeEventListener: function(type, handler) {
+                            if (workerScope._listeners[type]) {
+                                workerScope._listeners[type] = workerScope._listeners[type].filter(function(f) { return f !== handler; });
+                            }
+                        },
+                        _dispatch: function(type, event) {
+                            if (workerScope['on' + type]) workerScope['on' + type](event);
+                            var ls = workerScope._listeners[type];
+                            if (ls) { var s = ls.slice(); for (var i = 0; i < s.length; i++) s[i](event); }
+                        }
+                    };
+                    workerScope.self = workerScope;
+                    this._workerScope = workerScope;
+
+                    // Execute worker script in next microtask (like a real worker startup)
+                    setTimeout(function() {
+                        if (workerSelf._terminated) return;
+                        var fn = new Function('postMessage', 'self', 'addEventListener', 'removeEventListener', 'importScripts', code);
+                        fn(workerPostMessage, workerScope, workerScope.addEventListener, workerScope.removeEventListener, function(){});
+                    }, 0);
+                }
+
                 postMessage(data) {
                     if (this._terminated) return;
                     if (this._inline && this._workerScope) {
-                        // Deliver to inline worker's onmessage
                         var scope = this._workerScope;
-                        if (scope.onmessage) {
-                            var event = { type: 'message', data: data, origin: '', lastEventId: '', source: null, ports: [] };
-                            setTimeout(function() { scope.onmessage(event); }, 0);
-                        }
+                        var event = { type: 'message', data: data, origin: '', lastEventId: '', source: null, ports: [] };
+                        setTimeout(function() { scope._dispatch('message', event); }, 0);
                         return;
                     }
                     var serialized = (typeof data === 'string') ? data : JSON.stringify(data);
