@@ -184,10 +184,23 @@ fn do_fetch(
             "HEAD" => client.head(current_url.as_str()),
             _ => client.get(current_url.as_str()),
         };
+        // Determine if this hop is cross-origin relative to the initial URL
+        let initial_origin = origin_of(url);
+        let current_origin = origin_of(current_url.as_str());
+        let is_cross_origin = initial_origin != current_origin;
+
         // Forward original request headers, but merge accumulated cookies
         // into the Cookie header so redirect hops see cookies set by prior hops.
+        // Strip Authorization and Cookie headers on cross-origin redirects.
         let mut has_cookie_header = false;
         for (name, value) in headers {
+            if is_cross_origin && (name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("cookie")) {
+                // Don't forward sensitive headers cross-origin (accumulated cookies still sent below)
+                if name.eq_ignore_ascii_case("cookie") {
+                    has_cookie_header = true;
+                }
+                continue;
+            }
             if name.eq_ignore_ascii_case("cookie") {
                 has_cookie_header = true;
                 if !accumulated_cookies.is_empty() {
@@ -206,7 +219,7 @@ fn do_fetch(
                 builder = builder.header(name.as_str(), value.as_str());
             }
         }
-        // If no Cookie header was in the original request but we have accumulated cookies
+        // If no Cookie header was in the original request (or it was stripped) but we have accumulated cookies
         if !has_cookie_header && !accumulated_cookies.is_empty() {
             let cookie_val = build_cookie_header_from_set_cookies(&accumulated_cookies);
             builder = builder.header("Cookie", cookie_val);
@@ -283,11 +296,25 @@ fn do_fetch(
         // Prepend accumulated Set-Cookie headers from intermediate redirects
         // (the final response's own set-cookie headers are already in resp_headers)
         if !accumulated_cookies.is_empty() {
-            // Remove the final response's set-cookie from accumulated (they're already in resp_headers)
+            // Collect cookie names already present in the final response's set-cookie headers
+            let final_cookie_names: Vec<String> = resp_headers
+                .iter()
+                .filter(|(n, _)| n == "set-cookie")
+                .filter_map(|(_, v)| {
+                    let nv = v.split(';').next()?.trim();
+                    nv.find('=').map(|eq| nv[..eq].to_string())
+                })
+                .collect();
+            // Only keep intermediate cookies whose name isn't already set by the final response
             let intermediate_cookies: Vec<(String, String)> = accumulated_cookies
                 .into_iter()
                 .filter(|(_, v)| {
-                    !resp_headers.iter().any(|(n, rv)| n == "set-cookie" && rv == v)
+                    let name = v.split(';').next()
+                        .and_then(|nv| nv.trim().find('=').map(|eq| nv.trim()[..eq].to_string()));
+                    match name {
+                        Some(n) => !final_cookie_names.contains(&n),
+                        None => false,
+                    }
                 })
                 .collect();
             resp_headers.extend(intermediate_cookies);
@@ -305,6 +332,14 @@ fn do_fetch(
     }
     let hops: Vec<String> = redirect_chain.iter().map(|h| format!("{} {} -> {}", h.status, h.url, h.location)).collect();
     FetchOutcome::Err(format!("too many redirects (>{max_redirects}) for {url}\n  {}", hops.join("\n  ")))
+}
+
+/// Extract the origin (scheme + host + port) from a URL string for cross-origin comparison.
+fn origin_of(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(u) => format!("{}://{}{}", u.scheme(), u.host_str().unwrap_or(""), u.port().map(|p| format!(":{p}")).unwrap_or_default()),
+        Err(_) => url.to_string(),
+    }
 }
 
 /// Extract "name=value" pairs from Set-Cookie headers and join them into a Cookie header value.
