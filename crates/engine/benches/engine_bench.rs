@@ -37,10 +37,65 @@ fn spa_page() -> &'static str {
 }
 
 fn bench_spa(c: &mut Criterion) {
+    // End-to-end: init + parse + JS exec + snapshot
     c.bench_function("spa_products_e2e", |b| {
         b.iter(|| {
             let mut engine = Engine::new();
             engine.load_html(black_box(spa_page()));
+            engine.snapshot(SnapMode::Compact)
+        })
+    });
+
+    // Phase: Engine::new() — QuickJS runtime init, global setup
+    c.bench_function("engine_init", |b| {
+        b.iter(|| {
+            black_box(Engine::new());
+        })
+    });
+
+    // Phase: load_html — HTML parse + JS execution + settle
+    c.bench_function("load_html", |b| {
+        b.iter_batched(
+            Engine::new,
+            |mut engine| {
+                engine.load_html(black_box(spa_page()));
+            },
+            criterion::BatchSize::SmallInput,
+        )
+    });
+
+    // Phase: snapshot on a pre-loaded page
+    c.bench_function("snapshot_compact", |b| {
+        let mut engine = Engine::new();
+        engine.load_html(spa_page());
+        b.iter(|| {
+            black_box(engine.snapshot(SnapMode::Compact));
+        })
+    });
+
+    // Phase: snapshot text mode
+    c.bench_function("snapshot_text", |b| {
+        let mut engine = Engine::new();
+        engine.load_html(spa_page());
+        b.iter(|| {
+            black_box(engine.snapshot(SnapMode::Text));
+        })
+    });
+
+    // Phase: snapshot accessibility mode (heaviest serializer)
+    c.bench_function("snapshot_a11y", |b| {
+        let mut engine = Engine::new();
+        engine.load_html(spa_page());
+        b.iter(|| {
+            black_box(engine.snapshot(SnapMode::Accessibility));
+        })
+    });
+
+    // Minimal page — baseline for init + parse overhead
+    c.bench_function("minimal_page_e2e", |b| {
+        b.iter(|| {
+            let mut engine = Engine::new();
+            engine.load_html(black_box("<html><body><p>Hello</p></body></html>"));
             engine.snapshot(SnapMode::Compact)
         })
     });
