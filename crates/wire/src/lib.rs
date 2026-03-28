@@ -1,3 +1,5 @@
+pub mod worker_protocol;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -90,6 +92,18 @@ pub enum HostMessage {
     Command(DaemonCommand),
     /// Here are the HTTP responses you asked for.
     FetchResults(Vec<FetchResult>),
+    /// A worker process was successfully spawned.
+    WorkerSpawned { worker_id: u64 },
+    /// A message from a worker process to the main engine.
+    WorkerMessage { worker_id: u64, data: String },
+    /// A worker process encountered an error.
+    WorkerError { worker_id: u64, error: String },
+    /// A worker process has exited.
+    WorkerExited { worker_id: u64 },
+    /// Request the engine to prepare for checkpointing.
+    PrepareCheckpoint,
+    /// A worker has been restored after checkpoint (on session restore).
+    WorkerRestored { worker_id: u64, url: String },
 }
 
 /// Message sent from the engine process to the host (CLI) over stdout.
@@ -99,6 +113,21 @@ pub enum EngineMessage {
     NeedFetch(Vec<FetchRequest>),
     /// Here's the final result.
     CommandResult(DaemonResponse),
+    /// Request the host to spawn a worker process.
+    SpawnWorker { worker_id: u64, url: String },
+    /// Post a message to a worker process.
+    PostToWorker { worker_id: u64, data: String },
+    /// Terminate a worker process.
+    TerminateWorker { worker_id: u64 },
+    /// Engine is ready for checkpointing; here are the active workers.
+    CheckpointReady { active_workers: Vec<WorkerDescriptor> },
+}
+
+/// Descriptor for an active worker (used during checkpoint/restore).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkerDescriptor {
+    pub id: u64,
+    pub url: String,
 }
 
 /// Result of a single fetch request.
@@ -411,5 +440,105 @@ mod tests {
     #[test]
     fn fetch_outcome_err_roundtrip() {
         assert_roundtrip!(FetchOutcome::Err("timeout".into()), FetchOutcome);
+    }
+
+    // --- Worker and checkpoint protocol tests ---
+
+    #[test]
+    fn engine_message_spawn_worker_roundtrip() {
+        assert_roundtrip!(
+            EngineMessage::SpawnWorker { worker_id: 1, url: "https://example.com/worker.js".into() },
+            EngineMessage
+        );
+    }
+
+    #[test]
+    fn engine_message_post_to_worker_roundtrip() {
+        assert_roundtrip!(
+            EngineMessage::PostToWorker { worker_id: 1, data: r#"{"nonce":42}"#.into() },
+            EngineMessage
+        );
+    }
+
+    #[test]
+    fn engine_message_terminate_worker_roundtrip() {
+        assert_roundtrip!(
+            EngineMessage::TerminateWorker { worker_id: 3 },
+            EngineMessage
+        );
+    }
+
+    #[test]
+    fn engine_message_checkpoint_ready_roundtrip() {
+        assert_roundtrip!(
+            EngineMessage::CheckpointReady {
+                active_workers: vec![
+                    WorkerDescriptor { id: 1, url: "https://example.com/w1.js".into() },
+                    WorkerDescriptor { id: 2, url: "https://example.com/w2.js".into() },
+                ],
+            },
+            EngineMessage
+        );
+    }
+
+    #[test]
+    fn engine_message_checkpoint_ready_empty_roundtrip() {
+        assert_roundtrip!(
+            EngineMessage::CheckpointReady { active_workers: vec![] },
+            EngineMessage
+        );
+    }
+
+    #[test]
+    fn host_message_worker_spawned_roundtrip() {
+        assert_roundtrip!(
+            HostMessage::WorkerSpawned { worker_id: 1 },
+            HostMessage
+        );
+    }
+
+    #[test]
+    fn host_message_worker_message_roundtrip() {
+        assert_roundtrip!(
+            HostMessage::WorkerMessage { worker_id: 1, data: "hello from worker".into() },
+            HostMessage
+        );
+    }
+
+    #[test]
+    fn host_message_worker_error_roundtrip() {
+        assert_roundtrip!(
+            HostMessage::WorkerError { worker_id: 1, error: "ReferenceError: x is not defined".into() },
+            HostMessage
+        );
+    }
+
+    #[test]
+    fn host_message_worker_exited_roundtrip() {
+        assert_roundtrip!(
+            HostMessage::WorkerExited { worker_id: 5 },
+            HostMessage
+        );
+    }
+
+    #[test]
+    fn host_message_prepare_checkpoint_roundtrip() {
+        assert_roundtrip!(HostMessage::PrepareCheckpoint, HostMessage);
+    }
+
+    #[test]
+    fn host_message_worker_restored_roundtrip() {
+        assert_roundtrip!(
+            HostMessage::WorkerRestored { worker_id: 2, url: "https://example.com/solver.mjs".into() },
+            HostMessage
+        );
+    }
+
+    #[test]
+    fn worker_descriptor_roundtrip() {
+        assert_roundtrip!(
+            WorkerDescriptor { id: 42, url: "https://example.com/worker.js".into() },
+            WorkerDescriptor
+        );
     }
 }

@@ -27,6 +27,10 @@ workspace = true
 name = "braille-engine"
 path = "src/bin/braille_engine.rs"
 
+[[bin]]
+name = "braille-worker"
+path = "src/bin/braille_worker.rs"
+
 [dev-dependencies]
 libtest-mimic = "0.8"
 criterion = "0.5"

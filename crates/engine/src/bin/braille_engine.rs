@@ -7,10 +7,24 @@ use braille_wire::{
     FetchResult, HostMessage, SnapMode,
 };
 
+#[derive(Debug, Clone, PartialEq)]
+enum WorkerStatus {
+    Spawning,
+    Running,
+}
+
+#[derive(Debug, Clone)]
+struct WorkerState {
+    url: String,
+    status: WorkerStatus,
+}
+
 struct Session {
     engine: Engine,
     history: Vec<String>,
     history_index: Option<usize>,
+    workers: HashMap<u64, WorkerState>,
+    next_worker_id: u64,
 }
 
 impl Session {
@@ -19,6 +33,8 @@ impl Session {
             engine: Engine::new(),
             history: Vec::new(),
             history_index: None,
+            workers: HashMap::new(),
+            next_worker_id: 1,
         }
     }
 
@@ -98,6 +114,44 @@ fn main() {
                     )),
                 );
             }
+            HostMessage::WorkerMessage { worker_id, data } => {
+                handle_worker_message(&mut session, worker_id, &data);
+            }
+            HostMessage::WorkerSpawned { worker_id } => {
+                if let Some(w) = session.workers.get_mut(&worker_id) {
+                    w.status = WorkerStatus::Running;
+                }
+            }
+            HostMessage::WorkerError { worker_id, error } => {
+                deliver_worker_error(&mut session, worker_id, &error);
+                session.workers.remove(&worker_id);
+            }
+            HostMessage::WorkerExited { worker_id } => {
+                session.workers.remove(&worker_id);
+            }
+            HostMessage::PrepareCheckpoint => {
+                let active_workers: Vec<braille_wire::WorkerDescriptor> = session
+                    .workers
+                    .iter()
+                    .map(|(&id, w)| braille_wire::WorkerDescriptor {
+                        id,
+                        url: w.url.clone(),
+                    })
+                    .collect();
+                send(
+                    &mut writer,
+                    &EngineMessage::CheckpointReady { active_workers },
+                );
+            }
+            HostMessage::WorkerRestored { worker_id, url } => {
+                session.workers.insert(
+                    worker_id,
+                    WorkerState {
+                        url,
+                        status: WorkerStatus::Running,
+                    },
+                );
+            }
         }
     }
 }
@@ -140,6 +194,9 @@ fn handle_command(
     session.engine.drain_console();
 
     let response = handle_command_inner(session, reader, writer, cmd);
+
+    // Emit any pending worker operations before returning the result
+    drain_pending_workers(session, writer);
 
     // Attach any console output produced during this command.
     let console = session.engine.drain_console();
@@ -243,12 +300,17 @@ fn fetch_and_load(
     url: &str,
     snap_mode: SnapMode,
 ) -> Result<String, String> {
-    // Ask host to fetch the page
+    // Ask host to fetch the page, attaching any cookies from the jar
+    let mut page_headers = vec![];
+    let cookie_value = session.engine.get_cookies_for_url(url);
+    if !cookie_value.is_empty() {
+        page_headers.push(("Cookie".to_string(), cookie_value));
+    }
     let page_request = FetchRequest {
         id: 0,
         url: url.to_string(),
         method: "GET".to_string(),
-        headers: vec![],
+        headers: page_headers,
         body: None,
     };
     let results = request_fetches(reader, writer, vec![page_request]);
@@ -261,6 +323,9 @@ fn fetch_and_load(
         FetchOutcome::Ok(data) => data,
         FetchOutcome::Err(e) => return Err(format!("fetch failed: {e}")),
     };
+
+    // Inject cookies from the page response (Set-Cookie headers)
+    session.engine.inject_response_cookies(&page_data.url, &page_data.headers);
 
     let html = &page_data.body;
     let descriptors = session.engine.parse_and_collect_scripts(html);
@@ -383,11 +448,20 @@ fn resolve_pending_fetches(
                     eprintln!("    body: {}", &b[..b.len().min(120)]);
                 }
             }
+            // Attach cookies from the engine's cookie jar if no Cookie header set by JS
+            let mut headers = req.headers;
+            let has_cookie_header = headers.iter().any(|(h, _)| h.eq_ignore_ascii_case("cookie"));
+            if !has_cookie_header {
+                let cookie_value = session.engine.get_cookies_for_url(&req.url);
+                if !cookie_value.is_empty() {
+                    headers.push(("Cookie".to_string(), cookie_value));
+                }
+            }
             batch.push(FetchRequest {
                 id: req.id,
                 url: req.url,
                 method: req.method,
-                headers: req.headers,
+                headers,
                 body: req.body,
             });
         }
@@ -397,6 +471,7 @@ fn resolve_pending_fetches(
         for result in results {
             match result.outcome {
                 FetchOutcome::Ok(data) => {
+                    session.engine.inject_response_cookies(&data.url, &data.headers);
                     session.engine.resolve_fetch(result.id, &data);
                 }
                 FetchOutcome::Err(e) => {
@@ -412,5 +487,59 @@ fn resolve_pending_fetches(
         if !has_new {
             break;
         }
+    }
+}
+
+/// Deliver a worker message to the JS runtime via __braille_deliver_worker_message.
+fn handle_worker_message(session: &mut Session, worker_id: u64, data: &str) {
+    let js = format!(
+        "__braille_deliver_worker_message({}, {})",
+        worker_id,
+        serde_json::to_string(data).unwrap_or_else(|_| "\"\"".to_string())
+    );
+    let _ = session.engine.eval_js(&js);
+    session.engine.settle_no_advance();
+}
+
+/// Deliver a worker error to the JS runtime via __braille_deliver_worker_error.
+fn deliver_worker_error(session: &mut Session, worker_id: u64, error: &str) {
+    let js = format!(
+        "__braille_deliver_worker_error({}, {})",
+        worker_id,
+        serde_json::to_string(error).unwrap_or_else(|_| "\"\"".to_string())
+    );
+    let _ = session.engine.eval_js(&js);
+    session.engine.settle_no_advance();
+}
+
+/// Drain pending worker operations from the engine and emit them as EngineMessages.
+fn drain_pending_workers(session: &mut Session, writer: &mut impl Write) {
+    let spawns = session.engine.drain_pending_worker_spawns();
+    for (url,) in spawns {
+        let worker_id = session.next_worker_id;
+        session.next_worker_id += 1;
+        session.workers.insert(
+            worker_id,
+            WorkerState {
+                url: url.clone(),
+                status: WorkerStatus::Spawning,
+            },
+        );
+        // Tell JS the worker_id so it can route messages
+        let js = format!("__braille_assign_worker_id({worker_id})");
+        let _ = session.engine.eval_js(&js);
+        send(writer, &EngineMessage::SpawnWorker { worker_id, url });
+    }
+    let messages = session.engine.drain_pending_worker_messages();
+    for (worker_id, data) in messages {
+        send(
+            writer,
+            &EngineMessage::PostToWorker { worker_id, data },
+        );
+    }
+    let terminates = session.engine.drain_pending_worker_terminates();
+    for worker_id in terminates {
+        session.workers.remove(&worker_id);
+        send(writer, &EngineMessage::TerminateWorker { worker_id });
     }
 }

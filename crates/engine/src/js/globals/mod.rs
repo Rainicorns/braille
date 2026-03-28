@@ -4,6 +4,7 @@ mod dom_stubs;
 mod fetch;
 mod intl_js;
 mod timers;
+mod worker;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,6 +20,7 @@ pub fn register_all(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell
     console::register_console(ctx, Rc::clone(&state));
     timers::register_timers(ctx, Rc::clone(&state));
     dom_stubs::register_dom_stubs(ctx);
+    worker::register_worker(ctx, Rc::clone(&state));
     fetch::register_fetch(ctx, Rc::clone(&state));
     super::crypto::register(ctx);
     super::dom_bridge::install(ctx, Rc::clone(&tree), Rc::clone(&state));

@@ -768,14 +768,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             constructor() { this.signal = AbortSignal._makeSignal(); }
             abort(reason) { if (!this.signal.aborted) { this.signal.aborted = true; this.signal.reason = reason !== undefined ? reason : new Error('AbortError'); this.signal._fire(); } }
         };
-        // Worker shim — inert, never responds. Apps fall back to main-thread code path.
-        globalThis.Worker = class Worker {
-            constructor(url) { this.onmessage = null; this.onerror = null; this._listeners = {}; }
-            postMessage(data) {}
-            terminate() {}
-            addEventListener(type, cb) { if (!this._listeners[type]) this._listeners[type] = []; this._listeners[type].push(cb); }
-            removeEventListener(type, cb) { if (this._listeners[type]) this._listeners[type] = this._listeners[type].filter(function(f){return f!==cb;}); }
-        };
+        // Worker class is registered by worker.rs with real delegation to the host.
 
         globalThis.XMLHttpRequest = (function() {
             function XMLHttpRequest() {

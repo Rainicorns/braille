@@ -12,6 +12,16 @@ pub struct SessionMetadata {
     pub last_accessed: u64,
     /// Container ID when running in container mode. None for local process sessions.
     pub container_id: Option<String>,
+    /// Active workers at time of checkpoint (for restoration).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_workers: Vec<WorkerDescriptor>,
+}
+
+/// A worker that was active when the session was checkpointed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkerDescriptor {
+    pub id: u64,
+    pub url: String,
 }
 
 /// Directory for all sessions: `~/.braille/sessions/`
@@ -50,6 +60,7 @@ pub fn create_session(session_id: &str) -> SessionMetadata {
         created_at: now,
         last_accessed: now,
         container_id: None,
+        active_workers: Vec::new(),
     };
 
     write_metadata(&metadata);

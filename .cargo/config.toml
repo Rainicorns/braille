@@ -1,0 +1,5 @@
+# Cross-compilation settings for Linux musl target (container builds).
+# Used by: cargo build --target x86_64-unknown-linux-musl
+
+[target.x86_64-unknown-linux-musl]
+linker = "musl-gcc"

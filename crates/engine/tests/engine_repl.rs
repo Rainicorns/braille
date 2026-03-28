@@ -85,6 +85,7 @@ impl EngineHarness {
                     self.send(&HostMessage::FetchResults(results));
                 }
                 EngineMessage::CommandResult(resp) => return resp,
+                _ => { /* ignore worker/checkpoint messages in tests */ }
             }
         }
     }
@@ -158,6 +159,7 @@ fn type_command() {
                 assert!(resp.success, "type command should succeed: {:?}", resp.error);
                 break;
             }
+            _ => { /* ignore worker/checkpoint messages */ }
         }
     }
 }

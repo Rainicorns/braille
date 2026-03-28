@@ -22,6 +22,22 @@ pub struct TimerEntry {
     pub is_interval: bool,
 }
 
+/// A pending worker spawn request from JS `new Worker(url)`.
+pub struct PendingWorkerSpawn {
+    pub url: String,
+}
+
+/// A pending message to post to a worker.
+pub struct PendingWorkerMessage {
+    pub worker_id: u64,
+    pub data: String,
+}
+
+/// A pending worker termination request.
+pub struct PendingWorkerTerminate {
+    pub worker_id: u64,
+}
+
 /// Engine-side state shared across all JS operations.
 /// This replaces Boa's RealmState — all state that was stored in
 /// Realm::host_defined() is now stored here in plain Rust.
@@ -34,6 +50,9 @@ pub struct EngineState {
     pub timer_current_time_ms: u64,
     pub location_url: String,
     pub iframe_src_content: HashMap<String, String>,
+    pub pending_worker_spawns: Vec<PendingWorkerSpawn>,
+    pub pending_worker_messages: Vec<PendingWorkerMessage>,
+    pub pending_worker_terminates: Vec<PendingWorkerTerminate>,
 }
 
 impl EngineState {
@@ -47,6 +66,9 @@ impl EngineState {
             timer_current_time_ms: 0,
             location_url: String::from("about:blank"),
             iframe_src_content: HashMap::new(),
+            pending_worker_spawns: Vec::new(),
+            pending_worker_messages: Vec::new(),
+            pending_worker_terminates: Vec::new(),
         }
     }
 }

@@ -1,4 +1,4 @@
-pub(crate) mod crypto;
+pub mod crypto;
 pub(crate) mod dom_bridge;
 pub(crate) mod globals;
 pub(crate) mod intl;

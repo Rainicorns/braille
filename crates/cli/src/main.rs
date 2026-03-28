@@ -2,6 +2,8 @@ use braille_wire::{DaemonCommand, DaemonRequest, DaemonResponse, SnapMode};
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod client;
+#[allow(dead_code)] // Foundation module — container integration not wired yet.
+mod container;
 pub mod daemon;
 mod engine_process;
 pub mod network;
@@ -9,6 +11,7 @@ mod paths;
 mod session;
 #[allow(dead_code)] // Foundation module — not wired into CLI commands yet.
 mod session_store;
+mod worker_manager;
 
 #[derive(Parser)]
 #[command(name = "braille", about = "A text browser for LLM agents")]

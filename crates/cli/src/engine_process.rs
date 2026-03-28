@@ -6,12 +6,14 @@ use braille_wire::{
 };
 
 use crate::network::NetworkClient;
+use crate::worker_manager::WorkerManager;
 
 /// A handle to a running engine child process.
 pub struct EngineProcess {
     _child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    workers: WorkerManager,
 }
 
 impl EngineProcess {
@@ -32,6 +34,7 @@ impl EngineProcess {
             _child: child,
             stdin,
             stdout,
+            workers: WorkerManager::new(),
         }
     }
 
@@ -44,6 +47,29 @@ impl EngineProcess {
             let engine_msg = self.read_engine_message();
             match engine_msg {
                 Some(EngineMessage::CommandResult(response)) => return response,
+                Some(EngineMessage::SpawnWorker { worker_id, url }) => {
+                    eprintln!("[cli] spawning worker: id={worker_id} url={}", &url[..url.len().min(120)]);
+                    let messages = self.workers.spawn_worker(worker_id, &url, net);
+                    // Send WorkerSpawned confirmation, then relay any immediate messages
+                    self.send_host_message(&HostMessage::WorkerSpawned { worker_id });
+                    for msg in messages {
+                        self.send_host_message(&msg);
+                    }
+                }
+                Some(EngineMessage::PostToWorker { worker_id, data }) => {
+                    let messages = self.workers.post_to_worker(worker_id, &data);
+                    for msg in messages {
+                        self.send_host_message(&msg);
+                    }
+                }
+                Some(EngineMessage::TerminateWorker { worker_id }) => {
+                    self.workers.terminate_worker(worker_id);
+                }
+                Some(EngineMessage::CheckpointReady { active_workers }) => {
+                    eprintln!("[cli] engine checkpoint ready, {} active workers", active_workers.len());
+                    // TODO: Phase 7 — checkpoint container
+                    let _ = active_workers;
+                }
                 Some(EngineMessage::NeedFetch(requests)) => {
                     // Resolve URLs and prepare requests before spawning threads
                     #[allow(clippy::type_complexity)]
