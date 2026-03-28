@@ -160,6 +160,25 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 }
             });
         };
+        Object.defineProperty(EP, 'attributes', {
+            get: function() {
+                if (this.__nid === undefined) return undefined;
+                var names = JSON.parse(__n_getAttributeNames(this.__nid));
+                var result = [];
+                for (var i = 0; i < names.length; i++) {
+                    var val = __n_getAttribute(this.__nid, names[i]);
+                    var attr = new Attr(names[i], val);
+                    attr.ownerElement = this;
+                    result.push(attr);
+                }
+                result.getNamedItem = function(n) { for (var i = 0; i < this.length; i++) if (this[i].name === n) return this[i]; return null; };
+                result.setNamedItem = function(a) { if (a && a.ownerElement) a.ownerElement.setAttribute(a.name, a.value); };
+                result.removeNamedItem = function(n) { /* no-op for now */ };
+                result.item = function(i) { return this[i] || null; };
+                return result;
+            },
+            enumerable: true, configurable: true
+        });
         EP.contains = function(other) {
             if (!other || other.__nid === undefined) return false;
             return __n_contains(this.__nid, other.__nid);
