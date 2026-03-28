@@ -375,3 +375,77 @@ fn set_interval_fires_and_repeats() {
     let snap = engine.snapshot(SnapMode::Text);
     assert!(snap.contains('3'), "interval should have fired 3 times: {}", snap);
 }
+
+// ---------------------------------------------------------------------------
+// Test 17: Compact view renders bullet markers for list items
+// ---------------------------------------------------------------------------
+
+#[test]
+fn compact_view_unordered_list_has_dash_bullets() {
+    let html = r#"<html><body>
+        <ul>
+            <li>First item</li>
+            <li>Second item</li>
+            <li>Third item</li>
+        </ul>
+    </body></html>"#;
+
+    let mut engine = engine_with_html(html);
+    let snap = engine.snapshot(SnapMode::Compact);
+
+    assert!(snap.contains("- First item"), "ul items should have dash prefix: {}", snap);
+    assert!(snap.contains("- Second item"), "ul items should have dash prefix: {}", snap);
+    assert!(snap.contains("- Third item"), "ul items should have dash prefix: {}", snap);
+}
+
+#[test]
+fn compact_view_ordered_list_has_numbered_bullets() {
+    let html = r#"<html><body>
+        <ol>
+            <li>Alpha</li>
+            <li>Beta</li>
+            <li>Gamma</li>
+        </ol>
+    </body></html>"#;
+
+    let mut engine = engine_with_html(html);
+    let snap = engine.snapshot(SnapMode::Compact);
+
+    assert!(snap.contains("1. Alpha"), "ol items should have numbered prefix: {}", snap);
+    assert!(snap.contains("2. Beta"), "ol items should have numbered prefix: {}", snap);
+    assert!(snap.contains("3. Gamma"), "ol items should have numbered prefix: {}", snap);
+}
+
+#[test]
+fn compact_view_nested_lists() {
+    let html = r#"<html><body>
+        <ul>
+            <li>Outer one</li>
+            <li>Outer two
+                <ol>
+                    <li>Inner first</li>
+                    <li>Inner second</li>
+                </ol>
+            </li>
+        </ul>
+    </body></html>"#;
+
+    let mut engine = engine_with_html(html);
+    let snap = engine.snapshot(SnapMode::Compact);
+
+    assert!(snap.contains("- Outer one"), "outer ul items should have dash: {}", snap);
+    assert!(snap.contains("1. Inner first"), "inner ol items should be numbered: {}", snap);
+    assert!(snap.contains("2. Inner second"), "inner ol items should be numbered: {}", snap);
+}
+
+#[test]
+fn compact_view_bare_li_without_list_parent() {
+    let html = r#"<html><body>
+        <li>Orphan item</li>
+    </body></html>"#;
+
+    let mut engine = engine_with_html(html);
+    let snap = engine.snapshot(SnapMode::Compact);
+
+    assert!(snap.contains("- Orphan item"), "li without ul/ol parent should get dash prefix: {}", snap);
+}
