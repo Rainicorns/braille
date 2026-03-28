@@ -86,7 +86,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 if (isGlobalDoc) {
                     // Window capture
                     event.currentTarget = window;
-                    fireCbs(_winCapture[event.type], window);
+                    fireCbs(window.__et_listeners[event.type + '_c'], window);
                     if (event._stopImmediate || event._stopPropagation) return;
 
                     // Document capture
@@ -150,7 +150,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     // Window bubble
                     if (!event._stopPropagation) {
                         event.currentTarget = window;
-                        fireCbs(_winListeners[event.type], window);
+                        fireCbs(window.__et_listeners[event.type + '_b'], window);
                     }
                 } else {
                     // Non-global document bubble
@@ -540,28 +540,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         globalThis.Range = BrailleRange;
         doc.createRange = function() { return new BrailleRange(); };
 
-        // window.addEventListener / removeEventListener
-        window.addEventListener = function(type, cb, opts) {
-            if (typeof cb !== 'function') return;
-            var capture = !!(opts === true || (opts && opts.capture));
-            var once = !!(opts && typeof opts === 'object' && opts.once);
-            var store = capture ? _winCapture : _winListeners;
-            if (!store[type]) store[type] = [];
-            if (once) {
-                var wrapper = function(e) { cb.call(window, e); window.removeEventListener(type, wrapper, capture); };
-                wrapper._origCb = cb;
-                store[type].push(wrapper);
-            } else {
-                store[type].push(cb);
-            }
-        };
-        window.removeEventListener = function(type, cb, opts) {
-            var capture = !!(opts === true || (opts && opts.capture));
-            var store = capture ? _winCapture : _winListeners;
-            if (store[type]) {
-                store[type] = store[type].filter(function(f){return f!==cb && f._origCb!==cb;});
-            }
-        };
+        // window.__et_listeners initialized here; methods assigned after EventTarget is defined (below)
+        window.__et_listeners = {};
 
         doc.dispatchEvent = function(event) {
             event._dispatching = true;
@@ -619,22 +599,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.exitFullscreen = function() { __fullscreenElement = null; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
         doc.getAnimations = function() { return []; };
 
-        window.dispatchEvent = function(event) {
-            event._dispatching = true;
-            event.target = window;
-            event.currentTarget = window;
-            var cbs = _winListeners[event.type];
-            if (cbs) {
-                var snapshot = cbs.slice();
-                for (var i = 0; i < snapshot.length; i++) snapshot[i].call(window, event);
-            }
-            event._dispatching = false;
-            event._stopPropagation = false;
-            event._stopImmediate = false;
-            event.currentTarget = null;
-            event.eventPhase = 0;
-            return !event.defaultPrevented;
-        };
+        // window.dispatchEvent assigned after EventTarget is defined (below)
 
         // Track focused element for document.activeElement
         var __focusedElement = null;
@@ -901,27 +866,29 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         }
         EventTarget.prototype.addEventListener = function(type, cb, opts) {
             if (typeof cb !== 'function' && !(cb && typeof cb.handleEvent === 'function')) return;
+            var self = (this == null) ? window : this;
+            if (!self.__et_listeners) self.__et_listeners = {};
             var capture = !!(opts === true || (opts && opts.capture));
             var once = !!(opts && typeof opts === 'object' && opts.once);
             var key = type + (capture ? '_c' : '_b');
-            if (!this.__et_listeners[key]) this.__et_listeners[key] = [];
-            for (var i = 0; i < this.__et_listeners[key].length; i++) {
-                if (this.__et_listeners[key][i] === cb || this.__et_listeners[key][i]._origCb === cb) return;
+            if (!self.__et_listeners[key]) self.__et_listeners[key] = [];
+            for (var i = 0; i < self.__et_listeners[key].length; i++) {
+                if (self.__et_listeners[key][i] === cb || self.__et_listeners[key][i]._origCb === cb) return;
             }
             if (once) {
-                var self = this;
                 var wrapper = function(e) {
                     if (typeof cb === 'function') cb.call(self, e);
                     else cb.handleEvent(e);
                     self.removeEventListener(type, cb, capture);
                 };
                 wrapper._origCb = cb;
-                this.__et_listeners[key].push(wrapper);
+                self.__et_listeners[key].push(wrapper);
             } else {
-                this.__et_listeners[key].push(cb);
+                self.__et_listeners[key].push(cb);
             }
         };
         EventTarget.prototype.removeEventListener = function(type, cb, opts) {
+            if (!this.__et_listeners) return;
             var capture = !!(opts === true || (opts && opts.capture));
             var key = type + (capture ? '_c' : '_b');
             if (this.__et_listeners[key]) {
@@ -935,7 +902,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             event._path = [this];
             event.eventPhase = 2;
             var key = event.type + '_b';
-            var cbs = this.__et_listeners[key];
+            var cbs = this.__et_listeners ? this.__et_listeners[key] : undefined;
             if (cbs) {
                 var snapshot = cbs.slice();
                 for (var i = 0; i < snapshot.length; i++) {
@@ -1037,5 +1004,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Document.prototype = Object.create(EP);
         Document.prototype.constructor = Document;
         globalThis.Document = Document;
+
+        // Wire window event methods to EventTarget.prototype (spec: Window extends EventTarget)
+        window.addEventListener = EventTarget.prototype.addEventListener;
+        window.removeEventListener = EventTarget.prototype.removeEventListener;
+        window.dispatchEvent = EventTarget.prototype.dispatchEvent;
     "#
 }
