@@ -76,6 +76,9 @@ impl Engine {
             }
         }
 
+        // Make all fetched scripts available to inline Worker execution
+        Self::populate_worker_scripts(&fetched.scripts, &mut runtime);
+
         for descriptor in descriptors {
             match descriptor {
                 ScriptDescriptor::Inline(text, nid) => {
@@ -183,6 +186,9 @@ impl Engine {
                 }
             }
         }
+
+        // Make all fetched scripts available to inline Worker execution
+        Self::populate_worker_scripts(&fetched.scripts, &mut runtime);
 
         for descriptor in descriptors {
             if let ScriptDescriptor::ImportMap(json) = descriptor {
@@ -404,6 +410,22 @@ impl Engine {
     /// Store pre-fetched iframe HTML content in the realm state.
     pub(crate) fn populate_iframe_src_content(iframes: &HashMap<String, String>, runtime: &JsRuntime) {
         runtime.populate_iframe_content(iframes);
+    }
+
+    /// Make fetched scripts available to inline Worker execution via a JS-side map.
+    fn populate_worker_scripts(scripts: &HashMap<String, String>, runtime: &mut JsRuntime) {
+        if scripts.is_empty() {
+            return;
+        }
+        let _ = runtime.eval("if (!globalThis.__braille_worker_scripts) globalThis.__braille_worker_scripts = {};");
+        for (url, content) in scripts {
+            let url_json = serde_json::to_string(url).unwrap();
+            let content_json = serde_json::to_string(content).unwrap();
+            let _ = runtime.eval(&format!(
+                "globalThis.__braille_worker_scripts[{}] = {};",
+                url_json, content_json
+            ));
+        }
     }
 
     /// After scripts have executed, walk the DOM for `<iframe>` elements with a `src`

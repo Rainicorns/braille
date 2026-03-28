@@ -47,6 +47,18 @@ impl Engine {
     }
 }
 
+/// Check HTTP response headers for a `Refresh` header.
+/// This is the HTTP header equivalent of `<meta http-equiv="refresh">`.
+/// Anubis sends this when `randomData[0] % 2 != 0`.
+pub fn check_refresh_header(headers: &[(String, String)], base_url: Option<&str>) -> Option<MetaRefresh> {
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("refresh") {
+            return Some(parse_meta_refresh_content(value.trim(), base_url));
+        }
+    }
+    None
+}
+
 /// Parse the `content` attribute value of a meta refresh tag.
 ///
 /// Handles formats like:
@@ -58,7 +70,7 @@ pub(crate) fn parse_meta_refresh_content(content: &str, base_url: Option<&str>) 
     let content = content.trim();
 
     // Split on ';' or ',' (both are valid separators per the spec)
-    let (delay_str, rest) = match content.find(|c| c == ';' || c == ',') {
+    let (delay_str, rest) = match content.find([';', ',']) {
         Some(pos) => (&content[..pos], Some(content[pos + 1..].trim())),
         None => (content, None),
     };

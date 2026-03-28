@@ -8,6 +8,7 @@ pub mod html;
 pub mod js;
 mod loading;
 mod meta_refresh;
+pub mod navigation;
 mod scripts;
 
 use std::cell::RefCell;
@@ -23,7 +24,8 @@ use crate::js::JsRuntime;
 use braille_wire::SnapMode;
 
 // Re-export types that moved to sub-modules so the public API doesn't change.
-pub use crate::meta_refresh::MetaRefresh;
+pub use crate::meta_refresh::{check_refresh_header, MetaRefresh};
+pub use crate::navigation::{FetchProvider, MockFetcher};
 pub use crate::scripts::ScriptDescriptor;
 
 /// Pre-fetched resources for external scripts and iframe content.

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 
-use braille_engine::{Engine, FetchedResources, MetaRefresh, ScriptDescriptor};
+use braille_engine::{Engine, FetchProvider};
 use braille_wire::{
-    DaemonCommand, DaemonResponse, EngineAction, EngineMessage, FetchOutcome, FetchRequest,
+    DaemonCommand, DaemonResponse, EngineAction, EngineMessage, FetchRequest,
     FetchResult, HostMessage, SnapMode,
 };
 
@@ -292,6 +292,18 @@ fn handle_command_inner(
     }
 }
 
+/// IPC-based fetch provider that delegates to the host process over stdin/stdout.
+struct IpcFetchProvider<'a, R: BufRead, W: Write> {
+    reader: &'a mut R,
+    writer: &'a mut W,
+}
+
+impl<R: BufRead, W: Write> FetchProvider for IpcFetchProvider<'_, R, W> {
+    fn fetch_batch(&mut self, requests: Vec<FetchRequest>) -> Vec<FetchResult> {
+        request_fetches(self.reader, self.writer, requests)
+    }
+}
+
 /// Fetch a URL via the host, load HTML with two-phase script loading, return snapshot.
 fn fetch_and_load(
     session: &mut Session,
@@ -300,220 +312,21 @@ fn fetch_and_load(
     url: &str,
     snap_mode: SnapMode,
 ) -> Result<String, String> {
-    fetch_and_load_inner(session, reader, writer, url, snap_mode, 0)
+    let mut fetcher = IpcFetchProvider { reader, writer };
+    let snapshot = session.engine.navigate(url, &mut fetcher, snap_mode.clone())?;
+    // Update session history (navigate only updates it on success)
+    session.navigate(url.to_string());
+    Ok(snapshot)
 }
 
-fn fetch_and_load_inner(
-    session: &mut Session,
-    reader: &mut impl BufRead,
-    writer: &mut impl Write,
-    url: &str,
-    snap_mode: SnapMode,
-    redirect_depth: u32,
-) -> Result<String, String> {
-    if redirect_depth > 5 {
-        return Err("too many meta-refresh redirects".to_string());
-    }
-    // Ask host to fetch the page, attaching any cookies from the jar
-    let mut page_headers = vec![];
-    let cookie_value = session.engine.get_cookies_for_url(url);
-    if !cookie_value.is_empty() {
-        page_headers.push(("Cookie".to_string(), cookie_value));
-    }
-    let page_request = FetchRequest {
-        id: 0,
-        url: url.to_string(),
-        method: "GET".to_string(),
-        headers: page_headers,
-        body: None,
-    };
-    let results = request_fetches(reader, writer, vec![page_request]);
-    let page_result = results
-        .into_iter()
-        .next()
-        .ok_or_else(|| "no fetch result received".to_string())?;
-
-    let page_data = match page_result.outcome {
-        FetchOutcome::Ok(data) => data,
-        FetchOutcome::Err(e) => return Err(format!("fetch failed: {e}")),
-    };
-
-    // Inject cookies from the page response (Set-Cookie headers)
-    session.engine.inject_response_cookies(&page_data.url, &page_data.headers);
-
-    let html = &page_data.body;
-    let descriptors = session.engine.parse_and_collect_scripts(html);
-
-    // Collect external script URLs that need fetching
-    let import_map_urls = Engine::import_map_urls(&descriptors);
-    let mut script_requests: Vec<FetchRequest> = Vec::new();
-    let mut next_id = 1u64;
-
-    for desc in &descriptors {
-        if let ScriptDescriptor::External(src_url, _) | ScriptDescriptor::ExternalModule(src_url) = desc {
-            script_requests.push(FetchRequest {
-                id: next_id,
-                url: src_url.clone(),
-                method: "GET".to_string(),
-                headers: vec![],
-                body: None,
-            });
-            next_id += 1;
-        }
-    }
-    for import_url in &import_map_urls {
-        script_requests.push(FetchRequest {
-            id: next_id,
-            url: import_url.clone(),
-            method: "GET".to_string(),
-            headers: vec![],
-            body: None,
-        });
-        next_id += 1;
-    }
-
-    let mut fetched = HashMap::new();
-    if !script_requests.is_empty() {
-        // Map id back to URL for building the fetched map
-        let id_to_url: HashMap<u64, String> = script_requests
-            .iter()
-            .map(|r| (r.id, r.url.clone()))
-            .collect();
-
-        let script_results = request_fetches(reader, writer, script_requests);
-        for result in script_results {
-            if let (Some(url), FetchOutcome::Ok(data)) = (id_to_url.get(&result.id), &result.outcome)
-            {
-                fetched.insert(url.clone(), data.body.clone());
-            }
-        }
-    }
-
-    // Set URL before script execution so location.pathname is correct for routers
-    session.engine.set_url(&page_data.url);
-
-    let errors = session
-        .engine
-        .execute_scripts_lossy(&descriptors, &FetchedResources::scripts_only(fetched));
-    for err in &errors {
-        eprintln!("[JS ERROR] {err}");
-    }
-
-    // Interleave settle + fetch until quiescent (handles dynamic script loading).
-    // Use settle_no_advance to avoid firing interval timers (version polling)
-    // repeatedly. Only advance time at the very end.
-    for round in 0..30 {
-        session.engine.settle_no_advance();
-        if !session.engine.has_pending_fetches() {
-            eprintln!("[settle/fetch] quiescent after {round} rounds");
-            break;
-        }
-        eprintln!("[settle/fetch] round {round} — has pending fetches");
-        resolve_pending_fetches(session, reader, writer);
-    }
-    // Final settle — no time advance. The page is loaded; interval timers
-    // (polling) should not fire during initial load. Time advances will happen
-    // when the user interacts (click, type) and we call settle().
-    session.engine.settle_no_advance();
-
-    // Check for meta refresh — both HTTP Refresh header and <meta http-equiv="refresh">
-    let page_url = &page_data.url;
-    let refresh = check_refresh_header(&page_data.headers, Some(page_url))
-        .or_else(|| session.engine.check_meta_refresh(Some(page_url)));
-
-    if let Some(mr) = refresh {
-        if let Some(redirect_url) = mr.url {
-            eprintln!("[meta-refresh] following redirect to {}", &redirect_url[..redirect_url.len().min(120)]);
-            return fetch_and_load_inner(session, reader, writer, &redirect_url, snap_mode, redirect_depth + 1);
-        }
-    }
-
-    session.navigate(page_data.url);
-
-    Ok(session.engine.snapshot(snap_mode))
-}
-
-/// Service all pending fetch requests from the engine's JS runtime.
-/// Fetches all pending URLs in parallel, resolves them, settles (to fire
-/// timers like React's scheduler), then repeats for any NEW fetches.
-/// Stops as soon as a wave produces no new unique URLs.
+/// Service all pending fetch requests from the engine's JS runtime via IPC.
 fn resolve_pending_fetches(
     session: &mut Session,
     reader: &mut impl BufRead,
     writer: &mut impl Write,
 ) {
-    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for wave in 0..50 {
-        if !session.engine.has_pending_fetches() {
-            break;
-        }
-        let pending = session.engine.pending_fetches();
-
-        // Partition into new vs repeat requests
-        let mut batch = Vec::new();
-        let mut has_new = false;
-        for req in pending {
-            let key = format!("{} {}", req.method, req.url);
-            let is_new = seen_urls.insert(key);
-            if is_new {
-                has_new = true;
-            }
-            eprintln!("  [fetch w{wave}{}] {} {}",
-                if is_new { "" } else { " repeat" },
-                req.method, &req.url[..req.url.len().min(120)]);
-            // Log request headers for API calls (helps debug auth/session issues)
-            if req.url.contains("/api/") {
-                if req.headers.is_empty() {
-                    eprintln!("    (no headers)");
-                }
-                for (h, v) in &req.headers {
-                    eprintln!("    {h}: {}", &v[..v.len().min(80)]);
-                }
-                if let Some(b) = &req.body {
-                    eprintln!("    body: {}", &b[..b.len().min(120)]);
-                }
-            }
-            // Attach cookies from the engine's cookie jar if no Cookie header set by JS
-            let mut headers = req.headers;
-            let has_cookie_header = headers.iter().any(|(h, _)| h.eq_ignore_ascii_case("cookie"));
-            if !has_cookie_header {
-                let cookie_value = session.engine.get_cookies_for_url(&req.url);
-                if !cookie_value.is_empty() {
-                    headers.push(("Cookie".to_string(), cookie_value));
-                }
-            }
-            batch.push(FetchRequest {
-                id: req.id,
-                url: req.url,
-                method: req.method,
-                headers,
-                body: req.body,
-            });
-        }
-
-        // Fetch everything in parallel (new + repeats all go out together)
-        let results = request_fetches(reader, writer, batch);
-        for result in results {
-            match result.outcome {
-                FetchOutcome::Ok(data) => {
-                    session.engine.inject_response_cookies(&data.url, &data.headers);
-                    session.engine.resolve_fetch(result.id, &data);
-                }
-                FetchOutcome::Err(e) => {
-                    session.engine.reject_fetch(result.id, &e);
-                }
-            }
-        }
-
-        // Settle (no time advance) to fire ready timers like React's scheduler
-        session.engine.settle_no_advance();
-
-        // If this wave had no new URLs, we're done — only polling remains
-        if !has_new {
-            break;
-        }
-    }
+    let mut fetcher = IpcFetchProvider { reader, writer };
+    session.engine.settle_with_fetches(&mut fetcher);
 }
 
 /// Deliver a worker message to the JS runtime via __braille_deliver_worker_message.
@@ -570,37 +383,3 @@ fn drain_pending_workers(session: &mut Session, writer: &mut impl Write) {
     }
 }
 
-/// Check the HTTP `Refresh` header for a redirect. Same format as meta refresh content.
-fn check_refresh_header(headers: &[(String, String)], base_url: Option<&str>) -> Option<MetaRefresh> {
-    for (name, value) in headers {
-        if name.eq_ignore_ascii_case("refresh") {
-            let content = value.trim();
-            let (delay_str, rest) = match content.find([';', ',']) {
-                Some(pos) => (&content[..pos], Some(content[pos + 1..].trim())),
-                None => (content, None),
-            };
-            let delay_seconds = delay_str.trim().parse::<u32>().unwrap_or(0);
-            let url = rest.and_then(|rest| {
-                let rest_lower = rest.to_ascii_lowercase();
-                let url_str = if rest_lower.starts_with("url=") {
-                    rest[4..].trim()
-                } else {
-                    rest
-                };
-                if url_str.is_empty() {
-                    return None;
-                }
-                if let Some(base) = base_url {
-                    if let Ok(base_parsed) = url::Url::parse(base) {
-                        if let Ok(resolved) = base_parsed.join(url_str) {
-                            return Some(resolved.to_string());
-                        }
-                    }
-                }
-                Some(url_str.to_string())
-            });
-            return Some(MetaRefresh { delay_seconds, url });
-        }
-    }
-    None
-}

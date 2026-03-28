@@ -152,8 +152,10 @@ impl JsRuntime {
     }
 
     /// Fire all timers whose deadline has passed. Returns true if any fired.
+    /// Timers are fired in registration order (ascending ID) to match browser
+    /// semantics: setTimeout(f, 0) calls registered earlier fire first.
     pub fn fire_ready_timers(&mut self) -> bool {
-        let ready: Vec<(u32, bool)> = {
+        let mut ready: Vec<(u32, bool)> = {
             let state = self.state.borrow();
             let current_time = state.timer_current_time_ms;
             state
@@ -167,6 +169,9 @@ impl JsRuntime {
         if ready.is_empty() {
             return false;
         }
+
+        // Fire in registration order (lower ID = registered first)
+        ready.sort_by_key(|(id, _)| *id);
 
         for (id, is_interval) in ready {
             let callback_code = {
