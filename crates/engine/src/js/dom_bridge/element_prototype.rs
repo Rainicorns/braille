@@ -164,14 +164,14 @@ pub(crate) fn element_prototype_js() -> &'static str {
             if (!other || other.__nid === undefined) return false;
             return __n_contains(this.__nid, other.__nid);
         };
-        EP.insertBefore = function(n, ref_) { return n; };
-        EP.appendChild = function(child) { return child; };
-        EP.removeChild = function(child) { return child; };
         EP.cloneNode = function(deep) {
             var nid = __n_cloneNode(this.__nid, !!deep);
             return __w(nid);
         };
         EP.replaceChild = function(newChild, oldChild) {
+            if (newChild !== null && newChild !== undefined && typeof newChild === 'object' && newChild.nodeType === 2) {
+                throw new DOMException("The new child element contains the parent.", "HierarchyRequestError");
+            }
             if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined)) {
                 throw new TypeError("Failed to execute 'replaceChild' on 'Node': parameter 1 is not of type 'Node'.");
             }

@@ -232,6 +232,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         // Element mutation methods that operate on the real DomTree
         EP.appendChild = function(child) {
+            if (child !== null && child !== undefined && typeof child === 'object' && child.nodeType === 2) {
+                throw new DOMException("The new child element contains the parent.", "HierarchyRequestError");
+            }
             if (child === null || child === undefined || (typeof child === 'object' && child.__nid === undefined)) {
                 throw new TypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.");
             }
@@ -270,6 +273,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return child;
         };
         EP.insertBefore = function(newChild, refChild) {
+            if (newChild !== null && newChild !== undefined && typeof newChild === 'object' && newChild.nodeType === 2) {
+                throw new DOMException("The new child element contains the parent.", "HierarchyRequestError");
+            }
             if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined)) {
                 throw new TypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'.");
             }
@@ -372,6 +378,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.__listeners = {};
         doc.parentNode = null;
         doc.parentElement = null;
+        doc.title = '';
         doc.getElementById = function(id) {
             var nid = __n_getElementById(String(id));
             return nid >= 0 ? __w(nid) : null;
@@ -458,6 +465,23 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.createComment = function(text) {
             var nid = __n_createComment(text || '');
             return __w(nid);
+        };
+
+        doc.createAttribute = function(localName) {
+            if (arguments.length === 0) throw new TypeError("Failed to execute 'createAttribute' on 'Document': 1 argument required, but only 0 present.");
+            var name = String(localName).toLowerCase();
+            return new Attr(name);
+        };
+
+        doc.createAttributeNS = function(ns, qualifiedName) {
+            if (arguments.length < 2) throw new TypeError("Failed to execute 'createAttributeNS' on 'Document': 2 arguments required.");
+            var prefix = null;
+            var localName = String(qualifiedName);
+            var idx = localName.indexOf(':');
+            if (idx >= 0) { prefix = localName.substring(0, idx); localName = localName.substring(idx + 1); }
+            var attr = new Attr(qualifiedName, '', ns === null ? null : String(ns), prefix);
+            attr.localName = localName;
+            return attr;
         };
 
         function BrailleRange() {
@@ -948,6 +972,39 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Comment.prototype = Object.create(CharacterData.prototype);
         Comment.prototype.constructor = Comment;
         globalThis.Comment = Comment;
+
+        // Attr constructor — attribute nodes (nodeType 2)
+        // Attr.prototype inherits from Node (EP) for instanceof, but we
+        // override getter-based properties with own data properties via defineProperty.
+        function Attr(name, value, ns, prefix) {
+            var props = {
+                nodeType: 2,
+                name: name || '',
+                localName: name || '',
+                value: value || '',
+                nodeValue: value || '',
+                textContent: value || '',
+                namespaceURI: ns || null,
+                prefix: prefix || null,
+                ownerElement: null,
+                specified: true,
+                nodeName: name || '',
+                childNodes: [],
+                parentNode: null,
+                parentElement: null,
+                firstChild: null,
+                lastChild: null,
+                previousSibling: null,
+                nextSibling: null,
+                isConnected: false
+            };
+            for (var k in props) {
+                Object.defineProperty(this, k, { value: props[k], writable: true, enumerable: true, configurable: true });
+            }
+        }
+        Attr.prototype = Object.create(EP);
+        Attr.prototype.constructor = Attr;
+        globalThis.Attr = Attr;
 
         // Document constructor
         function Document() {}
