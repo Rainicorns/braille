@@ -45,7 +45,14 @@ pub(crate) fn element_prototype_js() -> &'static str {
             }
         };
         EP.dispatchEvent = function(event) {
-            __dispatch(this.__nid, event);
+            // Find the owning document by walking up to the root element
+            var ownerDoc = undefined;
+            var rootNid = this.__nid;
+            var p = __n_getParent(rootNid);
+            while (p >= 0) { rootNid = p; p = __n_getParent(rootNid); }
+            var rootEl = __w(rootNid);
+            if (rootEl.__ownerDoc) ownerDoc = rootEl.__ownerDoc;
+            __dispatch(this.__nid, event, ownerDoc);
             return !event.defaultPrevented;
         };
         // Pointer capture

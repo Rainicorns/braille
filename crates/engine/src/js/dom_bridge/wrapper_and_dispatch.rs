@@ -41,7 +41,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
 
         // Event dispatch with capture + bubble phases
-        function __dispatch(nodeId, event) {
+        // ownerDoc: optional non-global document that owns the target element
+        function __dispatch(nodeId, event, ownerDoc) {
             // Build path: target -> parent -> ... -> root
             var path = [];
             var cur = nodeId;
@@ -50,15 +51,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 cur = __n_getParent(cur);
             }
 
+            // Determine if we're dispatching in the global document tree or a standalone one
+            var isGlobalDoc = !ownerDoc || ownerDoc === document;
+            var theDoc = isGlobalDoc ? document : ownerDoc;
+
             event._dispatching = true;
             event.target = __w(nodeId);
             event.eventPhase = 0;
 
-            // Build composedPath: wrapped elements + document + window
+            // Build composedPath: wrapped elements + document (+ window for global)
             var composedPath = [];
             for (var pi = 0; pi < path.length; pi++) composedPath.push(__w(path[pi]));
-            composedPath.push(document);
-            composedPath.push(window);
+            composedPath.push(theDoc);
+            if (isGlobalDoc) composedPath.push(window);
             event._path = composedPath;
 
             // Helper to fire a list of callbacks
@@ -74,16 +79,24 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             // Run dispatch phases, then always clean up
             function runPhases() {
                 // === CAPTURE PHASE (root → target) ===
-                // Window capture
                 event.eventPhase = 1;
-                event.currentTarget = window;
-                fireCbs(_winCapture[event.type], window);
-                if (event._stopImmediate || event._stopPropagation) return;
 
-                // Document capture
-                event.currentTarget = document;
-                fireCbs(_docCapture[event.type], document);
-                if (event._stopImmediate || event._stopPropagation) return;
+                if (isGlobalDoc) {
+                    // Window capture
+                    event.currentTarget = window;
+                    fireCbs(_winCapture[event.type], window);
+                    if (event._stopImmediate || event._stopPropagation) return;
+
+                    // Document capture
+                    event.currentTarget = document;
+                    fireCbs(_docCapture[event.type], document);
+                    if (event._stopImmediate || event._stopPropagation) return;
+                } else {
+                    // Non-global document capture
+                    event.currentTarget = theDoc;
+                    fireCbs(theDoc.__captureListeners && theDoc.__captureListeners[event.type], theDoc);
+                    if (event._stopImmediate || event._stopPropagation) return;
+                }
 
                 // DOM elements capture: from root down to (but not including) target
                 for (var i = path.length - 1; i > 0; i--) {
@@ -124,17 +137,25 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     if (event._stopImmediate) return;
                 }
 
-                // Document bubble
-                if (!event._stopPropagation) {
-                    event.currentTarget = document;
-                    fireCbs(doc.__listeners[event.type], document);
-                    if (event._stopImmediate) return;
-                }
+                if (isGlobalDoc) {
+                    // Document bubble
+                    if (!event._stopPropagation) {
+                        event.currentTarget = document;
+                        fireCbs(doc.__listeners[event.type], document);
+                        if (event._stopImmediate) return;
+                    }
 
-                // Window bubble
-                if (!event._stopPropagation) {
-                    event.currentTarget = window;
-                    fireCbs(_winListeners[event.type], window);
+                    // Window bubble
+                    if (!event._stopPropagation) {
+                        event.currentTarget = window;
+                        fireCbs(_winListeners[event.type], window);
+                    }
+                } else {
+                    // Non-global document bubble
+                    if (!event._stopPropagation) {
+                        event.currentTarget = theDoc;
+                        fireCbs(theDoc.__listeners && theDoc.__listeners[event.type], theDoc);
+                    }
                 }
             }
 
@@ -341,6 +362,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     return !event.defaultPrevented;
                 },
             };
+            // Tag the root element so EP.dispatchEvent can find the owning document
+            rootEl.__ownerDoc = newDoc;
             return newDoc;
         }
 
@@ -559,6 +582,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return node;
         };
         doc.adoptNode = function(node) { return node; };
+        doc.cloneNode = function(deep) {
+            var docEl = doc.documentElement;
+            if (!docEl) return __makeDocumentLike(document.createElement('html'));
+            var cloned = docEl.cloneNode(!!deep);
+            return __makeDocumentLike(cloned);
+        };
         doc.exitFullscreen = function() { __fullscreenElement = null; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
         doc.getAnimations = function() { return []; };
 
@@ -699,40 +728,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                         titleEl.textContent = String(title);
                         headEl.appendChild(titleEl);
                     }
-                    var newDoc = {
-                        nodeType: 9, nodeName: '#document',
-                        documentElement: htmlEl, body: bodyEl, head: headEl,
-                        title: title !== undefined ? String(title) : '', readyState: 'complete',
-                        __listeners: {}, __captureListeners: {},
-                        querySelector: function(sel) { return htmlEl.querySelector(sel); },
-                        querySelectorAll: function(sel) { return htmlEl.querySelectorAll(sel); },
-                        getElementById: function(id) { return htmlEl.querySelector('#' + id) || null; },
-                        getElementsByTagName: function(tag) { return htmlEl.querySelectorAll(tag); },
-                        getElementsByClassName: function(cls) { return htmlEl.querySelectorAll('.' + cls); },
-                        createElement: function(tag) { return document.createElement(tag); },
-                        createTextNode: function(text) { return document.createTextNode(text); },
-                        createDocumentFragment: function() { return document.createDocumentFragment(); },
-                        createEvent: function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; },
-                        addEventListener: function(type, cb, opts) {
-                            if (typeof cb !== 'function') return;
-                            var capture = !!(opts === true || (opts && opts.capture));
-                            var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
-                            if (!store[type]) store[type] = [];
-                            store[type].push(cb);
-                        },
-                        removeEventListener: function(type, cb, opts) {
-                            var capture = !!(opts === true || (opts && opts.capture));
-                            var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
-                            if (store[type]) store[type] = store[type].filter(function(f){return f!==cb;});
-                        },
-                        dispatchEvent: function(event) {
-                            event.target = newDoc;
-                            event.currentTarget = newDoc;
-                            var cbs = newDoc.__listeners[event.type];
-                            if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(newDoc, event); }
-                            return !event.defaultPrevented;
-                        },
-                    };
+                    var newDoc = __makeDocumentLike(htmlEl);
+                    newDoc.title = title !== undefined ? String(title) : '';
                     return newDoc;
                 },
                 hasFeature: function() { return true; },
@@ -781,6 +778,72 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         EP.DOCUMENT_POSITION_CONTAINED_BY = 16;
         EP.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32;
         globalThis.Node = Node;
+
+        // Document constructor — creates a standalone XML document (initially empty)
+        globalThis.Document = function Document() {
+            var rootEl = null;
+            var newDoc = {
+                nodeType: 9, nodeName: '#document', readyState: 'complete',
+                __listeners: {}, __captureListeners: {},
+                get documentElement() { return rootEl; },
+                get body() {
+                    if (!rootEl) return null;
+                    var kids = rootEl.childNodes;
+                    for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'BODY') return kids[i];
+                    return null;
+                },
+                get head() {
+                    if (!rootEl) return null;
+                    var kids = rootEl.childNodes;
+                    for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'HEAD') return kids[i];
+                    return null;
+                },
+                querySelector: function(sel) { return rootEl ? rootEl.querySelector(sel) : null; },
+                querySelectorAll: function(sel) { return rootEl ? rootEl.querySelectorAll(sel) : []; },
+                getElementById: function(id) { return rootEl ? rootEl.querySelector('#' + id) || null : null; },
+                getElementsByTagName: function(tag) { return rootEl ? rootEl.querySelectorAll(tag) : []; },
+                getElementsByClassName: function(cls) { return rootEl ? rootEl.querySelectorAll('.' + cls) : []; },
+                createElement: function(tag) { return document.createElement(tag); },
+                createTextNode: function(text) { return document.createTextNode(text); },
+                createDocumentFragment: function() { return document.createDocumentFragment(); },
+                createEvent: function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; },
+                appendChild: function(child) {
+                    if (!rootEl && child && child.__nid !== undefined) {
+                        rootEl = child;
+                        rootEl.__ownerDoc = newDoc;
+                    } else if (rootEl) {
+                        rootEl.appendChild(child);
+                    }
+                    return child;
+                },
+                addEventListener: function(type, cb, opts) {
+                    if (typeof cb !== 'function') return;
+                    var capture = !!(opts === true || (opts && opts.capture));
+                    var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
+                    if (!store[type]) store[type] = [];
+                    store[type].push(cb);
+                },
+                removeEventListener: function(type, cb, opts) {
+                    var capture = !!(opts === true || (opts && opts.capture));
+                    var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
+                    if (store[type]) store[type] = store[type].filter(function(f){return f!==cb;});
+                },
+                dispatchEvent: function(event) {
+                    event._dispatching = true;
+                    event.target = newDoc;
+                    event.currentTarget = newDoc;
+                    var cbs = newDoc.__listeners[event.type];
+                    if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(newDoc, event); }
+                    event._dispatching = false;
+                    event._stopPropagation = false;
+                    event._stopImmediate = false;
+                    event.currentTarget = null;
+                    event.eventPhase = 0;
+                    return !event.defaultPrevented;
+                },
+            };
+            return newDoc;
+        };
 
         // EventTarget constructor — standalone event targets (not backed by DOM nodes)
         function EventTarget() {
