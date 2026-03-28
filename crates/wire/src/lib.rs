@@ -409,6 +409,7 @@ mod tests {
                         headers: vec![("content-type".into(), "text/html".into())],
                         body: "<html></html>".into(),
                         url: "https://example.com".into(),
+                        redirect_chain: vec![],
                     }),
                 },
                 FetchResult {
@@ -451,6 +452,7 @@ mod tests {
                 headers: vec![],
                 body: "".into(),
                 url: "https://example.com/missing".into(),
+                redirect_chain: vec![],
             }),
             FetchOutcome
         );

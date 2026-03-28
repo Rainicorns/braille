@@ -308,6 +308,7 @@ fn dynamic_script_load_fires_onload() {
         headers: vec![("content-type".to_string(), "application/javascript".to_string())],
         body: "window.__chunk_ran = 42;".to_string(),
         url: "https://example.com/chunk.js".to_string(),
+        redirect_chain: vec![],
     });
     e.settle();
 
@@ -340,6 +341,7 @@ fn dynamic_script_eval_runs_code() {
         headers: vec![],
         body: "window.__chunks.push([4599, {hello: 'world'}]);".to_string(),
         url: "https://cdn.example.com/chunk.4599.js".to_string(),
+        redirect_chain: vec![],
     });
     e.settle();
 

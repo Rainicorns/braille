@@ -64,6 +64,7 @@ fn service_fetches(client: &reqwest::blocking::Client, engine: &mut Engine, max_
                         headers,
                         body,
                         url: final_url,
+                        redirect_chain: vec![],
                     };
                     engine.resolve_fetch(req.id, &response_data);
                 }

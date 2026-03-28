@@ -230,6 +230,7 @@ self.DYNAMIC_VALUE = 'hello from dynamic script';
         status_text: "OK".to_string(),
         headers: vec![("content-type".to_string(), "application/javascript".to_string())],
         body: dynamic.to_string(),
+        redirect_chain: vec![],
     };
     engine.resolve_fetch(pending[0].id, &response);
 
@@ -368,6 +369,7 @@ __r.e('ui').then(function() {
             status_text: "OK".to_string(),
             headers: vec![],
             body: chunk_ui.to_string(),
+            redirect_chain: vec![],
         },
     );
 

@@ -35,6 +35,7 @@ impl SpyFetcher {
                 headers,
                 body: body.into(),
                 url: url.to_string(),
+                redirect_chain: vec![],
             },
         );
     }

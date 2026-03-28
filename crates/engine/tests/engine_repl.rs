@@ -80,6 +80,7 @@ impl EngineHarness {
                                 )],
                                 body: html.to_string(),
                                 url: url.to_string(),
+                                redirect_chain: vec![],
                             }),
                         })
                         .collect();
@@ -172,6 +173,7 @@ fn fetch_error_propagates() {
     engine.send(&HostMessage::Command(DaemonCommand::Goto {
         url: "https://example.com".to_string(),
         mode: SnapMode::Compact,
+        record_path: None,
     }));
 
     // Respond with an error to the page fetch

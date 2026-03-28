@@ -209,7 +209,6 @@ fn snap(socket: &std::path::Path, sid: &str) -> String {
             session_id: Some(sid.to_string()),
             command: DaemonCommand::Snap {
                 mode: SnapMode::Compact,
-                record_path: None,
             },
         },
     );

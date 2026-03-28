@@ -98,6 +98,7 @@ impl EngineHarness {
                                     headers: vec![],
                                     body: "not found".to_string(),
                                     url: req.url.clone(),
+                                    redirect_chain: vec![],
                                 });
                             FetchResult {
                                 id: req.id,
@@ -163,6 +164,7 @@ fn metarefresh_http_header_variant() {
             ],
             body: challenge_html.to_string(),
             url: "https://example.com/".to_string(),
+            redirect_chain: vec![],
         },
     );
 
@@ -178,6 +180,7 @@ fn metarefresh_http_header_variant() {
             ],
             body: docs_html.to_string(),
             url: "https://example.com/docs".to_string(),
+            redirect_chain: vec![],
         },
     );
 
@@ -227,6 +230,7 @@ fn metarefresh_meta_tag_variant() {
             headers: vec![("content-type".to_string(), "text/html".to_string())],
             body: challenge_html.to_string(),
             url: "https://example.com/".to_string(),
+            redirect_chain: vec![],
         },
     );
     responses.insert(
@@ -237,6 +241,7 @@ fn metarefresh_meta_tag_variant() {
             headers: vec![("content-type".to_string(), "text/html".to_string())],
             body: target_html.to_string(),
             url: "https://example.com/".to_string(),
+            redirect_chain: vec![],
         },
     );
 
@@ -278,6 +283,7 @@ fn meta_refresh_infinite_loop_stops() {
             ],
             body: challenge_html.to_string(),
             url: "https://example.com/".to_string(),
+            redirect_chain: vec![],
         },
     );
     responses.insert(
@@ -291,6 +297,7 @@ fn meta_refresh_infinite_loop_stops() {
             ],
             body: challenge_html.to_string(),
             url: "https://example.com/loop".to_string(),
+            redirect_chain: vec![],
         },
     );
 
@@ -323,6 +330,7 @@ fn no_refresh_returns_page_as_is() {
             headers: vec![("content-type".to_string(), "text/html".to_string())],
             body: html.to_string(),
             url: "https://example.com/".to_string(),
+            redirect_chain: vec![],
         },
     );
 
@@ -360,6 +368,7 @@ fn cookies_persist_across_refresh_redirect() {
             ],
             body: challenge_html.to_string(),
             url: "https://example.com/".to_string(),
+            redirect_chain: vec![],
         },
     );
     responses.insert(
@@ -373,6 +382,7 @@ fn cookies_persist_across_refresh_redirect() {
             ],
             body: docs_html.to_string(),
             url: "https://example.com/docs".to_string(),
+            redirect_chain: vec![],
         },
     );
 

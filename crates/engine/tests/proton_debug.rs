@@ -166,6 +166,7 @@ fn proton_login_debug() {
             status_text: "OK".to_string(),
             headers: vec![("content-type".to_string(), ct.to_string())],
             body,
+            redirect_chain: vec![],
         });
     }
 
@@ -350,6 +351,7 @@ fn proton_login_debug() {
             status_text: "OK".to_string(),
             headers: vec![("content-type".to_string(), "application/json".to_string())],
             body,
+            redirect_chain: vec![],
         });
     }
     engine.settle();
@@ -390,6 +392,7 @@ fn proton_login_debug() {
                 status_text: "OK".to_string(),
                 headers: vec![("content-type".to_string(), "application/json".to_string())],
                 body,
+                redirect_chain: vec![],
             });
         }
         engine.settle();

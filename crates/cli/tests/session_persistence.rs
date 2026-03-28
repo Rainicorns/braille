@@ -92,7 +92,6 @@ fn session_persists_across_commands() {
             session_id: Some(sid.clone()),
             command: DaemonCommand::Snap {
                 mode: SnapMode::Compact,
-                record_path: None,
             },
         },
     );
@@ -120,7 +119,6 @@ fn session_persists_across_commands() {
             session_id: Some(sid),
             command: DaemonCommand::Snap {
                 mode: SnapMode::Compact,
-                record_path: None,
             },
         },
     );
@@ -160,7 +158,6 @@ fn two_sessions_are_isolated() {
             session_id: Some(sid2.clone()),
             command: DaemonCommand::Snap {
                 mode: SnapMode::Compact,
-                record_path: None,
             },
         },
     );

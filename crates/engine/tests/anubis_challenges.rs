@@ -978,6 +978,7 @@ fn navigate_pow_with_external_scripts_e2e() {
             headers: vec![("content-type".into(), "application/javascript".into())],
             body: main_mjs.into(),
             url: "/static/js/main.mjs".into(),
+            redirect_chain: vec![],
         },
     );
 
@@ -1146,6 +1147,7 @@ fn navigate_anubis_pow_e2e() {
             headers: vec![("content-type".into(), "application/javascript".into())],
             body: main_mjs.into(),
             url: "https://anubis.example.com/.within.website/x/cmd/anubis/static/js/main.mjs?cacheBuster=v1.25.0-test".into(),
+            redirect_chain: vec![],
         },
     );
     let mut engine = Engine::new();

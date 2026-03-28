@@ -46,6 +46,7 @@ fn service_spa_fetches(engine: &mut Engine) {
                 headers: vec![("content-type".to_string(), "application/json".to_string())],
                 body,
                 url: req.url.clone(),
+                redirect_chain: vec![],
             });
         }
         engine.settle();

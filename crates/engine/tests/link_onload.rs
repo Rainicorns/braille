@@ -184,6 +184,7 @@ Promise.all([cssPromise, jsPromise]).then(function() {
         status_text: "OK".to_string(),
         headers: vec![("content-type".to_string(), "application/javascript".to_string())],
         body: chunk_js.to_string(),
+        redirect_chain: vec![],
     });
 
     // Settle to fire CSS onload timer + JS onload + Promise.all resolution
@@ -312,6 +313,7 @@ __r.e('ui').then(function() {
         status_text: "OK".to_string(),
         headers: vec![],
         body: chunk_ui_js.to_string(),
+        redirect_chain: vec![],
     });
 
     // Settle — fires CSS onload timer, resolves both promises, entry runs
@@ -391,6 +393,7 @@ function maybeRender() {
         status_text: "OK".to_string(),
         headers: vec![],
         body: chunk_js.to_string(),
+        redirect_chain: vec![],
     });
 
     // 3. settle_no_advance again (fires script onload, runs maybeRender)
