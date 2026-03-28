@@ -253,8 +253,13 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (child !== null && child !== undefined && typeof child === 'object' && child.nodeType === 2) {
                 throw new DOMException("The new child element contains the parent.", "HierarchyRequestError");
             }
-            if (child === null || child === undefined || (typeof child === 'object' && child.__nid === undefined)) {
+            if (child === null || child === undefined || (typeof child === 'object' && child.__nid === undefined && child.nodeType === undefined)) {
                 throw new TypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.");
+            }
+            // CharacterData nodes (Text=3, PI=7, Comment=8) cannot have children
+            var pnt = this.nodeType;
+            if (pnt === 3 || pnt === 7 || pnt === 8) {
+                throw new DOMException("CharacterData type " + this.nodeName + " must not have children", "HierarchyRequestError");
             }
             if (this.__nid === undefined) return child;
             if (child && child.__nid !== undefined) {
@@ -614,6 +619,20 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
         doc.exitFullscreen = function() { __fullscreenElement = null; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
         doc.getAnimations = function() { return []; };
+
+        doc.createProcessingInstruction = function(target, data) {
+            if (arguments.length < 2) throw new TypeError("Failed to execute 'createProcessingInstruction' on 'Document': 2 arguments required.");
+            var pi = Object.create(EP);
+            var props = {
+                nodeType: 7, nodeName: String(target), target: String(target),
+                data: String(data), textContent: String(data), nodeValue: String(data),
+                parentNode: null, parentElement: null, childNodes: [],
+                firstChild: null, lastChild: null, previousSibling: null, nextSibling: null,
+                ownerDocument: document
+            };
+            for (var k in props) Object.defineProperty(pi, k, { value: props[k], writable: true, enumerable: true, configurable: true });
+            return pi;
+        };
 
         // window.dispatchEvent assigned after EventTarget is defined (below)
 
