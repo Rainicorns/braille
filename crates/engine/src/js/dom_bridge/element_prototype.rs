@@ -320,35 +320,58 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         EP.after = function() {
             var parent = this.parentNode;
-            var next = this.nextSibling;
             if (!parent) return;
-            for (var i = 0; i < arguments.length; i++) {
-                var arg = arguments[i];
-                if (typeof arg === 'string') arg = document.createTextNode(arg);
-                if (next) parent.insertBefore(arg, next);
-                else parent.appendChild(arg);
+            // Collect viableNextSibling BEFORE moving any nodes (spec step 3)
+            var viable = this.nextSibling;
+            var args = [];
+            for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
+            // If viable is one of the args, advance past it
+            while (viable && args.indexOf(viable) !== -1) viable = viable.nextSibling;
+            var frag = document.createDocumentFragment();
+            for (var i = 0; i < args.length; i++) {
+                var arg = args[i];
+                if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
+                frag.appendChild(arg);
             }
+            if (viable) parent.insertBefore(frag, viable);
+            else parent.appendChild(frag);
         };
         EP.before = function() {
             var parent = this.parentNode;
             if (!parent) return;
-            for (var i = 0; i < arguments.length; i++) {
-                var arg = arguments[i];
-                if (typeof arg === 'string') arg = document.createTextNode(arg);
-                parent.insertBefore(arg, this);
+            var args = [];
+            for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
+            // Spec: viablePreviousSibling = this.previousSibling not in args, then insert after it
+            // Simpler: find the reference node (this), but if this gets moved by frag.appendChild,
+            // use its previousSibling's nextSibling (or parent.firstChild if no previousSibling)
+            var prev = this.previousSibling;
+            while (prev && args.indexOf(prev) !== -1) prev = prev.previousSibling;
+            var frag = document.createDocumentFragment();
+            for (var i = 0; i < args.length; i++) {
+                var arg = args[i];
+                if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
+                frag.appendChild(arg);
             }
+            var ref = prev ? prev.nextSibling : parent.firstChild;
+            if (ref) parent.insertBefore(frag, ref);
+            else parent.appendChild(frag);
         };
         EP.replaceWith = function() {
             var parent = this.parentNode;
             if (!parent) return;
             var next = this.nextSibling;
+            var args = [];
+            for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
+            while (next && args.indexOf(next) !== -1) next = next.nextSibling;
             parent.removeChild(this);
-            for (var i = 0; i < arguments.length; i++) {
-                var arg = arguments[i];
-                if (typeof arg === 'string') arg = document.createTextNode(arg);
-                if (next) parent.insertBefore(arg, next);
-                else parent.appendChild(arg);
+            var frag = document.createDocumentFragment();
+            for (var i = 0; i < args.length; i++) {
+                var arg = args[i];
+                if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
+                frag.appendChild(arg);
             }
+            if (next) parent.insertBefore(frag, next);
+            else parent.appendChild(frag);
         };
         ElemProto.toggleAttribute = function(name, force) {
             if (force !== undefined) {
