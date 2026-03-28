@@ -165,7 +165,23 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return __w(nid);
         };
         EP.replaceChild = function(newChild, oldChild) {
-            if (newChild && newChild.__nid !== undefined && oldChild && oldChild.__nid !== undefined) {
+            if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined)) {
+                throw new TypeError("Failed to execute 'replaceChild' on 'Node': parameter 1 is not of type 'Node'.");
+            }
+            if (oldChild === null || oldChild === undefined || (typeof oldChild === 'object' && oldChild.__nid === undefined)) {
+                throw new TypeError("Failed to execute 'replaceChild' on 'Node': parameter 2 is not of type 'Node'.");
+            }
+            if (newChild.__nid !== undefined && oldChild.__nid !== undefined && this.__nid !== undefined) {
+                var err = __n_validatePreReplace(this.__nid, newChild.__nid, oldChild.__nid);
+                if (err) {
+                    var colonIdx = err.indexOf(':');
+                    var name = err.substring(0, colonIdx);
+                    var msg = err.substring(colonIdx + 1);
+                    throw new DOMException(msg, name);
+                }
+                if (newChild.__nid === oldChild.__nid) {
+                    return oldChild;
+                }
                 if (newChild.nodeType === 11) {
                     // DocumentFragment: insert all fragment children before oldChild, then remove oldChild
                     var kids = __n_getAllChildIds(newChild.__nid);
@@ -183,11 +199,13 @@ pub(crate) fn element_prototype_js() -> &'static str {
 
         // CharacterData methods
         EP.substringData = function(offset, count) {
+            if (arguments.length < 2) throw new TypeError("Failed to execute 'substringData': 2 arguments required, but only " + arguments.length + " present.");
             var r = JSON.parse(__n_charDataSubstring(this.__nid, offset >>> 0, count >>> 0));
             if (r.err) throw new DOMException(r.err, r.err);
             return r.ok;
         };
         EP.appendData = function(data) {
+            if (arguments.length < 1) throw new TypeError("Failed to execute 'appendData': 1 argument required, but only 0 present.");
             __n_charDataAppend(this.__nid, String(data));
         };
         EP.insertData = function(offset, data) {
@@ -640,14 +658,6 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 set: function(v) {
                     var nt = __n_getNodeType(this.__nid);
                     if (nt === 3 || nt === 8) __n_setCharData(this.__nid, v === null ? '' : String(v));
-                },
-                configurable: true
-            },
-            length: {
-                get: function() {
-                    var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8) return __n_charDataLength(this.__nid);
-                    return undefined;
                 },
                 configurable: true
             },

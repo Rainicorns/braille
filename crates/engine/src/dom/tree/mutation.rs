@@ -314,4 +314,443 @@ impl DomTree {
         let text_id = self.create_text(text);
         self.append_child(node_id, text_id);
     }
+
+    /// Checks if `ancestor_id` is an inclusive ancestor of `node_id`.
+    fn is_inclusive_ancestor(&self, ancestor_id: NodeId, node_id: NodeId) -> bool {
+        let mut current = node_id;
+        loop {
+            if current == ancestor_id {
+                return true;
+            }
+            match self.nodes[current].parent {
+                Some(parent) => current = parent,
+                None => return false,
+            }
+        }
+    }
+
+    /// Returns true if there's a Doctype node after `ref_id` in `parent_id`'s children.
+    fn has_doctype_after(&self, parent_id: NodeId, ref_id: NodeId) -> bool {
+        let children = &self.nodes[parent_id].children;
+        let mut found_ref = false;
+        for &c in children {
+            if c == ref_id {
+                found_ref = true;
+                continue;
+            }
+            if found_ref && matches!(self.nodes[c].data, NodeData::Doctype { .. }) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns true if there's an Element node before `ref_id` in `parent_id`'s children.
+    fn has_element_before(&self, parent_id: NodeId, ref_id: NodeId) -> bool {
+        let children = &self.nodes[parent_id].children;
+        for &c in children {
+            if c == ref_id {
+                return false;
+            }
+            if matches!(self.nodes[c].data, NodeData::Element { .. }) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Pre-insertion validation per https://dom.spec.whatwg.org/#concept-node-ensure-pre-insertion-validity
+    /// Returns Ok(()) if valid, Err(error_name, message) if invalid.
+    /// `ref_child` is None for appendChild (append at end).
+    pub fn validate_pre_insert(
+        &self,
+        parent_id: NodeId,
+        node_id: NodeId,
+        ref_child: Option<NodeId>,
+    ) -> Result<(), (&'static str, &'static str)> {
+        let parent_data = &self.nodes[parent_id].data;
+
+        // Step 1: parent must be Document, DocumentFragment, or Element
+        match parent_data {
+            NodeData::Document
+            | NodeData::DocumentFragment
+            | NodeData::ShadowRoot { .. }
+            | NodeData::Element { .. } => {}
+            _ => {
+                return Err((
+                    "HierarchyRequestError",
+                    "parent is not a Document, DocumentFragment, or Element",
+                ));
+            }
+        }
+
+        // Step 2: node must not be an inclusive ancestor of parent
+        if self.is_inclusive_ancestor(node_id, parent_id) {
+            return Err((
+                "HierarchyRequestError",
+                "The new child is an ancestor of the parent",
+            ));
+        }
+
+        // Step 3: if ref_child is not null, its parent must be parent
+        if let Some(ref_id) = ref_child {
+            if self.nodes[ref_id].parent != Some(parent_id) {
+                return Err((
+                    "NotFoundError",
+                    "The node before which the new node is to be inserted is not a child of this node",
+                ));
+            }
+        }
+
+        let node_data = &self.nodes[node_id].data;
+
+        // Step 4: node must be a valid insertion type
+        match node_data {
+            NodeData::DocumentFragment
+            | NodeData::ShadowRoot { .. }
+            | NodeData::Doctype { .. }
+            | NodeData::Element { .. }
+            | NodeData::Text { .. }
+            | NodeData::Comment { .. }
+            | NodeData::ProcessingInstruction { .. }
+            | NodeData::CDATASection { .. } => {}
+            NodeData::Attr { .. } => {
+                return Err(("HierarchyRequestError", "Cannot insert an Attr node"));
+            }
+            NodeData::Document => {
+                return Err(("HierarchyRequestError", "Cannot insert a Document node"));
+            }
+        }
+
+        // Step 5: If node is Text and parent is Document, throw
+        if matches!(node_data, NodeData::Text { .. }) && matches!(parent_data, NodeData::Document) {
+            return Err((
+                "HierarchyRequestError",
+                "Cannot insert Text as a child of Document",
+            ));
+        }
+
+        // Step 5 continued: If node is Doctype and parent is not Document, throw
+        if matches!(node_data, NodeData::Doctype { .. }) && !matches!(parent_data, NodeData::Document) {
+            return Err((
+                "HierarchyRequestError",
+                "Cannot insert Doctype as a child of a non-Document node",
+            ));
+        }
+
+        // Step 6: If parent is Document, additional constraints
+        if matches!(parent_data, NodeData::Document) {
+            self.validate_document_insert(parent_id, node_id, ref_child)?;
+        }
+
+        Ok(())
+    }
+
+    /// Additional validation when inserting into a Document node (step 6 of pre-insert).
+    fn validate_document_insert(
+        &self,
+        parent_id: NodeId,
+        node_id: NodeId,
+        ref_child: Option<NodeId>,
+    ) -> Result<(), (&'static str, &'static str)> {
+        let node_data = &self.nodes[node_id].data;
+
+        match node_data {
+            NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
+                let frag_children = &self.nodes[node_id].children;
+                let elem_count = frag_children
+                    .iter()
+                    .filter(|&&c| matches!(self.nodes[c].data, NodeData::Element { .. }))
+                    .count();
+                let has_text = frag_children
+                    .iter()
+                    .any(|&c| matches!(self.nodes[c].data, NodeData::Text { .. }));
+
+                if has_text {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Cannot insert DocumentFragment containing Text into Document",
+                    ));
+                }
+                if elem_count > 1 {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Cannot insert DocumentFragment with multiple elements into Document",
+                    ));
+                }
+                if elem_count == 1 {
+                    let has_existing_element = self.nodes[parent_id]
+                        .children
+                        .iter()
+                        .any(|&c| matches!(self.nodes[c].data, NodeData::Element { .. }));
+                    if has_existing_element {
+                        return Err((
+                            "HierarchyRequestError",
+                            "Document already has an element child",
+                        ));
+                    }
+                    if let Some(ref_id) = ref_child {
+                        if matches!(self.nodes[ref_id].data, NodeData::Doctype { .. }) {
+                            return Err((
+                                "HierarchyRequestError",
+                                "Cannot insert element before doctype",
+                            ));
+                        }
+                        if self.has_doctype_after(parent_id, ref_id) {
+                            return Err((
+                                "HierarchyRequestError",
+                                "Cannot insert element before a doctype",
+                            ));
+                        }
+                    }
+                }
+            }
+            NodeData::Element { .. } => {
+                let has_existing_element = self.nodes[parent_id]
+                    .children
+                    .iter()
+                    .any(|&c| matches!(self.nodes[c].data, NodeData::Element { .. }));
+                if has_existing_element {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Document already has an element child",
+                    ));
+                }
+                if let Some(ref_id) = ref_child {
+                    if matches!(self.nodes[ref_id].data, NodeData::Doctype { .. }) {
+                        return Err((
+                            "HierarchyRequestError",
+                            "Cannot insert element before doctype",
+                        ));
+                    }
+                    if self.has_doctype_after(parent_id, ref_id) {
+                        return Err((
+                            "HierarchyRequestError",
+                            "Cannot insert element before a doctype",
+                        ));
+                    }
+                }
+            }
+            NodeData::Doctype { .. } => {
+                let has_existing_doctype = self.nodes[parent_id]
+                    .children
+                    .iter()
+                    .any(|&c| matches!(self.nodes[c].data, NodeData::Doctype { .. }));
+                if has_existing_doctype {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Document already has a doctype child",
+                    ));
+                }
+                if let Some(ref_id) = ref_child {
+                    if self.has_element_before(parent_id, ref_id) {
+                        return Err((
+                            "HierarchyRequestError",
+                            "Cannot insert doctype after an element",
+                        ));
+                    }
+                } else {
+                    let has_element = self.nodes[parent_id]
+                        .children
+                        .iter()
+                        .any(|&c| matches!(self.nodes[c].data, NodeData::Element { .. }));
+                    if has_element {
+                        return Err((
+                            "HierarchyRequestError",
+                            "Cannot insert doctype after an element",
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    /// Pre-replace validation per https://dom.spec.whatwg.org/#concept-node-replace
+    /// Returns Ok(()) if valid, Err(error_name, message) if invalid.
+    pub fn validate_pre_replace(
+        &self,
+        parent_id: NodeId,
+        node_id: NodeId,
+        old_child_id: NodeId,
+    ) -> Result<(), (&'static str, &'static str)> {
+        let parent_data = &self.nodes[parent_id].data;
+
+        // Step 1: parent must be Document, DocumentFragment, or Element
+        match parent_data {
+            NodeData::Document
+            | NodeData::DocumentFragment
+            | NodeData::ShadowRoot { .. }
+            | NodeData::Element { .. } => {}
+            _ => {
+                return Err((
+                    "HierarchyRequestError",
+                    "parent is not a Document, DocumentFragment, or Element",
+                ));
+            }
+        }
+
+        // Step 2: node must not be an inclusive ancestor of parent
+        if self.is_inclusive_ancestor(node_id, parent_id) {
+            return Err((
+                "HierarchyRequestError",
+                "The new child is an ancestor of the parent",
+            ));
+        }
+
+        // Step 3: old child's parent must be parent
+        if self.nodes[old_child_id].parent != Some(parent_id) {
+            return Err((
+                "NotFoundError",
+                "The node to be replaced is not a child of this node",
+            ));
+        }
+
+        let node_data = &self.nodes[node_id].data;
+
+        // Step 4/5: node must be a valid insertion type
+        match node_data {
+            NodeData::DocumentFragment
+            | NodeData::ShadowRoot { .. }
+            | NodeData::Doctype { .. }
+            | NodeData::Element { .. }
+            | NodeData::Text { .. }
+            | NodeData::Comment { .. }
+            | NodeData::ProcessingInstruction { .. }
+            | NodeData::CDATASection { .. } => {}
+            NodeData::Attr { .. } => {
+                return Err(("HierarchyRequestError", "Cannot insert an Attr node"));
+            }
+            NodeData::Document => {
+                return Err(("HierarchyRequestError", "Cannot insert a Document node"));
+            }
+        }
+
+        // Step 5: If node is Text and parent is Document, throw
+        if matches!(node_data, NodeData::Text { .. }) && matches!(parent_data, NodeData::Document) {
+            return Err((
+                "HierarchyRequestError",
+                "Cannot insert Text as a child of Document",
+            ));
+        }
+
+        // If node is Doctype and parent is not Document, throw
+        if matches!(node_data, NodeData::Doctype { .. }) && !matches!(parent_data, NodeData::Document) {
+            return Err((
+                "HierarchyRequestError",
+                "Cannot insert Doctype as a child of a non-Document node",
+            ));
+        }
+
+        // Step 6: If parent is Document, additional constraints
+        if matches!(parent_data, NodeData::Document) {
+            self.validate_document_replace(parent_id, node_id, old_child_id)?;
+        }
+
+        Ok(())
+    }
+
+    /// Additional validation when replacing within a Document node (step 6 of replace).
+    fn validate_document_replace(
+        &self,
+        parent_id: NodeId,
+        node_id: NodeId,
+        old_child_id: NodeId,
+    ) -> Result<(), (&'static str, &'static str)> {
+        let node_data = &self.nodes[node_id].data;
+
+        match node_data {
+            NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
+                let frag_children = &self.nodes[node_id].children;
+                let elem_count = frag_children
+                    .iter()
+                    .filter(|&&c| matches!(self.nodes[c].data, NodeData::Element { .. }))
+                    .count();
+                let has_text = frag_children
+                    .iter()
+                    .any(|&c| matches!(self.nodes[c].data, NodeData::Text { .. }));
+
+                if has_text {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Cannot insert DocumentFragment containing Text into Document",
+                    ));
+                }
+                if elem_count > 1 {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Cannot insert DocumentFragment with multiple elements into Document",
+                    ));
+                }
+                if elem_count == 1 {
+                    let has_other_element = self.nodes[parent_id]
+                        .children
+                        .iter()
+                        .any(|&c| {
+                            c != old_child_id
+                                && matches!(self.nodes[c].data, NodeData::Element { .. })
+                        });
+                    if has_other_element {
+                        return Err((
+                            "HierarchyRequestError",
+                            "Document already has an element child",
+                        ));
+                    }
+                    if self.has_doctype_after(parent_id, old_child_id) {
+                        return Err((
+                            "HierarchyRequestError",
+                            "Cannot insert element before a doctype",
+                        ));
+                    }
+                }
+            }
+            NodeData::Element { .. } => {
+                let has_other_element = self.nodes[parent_id]
+                    .children
+                    .iter()
+                    .any(|&c| {
+                        c != old_child_id
+                            && matches!(self.nodes[c].data, NodeData::Element { .. })
+                    });
+                if has_other_element {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Document already has an element child",
+                    ));
+                }
+                if self.has_doctype_after(parent_id, old_child_id) {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Cannot insert element before a doctype",
+                    ));
+                }
+            }
+            NodeData::Doctype { .. } => {
+                let has_other_doctype = self.nodes[parent_id]
+                    .children
+                    .iter()
+                    .any(|&c| {
+                        c != old_child_id
+                            && matches!(self.nodes[c].data, NodeData::Doctype { .. })
+                    });
+                if has_other_doctype {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Document already has a doctype child",
+                    ));
+                }
+                if self.has_element_before(parent_id, old_child_id) {
+                    return Err((
+                        "HierarchyRequestError",
+                        "Cannot insert doctype after an element",
+                    ));
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
 }

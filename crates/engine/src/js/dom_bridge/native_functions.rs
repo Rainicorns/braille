@@ -255,8 +255,17 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
                 tree.remove_child(parent_id as NodeId, child_id);
             }
             let frag = fragment_tree.borrow();
+            // html5ever's parse_fragment creates: Document -> <html> -> actual content.
+            // We need to skip the <html> wrapper and import the actual content nodes.
             let frag_doc = frag.document();
-            let frag_children: Vec<NodeId> = frag.get_node(frag_doc).children.clone();
+            let doc_children: Vec<NodeId> = frag.get_node(frag_doc).children.clone();
+            let content_parent = doc_children.iter().find(|&&child_id| {
+                matches!(
+                    &frag.get_node(child_id).data,
+                    NodeData::Element { tag_name, .. } if tag_name == "html"
+                )
+            }).copied().unwrap_or(frag_doc);
+            let frag_children: Vec<NodeId> = frag.get_node(content_parent).children.clone();
             for &frag_child_id in &frag_children {
                 import_node_recursive(tree, &frag, frag_child_id, parent_id as NodeId);
             }
@@ -410,6 +419,28 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     g.set("__n_createDocFragment", Function::new(ctx.clone(), || -> u32 {
         with_tree_mut(|tree| {
             tree.create_document_fragment() as u32
+        })
+    }).unwrap()).unwrap();
+
+    // validatePreInsert(parentId, nodeId, refChildId) -> "" if valid, "ErrorName:message" if invalid
+    // refChildId < 0 means null (append)
+    g.set("__n_validatePreInsert", Function::new(ctx.clone(), |parent_id: u32, node_id: u32, ref_child_id: i32| -> String {
+        with_tree(|tree| {
+            let ref_child = if ref_child_id < 0 { None } else { Some(ref_child_id as NodeId) };
+            match tree.validate_pre_insert(parent_id as NodeId, node_id as NodeId, ref_child) {
+                Ok(()) => String::new(),
+                Err((name, msg)) => format!("{}:{}", name, msg),
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // validatePreReplace(parentId, nodeId, oldChildId) -> "" if valid, "ErrorName:message" if invalid
+    g.set("__n_validatePreReplace", Function::new(ctx.clone(), |parent_id: u32, node_id: u32, old_child_id: u32| -> String {
+        with_tree(|tree| {
+            match tree.validate_pre_replace(parent_id as NodeId, node_id as NodeId, old_child_id as NodeId) {
+                Ok(()) => String::new(),
+                Err((name, msg)) => format!("{}:{}", name, msg),
+            }
         })
     }).unwrap()).unwrap();
 

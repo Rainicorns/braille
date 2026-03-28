@@ -264,6 +264,8 @@ pub(crate) fn form_bindings_js() -> &'static str {
         // length property for <select> (number of options) and <form> (number of controls)
         Object.defineProperty(EP, 'length', {
             get: function() {
+                var nt = __n_getNodeType(this.__nid);
+                if (nt === 3 || nt === 8) return __n_charDataLength(this.__nid);
                 if (this.tagName === 'SELECT') {
                     var opts = this.querySelectorAll('option');
                     return opts.length;

@@ -14,7 +14,8 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         // Event classes
         globalThis.Event = globalThis.Event || class Event {
             constructor(type, opts) {
-                this.type = type;
+                if (arguments.length < 1) throw new TypeError("Failed to construct 'Event': 1 argument required, but only 0 present.");
+                this.type = String(type);
                 this.bubbles = (opts && opts.bubbles) || false;
                 this.cancelable = (opts && opts.cancelable) || false;
                 this.composed = (opts && opts.composed) || false;

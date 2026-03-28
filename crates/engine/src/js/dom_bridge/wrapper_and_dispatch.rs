@@ -201,9 +201,23 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             });
         };
 
+        // Helper: throw DOMException from validation error string "ErrorName:message"
+        function __throwValidationError(err) {
+            var colonIdx = err.indexOf(':');
+            var name = err.substring(0, colonIdx);
+            var msg = err.substring(colonIdx + 1);
+            throw new DOMException(msg, name);
+        }
+
         // Element mutation methods that operate on the real DomTree
         EP.appendChild = function(child) {
-            if (child && child.__nid !== undefined && this.__nid !== undefined) {
+            if (child === null || child === undefined || (typeof child === 'object' && child.__nid === undefined)) {
+                throw new TypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.");
+            }
+            if (this.__nid === undefined) return child;
+            if (child && child.__nid !== undefined) {
+                var err = __n_validatePreInsert(this.__nid, child.__nid, -1);
+                if (err) __throwValidationError(err);
                 if (child.nodeType === 11) {
                     var kids = __n_getAllChildIds(child.__nid);
                     var added = [];
@@ -222,15 +236,33 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return child;
         };
         EP.removeChild = function(child) {
+            if (child === null || child === undefined || (typeof child === 'object' && child.__nid === undefined)) {
+                throw new TypeError("Failed to execute 'removeChild' on 'Node': parameter 1 is not of type 'Node'.");
+            }
             if (child && child.__nid !== undefined && this.__nid !== undefined) {
+                if (__n_getParent(child.__nid) !== this.__nid) {
+                    throw new DOMException("The node to be removed is not a child of this node.", "NotFoundError");
+                }
                 __n_removeChild(this.__nid, child.__nid);
                 if (typeof __mo_notify === 'function') __mo_notify('childList', this, {removedNodes: [child]});
             }
             return child;
         };
         EP.insertBefore = function(newChild, refChild) {
-            if (newChild && newChild.__nid !== undefined && this.__nid !== undefined) {
+            if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined)) {
+                throw new TypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'.");
+            }
+            if (arguments.length < 2) {
+                throw new TypeError("Failed to execute 'insertBefore' on 'Node': 2 arguments required, but only 1 present.");
+            }
+            if (refChild !== null && refChild !== undefined && (typeof refChild !== 'object' || refChild.__nid === undefined)) {
+                throw new TypeError("Failed to execute 'insertBefore' on 'Node': parameter 2 is not of type 'Node'.");
+            }
+            if (this.__nid === undefined) return newChild;
+            if (newChild && newChild.__nid !== undefined) {
                 var refId = (refChild && refChild.__nid !== undefined) ? refChild.__nid : -1;
+                var err = __n_validatePreInsert(this.__nid, newChild.__nid, refId);
+                if (err) __throwValidationError(err);
                 if (newChild.nodeType === 11) {
                     var kids = __n_getAllChildIds(newChild.__nid);
                     var added = [];
@@ -240,6 +272,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     }
                     if (typeof __mo_notify === 'function' && added.length) __mo_notify('childList', this, {addedNodes: added});
                 } else {
+                    if (refId >= 0 && newChild.__nid === refId) {
+                        return newChild;
+                    }
                     __n_insertBefore(this.__nid, newChild.__nid, refId);
                     if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [newChild]});
                 }
@@ -259,7 +294,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.parentNode = null;
         doc.parentElement = null;
         doc.getElementById = function(id) {
-            var nid = __n_getElementById(id);
+            var nid = __n_getElementById(String(id));
             return nid >= 0 ? __w(nid) : null;
         };
         doc.querySelector = function(sel) {
@@ -598,19 +633,51 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }, configurable: true },
             implementation: { value: {
                 createHTMLDocument: function(title) {
-                    var div = document.createElement('div');
-                    return {
-                        documentElement: div, body: div, head: null,
-                        title: title || '', readyState: 'complete',
-                        querySelector: function(sel) { return div.querySelector(sel); },
-                        querySelectorAll: function(sel) { return div.querySelectorAll(sel); },
-                        getElementById: function(id) { return div.querySelector('#' + id) || null; },
-                        getElementsByTagName: function(tag) { return div.getElementsByTagName(tag); },
-                        getElementsByClassName: function(cls) { return div.getElementsByClassName(cls); },
+                    var htmlEl = document.createElement('html');
+                    var headEl = document.createElement('head');
+                    var bodyEl = document.createElement('body');
+                    htmlEl.appendChild(headEl);
+                    htmlEl.appendChild(bodyEl);
+                    if (title !== undefined) {
+                        var titleEl = document.createElement('title');
+                        titleEl.textContent = String(title);
+                        headEl.appendChild(titleEl);
+                    }
+                    var newDoc = {
+                        nodeType: 9, nodeName: '#document',
+                        documentElement: htmlEl, body: bodyEl, head: headEl,
+                        title: title !== undefined ? String(title) : '', readyState: 'complete',
+                        __listeners: {}, __captureListeners: {},
+                        querySelector: function(sel) { return htmlEl.querySelector(sel); },
+                        querySelectorAll: function(sel) { return htmlEl.querySelectorAll(sel); },
+                        getElementById: function(id) { return htmlEl.querySelector('#' + id) || null; },
+                        getElementsByTagName: function(tag) { return htmlEl.querySelectorAll(tag); },
+                        getElementsByClassName: function(cls) { return htmlEl.querySelectorAll('.' + cls); },
                         createElement: function(tag) { return document.createElement(tag); },
                         createTextNode: function(text) { return document.createTextNode(text); },
                         createDocumentFragment: function() { return document.createDocumentFragment(); },
+                        createEvent: function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; },
+                        addEventListener: function(type, cb, opts) {
+                            if (typeof cb !== 'function') return;
+                            var capture = !!(opts === true || (opts && opts.capture));
+                            var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
+                            if (!store[type]) store[type] = [];
+                            store[type].push(cb);
+                        },
+                        removeEventListener: function(type, cb, opts) {
+                            var capture = !!(opts === true || (opts && opts.capture));
+                            var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
+                            if (store[type]) store[type] = store[type].filter(function(f){return f!==cb;});
+                        },
+                        dispatchEvent: function(event) {
+                            event.target = newDoc;
+                            event.currentTarget = newDoc;
+                            var cbs = newDoc.__listeners[event.type];
+                            if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(newDoc, event); }
+                            return !event.defaultPrevented;
+                        },
                     };
+                    return newDoc;
                 },
                 hasFeature: function() { return true; },
             }, configurable: true },
