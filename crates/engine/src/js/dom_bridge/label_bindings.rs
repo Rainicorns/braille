@@ -3,7 +3,7 @@ pub(super) fn label_bindings_js() -> &'static str {
     r#"
         // --- Label association properties ---
         // label.htmlFor — reflects the `for` attribute
-        Object.defineProperty(EP, 'htmlFor', {
+        Object.defineProperty(ElemProto, 'htmlFor', {
             get: function() {
                 if (this.tagName !== 'LABEL') return undefined;
                 return this.getAttribute('for') || '';
@@ -15,8 +15,9 @@ pub(super) fn label_bindings_js() -> &'static str {
         });
 
         // label.control — returns the associated form control element
-        Object.defineProperty(EP, 'control', {
+        Object.defineProperty(ElemProto, 'control', {
             get: function() {
+                if (this.__nid === undefined) return undefined;
                 if (this.tagName !== 'LABEL') return undefined;
                 var id = __n_findLabelControl(this.__nid);
                 return id >= 0 ? __w(id) : null;
@@ -25,8 +26,9 @@ pub(super) fn label_bindings_js() -> &'static str {
         });
 
         // input.labels — returns a NodeList of all <label> elements associated with this input
-        Object.defineProperty(EP, 'labels', {
+        Object.defineProperty(ElemProto, 'labels', {
             get: function() {
+                if (this.__nid === undefined) return undefined;
                 var tag = this.tagName;
                 if (tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA' && tag !== 'BUTTON') return undefined;
                 // Hidden inputs have no labels per spec

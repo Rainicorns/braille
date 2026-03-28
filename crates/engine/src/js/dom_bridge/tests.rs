@@ -766,3 +766,119 @@ fn form_length_returns_zero_for_empty_form() {
     let result = runtime.eval_to_string(r#"document.getElementById("f").length"#).unwrap();
     assert_eq!(result, "0");
 }
+
+#[test]
+fn abort_signal_basic_removal() {
+    let mut rt = make_runtime();
+    let result = rt.eval_to_string(r#"
+        var et = new EventTarget();
+        var ac = new AbortController();
+        var count = 0;
+        et.addEventListener('foo', function() { count++; }, { signal: ac.signal });
+        et.dispatchEvent(new Event('foo'));
+        et.dispatchEvent(new Event('foo'));
+        ac.abort();
+        et.dispatchEvent(new Event('foo'));
+        String(count)
+    "#).unwrap();
+    assert_eq!(result, "2");
+}
+
+#[test]
+fn abort_signal_inside_listener() {
+    let mut rt = make_runtime();
+    let result = rt.eval_to_string(r#"
+        var et = new EventTarget();
+        var ac = new AbortController();
+        var count = 0;
+        et.addEventListener('foo', function() {
+            count++;
+            if (count >= 3) ac.abort();
+        }, { signal: ac.signal });
+        et.dispatchEvent(new Event('foo'));
+        et.dispatchEvent(new Event('foo'));
+        et.dispatchEvent(new Event('foo'));
+        et.dispatchEvent(new Event('foo'));
+        et.dispatchEvent(new Event('foo'));
+        String(count)
+    "#).unwrap();
+    assert_eq!(result, "3");
+}
+
+#[test]
+fn abort_signal_nested_dispatch() {
+    let mut rt = make_runtime();
+    let result = rt.eval_to_string(r#"
+        var et = new EventTarget();
+        var ac = new AbortController();
+        var count = 0;
+        et.addEventListener('foo', function() { count++; }, { signal: ac.signal });
+        et.addEventListener('foo', function() { ac.abort(); });
+        et.dispatchEvent(new Event('foo'));
+        et.dispatchEvent(new Event('foo'));
+        String(count)
+    "#).unwrap();
+    // First dispatch: both listeners fire, count=1, then abort removes first listener
+    // Second dispatch: only second listener fires, count stays 1
+    assert_eq!(result, "1");
+}
+
+#[test]
+fn abort_signal_recursive_dispatch_simple() {
+    let mut rt = make_runtime();
+    let result = rt.eval_to_string(r#"
+        var et = new EventTarget();
+        var ac = new AbortController();
+        var count = 0;
+        et.addEventListener('foo', function() {
+            count++;
+            if (count > 3) ac.abort();
+            et.dispatchEvent(new Event('foo'));
+        }, { signal: ac.signal });
+        et.dispatchEvent(new Event('foo'));
+        String(count)
+    "#).unwrap();
+    assert_eq!(result, "4");
+}
+
+#[test]
+fn abort_signal_recursive_dispatch_with_inner_add() {
+    let mut rt = make_runtime();
+    let result = rt.eval_to_string(r#"
+        var et = new EventTarget();
+        var ac = new AbortController();
+        var count = 0;
+        et.addEventListener('foo', function outer() {
+            et.addEventListener('foo', function inner() {
+                count++;
+                if (count > 3) ac.abort();
+                et.dispatchEvent(new Event('foo'));
+            }, { signal: ac.signal });
+            et.dispatchEvent(new Event('foo'));
+        }, { once: true });
+        et.dispatchEvent(new Event('foo'));
+        String(count)
+    "#).unwrap();
+    assert_eq!(result, "4");
+}
+
+#[test]
+fn abort_signal_removes_event_listener() {
+    let mut rt = make_runtime();
+    let result = rt.eval_to_string(r#"
+        var et = new EventTarget();
+        var ac = new AbortController();
+        var count = 0;
+        et.addEventListener('foo', function() {
+            et.addEventListener('foo', function inner() {
+                count++;
+                if (count > 5) ac.abort();
+                et.dispatchEvent(new Event('foo'));
+            }, { signal: ac.signal });
+            et.dispatchEvent(new Event('foo'));
+        }, { once: true });
+        et.dispatchEvent(new Event('foo'));
+        String(count)
+    "#).unwrap();
+    assert_eq!(result, "6");
+}

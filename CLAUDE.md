@@ -33,6 +33,27 @@ let html = r#"<script type="module">
 </script>"#;
 ```
 
+### No tolerance / expected_failures
+
+Never use `expected_failures` counts, tolerance thresholds, or any mechanism that lets a partially-failing test report as green. If 51/80 subtests pass, that's a FAIL with 29 subtests to fix. The moment you hide failures behind a count, you lose track of what's actually broken.
+
+### Prefer strong foundations over green tests
+
+More regressions reporting the true state of things on a correct foundation is BETTER than passing tests on a shaky one. If a proper refactor causes 50 tests to go red because the old tests relied on wrong behavior, that's progress — those reds are now the honest backlog. Never optimize for short-term green. Always optimize for correctness and architectural strength. A strong foundation lets you build upward indefinitely. A weak one collapses under its own weight.
+
+### No shortcuts in architecture
+
+When you encounter a structural problem (e.g., "all node types share one prototype but only elements should have `tagName`"), do the proper refactor. Don't:
+- Add `if (this.__nid === undefined) return` guards as a permanent fix — that's a band-aid
+- Create standalone objects with `Object.defineProperty` overrides to shadow broken inherited getters — that's another band-aid on top
+- Say "this is a bigger effort, let me skip it" — you'll just hit the same wall in every subsequent test
+
+Every shortcut creates more work later. The only question is how many crappy implementations you go through before converging at the correct one. Do the correct thing the first time.
+
+### White-box test development
+
+When testing against an external system (e.g., Anubis), read their source code and build test cases from the actual code paths. Don't hit the live site — it's designed to be random to prevent grinding. Develop deterministic tests from their source.
+
 ## Code Structure
 
 - **New tests go in `crates/engine/tests/`**, not inline in source files. Use the public API (`eval_js`, `handle_click`, `handle_type`, `snapshot`, etc.) from external test files.

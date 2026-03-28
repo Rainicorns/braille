@@ -2,8 +2,9 @@ pub(crate) fn form_bindings_js() -> &'static str {
     r#"
         // --- Form-related properties and methods ---
         // form property: check form attribute first, then walk up ancestors
-        Object.defineProperty(EP, 'form', {
+        Object.defineProperty(ElemProto, 'form', {
             get: function() {
+                if (this.__nid === undefined) return null;
                 // Per HTML spec: if element has a form attribute, use getElementById to find the form
                 var formAttr = __n_getAttribute(this.__nid, 'form');
                 if (formAttr && formAttr !== '') {
@@ -23,14 +24,14 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // Form-specific methods (only meaningful on <form> elements but safe on all)
-        EP.submit = function() {
+        ElemProto.submit = function() {
             if (this.tagName === 'FORM') {
                 var evt = new Event('submit', {bubbles: true, cancelable: true});
                 evt.target = this;
                 this.dispatchEvent(evt);
             }
         };
-        EP.requestSubmit = function(submitter) {
+        ElemProto.requestSubmit = function(submitter) {
             if (this.tagName !== 'FORM') return;
             // If submitter is provided, validate it
             if (submitter !== undefined && submitter !== null) {
@@ -57,7 +58,7 @@ pub(crate) fn form_bindings_js() -> &'static str {
             // If preventDefault was called, do not submit
             if (!dispatched) return;
         };
-        EP.reset = function() {
+        ElemProto.reset = function() {
             if (this.tagName !== 'FORM') return;
             // Clear dirty flags on all descendant controls
             var controls = this.querySelectorAll('input, textarea, select');
@@ -77,11 +78,11 @@ pub(crate) fn form_bindings_js() -> &'static str {
             evt.target = this;
             this.dispatchEvent(evt);
         };
-        EP.setCustomValidity = function(msg) {
+        ElemProto.setCustomValidity = function(msg) {
             if (!this.__props) this.__props = {};
             this.__props._customValidity = String(msg);
         };
-        EP.checkValidity = function() {
+        ElemProto.checkValidity = function() {
             var v = this.validity;
             if (!v.valid) {
                 this.dispatchEvent(new Event('invalid', {bubbles: false, cancelable: true}));
@@ -89,10 +90,10 @@ pub(crate) fn form_bindings_js() -> &'static str {
             }
             return true;
         };
-        EP.reportValidity = function() { return this.checkValidity(); };
+        ElemProto.reportValidity = function() { return this.checkValidity(); };
 
         // elements property for <form>: returns live HTMLFormControlsCollection
-        Object.defineProperty(EP, 'elements', {
+        Object.defineProperty(ElemProto, 'elements', {
             get: function() {
                 if (this.tagName !== 'FORM') return undefined;
                 var self = this;
@@ -140,19 +141,19 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // action/method properties for all elements (meaningful on <form>)
-        Object.defineProperty(EP, 'action', {
+        Object.defineProperty(ElemProto, 'action', {
             get: function() { return this.getAttribute('action') || ''; },
             set: function(v) { this.setAttribute('action', String(v)); },
             configurable: true
         });
-        Object.defineProperty(EP, 'method', {
+        Object.defineProperty(ElemProto, 'method', {
             get: function() { return (this.getAttribute('method') || 'get').toLowerCase(); },
             set: function(v) { this.setAttribute('method', String(v)); },
             configurable: true
         });
 
         // enctype property (defaults to "application/x-www-form-urlencoded", validates values)
-        Object.defineProperty(EP, 'enctype', {
+        Object.defineProperty(ElemProto, 'enctype', {
             get: function() {
                 var v = (this.getAttribute('enctype') || '').toLowerCase();
                 if (v === 'application/x-www-form-urlencoded' || v === 'multipart/form-data' || v === 'text/plain') return v;
@@ -163,42 +164,42 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // encoding property (alias for enctype per spec)
-        Object.defineProperty(EP, 'encoding', {
+        Object.defineProperty(ElemProto, 'encoding', {
             get: function() { return this.enctype; },
             set: function(v) { this.enctype = v; },
             configurable: true
         });
 
         // noValidate property (boolean attribute)
-        Object.defineProperty(EP, 'noValidate', {
+        Object.defineProperty(ElemProto, 'noValidate', {
             get: function() { return this.hasAttribute('novalidate'); },
             set: function(v) { if (v) this.setAttribute('novalidate', ''); else this.removeAttribute('novalidate'); },
             configurable: true
         });
 
         // target property
-        Object.defineProperty(EP, 'target', {
+        Object.defineProperty(ElemProto, 'target', {
             get: function() { return this.getAttribute('target') || ''; },
             set: function(v) { this.setAttribute('target', String(v)); },
             configurable: true
         });
 
         // acceptCharset property (reflects "accept-charset" attribute)
-        Object.defineProperty(EP, 'acceptCharset', {
+        Object.defineProperty(ElemProto, 'acceptCharset', {
             get: function() { return this.getAttribute('accept-charset') || ''; },
             set: function(v) { this.setAttribute('accept-charset', String(v)); },
             configurable: true
         });
 
         // autocomplete property (defaults to "on")
-        Object.defineProperty(EP, 'autocomplete', {
+        Object.defineProperty(ElemProto, 'autocomplete', {
             get: function() { return this.getAttribute('autocomplete') || 'on'; },
             set: function(v) { this.setAttribute('autocomplete', String(v)); },
             configurable: true
         });
 
         // <select> selectedIndex property
-        Object.defineProperty(EP, 'selectedIndex', {
+        Object.defineProperty(ElemProto, 'selectedIndex', {
             get: function() {
                 if (this.tagName !== 'SELECT') return -1;
                 var opts = this.querySelectorAll('option');
@@ -220,7 +221,7 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // <select> options property
-        Object.defineProperty(EP, 'options', {
+        Object.defineProperty(ElemProto, 'options', {
             get: function() {
                 if (this.tagName !== 'SELECT') return undefined;
                 var sel = this;
@@ -246,7 +247,7 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // <select> selectedOptions property
-        Object.defineProperty(EP, 'selectedOptions', {
+        Object.defineProperty(ElemProto, 'selectedOptions', {
             get: function() {
                 if (this.tagName !== 'SELECT') return [];
                 var opts = this.querySelectorAll('option');
@@ -262,10 +263,8 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // length property for <select> (number of options) and <form> (number of controls)
-        Object.defineProperty(EP, 'length', {
+        Object.defineProperty(ElemProto, 'length', {
             get: function() {
-                var nt = __n_getNodeType(this.__nid);
-                if (nt === 3 || nt === 8) return __n_charDataLength(this.__nid);
                 if (this.tagName === 'SELECT') {
                     var opts = this.querySelectorAll('option');
                     return opts.length;
@@ -279,7 +278,7 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // <option> text property
-        Object.defineProperty(EP, 'text', {
+        Object.defineProperty(ElemProto, 'text', {
             get: function() {
                 if (this.tagName === 'OPTION') return (this.textContent || '').trim();
                 return undefined;
@@ -291,7 +290,7 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // <option> index property
-        Object.defineProperty(EP, 'index', {
+        Object.defineProperty(ElemProto, 'index', {
             get: function() {
                 if (this.tagName !== 'OPTION') return undefined;
                 var parent = this.parentNode;
@@ -306,7 +305,7 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // <option> label property
-        Object.defineProperty(EP, 'label', {
+        Object.defineProperty(ElemProto, 'label', {
             get: function() {
                 if (this.tagName !== 'OPTION') return '';
                 return this.getAttribute('label') || (this.textContent || '').trim();

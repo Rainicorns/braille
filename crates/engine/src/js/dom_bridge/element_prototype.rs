@@ -29,16 +29,27 @@ pub(crate) fn element_prototype_js() -> &'static str {
             if (typeof cb !== 'function') return;
             var capture = !!(opts === true || (opts && opts.capture));
             var once = !!(opts && typeof opts === 'object' && opts.once);
+            var signal = (opts && typeof opts === 'object') ? opts.signal : undefined;
+            if (signal !== undefined) {
+                if (!signal || typeof signal !== 'object' || !('aborted' in signal)) throw new TypeError("Failed to execute 'addEventListener': member signal is not of type AbortSignal.");
+                if (signal.aborted) return;
+            }
             var key = this.__nid + ':' + type;
             var store = capture ? _captureKeys : _bubbleKeys;
             if (!store[key]) store[key] = [];
             if (once) {
                 var el = this;
-                var wrapper = function(e) { cb.call(el, e); el.removeEventListener(type, wrapper, capture); };
+                var wrapper = function(e) { el.removeEventListener(type, wrapper, capture); cb.call(el, e); };
                 wrapper._origCb = cb;
                 store[key].push(wrapper);
             } else {
                 store[key].push(cb);
+            }
+            if (signal) {
+                var el = this;
+                signal.addEventListener('abort', function() {
+                    el.removeEventListener(type, cb, capture);
+                });
             }
         };
         EP.removeEventListener = function(type, cb, opts) {
@@ -50,6 +61,23 @@ pub(crate) fn element_prototype_js() -> &'static str {
             }
         };
         EP.dispatchEvent = function(event) {
+            if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
+            if (this.__nid === undefined) {
+                // Standalone node with no DomTree backing — fire EventTarget listeners only
+                event._dispatching = true;
+                event.target = this;
+                event.currentTarget = this;
+                event._path = [this];
+                event.eventPhase = 2;
+                if (this.__et_listeners) {
+                    var cbs = this.__et_listeners[event.type + '_b'];
+                    if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(this, event); }
+                }
+                event._dispatching = false;
+                event.currentTarget = null;
+                event.eventPhase = 0;
+                return !event.defaultPrevented;
+            }
             // Find the owning document by walking up to the root element
             var ownerDoc = undefined;
             var rootNid = this.__nid;
@@ -400,7 +428,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             ns = (ns === null || ns === undefined) ? '' : String(ns);
             return __n_hasAttributeNS(this.__nid, ns, String(localName));
         };
-        EP.insertAdjacentHTML = function(position, html) {
+        ElemProto.insertAdjacentHTML = function(position, html) {
             var temp = document.createElement('div');
             __n_setInnerHTML(temp.__nid, html);
             var frag = document.createDocumentFragment();
@@ -410,21 +438,21 @@ pub(crate) fn element_prototype_js() -> &'static str {
             else if (position === 'beforeend') this.append(frag);
             else if (position === 'afterend') this.after(frag);
         };
-        EP.insertAdjacentElement = function(position, el) {
+        ElemProto.insertAdjacentElement = function(position, el) {
             if (position === 'beforebegin') this.before(el);
             else if (position === 'afterbegin') this.prepend(el);
             else if (position === 'beforeend') this.append(el);
             else if (position === 'afterend') this.after(el);
             return el;
         };
-        EP.getAnimations = function() { return []; };
-        EP.animate = function() {
+        ElemProto.getAnimations = function() { return []; };
+        ElemProto.animate = function() {
             var anim = { finished: Promise.resolve(), cancel: function(){}, play: function(){}, pause: function(){}, onfinish: null };
             anim.finish = function() { if (typeof anim.onfinish === 'function') anim.onfinish(); };
             return anim;
         };
-        EP.attachShadow = function() { return document.createDocumentFragment(); };
-        EP.getAttributeNode = function(name) {
+        ElemProto.attachShadow = function() { return document.createDocumentFragment(); };
+        ElemProto.getAttributeNode = function(name) {
             if (!this.hasAttribute(name)) return null;
             return { name: name, value: this.getAttribute(name), specified: true };
         };
@@ -440,14 +468,15 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return __n_compareDocumentPosition(this.__nid, other.__nid);
         };
 
+        // === Node-level properties (stay on EP) ===
         Object.defineProperties(EP, {
             textContent: {
-                get: function() { return __n_getTextContent(this.__nid); },
-                set: function(v) { __n_setTextContent(this.__nid, String(v)); },
+                get: function() { if (this.__nid === undefined) return ''; return __n_getTextContent(this.__nid); },
+                set: function(v) { if (this.__nid === undefined) return; __n_setTextContent(this.__nid, String(v)); },
                 configurable: true
             },
-            tagName: { get: function() { return __n_getTagName(this.__nid); }, configurable: true },
             nodeName: { get: function() {
+                if (this.__nid === undefined) return '';
                 var nt = __n_getNodeType(this.__nid);
                 if (nt === 3) return '#text';
                 if (nt === 8) return '#comment';
@@ -455,7 +484,77 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (nt === 11) return '#document-fragment';
                 return __n_getTagName(this.__nid) || '#node';
             }, configurable: true },
-            nodeType: { get: function() { return __n_getNodeType(this.__nid); }, configurable: true },
+            nodeType: { get: function() { if (this.__nid === undefined) return undefined; return __n_getNodeType(this.__nid); }, configurable: true },
+            parentNode: {
+                get: function() { if (this.__nid === undefined) return null; var p = __n_getParent(this.__nid); return p >= 0 ? __w(p) : null; },
+                configurable: true
+            },
+            parentElement: {
+                get: function() {
+                    if (this.__nid === undefined) return null;
+                    var p = __n_getParent(this.__nid);
+                    if (p < 0) return null;
+                    var nt = __n_getNodeType(p);
+                    return nt === 1 ? __w(p) : null;
+                },
+                configurable: true
+            },
+            children: {
+                get: function() { if (this.__nid === undefined) return []; return __n_getChildElementIds(this.__nid).map(__w); },
+                configurable: true
+            },
+            childNodes: {
+                get: function() { if (this.__nid === undefined) return []; return __n_getAllChildIds(this.__nid).map(__w); },
+                configurable: true
+            },
+            firstChild: {
+                get: function() { if (this.__nid === undefined) return null; var id = __n_getFirstChild(this.__nid); return id >= 0 ? __w(id) : null; },
+                configurable: true
+            },
+            lastChild: {
+                get: function() { if (this.__nid === undefined) return null; var id = __n_getLastChild(this.__nid); return id >= 0 ? __w(id) : null; },
+                configurable: true
+            },
+            nextSibling: {
+                get: function() { if (this.__nid === undefined) return null; var id = __n_getNextSibling(this.__nid); return id >= 0 ? __w(id) : null; },
+                configurable: true
+            },
+            previousSibling: {
+                get: function() { if (this.__nid === undefined) return null; var id = __n_getPrevSibling(this.__nid); return id >= 0 ? __w(id) : null; },
+                configurable: true
+            },
+            nodeValue: {
+                get: function() {
+                    if (this.__nid === undefined) return null;
+                    var nt = __n_getNodeType(this.__nid);
+                    if (nt === 3 || nt === 8) return __n_getNodeValue(this.__nid);
+                    return null;
+                },
+                set: function(v) {
+                    if (this.__nid === undefined) return;
+                    var nt = __n_getNodeType(this.__nid);
+                    if (nt === 3 || nt === 8) __n_setCharData(this.__nid, String(v));
+                },
+                configurable: true
+            },
+            ownerDocument: { get: function() { return document; }, configurable: true },
+            isConnected: {
+                get: function() {
+                    if (this.__nid === undefined) return false;
+                    var cur = this.__nid;
+                    while (cur >= 0) {
+                        if (__n_getNodeType(cur) === 9) return true;
+                        cur = __n_getParent(cur);
+                    }
+                    return false;
+                },
+                configurable: true
+            },
+        });
+
+        // === Element-specific properties (on ElemProto) ===
+        Object.defineProperties(ElemProto, {
+            tagName: { get: function() { return __n_getTagName(this.__nid); }, configurable: true },
             id: {
                 get: function() { return this.getAttribute('id') || ''; },
                 set: function(v) { this.setAttribute('id', v); },
@@ -493,7 +592,6 @@ pub(crate) fn element_prototype_js() -> &'static str {
                             opts[i].__props._selected = ((opts[i].getAttribute('value') || opts[i].textContent || '') === String(v));
                         }
                     }
-                    // For textarea, update text content (textarea stores its value as text content, not as an attribute)
                     if (this.tagName === 'TEXTAREA') __n_setTextContent(this.__nid, String(v));
                 },
                 configurable: true
@@ -606,7 +704,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             },
             disabled: {
                 get: function() { return this.hasAttribute('disabled'); },
-                set: function(v) { if(v) this.setAttribute('disabled',''); else this.removeAttribute('disabled'); },
+                set: function(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); },
                 configurable: true
             },
             noModule: {
@@ -631,22 +729,21 @@ pub(crate) fn element_prototype_js() -> &'static str {
             },
             type: {
                 get: function() {
-                    var t = this.getAttribute('type');
-                    // HTML spec: <input> without type defaults to 'text'
-                    if (t === null && this.tagName === 'INPUT') return 'text';
-                    return t || '';
+                    if (this.tagName === 'INPUT') return (this.getAttribute('type') || 'text').toLowerCase();
+                    if (this.tagName === 'BUTTON') return (this.getAttribute('type') || 'submit').toLowerCase();
+                    return this.getAttribute('type') || '';
                 },
-                set: function(v) { this.setAttribute('type', v); },
+                set: function(v) { this.setAttribute('type', String(v)); },
                 configurable: true
             },
             href: {
                 get: function() { return this.getAttribute('href') || ''; },
-                set: function(v) { this.setAttribute('href', v); },
+                set: function(v) { this.setAttribute('href', String(v)); },
                 configurable: true
             },
             src: {
                 get: function() { return this.getAttribute('src') || ''; },
-                set: function(v) { this.setAttribute('src', v); },
+                set: function(v) { this.setAttribute('src', String(v)); },
                 configurable: true
             },
             innerHTML: {
@@ -654,72 +751,10 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 set: function(v) { __n_setInnerHTML(this.__nid, String(v)); },
                 configurable: true
             },
-            parentNode: {
-                get: function() { var p = __n_getParent(this.__nid); return p >= 0 ? __w(p) : null; },
-                configurable: true
-            },
-            parentElement: {
-                get: function() {
-                    var p = __n_getParent(this.__nid);
-                    if (p < 0) return null;
-                    var nt = __n_getNodeType(p);
-                    return nt === 1 ? __w(p) : null;
-                },
-                configurable: true
-            },
-            children: {
-                get: function() { return __n_getChildElementIds(this.__nid).map(__w); },
-                configurable: true
-            },
-            childNodes: {
-                get: function() { return __n_getAllChildIds(this.__nid).map(__w); },
-                configurable: true
-            },
-            firstChild: {
-                get: function() { var id = __n_getFirstChild(this.__nid); return id >= 0 ? __w(id) : null; },
-                configurable: true
-            },
-            lastChild: {
-                get: function() { var id = __n_getLastChild(this.__nid); return id >= 0 ? __w(id) : null; },
-                configurable: true
-            },
-            nextSibling: {
-                get: function() { var id = __n_getNextSibling(this.__nid); return id >= 0 ? __w(id) : null; },
-                configurable: true
-            },
-            previousSibling: {
-                get: function() { var id = __n_getPrevSibling(this.__nid); return id >= 0 ? __w(id) : null; },
-                configurable: true
-            },
-            nodeValue: {
-                get: function() {
-                    var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8) return __n_getNodeValue(this.__nid);
-                    return null;
-                },
-                set: function(v) {
-                    var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8) __n_setCharData(this.__nid, String(v));
-                },
-                configurable: true
-            },
-            data: {
-                get: function() {
-                    var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8) return __n_getCharData(this.__nid);
-                    return undefined;
-                },
-                set: function(v) {
-                    var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8) __n_setCharData(this.__nid, v === null ? '' : String(v));
-                },
-                configurable: true
-            },
             style: {
                 get: function() {
                     if (!this._s) {
                         var nid = this.__nid;
-                        // helpers to parse / serialize the style attribute
                         function parseStyle() {
                             var s = __n_getAttribute(nid, 'style');
                             var arr = [];
@@ -742,7 +777,6 @@ pub(crate) fn element_prototype_js() -> &'static str {
                             if (s) __n_setAttribute(nid, 'style', s);
                             else __n_removeAttribute(nid, 'style');
                         }
-                        // camelCase <-> kebab-case
                         function toKebab(cc) {
                             if (cc === 'cssFloat') return 'float';
                             return cc.replace(/[A-Z]/g, function(c) { return '-' + c.toLowerCase(); });
@@ -783,11 +817,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
                                     else __n_removeAttribute(nid, 'style');
                                     return true;
                                 }
-                                // setting a camelCase or kebab prop writes to the DOM
                                 var kebab = toKebab(p);
                                 var arr = parseStyle();
                                 if (v === '' || v === null || v === undefined) {
-                                    // empty string removes property per spec
                                     for (var i = 0; i < arr.length; i++) {
                                         if (arr[i][0] === kebab) { arr.splice(i, 1); break; }
                                     }
@@ -816,7 +848,6 @@ pub(crate) fn element_prototype_js() -> &'static str {
                                         return idx < arr.length ? arr[idx][0] : '';
                                     };
                                 }
-                                // camelCase property read
                                 var kebab = toKebab(p);
                                 var arr = parseStyle();
                                 for (var i = 0; i < arr.length; i++) {
@@ -857,7 +888,6 @@ pub(crate) fn element_prototype_js() -> &'static str {
                             return __n_getDataAttr(el.__nid, prop) || undefined;
                         },
                         set: function(t, prop, val) {
-                            // Convert camelCase to data-kebab-case
                             var name = 'data-' + prop.replace(/[A-Z]/g, function(c){return '-'+c.toLowerCase();});
                             __n_setAttribute(el.__nid, name, String(val));
                             return true;
@@ -881,7 +911,6 @@ pub(crate) fn element_prototype_js() -> &'static str {
             offsetParent: { get: function() { return this.parentNode; }, configurable: true },
             innerText: {
                 get: function() {
-                    // Walk tree, skipping hidden elements (display:none, visibility:hidden)
                     function walk(nid) {
                         var nt = __n_getNodeType(nid);
                         if (nt === 3) return __n_getCharData(nid);
@@ -924,20 +953,6 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 configurable: true
             },
-            ownerDocument: { get: function() { return document; }, configurable: true },
-            isConnected: {
-                get: function() {
-                    // Walk up to see if we reach the document root
-                    var cur = this.__nid;
-                    while (cur >= 0) {
-                        if (__n_getNodeType(cur) === 9) return true; // document node
-                        cur = __n_getParent(cur);
-                    }
-                    return false;
-                },
-                configurable: true
-            },
-            // Attribute-reflecting properties
             tabIndex: {
                 get: function() {
                     var v = this.getAttribute('tabindex');
@@ -974,33 +989,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 set: function(v) { this.setAttribute('name', String(v)); },
                 configurable: true
             },
-            type: {
-                get: function() {
-                    if (this.tagName === 'INPUT') return (this.getAttribute('type') || 'text').toLowerCase();
-                    if (this.tagName === 'BUTTON') return (this.getAttribute('type') || 'submit').toLowerCase();
-                    return this.getAttribute('type') || '';
-                },
-                set: function(v) { this.setAttribute('type', String(v)); },
-                configurable: true
-            },
-            disabled: {
-                get: function() { return this.hasAttribute('disabled'); },
-                set: function(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); },
-                configurable: true
-            },
             placeholder: {
                 get: function() { return this.getAttribute('placeholder') || ''; },
                 set: function(v) { this.setAttribute('placeholder', String(v)); },
-                configurable: true
-            },
-            href: {
-                get: function() { return this.getAttribute('href') || ''; },
-                set: function(v) { this.setAttribute('href', String(v)); },
-                configurable: true
-            },
-            src: {
-                get: function() { return this.getAttribute('src') || ''; },
-                set: function(v) { this.setAttribute('src', String(v)); },
                 configurable: true
             },
             rel: {
@@ -1138,7 +1129,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
         });
 
         // open property for DIALOG and DETAILS
-        Object.defineProperty(EP, 'open', {
+        Object.defineProperty(ElemProto, 'open', {
             get: function() {
                 if (this.tagName === 'DIALOG' || this.tagName === 'DETAILS') return this.hasAttribute('open');
                 return undefined;
@@ -1151,7 +1142,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             },
             configurable: true
         });
-        Object.defineProperty(EP, 'returnValue', {
+        Object.defineProperty(ElemProto, 'returnValue', {
             get: function() {
                 if (this.tagName !== 'DIALOG') return undefined;
                 return (this.__props && this.__props._returnValue) || '';

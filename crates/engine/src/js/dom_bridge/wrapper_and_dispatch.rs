@@ -15,15 +15,25 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         function __w(nodeId) {
             if (_cache[nodeId]) return _cache[nodeId];
             var nt = __n_getNodeType(nodeId);
-            var proto = (nt === 1) ? __ElemProto : EP;
+            var proto;
+            switch (nt) {
+                case 1:  proto = __ElemProto; break;
+                case 3:  proto = Text.prototype; break;
+                case 7:  proto = ProcessingInstruction.prototype; break;
+                case 8:  proto = Comment.prototype; break;
+                case 9:  proto = Document.prototype; break;
+                case 10: proto = DocumentType.prototype; break;
+                case 11: proto = DocumentFragment.prototype; break;
+                default: proto = EP; break;
+            }
             var obj = Object.create(proto);
             obj.__nid = nodeId;
-            obj.__props = {}; // per-element property store (dirty value/checked/selected)
-            // Set constructor so React's inputValueTracking can find
-            // the native value descriptor via node.constructor.prototype
-            var tag = __n_getTagName(nodeId);
-            var ctor = _ctorMap[tag];
-            if (ctor) obj.constructor = ctor;
+            obj.__props = {};
+            if (nt === 1) {
+                var tag = __n_getTagName(nodeId);
+                var ctor = _ctorMap[tag];
+                if (ctor) obj.constructor = ctor;
+            }
             _cache[nodeId] = obj;
             return obj;
         }
@@ -339,64 +349,82 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         EP.requestFullscreen = function() { __fullscreenElement = this; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
 
         // Helper: create a standalone document-like wrapper around a root element.
-        // Used by createHTMLDocument() and document.cloneNode().
+        // Used by createHTMLDocument(), createDocument(), and document.cloneNode().
+        // Returns a proper Document node (inherits from Document.prototype → EP → Node constants).
         function __makeDocumentLike(rootEl) {
-            var newDoc = {
+            // Document.prototype is defined later via function hoisting
+            var newDoc = Object.create(Document.prototype);
+            // Override getter-based properties from EP with own data properties
+            var ownProps = {
                 nodeType: 9, nodeName: '#document', readyState: 'complete',
-                __listeners: {}, __captureListeners: {},
-                get documentElement() { return rootEl; },
-                get body() {
-                    if (!rootEl) return null;
-                    var kids = rootEl.childNodes;
-                    for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'BODY') return kids[i];
-                    return null;
-                },
-                get head() {
-                    if (!rootEl) return null;
-                    var kids = rootEl.childNodes;
-                    for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'HEAD') return kids[i];
-                    return null;
-                },
-                querySelector: function(sel) { return rootEl ? rootEl.querySelector(sel) : null; },
-                querySelectorAll: function(sel) { return rootEl ? rootEl.querySelectorAll(sel) : []; },
-                getElementById: function(id) { return rootEl ? (rootEl.querySelector('#' + id) || null) : null; },
-                getElementsByTagName: function(tag) { return rootEl ? rootEl.querySelectorAll(tag) : []; },
-                getElementsByClassName: function(cls) { return rootEl ? rootEl.querySelectorAll('.' + cls) : []; },
-                createElement: function(tag) { return document.createElement(tag); },
-                createTextNode: function(text) { return document.createTextNode(text); },
-                createDocumentFragment: function() { return document.createDocumentFragment(); },
-                createEvent: function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; },
-                createComment: function(text) { return document.createComment(text); },
-                createProcessingInstruction: function(t, d) { return document.createProcessingInstruction(t, d); },
-                createAttribute: function(n) { return document.createAttribute(n); },
-                createAttributeNS: function(ns, qn) { return document.createAttributeNS(ns, qn); },
-                get implementation() { return document.implementation; },
-                appendChild: function(child) { if (rootEl) return rootEl.appendChild(child); return child; },
-                addEventListener: function(type, cb, opts) {
-                    if (typeof cb !== 'function') return;
-                    var capture = !!(opts === true || (opts && opts.capture));
-                    var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
-                    if (!store[type]) store[type] = [];
-                    store[type].push(cb);
-                },
-                removeEventListener: function(type, cb, opts) {
-                    var capture = !!(opts === true || (opts && opts.capture));
-                    var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
-                    if (store[type]) store[type] = store[type].filter(function(f){return f!==cb;});
-                },
-                dispatchEvent: function(event) {
-                    event._dispatching = true;
-                    event.target = newDoc;
-                    event.currentTarget = newDoc;
-                    var cbs = newDoc.__listeners[event.type];
-                    if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(newDoc, event); }
-                    event._dispatching = false;
-                    event._stopPropagation = false;
-                    event._stopImmediate = false;
-                    event.currentTarget = null;
-                    event.eventPhase = 0;
-                    return !event.defaultPrevented;
-                },
+                parentNode: null, parentElement: null,
+                childNodes: rootEl ? [rootEl] : [],
+                firstChild: rootEl || null, lastChild: rootEl || null,
+                previousSibling: null, nextSibling: null,
+                ownerDocument: null, isConnected: false,
+                title: '', contentType: 'application/xml',
+                URL: 'about:blank', documentURI: 'about:blank',
+                compatMode: 'CSS1Compat', characterSet: 'UTF-8',
+                charset: 'UTF-8', inputEncoding: 'UTF-8'
+            };
+            for (var k in ownProps) Object.defineProperty(newDoc, k, { value: ownProps[k], writable: true, enumerable: true, configurable: true });
+            newDoc.__listeners = {};
+            newDoc.__captureListeners = {};
+            Object.defineProperty(newDoc, 'documentElement', { get: function() { return rootEl; }, configurable: true });
+            Object.defineProperty(newDoc, 'body', { get: function() {
+                if (!rootEl) return null;
+                var kids = rootEl.childNodes;
+                for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'BODY') return kids[i];
+                return null;
+            }, configurable: true });
+            Object.defineProperty(newDoc, 'head', { get: function() {
+                if (!rootEl) return null;
+                var kids = rootEl.childNodes;
+                for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'HEAD') return kids[i];
+                return null;
+            }, configurable: true });
+            Object.defineProperty(newDoc, 'implementation', { get: function() { return document.implementation; }, configurable: true });
+            Object.defineProperty(newDoc, 'doctype', { get: function() { return null; }, configurable: true });
+            newDoc.querySelector = function(sel) { return rootEl ? rootEl.querySelector(sel) : null; };
+            newDoc.querySelectorAll = function(sel) { return rootEl ? rootEl.querySelectorAll(sel) : []; };
+            newDoc.getElementById = function(id) { return rootEl ? (rootEl.querySelector('#' + id) || null) : null; };
+            newDoc.getElementsByTagName = function(tag) { return rootEl ? rootEl.querySelectorAll(tag) : []; };
+            newDoc.getElementsByClassName = function(cls) { return rootEl ? rootEl.querySelectorAll('.' + cls) : []; };
+            newDoc.createElement = function(tag) { return document.createElement(tag); };
+            newDoc.createElementNS = function(ns, tag) { return document.createElementNS(ns, tag); };
+            newDoc.createTextNode = function(text) { return document.createTextNode(text); };
+            newDoc.createComment = function(text) { return document.createComment(text); };
+            newDoc.createDocumentFragment = function() { return document.createDocumentFragment(); };
+            newDoc.createProcessingInstruction = function(t, d) { return document.createProcessingInstruction(t, d); };
+            newDoc.createAttribute = function(n) { return document.createAttribute(n); };
+            newDoc.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
+            newDoc.createEvent = function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; };
+            newDoc.appendChild = function(child) { if (rootEl) return rootEl.appendChild(child); return child; };
+            newDoc.addEventListener = function(type, cb, opts) {
+                if (typeof cb !== 'function') return;
+                var capture = !!(opts === true || (opts && opts.capture));
+                var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
+                if (!store[type]) store[type] = [];
+                store[type].push(cb);
+            };
+            newDoc.removeEventListener = function(type, cb, opts) {
+                var capture = !!(opts === true || (opts && opts.capture));
+                var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
+                if (store[type]) store[type] = store[type].filter(function(f){return f!==cb;});
+            };
+            newDoc.dispatchEvent = function(event) {
+                if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
+                event._dispatching = true;
+                event.target = newDoc;
+                event.currentTarget = newDoc;
+                var cbs = newDoc.__listeners[event.type];
+                if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(newDoc, event); }
+                event._dispatching = false;
+                event._stopPropagation = false;
+                event._stopImmediate = false;
+                event.currentTarget = null;
+                event.eventPhase = 0;
+                return !event.defaultPrevented;
             };
             // Tag the root element so EP.dispatchEvent can find the owning document
             if (rootEl) rootEl.__ownerDoc = newDoc;
@@ -479,7 +507,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             var store = capture ? _docCapture : doc.__listeners;
             if (!store[type]) store[type] = [];
             if (once) {
-                var wrapper = function(e) { cb.call(document, e); doc.removeEventListener(type, wrapper, capture); };
+                var wrapper = function(e) { doc.removeEventListener(type, wrapper, capture); cb.call(document, e); };
                 wrapper._origCb = cb;
                 store[type].push(wrapper);
             } else {
@@ -570,6 +598,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         window.__et_listeners = {};
 
         doc.dispatchEvent = function(event) {
+            if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
             event._dispatching = true;
             event.target = document;
             event.currentTarget = document;
@@ -880,6 +909,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     if (store[type]) store[type] = store[type].filter(function(f){return f!==cb;});
                 },
                 dispatchEvent: function(event) {
+                    if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
                     event._dispatching = true;
                     event.target = newDoc;
                     event.currentTarget = newDoc;
@@ -906,6 +936,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (!self.__et_listeners) self.__et_listeners = {};
             var capture = !!(opts === true || (opts && opts.capture));
             var once = !!(opts && typeof opts === 'object' && opts.once);
+            var signal = (opts && typeof opts === 'object') ? opts.signal : undefined;
+            if (signal !== undefined) {
+                if (!signal || typeof signal !== 'object' || !('aborted' in signal)) throw new TypeError("Failed to execute 'addEventListener': member signal is not of type AbortSignal.");
+                if (signal.aborted) return;
+            }
             var key = type + (capture ? '_c' : '_b');
             if (!self.__et_listeners[key]) self.__et_listeners[key] = [];
             for (var i = 0; i < self.__et_listeners[key].length; i++) {
@@ -913,14 +948,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
             if (once) {
                 var wrapper = function(e) {
+                    self.removeEventListener(type, cb, capture);
                     if (typeof cb === 'function') cb.call(self, e);
                     else cb.handleEvent(e);
-                    self.removeEventListener(type, cb, capture);
                 };
                 wrapper._origCb = cb;
                 self.__et_listeners[key].push(wrapper);
             } else {
                 self.__et_listeners[key].push(cb);
+            }
+            if (signal) {
+                signal.addEventListener('abort', function() {
+                    self.removeEventListener(type, cb, capture);
+                });
             }
         };
         EventTarget.prototype.removeEventListener = function(type, cb, opts) {
@@ -932,6 +972,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
         };
         EventTarget.prototype.dispatchEvent = function(event) {
+            if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
             event._dispatching = true;
             event.target = this;
             event.currentTarget = this;
@@ -961,6 +1002,38 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         var CharacterData = function CharacterData() {};
         CharacterData.prototype = Object.create(EP);
         CharacterData.prototype.constructor = CharacterData;
+        Object.defineProperties(CharacterData.prototype, {
+            data: {
+                get: function() { return __n_getCharData(this.__nid); },
+                set: function(v) { __n_setCharData(this.__nid, v === null ? '' : String(v)); },
+                configurable: true
+            },
+            length: {
+                get: function() { return __n_charDataLength(this.__nid); },
+                configurable: true
+            },
+        });
+        CharacterData.prototype.substringData = function(offset, count) {
+            var d = this.data;
+            if (offset < 0 || offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
+            return d.substring(offset, offset + count);
+        };
+        CharacterData.prototype.appendData = function(data) { this.data = this.data + String(data); };
+        CharacterData.prototype.insertData = function(offset, data) {
+            var d = this.data;
+            if (offset < 0 || offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
+            this.data = d.substring(0, offset) + String(data) + d.substring(offset);
+        };
+        CharacterData.prototype.deleteData = function(offset, count) {
+            var d = this.data;
+            if (offset < 0 || offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
+            this.data = d.substring(0, offset) + d.substring(offset + count);
+        };
+        CharacterData.prototype.replaceData = function(offset, count, data) {
+            var d = this.data;
+            if (offset < 0 || offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
+            this.data = d.substring(0, offset) + String(data) + d.substring(offset + count);
+        };
         globalThis.CharacterData = CharacterData;
 
         // Text constructor — creates a real text node in the DomTree
@@ -1053,6 +1126,49 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         DocumentType.prototype = Object.create(EP);
         DocumentType.prototype.constructor = DocumentType;
         globalThis.DocumentType = DocumentType;
+
+        function DocumentFragment() {}
+        DocumentFragment.prototype = Object.create(EP);
+        DocumentFragment.prototype.constructor = DocumentFragment;
+        globalThis.DocumentFragment = DocumentFragment;
+
+        function ProcessingInstruction() {}
+        ProcessingInstruction.prototype = Object.create(CharacterData.prototype);
+        ProcessingInstruction.prototype.constructor = ProcessingInstruction;
+        globalThis.ProcessingInstruction = ProcessingInstruction;
+
+        // Wire global document to Document.prototype
+        // nodeId 0 is always the Document node (DomTree::new() allocates it first)
+        document.__nid = 0;
+        Object.setPrototypeOf(document, Document.prototype);
+
+        // Add Document-specific methods to Document.prototype
+        // (Global doc's own-property methods shadow these, but standalone documents inherit them)
+        Document.prototype.createElement = function(tag) { return document.createElement(tag); };
+        Document.prototype.createElementNS = function(ns, tag) { return document.createElementNS(ns, tag); };
+        Document.prototype.createTextNode = function(text) { return document.createTextNode(text); };
+        Document.prototype.createComment = function(text) { return document.createComment(text); };
+        Document.prototype.createDocumentFragment = function() { return document.createDocumentFragment(); };
+        Document.prototype.createProcessingInstruction = function(t, d) { return document.createProcessingInstruction(t, d); };
+        Document.prototype.createAttribute = function(n) { return document.createAttribute(n); };
+        Document.prototype.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
+        Document.prototype.createEvent = function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; };
+        Document.prototype.getElementById = function(id) { return null; };
+        Document.prototype.querySelector = function(sel) { return null; };
+        Document.prototype.querySelectorAll = function(sel) { return []; };
+        Document.prototype.getElementsByTagName = function(tag) { return []; };
+        Document.prototype.getElementsByClassName = function(cls) { return []; };
+
+        // DocumentFragment also gets querySelector/querySelectorAll
+        DocumentFragment.prototype.querySelector = function(sel) {
+            if (this.__nid === undefined) return null;
+            var nid = __n_querySelector(this.__nid, sel);
+            return nid >= 0 ? __w(nid) : null;
+        };
+        DocumentFragment.prototype.querySelectorAll = function(sel) {
+            if (this.__nid === undefined) return [];
+            return __n_querySelectorAll(this.__nid, sel).map(__w);
+        };
 
         // Wire window event methods to EventTarget.prototype (spec: Window extends EventTarget)
         window.addEventListener = EventTarget.prototype.addEventListener;
