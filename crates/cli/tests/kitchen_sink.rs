@@ -165,6 +165,7 @@ fn goto(socket: &std::path::Path, sid: &str, url: &str) -> String {
             command: DaemonCommand::Goto {
                 url: url.to_string(),
                 mode: SnapMode::Compact,
+                record_path: None,
             },
         },
     );
@@ -208,6 +209,7 @@ fn snap(socket: &std::path::Path, sid: &str) -> String {
             session_id: Some(sid.to_string()),
             command: DaemonCommand::Snap {
                 mode: SnapMode::Compact,
+                record_path: None,
             },
         },
     );

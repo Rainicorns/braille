@@ -154,7 +154,10 @@ fn engine_binary_path() -> std::path::PathBuf {
     std::path::PathBuf::from("braille-engine")
 }
 
-/// Perform a single HTTP fetch (used from parallel threads).
+/// Perform a single HTTP fetch with manual redirect following (used from parallel threads).
+///
+/// Follows up to 10 redirects, accumulating Set-Cookie headers from every hop
+/// so the engine's cookie jar sees cookies set during intermediate 3xx responses.
 fn do_fetch(
     client: &reqwest::blocking::Client,
     url: &str,
@@ -162,42 +165,143 @@ fn do_fetch(
     headers: &[(String, String)],
     body: Option<&str>,
 ) -> FetchOutcome {
-    let mut builder = match method.to_uppercase().as_str() {
-        "POST" => client.post(url),
-        "PUT" => client.put(url),
-        "DELETE" => client.delete(url),
-        "PATCH" => client.patch(url),
-        "HEAD" => client.head(url),
-        _ => client.get(url),
+    let max_redirects = 10;
+    let mut current_url = match url::Url::parse(url) {
+        Ok(u) => u,
+        Err(e) => return FetchOutcome::Err(format!("invalid URL {url}: {e}")),
     };
-    for (name, value) in headers {
-        builder = builder.header(name.as_str(), value.as_str());
-    }
-    if let Some(body_str) = body {
-        builder = builder.body(body_str.to_string());
-    }
-    match builder.send() {
-        Ok(response) => {
-            let final_url = response.url().to_string();
-            let status = response.status().as_u16();
-            let headers: Vec<(String, String)> = response
-                .headers()
-                .iter()
-                .filter_map(|(name, value)| {
-                    value.to_str().ok().map(|v| (name.to_string(), v.to_string()))
+    let mut current_method = method.to_uppercase();
+    let mut current_body: Option<String> = body.map(|s| s.to_string());
+    let mut accumulated_cookies: Vec<(String, String)> = Vec::new();
+
+    for _ in 0..max_redirects {
+        let mut builder = match current_method.as_str() {
+            "POST" => client.post(current_url.as_str()),
+            "PUT" => client.put(current_url.as_str()),
+            "DELETE" => client.delete(current_url.as_str()),
+            "PATCH" => client.patch(current_url.as_str()),
+            "HEAD" => client.head(current_url.as_str()),
+            _ => client.get(current_url.as_str()),
+        };
+        // Forward original request headers, but merge accumulated cookies
+        // into the Cookie header so redirect hops see cookies set by prior hops.
+        let mut has_cookie_header = false;
+        for (name, value) in headers {
+            if name.eq_ignore_ascii_case("cookie") {
+                has_cookie_header = true;
+                if !accumulated_cookies.is_empty() {
+                    // Merge original Cookie header with accumulated set-cookie values
+                    let extra = build_cookie_header_from_set_cookies(&accumulated_cookies);
+                    let merged = if value.is_empty() {
+                        extra
+                    } else {
+                        format!("{value}; {extra}")
+                    };
+                    builder = builder.header("Cookie", merged);
+                } else {
+                    builder = builder.header(name.as_str(), value.as_str());
+                }
+            } else {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+        }
+        // If no Cookie header was in the original request but we have accumulated cookies
+        if !has_cookie_header && !accumulated_cookies.is_empty() {
+            let cookie_val = build_cookie_header_from_set_cookies(&accumulated_cookies);
+            builder = builder.header("Cookie", cookie_val);
+        }
+        if let Some(ref body_str) = current_body {
+            builder = builder.body(body_str.clone());
+        }
+
+        let response = match builder.send() {
+            Ok(r) => r,
+            Err(e) => return FetchOutcome::Err(format!("fetch failed: {e}")),
+        };
+
+        let status = response.status().as_u16();
+
+        // Accumulate Set-Cookie headers from this response
+        for value in response.headers().get_all("set-cookie") {
+            if let Ok(v) = value.to_str() {
+                accumulated_cookies.push(("set-cookie".to_string(), v.to_string()));
+            }
+        }
+
+        // Check for redirect
+        if (300..400).contains(&status) {
+            if let Some(location) = response.headers().get("location") {
+                let location_str = match location.to_str() {
+                    Ok(s) => s,
+                    Err(e) => return FetchOutcome::Err(format!("invalid Location header: {e}")),
+                };
+                current_url = match current_url.join(location_str) {
+                    Ok(u) => u,
+                    Err(e) => return FetchOutcome::Err(format!("invalid redirect URL {location_str}: {e}")),
+                };
+
+                // RFC 7231: 301/302/303 → switch to GET, drop body. 307/308 → preserve.
+                if (301..=303).contains(&status) {
+                    current_method = "GET".to_string();
+                    current_body = None;
+                }
+                continue;
+            }
+        }
+
+        // Non-redirect (or redirect without Location): this is the final response
+        let final_url = current_url.to_string();
+        let mut resp_headers: Vec<(String, String)> = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value.to_str().ok().map(|v| (name.to_string(), v.to_string()))
+            })
+            .collect();
+
+        // Prepend accumulated Set-Cookie headers from intermediate redirects
+        // (the final response's own set-cookie headers are already in resp_headers)
+        if !accumulated_cookies.is_empty() {
+            // Remove the final response's set-cookie from accumulated (they're already in resp_headers)
+            let intermediate_cookies: Vec<(String, String)> = accumulated_cookies
+                .into_iter()
+                .filter(|(_, v)| {
+                    !resp_headers.iter().any(|(n, rv)| n == "set-cookie" && rv == v)
                 })
                 .collect();
-            let body = response.text().unwrap_or_default();
-            FetchOutcome::Ok(braille_wire::FetchResponseData {
-                status,
-                status_text: status_text_for_code(status).to_string(),
-                headers,
-                body,
-                url: final_url,
-            })
+            resp_headers.extend(intermediate_cookies);
         }
-        Err(e) => FetchOutcome::Err(format!("fetch failed: {e}")),
+
+        let body = response.text().unwrap_or_default();
+        return FetchOutcome::Ok(braille_wire::FetchResponseData {
+            status,
+            status_text: status_text_for_code(status).to_string(),
+            headers: resp_headers,
+            body,
+            url: final_url,
+        });
     }
+
+    FetchOutcome::Err(format!("too many redirects (>{max_redirects}) for {url}"))
+}
+
+/// Extract "name=value" pairs from Set-Cookie headers and join them into a Cookie header value.
+fn build_cookie_header_from_set_cookies(set_cookies: &[(String, String)]) -> String {
+    set_cookies
+        .iter()
+        .filter_map(|(_, v)| {
+            // Set-Cookie value format: "name=value; Path=/; ..."
+            // We only need the "name=value" part (everything before the first ';')
+            let name_value = v.split(';').next()?;
+            let name_value = name_value.trim();
+            if name_value.is_empty() {
+                None
+            } else {
+                Some(name_value.to_string())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn status_text_for_code(code: u16) -> &'static str {

@@ -211,7 +211,7 @@ fn handle_command_inner(
     cmd: DaemonCommand,
 ) -> DaemonResponse {
     match cmd {
-        DaemonCommand::Goto { url, mode } => match fetch_and_load(session, reader, writer, &url, mode) {
+        DaemonCommand::Goto { url, mode, record_path } => match fetch_and_load(session, reader, writer, &url, mode, record_path) {
             Ok(snapshot) => DaemonResponse::ok(snapshot),
             Err(e) => DaemonResponse::err(e),
         },
@@ -220,7 +220,7 @@ fn handle_command_inner(
             let action = session.engine.handle_click(&selector);
             match action {
                 EngineAction::Navigate(nav_req) => {
-                    match fetch_and_load(session, reader, writer, &nav_req.url, SnapMode::Compact) {
+                    match fetch_and_load(session, reader, writer, &nav_req.url, SnapMode::Compact, None) {
                         Ok(snapshot) => DaemonResponse::ok(snapshot),
                         Err(e) => DaemonResponse::err(e),
                     }
@@ -264,7 +264,7 @@ fn handle_command_inner(
         DaemonCommand::Back => match session.go_back() {
             Some(url) => {
                 let url = url.to_string();
-                match fetch_and_load(session, reader, writer, &url, SnapMode::Compact) {
+                match fetch_and_load(session, reader, writer, &url, SnapMode::Compact, None) {
                     Ok(snapshot) => DaemonResponse::ok(snapshot),
                     Err(e) => DaemonResponse::err(e),
                 }
@@ -274,7 +274,7 @@ fn handle_command_inner(
         DaemonCommand::Forward => match session.go_forward() {
             Some(url) => {
                 let url = url.to_string();
-                match fetch_and_load(session, reader, writer, &url, SnapMode::Compact) {
+                match fetch_and_load(session, reader, writer, &url, SnapMode::Compact, None) {
                     Ok(snapshot) => DaemonResponse::ok(snapshot),
                     Err(e) => DaemonResponse::err(e),
                 }
@@ -314,13 +314,15 @@ fn fetch_and_load(
     writer: &mut impl Write,
     url: &str,
     snap_mode: SnapMode,
+    record_path: Option<String>,
 ) -> Result<String, String> {
     let ipc = IpcFetchProvider { reader, writer };
     let mut recorder = RecordingFetcher::new(ipc);
     let result = session.engine.navigate(url, &mut recorder, snap_mode.clone());
 
-    // Save transcript even on error so we can debug failed navigations
-    if let Ok(path) = std::env::var("BRAILLE_RECORD") {
+    // Save transcript: use explicit record_path, fall back to BRAILLE_RECORD env var
+    let save_path = record_path.or_else(|| std::env::var("BRAILLE_RECORD").ok());
+    if let Some(path) = save_path {
         let transcript = Transcript {
             url: url.to_string(),
             exchanges: recorder.into_exchanges(),

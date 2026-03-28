@@ -226,6 +226,10 @@ braille forward
 
 # Debug
 braille console                  # View JS console output
+
+# Record & replay
+braille $SID goto --record URL   # Record network transcript
+braille $SID transcript          # View the transcript
 ```
 
 ## Architecture
@@ -340,7 +344,7 @@ Always start with `braille new` to get a session ID. Use that ID for all subsequ
 
 | Command | Syntax | What it does |
 |---------|--------|-------------|
-| **goto** | `SESSION_ID goto URL [--mode MODE]` | Navigate to a URL. Returns a page snapshot. |
+| **goto** | `SESSION_ID goto URL [--mode MODE] [--record]` | Navigate to a URL. Returns a page snapshot. `--record` saves the network transcript. |
 | **click** | `SESSION_ID click SELECTOR` | Click an element. Triggers JS event handlers, may navigate. |
 | **type** | `SESSION_ID type SELECTOR TEXT` | Type text into an input or textarea. Replaces current value. |
 | **select** | `SESSION_ID select SELECTOR VALUE` | Choose an option in a `<select>` dropdown by value. |
@@ -348,6 +352,7 @@ Always start with `braille new` to get a session ID. Use that ID for all subsequ
 | **back** | `SESSION_ID back` | Go back in navigation history. |
 | **forward** | `SESSION_ID forward` | Go forward in navigation history. |
 | **console** | `SESSION_ID console` | Show JavaScript console output (log/warn/error). |
+| **transcript** | `SESSION_ID transcript` | Show the last recorded network transcript (requires `--record` on goto). |
 
 #### Selectors
 
@@ -416,20 +421,17 @@ Braille can record every HTTP exchange during a browsing session and replay it d
 
 ### Recording a session
 
-Set `BRAILLE_RECORD` to a file path. The daemon must be started (or restarted) with this variable in its environment:
+Pass `--record` to `goto`. The transcript is saved to the session directory and can be retrieved by session ID:
 
 ```bash
-# Stop existing daemon so the new one inherits the env var
-braille daemon stop
-
-# Record a session
-BRAILLE_RECORD=/tmp/anubis.json braille new
-BRAILLE_RECORD=/tmp/anubis.json braille $SID goto "https://anubis.techaro.lol"
+braille new                                           # → sess_abc12345
+braille sess_abc12345 goto --record "https://example.com"
+braille sess_abc12345 transcript                      # → prints the JSON transcript
 ```
 
-After the `goto` completes, `/tmp/anubis.json` contains a transcript of every `fetch_batch` exchange the engine made during navigation: the initial page fetch, script fetches, dynamic fetch() calls, and any meta-refresh or location.href redirect fetches.
+After the `goto` completes, the session directory contains a transcript of every `fetch_batch` exchange the engine made during navigation: the initial page fetch, script fetches, dynamic fetch() calls, and any meta-refresh or location.href redirect fetches.
 
-When `BRAILLE_RECORD` is not set, there is zero overhead — `RecordingFetcher` wraps the real fetcher but never serializes.
+When `--record` is not passed, there is zero overhead — no transcript is serialized.
 
 ### Transcript format
 
@@ -471,35 +473,19 @@ fn replay_anubis_session() {
 
 `ReplayFetcher` serves recorded responses sequentially, remapping request IDs by position (the engine assigns fresh IDs each run, but the order is deterministic).
 
-### How we used this to find and fix the Anubis bug
+### Anubis: a real-world proof point
 
-We were debugging why Braille couldn't get past [Anubis](https://github.com/TecharoHQ/anubis), a proof-of-work bot challenge. The daemon log showed `fetched 0 scripts` and `refresh=None`, but we couldn't see what the server actually returned. We were guessing with MockFetcher and writing tests against imagined HTML.
+[Anubis](https://github.com/TecharoHQ/anubis) is a proof-of-work bot challenge that protects websites. It serves a challenge page with an inline `<script type="module">` that bundles Preact and SHA-256, computes a hash, then redirects via `location.href` to a pass-challenge endpoint. The server responds with a 302 that sets a JWT auth cookie and redirects to the real site. Every subsequent request — page, scripts, assets — must include that cookie or get challenged again.
 
-**Step 1: Record.** We recorded a live Anubis session. The transcript captured the full 25KB HTML response with all headers and cookies.
+Braille now gets through Anubis end-to-end: solve the challenge, follow the redirects, capture the auth cookie, load the real Docusaurus site with all JavaScript hydrated. Getting here required fixing three distinct bugs, each found via session recording and isolated with a failing test before the fix:
 
-**Step 2: Inspect.** The transcript revealed that Anubis bundles everything into a single inline `<script type="module">` — there are no external script URLs. The `fetched 0 scripts` message was correct and expected, not a bug. The engine was correctly parsing the page and finding one `InlineModule` descriptor.
+1. **Cookie loss across HTTP redirects.** Reqwest's automatic redirect follower consumed Set-Cookie headers from 302 responses into its internal cookie jar — our engine's cookie jar never saw them. Fix: disabled reqwest's redirect following and cookie jar, implemented manual redirect loop in `do_fetch` that accumulates Set-Cookie headers from every hop and forwards cookies on subsequent redirect hops.
 
-**Step 3: Replay at lower level.** We wrote a test that replayed the transcript but stopped after script execution to inspect JS errors and console output. Result: 0 JS errors, 0 console output. The bundled Preact app and SHA-256 implementation ran successfully.
+2. **Script fetches missing cookies.** `fetch_scripts()` sent requests with empty headers. The page fetch attached cookies, `resolve_pending_fetches_via()` attached cookies, but script fetches didn't. Fix: call `get_cookies_for_url()` for each script request, same as the other fetch paths.
 
-**Step 4: Identify the real bug.** The Anubis script computes a hash, then sets `window.location.href` to redirect to the pass-challenge URL. The engine executed the script correctly but never followed the redirect — the `location.href` setter was a dead store that updated a string in memory but didn't signal the engine.
+3. **Relative URLs vs cookie lookup.** Script `src` attributes like `/assets/js/main.js` are relative. `get_cookies_for_url("/assets/js/main.js")` fails because `url::Url::parse` can't extract a domain from a relative URL. Fix: resolve relative script URLs against the page URL before looking up cookies.
 
-**Step 5: Write a red test.**
-
-```rust
-#[test]
-fn location_href_set_triggers_navigation() {
-    let mut fetcher = MockFetcher::new();
-    fetcher.add_html("https://example.com/a", r#"<script>window.location.href = "https://example.com/b";</script>"#);
-    fetcher.add_html("https://example.com/b", "<h1>Page B</h1>");
-    let mut engine = Engine::new();
-    let snapshot = engine.navigate("https://example.com/a", &mut fetcher, SnapMode::Text).unwrap();
-    assert!(snapshot.contains("Page B")); // FAILS — engine stays on page A
-}
-```
-
-**Step 6: Fix.** Added `pending_navigation` to the engine state. The JS `location.href` setter now calls a native `__braille_navigate(url)` function that sets the pending navigation. After script execution and settling, `navigate_inner()` checks for a pending navigation before checking meta-refresh, and follows it.
-
-Without recording, we would have kept guessing that the problem was missing script fetches or module support. The transcript showed us the actual bytes and let us replay the exact scenario until the fix was obvious.
+Session recording was essential for diagnosing these — the transcript showed exactly which requests had cookies, which didn't, and what the server returned for each.
 
 ## Building
 

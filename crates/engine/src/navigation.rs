@@ -61,7 +61,7 @@ impl Engine {
         eprintln!("[navigate] body_len={} body_start={}", page.body.len(), &page.body[..page.body.len().min(500)].replace('\n', "\\n"));
 
         // 4. Fetch external scripts + import map URLs
-        let fetched = self.fetch_scripts(&descriptors, fetcher);
+        let fetched = self.fetch_scripts(&descriptors, fetcher, &page.url);
         eprintln!("[navigate] fetched {} scripts", fetched.len());
 
         // 5. Set URL, execute scripts
@@ -141,29 +141,43 @@ impl Engine {
         &mut self,
         descriptors: &[ScriptDescriptor],
         fetcher: &mut impl FetchProvider,
+        page_url: &str,
     ) -> HashMap<String, String> {
+        let base = url::Url::parse(page_url).ok();
         let import_map_urls = Self::import_map_urls(descriptors);
         let mut requests: Vec<FetchRequest> = Vec::new();
         let mut next_id = 1u64;
 
         for desc in descriptors {
             if let Some(src_url) = desc.external_url() {
+                let mut headers = vec![];
+                let absolute = resolve_url(src_url, &base);
+                let cookie_value = self.get_cookies_for_url(&absolute);
+                if !cookie_value.is_empty() {
+                    headers.push(("Cookie".into(), cookie_value));
+                }
                 requests.push(FetchRequest {
                     id: next_id,
                     url: src_url.to_string(),
                     method: "GET".into(),
-                    headers: vec![],
+                    headers,
                     body: None,
                 });
                 next_id += 1;
             }
         }
         for url in &import_map_urls {
+            let mut headers = vec![];
+            let absolute = resolve_url(url, &base);
+            let cookie_value = self.get_cookies_for_url(&absolute);
+            if !cookie_value.is_empty() {
+                headers.push(("Cookie".into(), cookie_value));
+            }
             requests.push(FetchRequest {
                 id: next_id,
                 url: url.clone(),
                 method: "GET".into(),
-                headers: vec![],
+                headers,
                 body: None,
             });
             next_id += 1;
@@ -322,6 +336,20 @@ impl MockFetcher {
             },
         );
     }
+}
+
+/// Resolve a possibly-relative URL against a base URL for cookie matching.
+/// Returns the original string if it's already absolute or base is unavailable.
+fn resolve_url(url: &str, base: &Option<url::Url>) -> String {
+    if url::Url::parse(url).is_ok() {
+        return url.to_string();
+    }
+    if let Some(base) = base {
+        if let Ok(resolved) = base.join(url) {
+            return resolved.to_string();
+        }
+    }
+    url.to_string()
 }
 
 impl FetchProvider for MockFetcher {

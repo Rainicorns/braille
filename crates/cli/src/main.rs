@@ -58,6 +58,9 @@ enum SessionAction {
         /// Target element (@eN, #id, CSS selector) for region mode
         #[arg(long)]
         target: Option<String>,
+        /// Record the network transcript for replay/debugging
+        #[arg(long)]
+        record: bool,
     },
     /// Click an element matching the selector
     Click { selector: String },
@@ -83,6 +86,8 @@ enum SessionAction {
     Forward,
     /// Show console output (log/warn/error) from JS
     Console,
+    /// Show the last recorded network transcript
+    Transcript,
     /// Close the session
     Close,
 }
@@ -120,6 +125,16 @@ impl SnapModeArg {
     }
 }
 
+fn transcript_path(session_id: &str) -> String {
+    let dir = paths::runtime_dir()
+        .join("sessions")
+        .join(session_id);
+    std::fs::create_dir_all(&dir).ok();
+    dir.join("transcript.json")
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn parse_session_action(args: &[String]) -> SessionAction {
     use clap::FromArgMatches;
 
@@ -131,16 +146,18 @@ fn parse_session_action(args: &[String]) -> SessionAction {
     SessionAction::from_arg_matches(&matches).unwrap()
 }
 
-fn session_action_to_daemon_command(action: SessionAction) -> DaemonCommand {
+fn session_action_to_daemon_command(action: SessionAction, session_id: &str) -> DaemonCommand {
     match action {
         SessionAction::Goto {
             url,
             mode,
             query,
             target,
+            record,
         } => DaemonCommand::Goto {
             url,
             mode: mode.into_snap_mode(query, target),
+            record_path: if record { Some(transcript_path(session_id)) } else { None },
         },
         SessionAction::Click { selector } => DaemonCommand::Click { selector },
         SessionAction::Type { selector, text } => DaemonCommand::Type { selector, text },
@@ -151,6 +168,7 @@ fn session_action_to_daemon_command(action: SessionAction) -> DaemonCommand {
         SessionAction::Back => DaemonCommand::Back,
         SessionAction::Forward => DaemonCommand::Forward,
         SessionAction::Console => DaemonCommand::Console,
+        SessionAction::Transcript => unreachable!("transcript handled before daemon dispatch"),
         SessionAction::Close => DaemonCommand::Close,
     }
 }
@@ -235,7 +253,17 @@ fn run(cli: Cli) -> String {
                     .to_string();
             }
             let action = parse_session_action(action_args);
-            let command = session_action_to_daemon_command(action);
+
+            // Transcript is handled locally — no daemon round-trip needed
+            if matches!(action, SessionAction::Transcript) {
+                let path = transcript_path(sid);
+                return match std::fs::read_to_string(&path) {
+                    Ok(contents) => contents,
+                    Err(_) => format!("error: no transcript found for session {sid} (use --record on goto)"),
+                };
+            }
+
+            let command = session_action_to_daemon_command(action, sid);
 
             client::ensure_daemon_running();
             let request = DaemonRequest {

@@ -216,16 +216,36 @@ fn fetch_worker_script(url: &str, net: &mut NetworkClient) -> String {
         return String::new();
     }
 
-    // Fetch via network
+    // Fetch via network with manual redirect following
     let resolved = net.resolve_url(url);
     let client = net.client().clone();
-    match client.get(&resolved).send() {
-        Ok(resp) => resp.text().unwrap_or_default(),
-        Err(e) => {
-            eprintln!("[worker] failed to fetch script {url}: {e}");
-            String::new()
+    let mut current_url = resolved;
+    for _ in 0..10 {
+        match client.get(&current_url).send() {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                if (300..400).contains(&status) {
+                    if let Some(location) = resp.headers().get("location") {
+                        if let Ok(loc) = location.to_str() {
+                            if let Ok(base) = url::Url::parse(&current_url) {
+                                if let Ok(next) = base.join(loc) {
+                                    current_url = next.to_string();
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+                return resp.text().unwrap_or_default();
+            }
+            Err(e) => {
+                eprintln!("[worker] failed to fetch script {url}: {e}");
+                return String::new();
+            }
         }
     }
+    eprintln!("[worker] too many redirects for {url}");
+    String::new()
 }
 
 fn base64_decode(input: &str) -> Vec<u8> {

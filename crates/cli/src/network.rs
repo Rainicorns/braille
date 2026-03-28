@@ -21,10 +21,11 @@ impl Default for NetworkClient {
 }
 
 impl NetworkClient {
-    /// Create a new NetworkClient with an enabled cookie jar.
+    /// Create a new NetworkClient. Redirects and cookies are handled manually
+    /// so that Set-Cookie headers from intermediate 3xx responses are not lost.
     pub fn new() -> Self {
         let client = Client::builder()
-            .cookie_store(true)
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent("Mozilla/5.0 (compatible; Braille/0.1)")
             .build()
             .expect("failed to build reqwest client");
@@ -36,34 +37,50 @@ impl NetworkClient {
         &self.client
     }
 
-    /// Fetch a URL. Follows redirects automatically (reqwest default).
+    /// Fetch a URL. Follows redirects manually to preserve Set-Cookie headers.
     /// Updates base_url to the final URL after redirects.
     pub fn fetch(&mut self, url: &str) -> Result<FetchResponse, String> {
         let resolved = self.resolve_url(url);
-        let response = self
-            .client
-            .get(&resolved)
-            .send()
-            .map_err(|e| format!("fetch failed: {e}"))?;
+        let mut current_url = url::Url::parse(&resolved)
+            .map_err(|e| format!("invalid URL {resolved}: {e}"))?;
 
-        let final_url = response.url().to_string();
-        let status = response.status().as_u16();
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+        for _ in 0..10 {
+            let response = self
+                .client
+                .get(current_url.as_str())
+                .send()
+                .map_err(|e| format!("fetch failed: {e}"))?;
 
-        self.set_base_url(&final_url);
+            let status = response.status().as_u16();
+            if (300..400).contains(&status) {
+                if let Some(location) = response.headers().get("location") {
+                    let loc = location.to_str().map_err(|e| format!("invalid Location header: {e}"))?;
+                    current_url = current_url.join(loc)
+                        .map_err(|e| format!("invalid redirect URL {loc}: {e}"))?;
+                    continue;
+                }
+            }
 
-        let body = response.text().map_err(|e| format!("failed to read body: {e}"))?;
+            let final_url = current_url.to_string();
+            let content_type = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
 
-        Ok(FetchResponse {
-            body,
-            url: final_url,
-            status,
-            content_type,
-        })
+            self.set_base_url(&final_url);
+
+            let body = response.text().map_err(|e| format!("failed to read body: {e}"))?;
+
+            return Ok(FetchResponse {
+                body,
+                url: final_url,
+                status,
+                content_type,
+            });
+        }
+
+        Err(format!("too many redirects for {resolved}"))
     }
 
     /// Resolve a possibly-relative URL against the current base_url.
@@ -109,6 +126,7 @@ impl NetworkClient {
     }
 
     /// Fetch a URL with custom method, headers, and body.
+    /// Follows redirects manually. 301/302/303 switch to GET and drop body.
     pub fn fetch_with_options(
         &mut self,
         url: &str,
@@ -117,41 +135,63 @@ impl NetworkClient {
         body: Option<&str>,
     ) -> Result<FetchResponse, String> {
         let resolved = self.resolve_url(url);
-        let mut builder = match method.to_uppercase().as_str() {
-            "POST" => self.client.post(&resolved),
-            "PUT" => self.client.put(&resolved),
-            "DELETE" => self.client.delete(&resolved),
-            "PATCH" => self.client.patch(&resolved),
-            "HEAD" => self.client.head(&resolved),
-            _ => self.client.get(&resolved),
-        };
+        let mut current_url = url::Url::parse(&resolved)
+            .map_err(|e| format!("invalid URL {resolved}: {e}"))?;
+        let mut current_method = method.to_uppercase();
+        let mut current_body: Option<String> = body.map(|s| s.to_string());
 
-        for (name, value) in headers {
-            builder = builder.header(name.as_str(), value.as_str());
+        for _ in 0..10 {
+            let mut builder = match current_method.as_str() {
+                "POST" => self.client.post(current_url.as_str()),
+                "PUT" => self.client.put(current_url.as_str()),
+                "DELETE" => self.client.delete(current_url.as_str()),
+                "PATCH" => self.client.patch(current_url.as_str()),
+                "HEAD" => self.client.head(current_url.as_str()),
+                _ => self.client.get(current_url.as_str()),
+            };
+
+            for (name, value) in headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+
+            if let Some(ref body_str) = current_body {
+                builder = builder.body(body_str.clone());
+            }
+
+            let response = builder.send().map_err(|e| format!("fetch failed: {e}"))?;
+
+            let status = response.status().as_u16();
+            if (300..400).contains(&status) {
+                if let Some(location) = response.headers().get("location") {
+                    let loc = location.to_str().map_err(|e| format!("invalid Location header: {e}"))?;
+                    current_url = current_url.join(loc)
+                        .map_err(|e| format!("invalid redirect URL {loc}: {e}"))?;
+                    if (301..=303).contains(&status) {
+                        current_method = "GET".to_string();
+                        current_body = None;
+                    }
+                    continue;
+                }
+            }
+
+            let final_url = current_url.to_string();
+            let content_type = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            let body = response.text().map_err(|e| format!("failed to read body: {e}"))?;
+
+            return Ok(FetchResponse {
+                body,
+                url: final_url,
+                status,
+                content_type,
+            });
         }
 
-        if let Some(body_str) = body {
-            builder = builder.body(body_str.to_string());
-        }
-
-        let response = builder.send().map_err(|e| format!("fetch failed: {e}"))?;
-
-        let final_url = response.url().to_string();
-        let status = response.status().as_u16();
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-
-        let body = response.text().map_err(|e| format!("failed to read body: {e}"))?;
-
-        Ok(FetchResponse {
-            body,
-            url: final_url,
-            status,
-            content_type,
-        })
+        Err(format!("too many redirects for {resolved}"))
     }
 
     /// Update the base URL (typically after navigation).

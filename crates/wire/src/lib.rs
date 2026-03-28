@@ -155,7 +155,12 @@ pub struct DaemonRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DaemonCommand {
     NewSession,
-    Goto { url: String, mode: SnapMode },
+    Goto {
+        url: String,
+        mode: SnapMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        record_path: Option<String>,
+    },
     Click { selector: String },
     Type { selector: String, text: String },
     Select { selector: String, value: String },
@@ -333,7 +338,7 @@ mod tests {
         assert_roundtrip!(
             DaemonRequest {
                 session_id: Some("sess_abc12345".into()),
-                command: DaemonCommand::Goto { url: "https://example.com".into(), mode: SnapMode::Compact },
+                command: DaemonCommand::Goto { url: "https://example.com".into(), mode: SnapMode::Compact, record_path: None },
             },
             DaemonRequest
         );
@@ -373,6 +378,7 @@ mod tests {
             HostMessage::Command(DaemonCommand::Goto {
                 url: "https://example.com".into(),
                 mode: SnapMode::Compact,
+                record_path: None,
             }),
             HostMessage
         );

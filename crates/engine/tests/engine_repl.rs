@@ -60,6 +60,7 @@ impl EngineHarness {
         self.send(&HostMessage::Command(DaemonCommand::Goto {
             url: url.to_string(),
             mode: SnapMode::Compact,
+            record_path: None,
         }));
 
         loop {
