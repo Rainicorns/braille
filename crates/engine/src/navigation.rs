@@ -216,19 +216,23 @@ impl Engine {
     /// Interleave settle + fetch loops until quiescent.
     /// Uses settle_no_advance to avoid firing interval timers repeatedly.
     pub fn settle_with_fetches(&mut self, fetcher: &mut impl FetchProvider) {
+        let mut seen_urls: HashSet<String> = HashSet::new();
         for _ in 0..30 {
             self.settle_no_advance();
             if !self.has_pending_fetches() {
                 break;
             }
-            self.resolve_pending_fetches_via(fetcher);
+            self.resolve_pending_fetches_via(fetcher, &mut seen_urls);
         }
         self.settle_no_advance();
     }
 
     /// Service all pending fetch requests from the JS runtime via the FetchProvider.
-    fn resolve_pending_fetches_via(&mut self, fetcher: &mut impl FetchProvider) {
-        let mut seen_urls: HashSet<String> = HashSet::new();
+    fn resolve_pending_fetches_via(
+        &mut self,
+        fetcher: &mut impl FetchProvider,
+        seen_urls: &mut HashSet<String>,
+    ) {
 
         for _ in 0..50 {
             if !self.has_pending_fetches() {
