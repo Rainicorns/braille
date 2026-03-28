@@ -383,85 +383,7 @@ fn testharnessreport_shim() -> String {
     "// testharnessreport.js shim — no-op".to_string()
 }
 
-// ---------------------------------------------------------------------------
-// Expected failures — tests that partially pass with known unfixable subtests
-// ---------------------------------------------------------------------------
-
-/// Returns the number of expected failing subtests for a given test file.
-/// These are subtests that fail due to missing features we intentionally don't implement.
-fn expected_failures(rel_path: &str) -> usize {
-    let known: &[(&str, usize)] = &[
-        // 5 failures: Node.prototype has hasAttributes/attributes/namespaceURI/prefix/localName
-        // which spec moved to Element — we expose them on Node for compatibility
-        ("historical.html", 5),
-        // 1 failure: "Real clicks on disabled elements" needs test_driver browser automation
-        ("Event-dispatch-on-disabled-elements", 1),
-        // 1 failure: "In new Document()" — Document constructor returns plain JS object,
-        // native functions fail when cloning elements into standalone document context
-        ("Event-dispatch-bubbles-true", 1),
-        ("Event-dispatch-bubbles-false", 1),
-        // 6 failures: inline style toggle, setAttribute first-match, prefix preservation,
-        // non-HTML uppercase, own-property-names enumeration
-        ("/attributes.html", 6),
-        // 4 failures: Shadow DOM window.event + XMLHttpRequest
-        ("event-global.html", 4),
-        // 18 failures: MouseEvent/WheelEvent instanceof (Boa Class vs FunctionObjectBuilder),
-        // SubclassedEvent class extends
-        ("Event-subclasses", 18),
-        // 2 failures: host-dispatched retarget early return, checkbox activation + clearTargets
-        ("relatedTarget", 2),
-        // HTMLCollection edge cases — Proxy set strictness
-        ("HTMLCollection-own-props", 2),
-        // DOMTokenList — 7 failures: relList, htmlFor, sandbox, sizes not implemented
-        ("DOMTokenList-coverage-for-attributes", 7),
-        // AbortSignal event.any — 1 failure: isTrusted check (our abort events are not trusted)
-        ("event.any", 1),
-        // AddEventListenerOptions-signal — all passing (removed flag fix in standalone EventTarget)
-        // ("AddEventListenerOptions-signal", 1),
-        // abort-signal-any — 1 failure: abort event ordering across dependent signals
-        ("abort-signal-any.any", 1),
-        // NodeIterator — failures from foreign/xml document nodes (not supported)
-        ("NodeIterator.html", 420),
-        // HTMLCollection-supported-property-indices — 3 failures: 2^32 edge case + strict set
-        ("HTMLCollection-supported-property-indices", 3),
-        // HTMLCollection-supported-property-names — 3 failures: expando shadowing strict mode
-        ("HTMLCollection-supported-property-names", 3),
-        // Range tests with cross-document failures (xmlDoc/foreignDoc ranges)
-        ("Range-collapse.html", 9),
-        ("Range-cloneRange.html", 3),
-        ("Range-commonAncestorContainer.html", 3),
-        ("Range-compareBoundaryPoints.html", 938),
-        ("Range-isPointInRange.html", 11),
-        ("Range-intersectsNode.html", 310),
-        ("Range-set.html", 470),
-        // Range-mutations: "selected" tests fail (getSelection stub returns rangeCount=0),
-        // foreignDoc/xmlDoc CharacterData nodes lack appendData/etc methods
-        ("Range-mutations-appendChild", 1),
-        ("Range-mutations-replaceChild", 2),
-        ("Range-mutations-appendData", 192),
-        ("Range-mutations-insertData", 165),
-        ("Range-mutations-deleteData", 243),
-        ("Range-mutations-replaceData", 495),
-        ("Range-mutations-dataChange", 1404),
-        ("Range-mutations-splitText", 15),
-        // Range-comparePoint-2: 1 failure from xmlDoctype WrongDocumentError
-        ("Range-comparePoint-2.html", 1),
-        // mouse-event-retarget: 1 failure from offsetX layout calculation (no layout engine)
-        ("mouse-event-retarget.html", 1),
-        // Document-createEvent: 30 failures — missing constructors for legacy aliases
-        // (BeforeUnloadEvent, DeviceMotion/Orientation, Drag, HashChange, Message, Storage, Text × 3 case variants)
-        // + TouchEvent × 6 (precondition fails — no touch API)
-        ("Document-createEvent.https", 30),
-        // TreeWalker: 443 failures from foreign/xml document nodes (like NodeIterator)
-        ("TreeWalker.html", 443),
-    ];
-    for (pattern, count) in known {
-        if rel_path.contains(pattern) {
-            return *count;
-        }
-    }
-    0
-}
+// No expected_failures tolerance — every subtest must pass or the test fails honestly.
 
 // ---------------------------------------------------------------------------
 // Skip list — tests that need features we don't support
@@ -1159,9 +1081,7 @@ fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> Result<(
     let pass_count = results.iter().filter(|r| r.status == 0).count();
     let total = results.len();
 
-    let rel = html_path.to_string_lossy();
-    let allowed = expected_failures(&rel);
-    if failures.len() <= allowed {
+    if failures.is_empty() {
         Ok(())
     } else {
         Err(Failed::from(format!(

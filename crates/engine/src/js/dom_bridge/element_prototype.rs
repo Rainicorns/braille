@@ -1,24 +1,29 @@
 pub(crate) fn element_prototype_js() -> &'static str {
     r#"
-        EP.getAttribute = function(name) {
+        // ElemProto inherits from EP (Node prototype).
+        // Element-specific methods go on ElemProto, Node methods stay on EP.
+        var ElemProto = Object.create(EP);
+        globalThis.__ElemProto = ElemProto;
+
+        ElemProto.getAttribute = function(name) {
             name = String(name).toLowerCase();
             var v = __n_getAttribute(this.__nid, name);
             return __n_hasAttrValue(this.__nid, name) ? v : null;
         };
-        EP.setAttribute = function(name, value) {
+        ElemProto.setAttribute = function(name, value) {
             name = String(name).toLowerCase();
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
             __n_setAttribute(this.__nid, name, String(value));
             if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
         };
-        EP.removeAttribute = function(name) {
+        ElemProto.removeAttribute = function(name) {
             name = String(name).toLowerCase();
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
             __n_removeAttribute(this.__nid, name);
             if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
         };
-        EP.hasAttribute = function(name) { return __n_hasAttribute(this.__nid, String(name).toLowerCase()); };
-        EP.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
+        ElemProto.hasAttribute = function(name) { return __n_hasAttribute(this.__nid, String(name).toLowerCase()); };
+        ElemProto.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
 
         EP.addEventListener = function(type, cb, opts) {
             if (typeof cb !== 'function') return;
@@ -57,11 +62,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         // Pointer capture
         var __pointerCaptures = {};
-        EP.setPointerCapture = function(pointerId) { __pointerCaptures[pointerId] = this.__nid; };
-        EP.releasePointerCapture = function(pointerId) { if (__pointerCaptures[pointerId] === this.__nid) delete __pointerCaptures[pointerId]; };
-        EP.hasPointerCapture = function(pointerId) { return __pointerCaptures[pointerId] === this.__nid; };
+        ElemProto.setPointerCapture = function(pointerId) { __pointerCaptures[pointerId] = this.__nid; };
+        ElemProto.releasePointerCapture = function(pointerId) { if (__pointerCaptures[pointerId] === this.__nid) delete __pointerCaptures[pointerId]; };
+        ElemProto.hasPointerCapture = function(pointerId) { return __pointerCaptures[pointerId] === this.__nid; };
 
-        EP.click = function() {
+        ElemProto.click = function() {
             var event = new MouseEvent('click', {bubbles: true, cancelable: true});
             event.target = this;
             event.currentTarget = this;
@@ -104,13 +109,13 @@ pub(crate) fn element_prototype_js() -> &'static str {
             }
         };
         // <dialog> element APIs
-        EP.showModal = function() {
+        ElemProto.showModal = function() {
             if (this.tagName === 'DIALOG') { this.setAttribute('open', ''); if (!this.__props) this.__props = {}; this.__props._dialogModal = true; }
         };
-        EP.show = function() {
+        ElemProto.show = function() {
             if (this.tagName === 'DIALOG') this.setAttribute('open', '');
         };
-        EP.close = function(returnValue) {
+        ElemProto.close = function(returnValue) {
             if (this.tagName === 'DIALOG') {
                 this.removeAttribute('open');
                 if (!this.__props) this.__props = {};
@@ -119,14 +124,14 @@ pub(crate) fn element_prototype_js() -> &'static str {
             }
         };
 
-        EP.querySelector = function(sel) {
+        ElemProto.querySelector = function(sel) {
             var id = __n_querySelector(this.__nid, sel);
             return id >= 0 ? __w(id) : null;
         };
-        EP.querySelectorAll = function(sel) {
+        ElemProto.querySelectorAll = function(sel) {
             return __n_querySelectorAll(this.__nid, sel).map(__w);
         };
-        EP.getElementsByTagName = function(tag) {
+        ElemProto.getElementsByTagName = function(tag) {
             var self = this;
             return new Proxy([], {
                 get: function(t, p) {
@@ -146,7 +151,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 }
             });
         };
-        EP.getElementsByClassName = function(cls) {
+        ElemProto.getElementsByClassName = function(cls) {
             var self = this;
             return new Proxy([], {
                 get: function(t, p) {
@@ -160,7 +165,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 }
             });
         };
-        Object.defineProperty(EP, 'attributes', {
+        Object.defineProperty(ElemProto, 'attributes', {
             get: function() {
                 if (this.__nid === undefined) return undefined;
                 var names = JSON.parse(__n_getAttributeNames(this.__nid));
@@ -247,7 +252,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             if (err) throw new DOMException(err, err);
         };
 
-        EP.getBoundingClientRect = function() {
+        ElemProto.getBoundingClientRect = function() {
             // Return plausible non-zero defaults instead of all zeros
             var s = __n_getAttribute(this.__nid, 'style') || '';
             // display:none → all zeros
@@ -278,15 +283,15 @@ pub(crate) fn element_prototype_js() -> &'static str {
             }
             return {top:0,left:0,width:w,height:h,right:w,bottom:h,x:0,y:0};
         };
-        EP.getClientRects = function() { return [this.getBoundingClientRect()]; };
+        ElemProto.getClientRects = function() { return [this.getBoundingClientRect()]; };
         // focus/blur defined later after defineProperties to track activeElement
-        EP.scrollIntoView = function() {};
-        EP.matches = function(sel) { return __n_matchesSelector(this.__nid, sel); };
-        EP.closest = function(sel) {
+        ElemProto.scrollIntoView = function() {};
+        ElemProto.matches = function(sel) { return __n_matchesSelector(this.__nid, sel); };
+        ElemProto.closest = function(sel) {
             var id = __n_closest(this.__nid, sel);
             return id >= 0 ? __w(id) : null;
         };
-        EP.getAttributeNames = function() {
+        ElemProto.getAttributeNames = function() {
             return JSON.parse(__n_getAttributeNames(this.__nid));
         };
         EP.append = function() {
@@ -345,7 +350,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 else parent.appendChild(arg);
             }
         };
-        EP.toggleAttribute = function(name, force) {
+        ElemProto.toggleAttribute = function(name, force) {
             if (force !== undefined) {
                 if (force) { this.setAttribute(name, ''); return true; }
                 else { this.removeAttribute(name); return false; }
@@ -353,22 +358,22 @@ pub(crate) fn element_prototype_js() -> &'static str {
             if (this.hasAttribute(name)) { this.removeAttribute(name); return false; }
             this.setAttribute(name, ''); return true;
         };
-        EP.setAttributeNS = function(ns, qualifiedName, value) {
+        ElemProto.setAttributeNS = function(ns, qualifiedName, value) {
             ns = (ns === null || ns === undefined) ? '' : String(ns);
             __n_setAttributeNS(this.__nid, ns, String(qualifiedName), String(value));
         };
-        EP.getAttributeNS = function(ns, localName) {
+        ElemProto.getAttributeNS = function(ns, localName) {
             ns = (ns === null || ns === undefined) ? '' : String(ns);
             if (__n_hasAttributeNS(this.__nid, ns, String(localName))) {
                 return __n_getAttributeNS(this.__nid, ns, String(localName));
             }
             return null;
         };
-        EP.removeAttributeNS = function(ns, localName) {
+        ElemProto.removeAttributeNS = function(ns, localName) {
             ns = (ns === null || ns === undefined) ? '' : String(ns);
             __n_removeAttributeNS(this.__nid, ns, String(localName));
         };
-        EP.hasAttributeNS = function(ns, localName) {
+        ElemProto.hasAttributeNS = function(ns, localName) {
             ns = (ns === null || ns === undefined) ? '' : String(ns);
             return __n_hasAttributeNS(this.__nid, ns, String(localName));
         };

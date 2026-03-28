@@ -14,7 +14,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Wrapper factory
         function __w(nodeId) {
             if (_cache[nodeId]) return _cache[nodeId];
-            var obj = Object.create(EP);
+            var nt = __n_getNodeType(nodeId);
+            var proto = (nt === 1) ? __ElemProto : EP;
+            var obj = Object.create(proto);
             obj.__nid = nodeId;
             obj.__props = {}; // per-element property store (dirty value/checked/selected)
             // Set constructor so React's inputValueTracking can find
@@ -323,20 +325,22 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 __listeners: {}, __captureListeners: {},
                 get documentElement() { return rootEl; },
                 get body() {
+                    if (!rootEl) return null;
                     var kids = rootEl.childNodes;
                     for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'BODY') return kids[i];
                     return null;
                 },
                 get head() {
+                    if (!rootEl) return null;
                     var kids = rootEl.childNodes;
                     for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'HEAD') return kids[i];
                     return null;
                 },
-                querySelector: function(sel) { return rootEl.querySelector(sel); },
-                querySelectorAll: function(sel) { return rootEl.querySelectorAll(sel); },
-                getElementById: function(id) { return rootEl.querySelector('#' + id) || null; },
-                getElementsByTagName: function(tag) { return rootEl.querySelectorAll(tag); },
-                getElementsByClassName: function(cls) { return rootEl.querySelectorAll('.' + cls); },
+                querySelector: function(sel) { return rootEl ? rootEl.querySelector(sel) : null; },
+                querySelectorAll: function(sel) { return rootEl ? rootEl.querySelectorAll(sel) : []; },
+                getElementById: function(id) { return rootEl ? (rootEl.querySelector('#' + id) || null) : null; },
+                getElementsByTagName: function(tag) { return rootEl ? rootEl.querySelectorAll(tag) : []; },
+                getElementsByClassName: function(cls) { return rootEl ? rootEl.querySelectorAll('.' + cls) : []; },
                 createElement: function(tag) { return document.createElement(tag); },
                 createTextNode: function(text) { return document.createTextNode(text); },
                 createDocumentFragment: function() { return document.createDocumentFragment(); },
@@ -369,7 +373,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 },
             };
             // Tag the root element so EP.dispatchEvent can find the owning document
-            rootEl.__ownerDoc = newDoc;
+            if (rootEl) rootEl.__ownerDoc = newDoc;
             return newDoc;
         }
 
@@ -755,6 +759,28 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     var newDoc = __makeDocumentLike(htmlEl);
                     newDoc.title = title !== undefined ? String(title) : '';
                     return newDoc;
+                },
+                createDocument: function(ns, qualifiedName, doctype) {
+                    var rootEl = null;
+                    if (qualifiedName) {
+                        rootEl = document.createElementNS(ns, qualifiedName);
+                    }
+                    var newDoc = rootEl ? __makeDocumentLike(rootEl) : __makeDocumentLike(null);
+                    newDoc.contentType = ns === 'http://www.w3.org/1999/xhtml' ? 'application/xhtml+xml' : 'application/xml';
+                    return newDoc;
+                },
+                createDocumentType: function(qualifiedName, publicId, systemId) {
+                    return {
+                        nodeType: 10,
+                        nodeName: qualifiedName,
+                        name: qualifiedName,
+                        publicId: publicId || '',
+                        systemId: systemId || '',
+                        parentNode: null,
+                        parentElement: null,
+                        childNodes: [],
+                        ownerDocument: null
+                    };
                 },
                 hasFeature: function() { return true; },
             }, configurable: true },
