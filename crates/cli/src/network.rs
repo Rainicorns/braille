@@ -38,20 +38,32 @@ impl NetworkClient {
     }
 
     /// Fetch a URL. Follows redirects manually to preserve Set-Cookie headers.
-    /// Updates base_url to the final URL after redirects.
+    /// Accumulates cookies across redirect hops. Updates base_url to the final URL.
     pub fn fetch(&mut self, url: &str) -> Result<FetchResponse, String> {
         let resolved = self.resolve_url(url);
         let mut current_url = url::Url::parse(&resolved)
             .map_err(|e| format!("invalid URL {resolved}: {e}"))?;
+        let mut accumulated_cookies: Vec<String> = Vec::new();
 
         for _ in 0..10 {
-            let response = self
-                .client
-                .get(current_url.as_str())
-                .send()
-                .map_err(|e| format!("fetch failed: {e}"))?;
+            let mut builder = self.client.get(current_url.as_str());
+
+            if !accumulated_cookies.is_empty() {
+                let cookie_val = build_cookie_header(&accumulated_cookies);
+                builder = builder.header("Cookie", cookie_val);
+            }
+
+            let response = builder.send().map_err(|e| format!("fetch failed: {e}"))?;
 
             let status = response.status().as_u16();
+
+            // Accumulate Set-Cookie headers from this hop
+            for value in response.headers().get_all("set-cookie") {
+                if let Ok(v) = value.to_str() {
+                    accumulated_cookies.push(v.to_string());
+                }
+            }
+
             if (300..400).contains(&status) {
                 if let Some(location) = response.headers().get("location") {
                     let loc = location.to_str().map_err(|e| format!("invalid Location header: {e}"))?;
@@ -131,6 +143,7 @@ impl NetworkClient {
 
     /// Fetch a URL with custom method, headers, and body.
     /// Follows redirects manually. 301/302/303 switch to GET and drop body.
+    /// Accumulates cookies across redirect hops. Strips sensitive headers on cross-origin redirects.
     pub fn fetch_with_options(
         &mut self,
         url: &str,
@@ -141,8 +154,10 @@ impl NetworkClient {
         let resolved = self.resolve_url(url);
         let mut current_url = url::Url::parse(&resolved)
             .map_err(|e| format!("invalid URL {resolved}: {e}"))?;
+        let initial_origin = origin_of(current_url.as_str());
         let mut current_method = method.to_uppercase();
         let mut current_body: Option<String> = body.map(|s| s.to_string());
+        let mut accumulated_cookies: Vec<String> = Vec::new();
 
         for _ in 0..10 {
             let mut builder = match current_method.as_str() {
@@ -154,8 +169,36 @@ impl NetworkClient {
                 _ => self.client.get(current_url.as_str()),
             };
 
+            let is_cross_origin = origin_of(current_url.as_str()) != initial_origin;
+
+            let mut has_cookie_header = false;
             for (name, value) in headers {
-                builder = builder.header(name.as_str(), value.as_str());
+                if is_cross_origin && (name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("cookie")) {
+                    if name.eq_ignore_ascii_case("cookie") {
+                        has_cookie_header = true;
+                    }
+                    continue;
+                }
+                if name.eq_ignore_ascii_case("cookie") {
+                    has_cookie_header = true;
+                    if !accumulated_cookies.is_empty() {
+                        let extra = build_cookie_header(&accumulated_cookies);
+                        let merged = if value.is_empty() {
+                            extra
+                        } else {
+                            format!("{value}; {extra}")
+                        };
+                        builder = builder.header("Cookie", merged);
+                    } else {
+                        builder = builder.header(name.as_str(), value.as_str());
+                    }
+                } else {
+                    builder = builder.header(name.as_str(), value.as_str());
+                }
+            }
+            if !has_cookie_header && !accumulated_cookies.is_empty() {
+                let cookie_val = build_cookie_header(&accumulated_cookies);
+                builder = builder.header("Cookie", cookie_val);
             }
 
             if let Some(ref body_str) = current_body {
@@ -165,6 +208,14 @@ impl NetworkClient {
             let response = builder.send().map_err(|e| format!("fetch failed: {e}"))?;
 
             let status = response.status().as_u16();
+
+            // Accumulate Set-Cookie headers from this hop
+            for value in response.headers().get_all("set-cookie") {
+                if let Ok(v) = value.to_str() {
+                    accumulated_cookies.push(v.to_string());
+                }
+            }
+
             if (300..400).contains(&status) {
                 if let Some(location) = response.headers().get("location") {
                     let loc = location.to_str().map_err(|e| format!("invalid Location header: {e}"))?;
@@ -256,6 +307,46 @@ fn extract_directory(url: &str) -> String {
         Some(i) if i >= path_start => format!("{}/", &url[..i]),
         _ => format!("{url}/"),
     }
+}
+
+/// Extract the origin (scheme + host + port) from a URL string for cross-origin comparison.
+fn origin_of(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(u) => format!(
+            "{}://{}{}",
+            u.scheme(),
+            u.host_str().unwrap_or(""),
+            u.port().map(|p| format!(":{p}")).unwrap_or_default()
+        ),
+        Err(_) => url.to_string(),
+    }
+}
+
+/// Build a Cookie header value from accumulated Set-Cookie header values.
+/// Deduplicates by cookie name (last value wins).
+fn build_cookie_header(set_cookies: &[String]) -> String {
+    let mut names: Vec<String> = Vec::new();
+    let mut values: Vec<String> = Vec::new();
+    for v in set_cookies {
+        let name_value = match v.split(';').next() {
+            Some(nv) => nv.trim(),
+            None => continue,
+        };
+        if name_value.is_empty() {
+            continue;
+        }
+        let name = match name_value.find('=') {
+            Some(eq) => name_value[..eq].to_string(),
+            None => continue,
+        };
+        if let Some(pos) = names.iter().position(|n| *n == name) {
+            values[pos] = name_value.to_string();
+        } else {
+            names.push(name);
+            values.push(name_value.to_string());
+        }
+    }
+    values.join("; ")
 }
 
 #[cfg(test)]

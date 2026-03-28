@@ -131,7 +131,8 @@ fn transcript_path(session_id: &str) -> String {
     let dir = paths::runtime_dir()
         .join("sessions")
         .join(session_id);
-    std::fs::create_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir)
+        .unwrap_or_else(|e| panic!("failed to create transcript directory {}: {e}", dir.display()));
     dir.join("transcript.json")
         .to_string_lossy()
         .into_owned()
