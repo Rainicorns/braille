@@ -8,6 +8,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(r#"
         globalThis.window = globalThis;
         globalThis.self = globalThis;
+        globalThis.isSecureContext = true;
         globalThis.document = { nodeType: 9, nodeName: '#document', readyState: 'complete', cookie: '', title: '', defaultView: globalThis };
 
         // Event classes
@@ -472,10 +473,25 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this.hostname = this.host.replace(/:\d+$/, '');
                 this.port = (this.host.match(/:(\d+)$/) || ['',''])[1];
                 this.pathname = m ? (m[3]||'/') : '/';
-                this.search = m ? (m[4]||'') : '';
+                this._search = m ? (m[4]||'') : '';
                 this.hash = m ? (m[5]||'') : '';
                 this.origin = this.protocol + '//' + this.host;
-                this.searchParams = new URLSearchParams(this.search);
+                // searchParams is a live view — mutations sync back to the URL
+                var self = this;
+                this.searchParams = new URLSearchParams(this._search);
+                this.searchParams._url = this;
+            }
+            get search() { return this._search; }
+            set search(v) {
+                this._search = v;
+                this.searchParams = new URLSearchParams(v);
+                this.searchParams._url = this;
+                this._rebuildHref();
+            }
+            _rebuildHref() {
+                var s = this.searchParams.toString();
+                this._search = s ? '?' + s : '';
+                this.href = this.origin + this.pathname + this._search + this.hash;
             }
             toString() { return this.href; }
             toJSON() { return this.href; }
@@ -493,13 +509,14 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                     }.bind(this));
                 }
             }
+            _sync() { if (this._url) this._url._rebuildHref(); }
             get(n) { var e=this._entries.find(function(e){return e[0]===n;}); return e?e[1]:null; }
             getAll(n) { return this._entries.filter(function(e){return e[0]===n;}).map(function(e){return e[1];}); }
             has(n,v) { return arguments.length > 1 ? this._entries.some(function(e){return e[0]===n && e[1]===v;}) : this._entries.some(function(e){return e[0]===n;}); }
-            set(n,v) { var found=false; this._entries=this._entries.filter(function(e){if(e[0]===n){if(!found){e[1]=String(v);found=true;return true;}return false;}return true;}); if(!found) this._entries.push([n,String(v)]); }
-            append(n,v) { this._entries.push([n,String(v)]); }
-            delete(n,v) { if (arguments.length > 1) { this._entries=this._entries.filter(function(e){return !(e[0]===n && e[1]===String(v));}); } else { this._entries=this._entries.filter(function(e){return e[0]!==n;}); } }
-            sort() { this._entries.sort(function(a,b){return a[0]<b[0]?-1:a[0]>b[0]?1:0;}); }
+            set(n,v) { var found=false; this._entries=this._entries.filter(function(e){if(e[0]===n){if(!found){e[1]=String(v);found=true;return true;}return false;}return true;}); if(!found) this._entries.push([n,String(v)]); this._sync(); }
+            append(n,v) { this._entries.push([n,String(v)]); this._sync(); }
+            delete(n,v) { if (arguments.length > 1) { this._entries=this._entries.filter(function(e){return !(e[0]===n && e[1]===String(v));}); } else { this._entries=this._entries.filter(function(e){return e[0]!==n;}); } this._sync(); }
+            sort() { this._entries.sort(function(a,b){return a[0]<b[0]?-1:a[0]>b[0]?1:0;}); this._sync(); }
             toString() { return this._entries.map(function(e){return encodeURIComponent(e[0])+'='+encodeURIComponent(e[1]);}).join('&'); }
             forEach(cb) { this._entries.forEach(function(e){cb(e[1],e[0]);}); }
             keys() { return this._entries.map(function(e){return e[0];})[Symbol.iterator](); }
