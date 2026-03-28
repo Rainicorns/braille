@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 
-use braille_engine::{Engine, FetchedResources, ScriptDescriptor};
+use braille_engine::{Engine, FetchedResources, MetaRefresh, ScriptDescriptor};
 use braille_wire::{
     DaemonCommand, DaemonResponse, EngineAction, EngineMessage, FetchOutcome, FetchRequest,
     FetchResult, HostMessage, SnapMode,
@@ -300,6 +300,20 @@ fn fetch_and_load(
     url: &str,
     snap_mode: SnapMode,
 ) -> Result<String, String> {
+    fetch_and_load_inner(session, reader, writer, url, snap_mode, 0)
+}
+
+fn fetch_and_load_inner(
+    session: &mut Session,
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+    url: &str,
+    snap_mode: SnapMode,
+    redirect_depth: u32,
+) -> Result<String, String> {
+    if redirect_depth > 5 {
+        return Err("too many meta-refresh redirects".to_string());
+    }
     // Ask host to fetch the page, attaching any cookies from the jar
     let mut page_headers = vec![];
     let cookie_value = session.engine.get_cookies_for_url(url);
@@ -401,6 +415,18 @@ fn fetch_and_load(
     // (polling) should not fire during initial load. Time advances will happen
     // when the user interacts (click, type) and we call settle().
     session.engine.settle_no_advance();
+
+    // Check for meta refresh — both HTTP Refresh header and <meta http-equiv="refresh">
+    let page_url = &page_data.url;
+    let refresh = check_refresh_header(&page_data.headers, Some(page_url))
+        .or_else(|| session.engine.check_meta_refresh(Some(page_url)));
+
+    if let Some(mr) = refresh {
+        if let Some(redirect_url) = mr.url {
+            eprintln!("[meta-refresh] following redirect to {}", &redirect_url[..redirect_url.len().min(120)]);
+            return fetch_and_load_inner(session, reader, writer, &redirect_url, snap_mode, redirect_depth + 1);
+        }
+    }
 
     session.navigate(page_data.url);
 
@@ -542,4 +568,39 @@ fn drain_pending_workers(session: &mut Session, writer: &mut impl Write) {
         session.workers.remove(&worker_id);
         send(writer, &EngineMessage::TerminateWorker { worker_id });
     }
+}
+
+/// Check the HTTP `Refresh` header for a redirect. Same format as meta refresh content.
+fn check_refresh_header(headers: &[(String, String)], base_url: Option<&str>) -> Option<MetaRefresh> {
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("refresh") {
+            let content = value.trim();
+            let (delay_str, rest) = match content.find([';', ',']) {
+                Some(pos) => (&content[..pos], Some(content[pos + 1..].trim())),
+                None => (content, None),
+            };
+            let delay_seconds = delay_str.trim().parse::<u32>().unwrap_or(0);
+            let url = rest.and_then(|rest| {
+                let rest_lower = rest.to_ascii_lowercase();
+                let url_str = if rest_lower.starts_with("url=") {
+                    rest[4..].trim()
+                } else {
+                    rest
+                };
+                if url_str.is_empty() {
+                    return None;
+                }
+                if let Some(base) = base_url {
+                    if let Ok(base_parsed) = url::Url::parse(base) {
+                        if let Ok(resolved) = base_parsed.join(url_str) {
+                            return Some(resolved.to_string());
+                        }
+                    }
+                }
+                Some(url_str.to_string())
+            });
+            return Some(MetaRefresh { delay_seconds, url });
+        }
+    }
+    None
 }
