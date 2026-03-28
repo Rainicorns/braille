@@ -61,6 +61,7 @@ impl EngineHarness {
             url: url.to_string(),
             mode: SnapMode::Compact,
             record_path: None,
+            clean: false,
         }));
 
         loop {
@@ -174,6 +175,7 @@ fn fetch_error_propagates() {
         url: "https://example.com".to_string(),
         mode: SnapMode::Compact,
         record_path: None,
+        clean: false,
     }));
 
     // Respond with an error to the page fetch

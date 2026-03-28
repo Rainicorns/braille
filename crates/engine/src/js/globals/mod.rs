@@ -17,11 +17,11 @@ use super::state::EngineState;
 
 /// Register all global objects and functions in the JS context.
 pub fn register_all(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell<EngineState>>) {
-    console::register_console(ctx, Rc::clone(&state));
-    timers::register_timers(ctx, Rc::clone(&state));
-    dom_stubs::register_dom_stubs(ctx, Rc::clone(&state));
-    worker::register_worker(ctx, Rc::clone(&state));
-    fetch::register_fetch(ctx, Rc::clone(&state));
+    console::register_console(ctx);
+    timers::register_timers(ctx);
+    dom_stubs::register_dom_stubs(ctx);
+    worker::register_worker(ctx);
+    fetch::register_fetch(ctx);
     super::crypto::register(ctx);
     super::dom_bridge::install(ctx, Rc::clone(&tree), Rc::clone(&state));
     css::register_css_object(ctx);

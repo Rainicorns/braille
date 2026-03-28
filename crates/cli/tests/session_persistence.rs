@@ -75,6 +75,7 @@ fn session_persists_across_commands() {
                 url: "https://example.com".to_string(),
                 mode: SnapMode::Compact,
                 record_path: None,
+                clean: false,
             },
         },
     );
@@ -146,6 +147,7 @@ fn two_sessions_are_isolated() {
                 url: "https://example.com".to_string(),
                 mode: SnapMode::Compact,
                 record_path: None,
+                clean: false,
             },
         },
     );

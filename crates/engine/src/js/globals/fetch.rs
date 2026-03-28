@@ -1,13 +1,9 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use rquickjs::{Ctx, Function};
 
-use crate::js::state::EngineState;
+use crate::js::dom_bridge::with_state_mut;
 
-pub(super) fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
+pub(super) fn register_fetch(ctx: &Ctx<'_>) {
     // fetch() queues a PendingFetch and returns a Promise
-    let state_fetch = Rc::clone(&state);
     let fetch_setup = Function::new(ctx.clone(), move |url: String, method: String, headers_json: String, body: rquickjs::Value<'_>| -> u64 {
         let headers: Vec<(String, String)> = serde_json::from_str(&headers_json).unwrap_or_default();
         let body_str = if body.is_null() || body.is_undefined() {
@@ -17,21 +13,22 @@ pub(super) fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
             if s.is_empty() { None } else { Some(s) }
         };
 
-        let mut st = state_fetch.borrow_mut();
-        let id = st.next_fetch_id;
-        st.next_fetch_id += 1;
+        with_state_mut(|st| {
+            let id = st.next_fetch_id;
+            st.next_fetch_id += 1;
 
-        st.pending_fetches.push(crate::js::state::PendingFetch {
-            id,
-            url,
-            method,
-            headers,
-            body: body_str,
-            resolve_id: 0, // Will be set from JS side
-            reject_id: 0,
-        });
+            st.pending_fetches.push(crate::js::state::PendingFetch {
+                id,
+                url,
+                method,
+                headers,
+                body: body_str,
+                resolve_id: 0, // Will be set from JS side
+                reject_id: 0,
+            });
 
-        id
+            id
+        })
     }).unwrap();
 
     ctx.globals().set("__braille_fetch_setup", fetch_setup).unwrap();
@@ -215,13 +212,13 @@ pub(super) fn register_fetch(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
     "#).unwrap();
 
     // Link the resolver IDs back to pending fetches
-    let state2 = Rc::clone(&state);
     let set_resolver = Function::new(ctx.clone(), move |fetch_id: u64, resolver_id: u32| {
-        let mut st = state2.borrow_mut();
-        if let Some(pf) = st.pending_fetches.iter_mut().find(|pf| pf.id == fetch_id) {
-            pf.resolve_id = resolver_id;
-            pf.reject_id = resolver_id;
-        }
+        with_state_mut(|st| {
+            if let Some(pf) = st.pending_fetches.iter_mut().find(|pf| pf.id == fetch_id) {
+                pf.resolve_id = resolver_id;
+                pf.reject_id = resolver_id;
+            }
+        });
     }).unwrap();
     ctx.globals().set("__braille_set_fetch_resolver", set_resolver).unwrap();
 }

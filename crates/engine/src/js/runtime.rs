@@ -53,6 +53,10 @@ impl JsRuntime {
         let context = Context::full(&runtime).expect("failed to create QuickJS context");
         let state = Rc::new(RefCell::new(EngineState::new()));
 
+        // Set thread-locals before register_all so closures can find them
+        super::dom_bridge::set_tree(Rc::clone(&tree));
+        super::dom_bridge::set_state(Rc::clone(&state));
+
         let rt = Self {
             runtime,
             context,
@@ -67,6 +71,40 @@ impl JsRuntime {
         });
 
         rt
+    }
+
+    /// Rebind the runtime to a new page without re-registering globals.
+    /// Swaps the tree and state in thread-locals, clears JS-side caches,
+    /// and resets the module registry. ~0.5ms vs ~8.5ms for full init.
+    pub fn rebind_for_new_page(&mut self, new_tree: Rc<RefCell<DomTree>>, new_state: Rc<RefCell<EngineState>>) {
+        // Swap tree in thread-local
+        self.tree = Rc::clone(&new_tree);
+        super::dom_bridge::set_tree(new_tree);
+
+        // Swap state in thread-local
+        self.state = Rc::clone(&new_state);
+        super::dom_bridge::set_state(new_state);
+
+        // Clear module registry
+        module_loader::clear_registry(&self.module_registry);
+
+        // Clear JS-side wrapper cache + DOM state
+        let _ = self.eval(r#"
+            if (typeof __braille_reset_dom_cache === 'function') __braille_reset_dom_cache();
+            if (typeof _cookieJar !== 'undefined') {
+                for (var k in _cookieJar) delete _cookieJar[k];
+            }
+            if (typeof localStorage !== 'undefined') localStorage.clear();
+            if (typeof sessionStorage !== 'undefined') sessionStorage.clear();
+            if (typeof __braille_pending_navigation !== 'undefined') __braille_pending_navigation = null;
+            if (typeof __braille_fetch_resolvers !== 'undefined') __braille_fetch_resolvers = {};
+            if (typeof __braille_fetch_rejecters !== 'undefined') __braille_fetch_rejecters = {};
+            if (typeof __braille_next_resolver_id !== 'undefined') __braille_next_resolver_id = 1;
+            if (typeof __braille_worker_scripts !== 'undefined') __braille_worker_scripts = {};
+            if (typeof __braille_pending_rejections !== 'undefined') __braille_pending_rejections = [];
+        "#);
+
+        self.flush_jobs();
     }
 
     /// Evaluate a JS source string. Errors are returned as strings.

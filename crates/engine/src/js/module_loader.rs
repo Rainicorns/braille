@@ -22,6 +22,12 @@ pub fn new_registry() -> SharedModuleRegistry {
     Rc::new(RefCell::new(ModuleRegistry::default()))
 }
 
+pub fn clear_registry(registry: &SharedModuleRegistry) {
+    let mut reg = registry.borrow_mut();
+    reg.modules.clear();
+    reg.import_map.clear();
+}
+
 /// Custom resolver that:
 /// 1. Applies import map remapping (bare specifier -> URL)
 /// 2. Resolves relative paths against the base module

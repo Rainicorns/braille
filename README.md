@@ -270,7 +270,7 @@ crates/
 |---|---|
 | html5lib tree construction | **1778/1778 (100%)** |
 | html5lib serializer | **204/204** |
-| Engine unit tests | **369 passed** |
+| Engine unit tests | **461 passed** |
 | DOM bridge integration | **63 passed** |
 | Framework tests (React/Vue/Svelte) | **31 passed** |
 | React controlled inputs | **9 passed** |
@@ -294,6 +294,17 @@ No daemon. No sidecar. No serialization of JS state. Just freeze and restore.
 ## Performance
 
 **3.5ms per page** — full pipeline from HTML parse through JavaScript execution to snapshot output. Benchmarked on a single-page app with navigation, 30 dynamically-generated product cards, and event handlers.
+
+**Sub-1ms on subsequent pages.** The JS runtime is reused across page loads by default (Fast mode). Global registrations (~8.5ms of Web API setup) happen once; subsequent navigations only rebind the DOM tree and engine state via thread-locals. Benchmarked second page load: **0.88ms** vs 11.5ms with a fresh runtime — a 13x speedup that makes page loads effectively network-bound.
+
+| Benchmark | Time |
+|---|---|
+| First page load (full init) | ~9ms |
+| Second page load (Fast mode) | ~0.88ms |
+| Second page load (Clean mode) | ~11.5ms |
+| `rebind_for_new_page` isolated | ~19µs |
+
+Use `--clean` on `goto` to force a fresh JS runtime when debugging state leaks between pages.
 
 ## What This Enables
 

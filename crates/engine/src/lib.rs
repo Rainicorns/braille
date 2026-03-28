@@ -50,6 +50,17 @@ impl FetchedResources {
     }
 }
 
+/// Controls whether the JS runtime is reused across page loads.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeMode {
+    /// Reuse the JS runtime across page loads (default). Rebinds tree/state
+    /// without re-registering globals. ~18x faster on subsequent loads.
+    #[default]
+    Fast,
+    /// Create a fresh JS runtime for every page load.
+    Clean,
+}
+
 /// The core browser engine. Parses HTML, executes JavaScript, and produces
 /// accessibility-tree snapshots for LLM agents to read and interact with.
 ///
@@ -85,6 +96,8 @@ pub struct Engine {
     pub(crate) http_cookie_jar: Vec<cookies::StoredCookie>,
     /// Whether cookies need syncing to JS on next runtime creation.
     pub(crate) cookies_pending_js_sync: bool,
+    /// Controls whether JS runtime is reused across page loads.
+    pub runtime_mode: RuntimeMode,
 }
 
 impl Default for Engine {
@@ -103,6 +116,7 @@ impl Engine {
             pending_url: None,
             http_cookie_jar: Vec::new(),
             cookies_pending_js_sync: false,
+            runtime_mode: RuntimeMode::default(),
         }
     }
 

@@ -1,21 +1,35 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::dom::node::NodeData;
 use crate::dom::tree::DomTree;
 use crate::dom::NodeId;
+use crate::js::state::EngineState;
 use crate::js::JsRuntime;
 
-use super::{Engine, FetchedResources, ScriptDescriptor};
+use super::{Engine, FetchedResources, RuntimeMode, ScriptDescriptor};
 
 impl Engine {
+    /// Create or rebind a JsRuntime for the current tree, respecting runtime_mode.
+    fn make_runtime(&mut self) -> JsRuntime {
+        let new_state = Rc::new(RefCell::new(EngineState::new()));
+        if self.runtime_mode == RuntimeMode::Fast {
+            if let Some(mut existing) = self.runtime.take() {
+                existing.rebind_for_new_page(Rc::clone(&self.tree), new_state);
+                return existing;
+            }
+        }
+        JsRuntime::new(Rc::clone(&self.tree))
+    }
+
     pub fn load_html(&mut self, html: &str) {
         // 1. Parse HTML into a DomTree
         let tree = crate::html::parse_html(html);
         self.tree = tree;
 
         // 2. Create a new JsRuntime bound to this tree
-        let mut runtime = JsRuntime::new(Rc::clone(&self.tree));
+        let mut runtime = self.make_runtime();
 
         // 3. Walk the tree to find all <script> elements in document order,
         //    collect their text content, and execute each one.
@@ -54,7 +68,7 @@ impl Engine {
     /// Executes all scripts in document order, substituting external content.
     /// Skips external scripts whose URL is not found in `fetched.scripts`.
     pub fn execute_scripts(&mut self, descriptors: &[ScriptDescriptor], fetched: &FetchedResources) {
-        let mut runtime = JsRuntime::new(Rc::clone(&self.tree));
+        let mut runtime = self.make_runtime();
 
         // Apply pending URL so scripts see correct location from the start
         if let Some(url) = &self.pending_url {
@@ -165,7 +179,7 @@ impl Engine {
         descriptors: &[ScriptDescriptor],
         fetched: &FetchedResources,
     ) -> Vec<String> {
-        let mut runtime = JsRuntime::new(Rc::clone(&self.tree));
+        let mut runtime = self.make_runtime();
         let mut errors = Vec::new();
 
         // Apply pending URL so scripts see correct location from the start
@@ -308,7 +322,8 @@ impl Engine {
         let tree = Rc::clone(inc.tree());
 
         // 2. Create JsRuntime bound to the shared tree
-        let mut runtime = JsRuntime::new(Rc::clone(&tree));
+        self.tree = Rc::clone(&tree);
+        let mut runtime = self.make_runtime();
 
         // 3. Populate iframe src content
         Self::populate_iframe_src_content(&fetched.iframes, &runtime);

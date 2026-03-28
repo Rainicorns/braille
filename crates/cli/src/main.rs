@@ -61,6 +61,9 @@ enum SessionAction {
         /// Record the network transcript for replay/debugging
         #[arg(long)]
         record: bool,
+        /// Use a fresh JS runtime instead of reusing from previous page
+        #[arg(long)]
+        clean: bool,
     },
     /// Click an element matching the selector
     Click { selector: String },
@@ -157,10 +160,12 @@ fn session_action_to_daemon_command(action: SessionAction, session_id: &str) -> 
             query,
             target,
             record,
+            clean,
         } => DaemonCommand::Goto {
             url,
             mode: mode.into_snap_mode(query, target),
             record_path: if record { Some(transcript_path(session_id)) } else { None },
+            clean,
         },
         SessionAction::Click { selector } => DaemonCommand::Click { selector },
         SessionAction::Type { selector, text } => DaemonCommand::Type { selector, text },

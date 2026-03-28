@@ -27,6 +27,7 @@ mod tests;
 // Thread-local for DomTree access from native functions.
 thread_local! {
     static TREE: RefCell<Option<Rc<RefCell<DomTree>>>> = const { RefCell::new(None) };
+    static STATE: RefCell<Option<Rc<RefCell<EngineState>>>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn with_tree<F, R>(f: F) -> R
@@ -53,11 +54,47 @@ where
     })
 }
 
-/// Install the DOM bridge. Must be called once during runtime initialization.
-pub fn install(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, _state: Rc<RefCell<EngineState>>) {
+#[allow(dead_code)]
+pub(crate) fn with_state<F, R>(f: F) -> R
+where
+    F: FnOnce(&EngineState) -> R,
+{
+    STATE.with(|s| {
+        let borrow = s.borrow();
+        let state_rc = borrow.as_ref().expect("DOM bridge state not set");
+        let state = state_rc.borrow();
+        f(&state)
+    })
+}
+
+pub(crate) fn with_state_mut<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut EngineState) -> R,
+{
+    STATE.with(|s| {
+        let borrow = s.borrow();
+        let state_rc = borrow.as_ref().expect("DOM bridge state not set");
+        let mut state = state_rc.borrow_mut();
+        f(&mut state)
+    })
+}
+
+pub(crate) fn set_tree(tree: Rc<RefCell<DomTree>>) {
     TREE.with(|t| {
         *t.borrow_mut() = Some(tree);
     });
+}
+
+pub(crate) fn set_state(state: Rc<RefCell<EngineState>>) {
+    STATE.with(|s| {
+        *s.borrow_mut() = Some(state);
+    });
+}
+
+/// Install the DOM bridge. Must be called once during runtime initialization.
+pub fn install(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell<EngineState>>) {
+    set_tree(tree);
+    set_state(state);
 
     native_functions::register_native_functions(ctx);
     register_js_wrappers(ctx);

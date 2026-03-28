@@ -255,7 +255,7 @@ fn new_session(socket: &std::path::Path) -> String {
 fn goto(socket: &std::path::Path, sid: &str, url: &str) -> String {
     let resp = send(socket, &DaemonRequest {
         session_id: Some(sid.to_string()),
-        command: DaemonCommand::Goto { url: url.to_string(), mode: SnapMode::Compact, record_path: None },
+        command: DaemonCommand::Goto { url: url.to_string(), mode: SnapMode::Compact, record_path: None, clean: false },
     });
     assert!(resp.success, "Goto {url} failed: {:?}", resp.error);
     resp.content.unwrap_or_default()

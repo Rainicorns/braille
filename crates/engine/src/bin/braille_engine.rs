@@ -217,9 +217,14 @@ fn handle_command_inner(
     cmd: DaemonCommand,
 ) -> DaemonResponse {
     match cmd {
-        DaemonCommand::Goto { url, mode, record_path } => {
+        DaemonCommand::Goto { url, mode, record_path, clean } => {
             if record_path.is_some() {
                 session.record_path = record_path;
+            }
+            if clean {
+                session.engine.runtime_mode = braille_engine::RuntimeMode::Clean;
+            } else {
+                session.engine.runtime_mode = braille_engine::RuntimeMode::Fast;
             }
             match fetch_and_load(session, reader, writer, &url, mode) {
                 Ok(snapshot) => DaemonResponse::ok(snapshot),

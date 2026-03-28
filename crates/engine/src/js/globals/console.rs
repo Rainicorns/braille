@@ -1,16 +1,12 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use rquickjs::prelude::Rest;
 use rquickjs::{Ctx, Function, Object};
 
-use crate::js::state::EngineState;
+use crate::js::dom_bridge::with_state_mut;
 
-pub(super) fn register_console(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
+pub(super) fn register_console(ctx: &Ctx<'_>) {
     let console = Object::new(ctx.clone()).unwrap();
 
-    let mk = |state: Rc<RefCell<EngineState>>, prefix: &'static str| {
-        let state = Rc::clone(&state);
+    let mk = |prefix: &'static str| {
         Function::new(ctx.clone(), move |args: Rest<rquickjs::Value<'_>>| {
             let parts: Vec<String> = args.0.iter().map(|v| {
                 if let Some(s) = v.as_string() {
@@ -43,16 +39,16 @@ pub(super) fn register_console(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
             } else {
                 format!("[{}] {}", prefix, parts.join(" "))
             };
-            state.borrow_mut().console_buffer.push(line);
+            with_state_mut(|s| s.console_buffer.push(line));
         })
         .unwrap()
     };
 
-    console.set("log", mk(Rc::clone(&state), "")).unwrap();
-    console.set("info", mk(Rc::clone(&state), "info")).unwrap();
-    console.set("warn", mk(Rc::clone(&state), "warn")).unwrap();
-    console.set("error", mk(Rc::clone(&state), "error")).unwrap();
-    console.set("debug", mk(Rc::clone(&state), "debug")).unwrap();
+    console.set("log", mk("")).unwrap();
+    console.set("info", mk("info")).unwrap();
+    console.set("warn", mk("warn")).unwrap();
+    console.set("error", mk("error")).unwrap();
+    console.set("debug", mk("debug")).unwrap();
     // Stubs for methods that don't produce output
     let noop = Function::new(ctx.clone(), || {}).unwrap();
     console.set("trace", noop.clone()).unwrap();

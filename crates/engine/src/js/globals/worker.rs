@@ -1,40 +1,38 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use rquickjs::{Ctx, Function};
 
-use crate::js::state::{EngineState, PendingWorkerMessage, PendingWorkerSpawn, PendingWorkerTerminate};
+use crate::js::dom_bridge::with_state_mut;
+use crate::js::state::{PendingWorkerMessage, PendingWorkerSpawn, PendingWorkerTerminate};
 
-pub(super) fn register_worker(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
+pub(super) fn register_worker(ctx: &Ctx<'_>) {
     // Native: push a worker spawn request, return a temporary JS-side worker index
-    let state_spawn = Rc::clone(&state);
     let spawn_fn = Function::new(ctx.clone(), move |url: String| -> u32 {
-        let mut st = state_spawn.borrow_mut();
-        let idx = st.pending_worker_spawns.len() as u32;
-        st.pending_worker_spawns.push(PendingWorkerSpawn { url });
-        idx
+        with_state_mut(|st| {
+            let idx = st.pending_worker_spawns.len() as u32;
+            st.pending_worker_spawns.push(PendingWorkerSpawn { url });
+            idx
+        })
     })
     .unwrap();
     ctx.globals().set("__braille_worker_spawn", spawn_fn).unwrap();
 
     // Native: push a postMessage to a worker
-    let state_post = Rc::clone(&state);
     let post_fn = Function::new(ctx.clone(), move |worker_id: u64, data: String| {
-        let mut st = state_post.borrow_mut();
-        st.pending_worker_messages.push(PendingWorkerMessage {
-            worker_id,
-            data,
+        with_state_mut(|st| {
+            st.pending_worker_messages.push(PendingWorkerMessage {
+                worker_id,
+                data,
+            });
         });
     })
     .unwrap();
     ctx.globals().set("__braille_worker_post", post_fn).unwrap();
 
     // Native: push a terminate request
-    let state_term = Rc::clone(&state);
     let term_fn = Function::new(ctx.clone(), move |worker_id: u64| {
-        let mut st = state_term.borrow_mut();
-        st.pending_worker_terminates
-            .push(PendingWorkerTerminate { worker_id });
+        with_state_mut(|st| {
+            st.pending_worker_terminates
+                .push(PendingWorkerTerminate { worker_id });
+        });
     })
     .unwrap();
     ctx.globals()

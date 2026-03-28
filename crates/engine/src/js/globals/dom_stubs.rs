@@ -1,15 +1,11 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use rquickjs::{Ctx, Function};
 
-use crate::js::state::EngineState;
+use crate::js::dom_bridge::with_state_mut;
 
-pub(super) fn register_dom_stubs(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
+pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
     // Register __braille_navigate — called by location.href setter to signal pending navigation
-    let nav_state = Rc::clone(&state);
     let navigate_fn = Function::new(ctx.clone(), move |url: String| {
-        nav_state.borrow_mut().pending_navigation = Some(url);
+        with_state_mut(|s| s.pending_navigation = Some(url));
     }).unwrap();
     ctx.globals().set("__braille_navigate", navigate_fn).unwrap();
     // Comprehensive DOM/Web API stubs so real-world JS doesn't crash on missing globals.

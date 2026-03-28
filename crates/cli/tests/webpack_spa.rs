@@ -424,6 +424,7 @@ fn goto(socket: &std::path::Path, sid: &str, url: &str) -> String {
                 url: url.to_string(),
                 mode: SnapMode::Compact,
                 record_path: None,
+                clean: false,
             },
         },
     );

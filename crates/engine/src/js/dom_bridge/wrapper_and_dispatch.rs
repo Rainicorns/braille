@@ -38,6 +38,15 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return obj;
         }
         globalThis.__braille_get_element_wrapper = __w;
+        globalThis.__braille_reset_dom_cache = function() {
+            for (var k in _cache) delete _cache[k];
+            for (var k in _listeners) delete _listeners[k];
+            for (var k in _captureKeys) delete _captureKeys[k];
+            for (var k in _bubbleKeys) delete _bubbleKeys[k];
+            for (var k in _winListeners) delete _winListeners[k];
+            for (var k in _winCapture) delete _winCapture[k];
+            for (var k in _docCapture) delete _docCapture[k];
+        };
 
         // Collect all dirty property values from cached wrappers.
         // Returns a JSON string: [[nodeId, value], ...]

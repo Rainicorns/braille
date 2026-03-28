@@ -75,6 +75,7 @@ impl EngineHarness {
             url: url.to_string(),
             mode: SnapMode::Compact,
             record_path: None,
+            clean: false,
         }));
 
         loop {

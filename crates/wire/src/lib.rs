@@ -172,6 +172,8 @@ pub enum DaemonCommand {
         mode: SnapMode,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         record_path: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clean: bool,
     },
     Click { selector: String },
     Type { selector: String, text: String },
@@ -351,7 +353,7 @@ mod tests {
         assert_roundtrip!(
             DaemonRequest {
                 session_id: Some("sess_abc12345".into()),
-                command: DaemonCommand::Goto { url: "https://example.com".into(), mode: SnapMode::Compact, record_path: None },
+                command: DaemonCommand::Goto { url: "https://example.com".into(), mode: SnapMode::Compact, record_path: None, clean: false },
             },
             DaemonRequest
         );
@@ -392,6 +394,7 @@ mod tests {
                 url: "https://example.com".into(),
                 mode: SnapMode::Compact,
                 record_path: None,
+                clean: false,
             }),
             HostMessage
         );
