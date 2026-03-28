@@ -1002,3 +1002,267 @@ fn navigate_simple_page() {
     let snapshot = engine.navigate("https://example.com/", &mut fetcher, SnapMode::Text).unwrap();
     assert!(snapshot.contains("Hello World"), "should render page: {}", snapshot);
 }
+
+// =========================================================================
+// FAITHFUL LIVE SITE REPRODUCTION
+//
+// This test models the EXACT HTTP exchange observed on the live site via curl.
+// It uses the real HTML, real headers, and real cookie flow.
+//
+// Live flow (from curl -sD - "https://anubis.techaro.lol/"):
+//   1. GET / → 200, Refresh header, Set-Cookie (verification + clear auth), challenge HTML
+//   2. GET /pass-challenge?... (with verification cookie) → server validates,
+//      sets auth cookie, 302 → /
+//   3. GET / (with auth cookie) → 200, real page
+//
+// In the real CLI, reqwest follows the 302 in step 2, so the engine sees
+// the FINAL response from step 3 as the result of fetching the pass-challenge URL.
+// The MockFetcher models this by returning the real page directly for the
+// pass-challenge URL (simulating what the engine sees after reqwest follows 302).
+//
+// If this test PASSES but the live site FAILS, the bug is in the CLI's
+// HTTP/cookie layer, not in the engine's navigation logic.
+// If this test FAILS, the bug is in the engine.
+// =========================================================================
+
+/// Faithful reproduction: Anubis PoW challenge end-to-end via navigate().
+///
+/// From white-box analysis of Anubis source + daemon log from live site:
+///   - Server returns PoW challenge (algorithm "fast"), NOT metarefresh
+///   - HTML has <script async type="module" src="main.mjs"> (from proofofwork.templ)
+///   - No Refresh header, no <meta http-equiv="refresh">
+///   - main.mjs reads challenge JSON, spawns Worker, Worker brute-forces SHA256
+///   - On success, main.mjs does window.location.replace(pass-challenge-url)
+///   - pass-challenge validates, sets JWT cookie, 302 → real page
+///
+/// This test uses the actual Anubis HTML structure and JS logic.
+/// The Worker script is provided via FetchedResources (same as populate_worker_scripts).
+#[test]
+fn navigate_anubis_pow_e2e() {
+    // --- HTML: from Anubis base template + proofofwork.templ ---
+    // The proofofwork template adds main.mjs; base template has JSON data blocks
+    let challenge_html = r#"<!doctype html><html lang="en"><head>
+        <title>Making sure you&#39;re not a bot!</title>
+        <meta name="robots" content="noindex,nofollow">
+        <script id="anubis_version" type="application/json">"v1.25.0-test"</script>
+        <script id="anubis_challenge" type="application/json">{"rules":{"algorithm":"fast","difficulty":1},"challenge":{"id":"pow-e2e-001","randomData":"testchallenge","difficulty":1}}</script>
+        <script id="anubis_base_prefix" type="application/json">""</script>
+        <script id="anubis_public_url" type="application/json">""</script>
+    </head><body>
+        <script type="ignore"><a href="/honeypot/fake">Don't click me</a></script>
+        <main>
+        <h1 id="title">Making sure you're not a bot!</h1>
+        <div class="centered-div">
+            <img id="image" style="width:100%;max-width:256px;" src="/img/pensive.webp"/>
+            <p id="status">Loading...</p>
+            <script async type="module" src="/.within.website/x/cmd/anubis/static/js/main.mjs?cacheBuster=v1.25.0-test"></script>
+            <div id="progress" role="progressbar"><div class="bar-inner"></div></div>
+        </div>
+        </main>
+    </body></html>"#;
+
+    // --- main.mjs: simplified from real Anubis main.mjs (fast algorithm path) ---
+    // Real main.mjs: loads translations, checks deps, spawns Worker, redirects on success
+    // Simplified: skip i18n fetch, inline the PoW instead of Worker (tests the solve + redirect)
+    let main_mjs = r#"
+        var j = function(id) {
+            var elem = document.getElementById(id);
+            if (elem === null) return null;
+            return JSON.parse(elem.textContent);
+        };
+        var u = function(url, params) {
+            var result = new URL(url, window.location.href);
+            var keys = Object.keys(params || {});
+            for (var i = 0; i < keys.length; i++) {
+                result.searchParams.set(keys[i], params[keys[i]]);
+            }
+            return result.toString();
+        };
+
+        var status = document.getElementById('status');
+        var challengeData = j('anubis_challenge');
+        var basePrefix = j('anubis_base_prefix') || '';
+        var challenge = challengeData.challenge;
+        var rules = challengeData.rules;
+
+        // Inline PoW solver (real main.mjs uses Workers)
+        var encoder = new TextEncoder();
+        async function solve() {
+            for (var nonce = 0; nonce < 10000000; nonce++) {
+                var data = encoder.encode(challenge.randomData + nonce);
+                var hashBuffer = await crypto.subtle.digest('SHA-256', data);
+                var hashArray = new Uint8Array(hashBuffer);
+
+                // Check leading zero hex chars
+                var requiredZeroBytes = Math.floor(rules.difficulty / 2);
+                var isDifficultyOdd = rules.difficulty % 2 !== 0;
+                var isValid = true;
+                for (var i = 0; i < requiredZeroBytes; i++) {
+                    if (hashArray[i] !== 0) { isValid = false; break; }
+                }
+                if (isValid && isDifficultyOdd) {
+                    if (hashArray[requiredZeroBytes] >> 4 !== 0) { isValid = false; }
+                }
+
+                if (isValid) {
+                    var hex = '';
+                    for (var i = 0; i < hashArray.length; i++) {
+                        hex += hashArray[i].toString(16).padStart(2, '0');
+                    }
+                    // Real main.mjs does: window.location.replace(redirectURL)
+                    var redir = window.location.href;
+                    var redirectURL = u(basePrefix + '/.within.website/x/cmd/anubis/api/pass-challenge', {
+                        id: challenge.id,
+                        response: hex,
+                        nonce: nonce,
+                        redir: redir,
+                        elapsedTime: 1
+                    });
+                    status.textContent = 'redirect:' + redirectURL;
+                    window.location.replace(redirectURL);
+                    return;
+                }
+            }
+            status.textContent = 'exhausted';
+        }
+        solve();
+    "#;
+
+    let mut fetcher = MockFetcher::new();
+    fetcher.add_with_headers(
+        "https://anubis.example.com/",
+        challenge_html,
+        vec![
+            ("content-type".into(), "text/html; charset=utf-8".into()),
+            ("cache-control".into(), "no-store".into()),
+            ("set-cookie".into(), "test-anubis-cookie-verification=pow-e2e-001; Path=/; Secure".into()),
+        ],
+    );
+    fetcher.add(
+        "/.within.website/x/cmd/anubis/static/js/main.mjs?cacheBuster=v1.25.0-test",
+        braille_wire::FetchResponseData {
+            status: 200,
+            status_text: "OK".into(),
+            headers: vec![("content-type".into(), "application/javascript".into())],
+            body: main_mjs.into(),
+            url: "https://anubis.example.com/.within.website/x/cmd/anubis/static/js/main.mjs?cacheBuster=v1.25.0-test".into(),
+        },
+    );
+    let mut engine = Engine::new();
+    let _snapshot = engine.navigate(
+        "https://anubis.example.com/",
+        &mut fetcher,
+        SnapMode::Text,
+    ).unwrap();
+
+    // Check that the solver ran and computed a redirect
+    let status = engine.eval_js("document.getElementById('status').textContent").unwrap();
+    assert!(
+        status.starts_with("redirect:"),
+        "PoW solver should complete. Got status: {}",
+        status
+    );
+    assert!(
+        status.contains("id=pow-e2e-001"),
+        "redirect should include challenge ID: {}",
+        status
+    );
+    assert!(
+        status.contains("response=0"),
+        "response hash should start with 0 (difficulty=1): {}",
+        status
+    );
+
+    // TODO: window.location.replace() is not yet intercepted by navigate().
+    // Once it is, the engine should follow the redirect to pass-challenge,
+    // which returns 302 → real page. For now we verify the solver works.
+}
+
+/// Faithful reproduction: exact Anubis metarefresh flow from live site.
+/// Models the real HTTP response headers and HTML captured via curl.
+#[test]
+fn navigate_anubis_live_metarefresh_faithful() {
+    // Exact challenge HTML from curl (trimmed CSS/meta but structurally identical)
+    let challenge_html = r#"<!doctype html><html lang="en"><head>
+        <title>Making sure you&#39;re not a bot!</title>
+        <meta name="robots" content="noindex,nofollow">
+        <script id="anubis_version" type="application/json">"v1.25.0-30-g3acf8ee"</script>
+        <script id="anubis_challenge" type="application/json">{"rules":{"algorithm":"metarefresh","difficulty":1},"challenge":{"issuedAt":"2026-03-28T15:14:40.036144729Z","metadata":{},"id":"019d3502-f724-721e-9ed8-f801c9ee1b3d","method":"metarefresh","randomData":"5901bf72a34159b0","policyRuleHash":"ac980f49c4d35fab","difficulty":1,"spent":false}}</script>
+        <script id="anubis_base_prefix" type="application/json">""</script>
+        <script id="anubis_public_url" type="application/json">""</script>
+    </head><body>
+        <h1 id="title">Making sure you're not a bot!</h1>
+        <div class="centered-div">
+            <p id="status">Loading...</p>
+            <div id="progress" style="display:none"><div class="bar-inner"></div></div>
+        </div>
+        <p>Please wait a moment while we ensure the security of your connection.</p>
+        <footer>Protected by Anubis</footer>
+        <script async type="module" src="/.within.website/x/cmd/anubis/static/js/main.mjs"></script>
+    </body></html>"#;
+
+    // Exact headers from curl response (the important ones)
+    let challenge_headers = vec![
+        ("content-type".into(), "text/html; charset=utf-8".into()),
+        ("cache-control".into(), "no-store".into()),
+        // This is the key: Refresh header with the pass-challenge redirect
+        ("refresh".into(), "2; url=/.within.website/x/cmd/anubis/api/pass-challenge?challenge=5901bf72a34159b0&id=019d3502-f724-721e-9ed8-f801c9ee1b3d&redir=%2F".into()),
+        // Server clears any existing auth cookie
+        ("set-cookie".into(), "techaro.lol-anubis-auth=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Secure; SameSite=None".into()),
+        // Server sets verification cookie (must be sent back with pass-challenge)
+        ("set-cookie".into(), "techaro.lol-anubis-cookie-verification=019d3502-f724-721e-9ed8-f801c9ee1b3d; Path=/; Secure; SameSite=None".into()),
+    ];
+
+    // The real page you'd see after passing the challenge
+    let real_page_html = r#"<!doctype html><html lang="en"><head>
+        <title>Techaro - Welcome</title>
+    </head><body>
+        <h1>Welcome to Techaro</h1>
+        <p>You have passed the Anubis challenge.</p>
+    </body></html>"#;
+
+    // The pass-challenge URL (after resolving the relative URL against the base)
+    let pass_challenge_url = "https://anubis.techaro.lol/.within.website/x/cmd/anubis/api/pass-challenge?challenge=5901bf72a34159b0&id=019d3502-f724-721e-9ed8-f801c9ee1b3d&redir=%2F";
+
+    // In the real CLI, reqwest follows the 302 from pass-challenge back to /.
+    // The engine sees the FINAL response. Model that here: the pass-challenge
+    // URL returns the real page (as if reqwest already followed the 302).
+    let pass_challenge_headers = vec![
+        ("content-type".into(), "text/html; charset=utf-8".into()),
+        ("set-cookie".into(), "techaro.lol-anubis-auth=valid-token; Path=/; Secure; SameSite=None".into()),
+    ];
+
+    let mut fetcher = MockFetcher::new();
+    fetcher.add_with_headers(
+        "https://anubis.techaro.lol/",
+        challenge_html,
+        challenge_headers,
+    );
+    fetcher.add_with_headers(
+        pass_challenge_url,
+        real_page_html,
+        pass_challenge_headers,
+    );
+    // main.mjs fetch will fail (404) — that's fine, metarefresh doesn't need JS
+    // The engine should follow the Refresh header BEFORE the JS solver completes
+
+    let mut engine = Engine::new();
+    let snapshot = engine.navigate(
+        "https://anubis.techaro.lol/",
+        &mut fetcher,
+        SnapMode::Text,
+    ).unwrap();
+
+    assert!(
+        snapshot.contains("Welcome to Techaro"),
+        "Engine should follow Refresh header redirect and arrive at real page.\n\
+         Got: {}",
+        snapshot
+    );
+    assert!(
+        !snapshot.contains("Loading..."),
+        "Should NOT still be on the challenge page.\n\
+         Got: {}",
+        snapshot
+    );
+}

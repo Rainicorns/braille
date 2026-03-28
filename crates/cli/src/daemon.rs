@@ -29,6 +29,19 @@ pub fn run_daemon(socket_path: PathBuf, pid_path: PathBuf) {
     // Write PID file.
     std::fs::write(&pid_path, std::process::id().to_string()).ok();
 
+    // Record the binary's mtime so the client can detect stale daemons.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Ok(meta) = exe.metadata() {
+            if let Ok(mtime) = meta.modified() {
+                let nanos = mtime
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos();
+                std::fs::write(crate::paths::mtime_path(), nanos.to_string()).ok();
+            }
+        }
+    }
+
     let listener = UnixListener::bind(&socket_path).unwrap_or_else(|e| {
         eprintln!("failed to bind socket {}: {e}", socket_path.display());
         std::process::exit(1);

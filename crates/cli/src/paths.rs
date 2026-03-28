@@ -30,6 +30,10 @@ pub fn log_path() -> PathBuf {
     runtime_dir().join("daemon.log")
 }
 
+pub fn mtime_path() -> PathBuf {
+    runtime_dir().join("daemon.mtime")
+}
+
 fn home_dir() -> PathBuf {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))

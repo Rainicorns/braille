@@ -8,6 +8,7 @@ use braille_wire::{DaemonRequest, DaemonResponse};
 use crate::paths;
 
 /// Ensure the daemon is running. If not, start it and wait for the socket.
+/// If the binary has been rebuilt since the daemon started, kill and restart it.
 pub fn ensure_daemon_running() {
     let socket = paths::socket_path();
     let pid_file = paths::pid_path();
@@ -15,10 +16,19 @@ pub fn ensure_daemon_running() {
     // Try connecting to existing socket.
     if socket.exists() {
         if UnixStream::connect(&socket).is_ok() {
-            return; // Daemon is alive.
+            // Daemon is alive — but is it stale?
+            if is_daemon_stale() {
+                eprintln!("braille binary updated — restarting daemon");
+                kill_daemon(&pid_file);
+                std::fs::remove_file(&socket).ok();
+                // Fall through to start a fresh daemon.
+            } else {
+                return;
+            }
+        } else {
+            // Stale socket — remove it.
+            std::fs::remove_file(&socket).ok();
         }
-        // Stale socket — remove it.
-        std::fs::remove_file(&socket).ok();
     }
 
     // Check PID file for stale process.
@@ -97,6 +107,54 @@ pub fn send_request_to(socket_path: &Path, request: &DaemonRequest) -> DaemonRes
     serde_json::from_str(&response_line).unwrap_or_else(|e| {
         DaemonResponse::err(format!("invalid daemon response: {e}"))
     })
+}
+
+/// Check if the running daemon was built from an older binary.
+fn is_daemon_stale() -> bool {
+    let mtime_file = paths::mtime_path();
+    let recorded = match std::fs::read_to_string(&mtime_file) {
+        Ok(s) => match s.trim().parse::<u128>() {
+            Ok(n) => n,
+            Err(_) => return false,
+        },
+        Err(_) => return false, // No mtime file — can't tell, assume fresh.
+    };
+
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let current = match exe.metadata().and_then(|m| m.modified()) {
+        Ok(mtime) => mtime
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+        Err(_) => return false,
+    };
+
+    current > recorded
+}
+
+/// Kill the daemon process via its PID file.
+fn kill_daemon(pid_file: &Path) {
+    if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+            if is_process_alive(pid) {
+                #[cfg(unix)]
+                unsafe {
+                    libc_kill(pid, 15); // SIGTERM
+                }
+                // Wait briefly for it to die.
+                for _ in 0..20 {
+                    std::thread::sleep(Duration::from_millis(50));
+                    if !is_process_alive(pid) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    std::fs::remove_file(pid_file).ok();
 }
 
 #[cfg(unix)]

@@ -40,30 +40,56 @@ impl Engine {
             return Err("too many meta-refresh redirects".into());
         }
 
+        eprintln!("[navigate] depth={redirect_depth} url={}", &url[..url.len().min(120)]);
+
         // 1. Fetch the page (with cookies)
         let page = self.fetch_page(url, fetcher)?;
+        eprintln!("[navigate] fetched url={} headers={}", &page.url[..page.url.len().min(120)], page.headers.len());
+        for (k, v) in &page.headers {
+            eprintln!("[navigate]   {k}: {}", &v[..v.len().min(200)]);
+        }
 
         // 2. Inject response cookies
         self.inject_response_cookies(&page.url, &page.headers);
 
         // 3. Parse HTML, collect script descriptors
         let descriptors = self.parse_and_collect_scripts(&page.body);
+        eprintln!("[navigate] descriptors={}", descriptors.len());
+        for (i, d) in descriptors.iter().enumerate() {
+            eprintln!("[navigate]   desc[{i}]={d:?}");
+        }
+        eprintln!("[navigate] body_len={} body_start={}", page.body.len(), &page.body[..page.body.len().min(500)].replace('\n', "\\n"));
 
         // 4. Fetch external scripts + import map URLs
         let fetched = self.fetch_scripts(&descriptors, fetcher);
+        eprintln!("[navigate] fetched {} scripts", fetched.len());
 
         // 5. Set URL, execute scripts
         self.set_url(&page.url);
-        let _errors = self.execute_scripts_lossy(&descriptors, &FetchedResources::scripts_only(fetched));
+        let errors = self.execute_scripts_lossy(&descriptors, &FetchedResources::scripts_only(fetched));
+        if !errors.is_empty() {
+            eprintln!("[navigate] JS errors: {}", errors.len());
+            for e in &errors {
+                eprintln!("[navigate]   {}", &e[..e.len().min(200)]);
+            }
+        }
 
         // 6. Interleaved settle + dynamic fetch loop
         self.settle_with_fetches(fetcher);
 
-        // 7. Check meta refresh (HTTP header + meta tag)
+        // 7. Check if JS set location.href (takes priority over meta-refresh)
+        if let Some(nav_url) = self.take_pending_navigation() {
+            eprintln!("[navigate] JS location.href redirect to {}", &nav_url[..nav_url.len().min(120)]);
+            return self.navigate_inner(&nav_url, fetcher, snap_mode, redirect_depth + 1);
+        }
+
+        // 8. Check meta refresh (HTTP header + meta tag)
         let refresh = check_refresh_header(&page.headers, Some(&page.url))
             .or_else(|| self.check_meta_refresh(Some(&page.url)));
+        eprintln!("[navigate] refresh={:?}", refresh);
         if let Some(mr) = refresh {
             if let Some(redirect_url) = mr.url {
+                eprintln!("[navigate] following redirect to {}", &redirect_url[..redirect_url.len().min(120)]);
                 return self.navigate_inner(&redirect_url, fetcher, snap_mode, redirect_depth + 1);
             }
         }
@@ -143,7 +169,21 @@ impl Engine {
         if !requests.is_empty() {
             let id_to_url: HashMap<u64, String> =
                 requests.iter().map(|r| (r.id, r.url.clone())).collect();
+            for r in &requests {
+                eprintln!("[navigate] script request id={} url={}", r.id, &r.url[..r.url.len().min(120)]);
+            }
             let results = fetcher.fetch_batch(requests);
+            for result in &results {
+                let url = id_to_url.get(&result.id).map(|s| s.as_str()).unwrap_or("?");
+                match &result.outcome {
+                    FetchOutcome::Ok(data) => {
+                        eprintln!("[navigate] script result id={} url={} body_len={}", result.id, &url[..url.len().min(80)], data.body.len());
+                    }
+                    FetchOutcome::Err(e) => {
+                        eprintln!("[navigate] script FAILED id={} url={} err={}", result.id, &url[..url.len().min(80)], &e[..e.len().min(200)]);
+                    }
+                }
+            }
             for result in results {
                 if let (Some(url), FetchOutcome::Ok(data)) =
                     (id_to_url.get(&result.id), &result.outcome)

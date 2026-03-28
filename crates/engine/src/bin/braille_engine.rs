@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 
+use braille_engine::transcript::{RecordingFetcher, Transcript};
 use braille_engine::{Engine, FetchProvider};
 use braille_wire::{
     DaemonCommand, DaemonResponse, EngineAction, EngineMessage, FetchRequest,
@@ -305,6 +306,8 @@ impl<R: BufRead, W: Write> FetchProvider for IpcFetchProvider<'_, R, W> {
 }
 
 /// Fetch a URL via the host, load HTML with two-phase script loading, return snapshot.
+/// When BRAILLE_RECORD is set, wraps the fetcher with RecordingFetcher and saves the
+/// transcript to the specified path after navigation completes.
 fn fetch_and_load(
     session: &mut Session,
     reader: &mut impl BufRead,
@@ -312,9 +315,22 @@ fn fetch_and_load(
     url: &str,
     snap_mode: SnapMode,
 ) -> Result<String, String> {
-    let mut fetcher = IpcFetchProvider { reader, writer };
-    let snapshot = session.engine.navigate(url, &mut fetcher, snap_mode.clone())?;
-    // Update session history (navigate only updates it on success)
+    let ipc = IpcFetchProvider { reader, writer };
+    let mut recorder = RecordingFetcher::new(ipc);
+    let snapshot = session.engine.navigate(url, &mut recorder, snap_mode.clone())?;
+
+    if let Ok(path) = std::env::var("BRAILLE_RECORD") {
+        let transcript = Transcript {
+            url: url.to_string(),
+            exchanges: recorder.into_exchanges(),
+        };
+        let json = serde_json::to_string_pretty(&transcript)
+            .expect("failed to serialize transcript");
+        std::fs::write(&path, json)
+            .unwrap_or_else(|e| eprintln!("[record] failed to write transcript to {path}: {e}"));
+        eprintln!("[record] saved transcript to {path}");
+    }
+
     session.navigate(url.to_string());
     Ok(snapshot)
 }

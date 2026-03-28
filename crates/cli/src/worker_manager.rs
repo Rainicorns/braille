@@ -42,6 +42,12 @@ pub struct WorkerManager {
     workers: HashMap<u64, WorkerProcess>,
 }
 
+impl Default for WorkerManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WorkerManager {
     pub fn new() -> Self {
         WorkerManager {
@@ -124,12 +130,7 @@ impl WorkerManager {
         };
 
         // Read available messages from the worker (non-blocking read by checking lines)
-        loop {
-            let msg = match worker.try_read() {
-                Some(m) => m,
-                None => break,
-            };
-
+        while let Some(msg) = worker.try_read() {
             match msg {
                 WorkerToHost::PostMessage { data } => {
                     host_messages.push(HostMessage::WorkerMessage {

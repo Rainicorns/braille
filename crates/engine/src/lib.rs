@@ -10,6 +10,7 @@ mod loading;
 mod meta_refresh;
 pub mod navigation;
 mod scripts;
+pub mod transcript;
 
 use std::cell::RefCell;
 use std::collections::HashMap;

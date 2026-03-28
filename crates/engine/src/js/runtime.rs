@@ -255,6 +255,11 @@ impl JsRuntime {
         });
     }
 
+    /// Take the pending navigation URL if JS set location.href.
+    pub fn take_pending_navigation(&self) -> Option<String> {
+        self.state.borrow_mut().pending_navigation.take()
+    }
+
     /// Returns true if there are pending fetch requests.
     pub fn has_pending_fetches(&self) -> bool {
         !self.state.borrow().pending_fetches.is_empty()
@@ -315,12 +320,13 @@ impl JsRuntime {
         }
     }
 
-    /// Set the location URL.
+    /// Set the location URL. Suppresses the navigate signal so the engine
+    /// doesn't treat its own URL sync as a JS-initiated navigation.
     pub fn set_url(&self, url: &str) {
         self.state.borrow_mut().location_url = url.to_string();
         self.context.with(|ctx| {
             let _ = ctx.eval::<(), _>(format!(
-                "if(typeof location !== 'undefined') location.href = {:?}",
+                "if(typeof location !== 'undefined') {{ location.__suppress_nav = true; location.href = {:?}; location.__suppress_nav = false; }}",
                 url
             ));
         });

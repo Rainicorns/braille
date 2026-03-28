@@ -410,6 +410,97 @@ Page content here...
 
 </details>
 
+## Session Recording & Replay
+
+Braille can record every HTTP exchange during a browsing session and replay it deterministically in tests. This lets you capture exactly what a live server returned — headers, cookies, HTML, scripts, API responses — and replay that session offline to reproduce bugs.
+
+### Recording a session
+
+Set `BRAILLE_RECORD` to a file path. The daemon must be started (or restarted) with this variable in its environment:
+
+```bash
+# Stop existing daemon so the new one inherits the env var
+braille daemon stop
+
+# Record a session
+BRAILLE_RECORD=/tmp/anubis.json braille new
+BRAILLE_RECORD=/tmp/anubis.json braille $SID goto "https://anubis.techaro.lol"
+```
+
+After the `goto` completes, `/tmp/anubis.json` contains a transcript of every `fetch_batch` exchange the engine made during navigation: the initial page fetch, script fetches, dynamic fetch() calls, and any meta-refresh or location.href redirect fetches.
+
+When `BRAILLE_RECORD` is not set, there is zero overhead — `RecordingFetcher` wraps the real fetcher but never serializes.
+
+### Transcript format
+
+```json
+{
+  "url": "https://anubis.techaro.lol",
+  "exchanges": [
+    {
+      "requests": [
+        {"id": 0, "url": "https://anubis.techaro.lol", "method": "GET", "headers": [...], "body": null}
+      ],
+      "results": [
+        {"id": 0, "outcome": {"Ok": {"status": 200, "status_text": "OK", "headers": [...], "body": "<!doctype html>..."}}}
+      ]
+    }
+  ]
+}
+```
+
+Each exchange is one `fetch_batch` call — a batch of requests sent together and their results. Exchanges are ordered chronologically: page fetch first, then script fetches, then dynamic fetches during settle.
+
+### Replaying in tests
+
+```rust
+use braille_engine::transcript::ReplayFetcher;
+use braille_engine::Engine;
+use braille_wire::SnapMode;
+
+#[test]
+fn replay_anubis_session() {
+    let mut fetcher = ReplayFetcher::load("tests/fixtures/anubis.json").unwrap();
+    let mut engine = Engine::new();
+    let snapshot = engine
+        .navigate("https://anubis.techaro.lol", &mut fetcher, SnapMode::Text)
+        .unwrap();
+    assert!(snapshot.contains("Anubis"));
+}
+```
+
+`ReplayFetcher` serves recorded responses sequentially, remapping request IDs by position (the engine assigns fresh IDs each run, but the order is deterministic).
+
+### How we used this to find and fix the Anubis bug
+
+We were debugging why Braille couldn't get past [Anubis](https://github.com/TecharoHQ/anubis), a proof-of-work bot challenge. The daemon log showed `fetched 0 scripts` and `refresh=None`, but we couldn't see what the server actually returned. We were guessing with MockFetcher and writing tests against imagined HTML.
+
+**Step 1: Record.** We recorded a live Anubis session. The transcript captured the full 25KB HTML response with all headers and cookies.
+
+**Step 2: Inspect.** The transcript revealed that Anubis bundles everything into a single inline `<script type="module">` — there are no external script URLs. The `fetched 0 scripts` message was correct and expected, not a bug. The engine was correctly parsing the page and finding one `InlineModule` descriptor.
+
+**Step 3: Replay at lower level.** We wrote a test that replayed the transcript but stopped after script execution to inspect JS errors and console output. Result: 0 JS errors, 0 console output. The bundled Preact app and SHA-256 implementation ran successfully.
+
+**Step 4: Identify the real bug.** The Anubis script computes a hash, then sets `window.location.href` to redirect to the pass-challenge URL. The engine executed the script correctly but never followed the redirect — the `location.href` setter was a dead store that updated a string in memory but didn't signal the engine.
+
+**Step 5: Write a red test.**
+
+```rust
+#[test]
+fn location_href_set_triggers_navigation() {
+    let mut fetcher = MockFetcher::new();
+    fetcher.add_html("https://example.com/a", r#"<script>window.location.href = "https://example.com/b";</script>"#);
+    fetcher.add_html("https://example.com/b", "<h1>Page B</h1>");
+    let mut engine = Engine::new();
+    let snapshot = engine.navigate("https://example.com/a", &mut fetcher, SnapMode::Text).unwrap();
+    assert!(snapshot.contains("Page B")); // FAILS — engine stays on page A
+}
+```
+
+**Step 6: Fix.** Added `pending_navigation` to the engine state. The JS `location.href` setter now calls a native `__braille_navigate(url)` function that sets the pending navigation. After script execution and settling, `navigate_inner()` checks for a pending navigation before checking meta-refresh, and follows it.
+
+Without recording, we would have kept guessing that the problem was missing script fetches or module support. The transcript showed us the actual bytes and let us replay the exact scenario until the fix was obvious.
+
 ## Building
 
 ```bash

@@ -5,6 +5,8 @@ set -e
 case "${1:-build}" in
   build)
     cargo build --bin braille-engine --bin braille
+    # Kill stale daemon so next command uses the fresh binary
+    pkill -f 'braille.* daemon start' 2>/dev/null || true
     ;;
   test)
     cargo test -p braille-engine --test adversarial

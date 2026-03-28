@@ -1,6 +1,11 @@
 use super::Engine;
 
 impl Engine {
+    /// Take the pending navigation URL if JS set location.href.
+    pub fn take_pending_navigation(&mut self) -> Option<String> {
+        self.runtime.as_ref().and_then(|rt| rt.take_pending_navigation())
+    }
+
     /// Returns true if there are pending fetch requests that need to be serviced.
     pub fn has_pending_fetches(&self) -> bool {
         if let Some(runtime) = &self.runtime {

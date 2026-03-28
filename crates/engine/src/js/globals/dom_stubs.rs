@@ -1,6 +1,17 @@
-use rquickjs::Ctx;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
+use rquickjs::{Ctx, Function};
+
+use crate::js::state::EngineState;
+
+pub(super) fn register_dom_stubs(ctx: &Ctx<'_>, state: Rc<RefCell<EngineState>>) {
+    // Register __braille_navigate — called by location.href setter to signal pending navigation
+    let nav_state = Rc::clone(&state);
+    let navigate_fn = Function::new(ctx.clone(), move |url: String| {
+        nav_state.borrow_mut().pending_navigation = Some(url);
+    }).unwrap();
+    ctx.globals().set("__braille_navigate", navigate_fn).unwrap();
     // Comprehensive DOM/Web API stubs so real-world JS doesn't crash on missing globals.
     // These are JS-level stubs that provide the right shape but no real DOM integration.
     // Critical DOM operations (createElement, appendChild, etc.) are backed by native
@@ -188,6 +199,10 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                         loc.hash = m[6] || '';
                         loc.origin = loc.protocol + '//' + loc.host;
                     }
+                    // Signal navigation to engine (unless suppressed by engine's own set_url)
+                    if (!loc.__suppress_nav && typeof __braille_navigate === 'function') {
+                        __braille_navigate(String(v));
+                    }
                 },
                 configurable: true, enumerable: true,
             });
@@ -311,7 +326,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 dispatchEvent: function() { return true; },
             };
         };
-        globalThis.requestAnimationFrame = function(cb) { return setTimeout(cb, 0); };
+        globalThis.requestAnimationFrame = function(cb) { return setTimeout(cb, 16); };
         globalThis.cancelAnimationFrame = function(id) { clearTimeout(id); };
         globalThis.requestIdleCallback = function(cb) { return setTimeout(cb, 0); };
         globalThis.cancelIdleCallback = function(id) { clearTimeout(id); };
