@@ -77,6 +77,10 @@ impl Engine {
         // 6. Interleaved settle + dynamic fetch loop
         self.settle_with_fetches(fetcher);
 
+        // 6b. Full settle with time advancement so rAF-driven frameworks
+        //     (Preact, React, etc.) can complete their render/effect chains.
+        self.settle();
+
         // 7. Check if JS set location.href (takes priority over meta-refresh)
         if let Some(nav_url) = self.take_pending_navigation() {
             eprintln!("[navigate] JS location.href redirect to {}", &nav_url[..nav_url.len().min(120)]);

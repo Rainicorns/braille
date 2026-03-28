@@ -124,6 +124,7 @@ impl Engine {
     fn settle_inner(&mut self, time_budget_ms: u64) {
         if let Some(runtime) = self.runtime.as_mut() {
             let starting_time = runtime.current_time_ms();
+            let wall_start = std::time::Instant::now();
 
             for _ in 0..100 {
                 // 1. Flush microtask queue (Promises from event handlers)
@@ -147,12 +148,33 @@ impl Engine {
                 // 4. No MO and no ready timers at current time — try advancing clock
                 if !had_mo && !fired_timers {
                     if time_budget_ms > 0 && runtime.has_pending_timers() && !runtime.has_pending_fetches() {
-                        // Only advance if the next deadline is within our time budget
                         if let Some(next) = runtime.next_timer_deadline() {
-                            if next <= starting_time + time_budget_ms
-                                && runtime.advance_timers_to_next_deadline()
-                            {
-                                continue;
+                            if next <= starting_time + time_budget_ms {
+                                // Virtual clock tracks wall clock: it cannot outrun
+                                // reality (servers validate real elapsed time), and
+                                // it must not fall behind (slow machines shouldn't
+                                // artificially delay timer resolution).
+                                let virtual_target = next - starting_time;
+                                let wall_elapsed = wall_start.elapsed().as_millis() as u64;
+
+                                if wall_elapsed < virtual_target {
+                                    // Virtual clock is ahead of wall clock — sleep
+                                    // until reality catches up.
+                                    std::thread::sleep(std::time::Duration::from_millis(
+                                        virtual_target - wall_elapsed,
+                                    ));
+                                } else if wall_elapsed > virtual_target {
+                                    // Wall clock is ahead of virtual clock — snap
+                                    // virtual time forward so timers that should
+                                    // have fired by now become ready.
+                                    let wall_based_time = starting_time + wall_elapsed;
+                                    let capped = wall_based_time.min(starting_time + time_budget_ms);
+                                    runtime.set_timer_current_time(capped);
+                                }
+
+                                if runtime.advance_timers_to_next_deadline() {
+                                    continue;
+                                }
                             }
                         }
                     }

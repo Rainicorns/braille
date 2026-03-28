@@ -230,6 +230,12 @@ impl JsRuntime {
         self.state.borrow().timer_current_time_ms
     }
 
+    /// Set the virtual timer clock to a specific time.
+    /// Used by settle_inner to snap virtual time forward when wall clock is ahead.
+    pub fn set_timer_current_time(&self, time_ms: u64) {
+        self.state.borrow_mut().timer_current_time_ms = time_ms;
+    }
+
     /// Returns the earliest deadline across all pending timers,
     /// without actually advancing the clock.
     pub fn next_timer_deadline(&self) -> Option<u64> {

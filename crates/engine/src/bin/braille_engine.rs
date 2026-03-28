@@ -317,8 +317,9 @@ fn fetch_and_load(
 ) -> Result<String, String> {
     let ipc = IpcFetchProvider { reader, writer };
     let mut recorder = RecordingFetcher::new(ipc);
-    let snapshot = session.engine.navigate(url, &mut recorder, snap_mode.clone())?;
+    let result = session.engine.navigate(url, &mut recorder, snap_mode.clone());
 
+    // Save transcript even on error so we can debug failed navigations
     if let Ok(path) = std::env::var("BRAILLE_RECORD") {
         let transcript = Transcript {
             url: url.to_string(),
@@ -331,6 +332,7 @@ fn fetch_and_load(
         eprintln!("[record] saved transcript to {path}");
     }
 
+    let snapshot = result?;
     session.navigate(url.to_string());
     Ok(snapshot)
 }
