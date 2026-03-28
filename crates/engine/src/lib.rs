@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-// Engine-level code should not reference Boa types directly.
+// Engine-level code should not reference QuickJS types directly.
 // All JS engine operations go through JsRuntime methods.
 
 use crate::dom::tree::DomTree;

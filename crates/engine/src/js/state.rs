@@ -39,8 +39,7 @@ pub struct PendingWorkerTerminate {
 }
 
 /// Engine-side state shared across all JS operations.
-/// This replaces Boa's RealmState — all state that was stored in
-/// Realm::host_defined() is now stored here in plain Rust.
+/// All state is stored here in plain Rust, accessible from JS bindings.
 pub struct EngineState {
     pub console_buffer: Vec<String>,
     pub pending_fetches: Vec<PendingFetch>,
