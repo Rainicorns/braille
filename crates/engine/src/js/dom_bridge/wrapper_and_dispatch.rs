@@ -622,16 +622,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         doc.createProcessingInstruction = function(target, data) {
             if (arguments.length < 2) throw new TypeError("Failed to execute 'createProcessingInstruction' on 'Document': 2 arguments required.");
-            var pi = Object.create(EP);
-            var props = {
-                nodeType: 7, nodeName: String(target), target: String(target),
-                data: String(data), textContent: String(data), nodeValue: String(data),
-                parentNode: null, parentElement: null, childNodes: [],
-                firstChild: null, lastChild: null, previousSibling: null, nextSibling: null,
-                ownerDocument: document
-            };
-            for (var k in props) Object.defineProperty(pi, k, { value: props[k], writable: true, enumerable: true, configurable: true });
-            return pi;
+            var nid = __n_createPI(String(target), String(data));
+            return __w(nid);
         };
 
         // window.dispatchEvent assigned after EventTarget is defined (below)

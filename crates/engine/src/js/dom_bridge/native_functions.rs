@@ -279,6 +279,13 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // createProcessingInstruction(target, data) -> nodeId
+    g.set("__n_createPI", Function::new(ctx.clone(), |target: String, data: String| -> u32 {
+        with_tree_mut(|tree| {
+            tree.create_processing_instruction(&target, &data) as u32
+        })
+    }).unwrap()).unwrap();
+
     // getAllChildIds(nodeId) -> array of ALL child nodeIds (elements, text, comments)
     g.set("__n_getAllChildIds", Function::new(ctx.clone(), |node_id: u32| -> Vec<u32> {
         with_tree(|tree| {
