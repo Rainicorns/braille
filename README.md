@@ -229,6 +229,7 @@ braille console                  # View JS console output
 
 # Record & replay
 braille $SID goto --record URL   # Record network transcript
+braille $SID mark "before click" # Insert checkpoint in transcript
 braille $SID transcript          # View the transcript
 ```
 
@@ -352,7 +353,8 @@ Always start with `braille new` to get a session ID. Use that ID for all subsequ
 | **back** | `SESSION_ID back` | Go back in navigation history. |
 | **forward** | `SESSION_ID forward` | Go forward in navigation history. |
 | **console** | `SESSION_ID console` | Show JavaScript console output (log/warn/error). |
-| **transcript** | `SESSION_ID transcript` | Show the last recorded network transcript (requires `--record` on goto). |
+| **mark** | `SESSION_ID mark LABEL` | Insert a labeled checkpoint into the recording transcript. |
+| **transcript** | `SESSION_ID transcript` | Show the recorded network transcript (requires `--record` on goto). |
 
 #### Selectors
 
@@ -429,7 +431,9 @@ braille sess_abc12345 goto --record "https://example.com"
 braille sess_abc12345 transcript                      # → prints the JSON transcript
 ```
 
-After the `goto` completes, the session directory contains a transcript of every `fetch_batch` exchange the engine made during navigation: the initial page fetch, script fetches, dynamic fetch() calls, and any meta-refresh or location.href redirect fetches.
+Once `--record` is passed, the session records all subsequent navigations (clicks, back, forward) — not just the initial goto. Use `mark` to insert labeled checkpoints between commands for easier analysis.
+
+The transcript captures every `fetch_batch` exchange including the full HTTP redirect chain within each fetch (status, URL, Location, Set-Cookie headers at each hop). This makes it possible to diagnose redirect loops, cookie loss, and protocol issues without guessing.
 
 When `--record` is not passed, there is zero overhead — no transcript is serialized.
 

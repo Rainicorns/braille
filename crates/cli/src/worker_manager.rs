@@ -228,7 +228,10 @@ fn fetch_worker_script(url: &str, net: &mut NetworkClient) -> String {
                     if let Some(location) = resp.headers().get("location") {
                         if let Ok(loc) = location.to_str() {
                             if let Ok(base) = url::Url::parse(&current_url) {
-                                if let Ok(next) = base.join(loc) {
+                                if let Ok(mut next) = base.join(loc) {
+                                    if base.scheme() == "https" && next.scheme() == "http" {
+                                        let _ = next.set_scheme("https");
+                                    }
                                     current_url = next.to_string();
                                     continue;
                                 }

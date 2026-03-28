@@ -81,6 +81,18 @@ pub struct FetchResponseData {
     pub headers: Vec<(String, String)>,
     pub body: String,
     pub url: String,
+    /// Redirect hops followed to reach this response. Empty if no redirects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub redirect_chain: Vec<RedirectHop>,
+}
+
+/// A single HTTP redirect hop within a fetch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RedirectHop {
+    pub status: u16,
+    pub url: String,
+    pub location: String,
+    pub set_cookies: Vec<String>,
 }
 
 // --- Engine REPL protocol types ---
@@ -168,6 +180,7 @@ pub enum DaemonCommand {
     Back,
     Forward,
     Console,
+    Mark { label: String },
     Close,
     DaemonStop,
 }

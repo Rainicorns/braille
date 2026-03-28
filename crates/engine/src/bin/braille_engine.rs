@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 
-use braille_engine::transcript::{RecordingFetcher, Transcript};
+use braille_engine::transcript::{Exchange, RecordingFetcher, Transcript};
 use braille_engine::{Engine, FetchProvider};
 use braille_wire::{
     DaemonCommand, DaemonResponse, EngineAction, EngineMessage, FetchRequest,
@@ -26,6 +26,9 @@ struct Session {
     history_index: Option<usize>,
     workers: HashMap<u64, WorkerState>,
     next_worker_id: u64,
+    record_path: Option<String>,
+    transcript_url: String,
+    transcript_exchanges: Vec<Exchange>,
 }
 
 impl Session {
@@ -36,6 +39,9 @@ impl Session {
             history_index: None,
             workers: HashMap::new(),
             next_worker_id: 1,
+            record_path: None,
+            transcript_url: String::new(),
+            transcript_exchanges: Vec::new(),
         }
     }
 
@@ -211,16 +217,21 @@ fn handle_command_inner(
     cmd: DaemonCommand,
 ) -> DaemonResponse {
     match cmd {
-        DaemonCommand::Goto { url, mode, record_path } => match fetch_and_load(session, reader, writer, &url, mode, record_path) {
-            Ok(snapshot) => DaemonResponse::ok(snapshot),
-            Err(e) => DaemonResponse::err(e),
-        },
+        DaemonCommand::Goto { url, mode, record_path } => {
+            if record_path.is_some() {
+                session.record_path = record_path;
+            }
+            match fetch_and_load(session, reader, writer, &url, mode) {
+                Ok(snapshot) => DaemonResponse::ok(snapshot),
+                Err(e) => DaemonResponse::err(e),
+            }
+        }
         DaemonCommand::Click { selector } => {
             session.engine.snapshot(SnapMode::Compact);
             let action = session.engine.handle_click(&selector);
             match action {
                 EngineAction::Navigate(nav_req) => {
-                    match fetch_and_load(session, reader, writer, &nav_req.url, SnapMode::Compact, None) {
+                    match fetch_and_load(session, reader, writer, &nav_req.url, SnapMode::Compact) {
                         Ok(snapshot) => DaemonResponse::ok(snapshot),
                         Err(e) => DaemonResponse::err(e),
                     }
@@ -261,10 +272,19 @@ fn handle_command_inner(
             // Return empty OK — the console field on the response has the data.
             DaemonResponse::ok(String::new())
         }
+        DaemonCommand::Mark { label } => {
+            session.transcript_exchanges.push(Exchange {
+                label: Some(label.clone()),
+                requests: vec![],
+                results: vec![],
+            });
+            save_transcript(session);
+            DaemonResponse::ok(format!("mark: {label}"))
+        }
         DaemonCommand::Back => match session.go_back() {
             Some(url) => {
                 let url = url.to_string();
-                match fetch_and_load(session, reader, writer, &url, SnapMode::Compact, None) {
+                match fetch_and_load(session, reader, writer, &url, SnapMode::Compact) {
                     Ok(snapshot) => DaemonResponse::ok(snapshot),
                     Err(e) => DaemonResponse::err(e),
                 }
@@ -274,7 +294,7 @@ fn handle_command_inner(
         DaemonCommand::Forward => match session.go_forward() {
             Some(url) => {
                 let url = url.to_string();
-                match fetch_and_load(session, reader, writer, &url, SnapMode::Compact, None) {
+                match fetch_and_load(session, reader, writer, &url, SnapMode::Compact) {
                     Ok(snapshot) => DaemonResponse::ok(snapshot),
                     Err(e) => DaemonResponse::err(e),
                 }
@@ -314,29 +334,47 @@ fn fetch_and_load(
     writer: &mut impl Write,
     url: &str,
     snap_mode: SnapMode,
-    record_path: Option<String>,
 ) -> Result<String, String> {
     let ipc = IpcFetchProvider { reader, writer };
     let mut recorder = RecordingFetcher::new(ipc);
     let result = session.engine.navigate(url, &mut recorder, snap_mode.clone());
 
-    // Save transcript: use explicit record_path, fall back to BRAILLE_RECORD env var
-    let save_path = record_path.or_else(|| std::env::var("BRAILLE_RECORD").ok());
-    if let Some(path) = save_path {
-        let transcript = Transcript {
-            url: url.to_string(),
-            exchanges: recorder.into_exchanges(),
-        };
-        let json = serde_json::to_string_pretty(&transcript)
-            .expect("failed to serialize transcript");
-        std::fs::write(&path, json)
-            .unwrap_or_else(|e| eprintln!("[record] failed to write transcript to {path}: {e}"));
-        eprintln!("[record] saved transcript to {path}");
+    // Append exchanges to session transcript and save
+    let new_exchanges = recorder.into_exchanges();
+    if session.record_path.is_some() || std::env::var("BRAILLE_RECORD").is_ok() {
+        if session.transcript_url.is_empty() {
+            session.transcript_url = url.to_string();
+        }
+        // Auto-label the first exchange of this navigation
+        let mut exchanges = new_exchanges;
+        if let Some(first) = exchanges.first_mut() {
+            first.label = Some(format!("goto {}", &url[..url.len().min(100)]));
+        }
+        session.transcript_exchanges.extend(exchanges);
+        save_transcript(session);
     }
 
     let snapshot = result?;
     session.navigate(url.to_string());
     Ok(snapshot)
+}
+
+fn save_transcript(session: &Session) {
+    let path = match &session.record_path {
+        Some(p) => p.clone(),
+        None => match std::env::var("BRAILLE_RECORD") {
+            Ok(p) => p,
+            Err(_) => return,
+        },
+    };
+    let transcript = Transcript {
+        url: session.transcript_url.clone(),
+        exchanges: session.transcript_exchanges.clone(),
+    };
+    let json = serde_json::to_string_pretty(&transcript)
+        .expect("failed to serialize transcript");
+    std::fs::write(&path, json)
+        .unwrap_or_else(|e| eprintln!("[record] failed to write transcript to {path}: {e}"));
 }
 
 /// Service all pending fetch requests from the engine's JS runtime via IPC.

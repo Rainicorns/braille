@@ -55,8 +55,12 @@ impl NetworkClient {
             if (300..400).contains(&status) {
                 if let Some(location) = response.headers().get("location") {
                     let loc = location.to_str().map_err(|e| format!("invalid Location header: {e}"))?;
-                    current_url = current_url.join(loc)
+                    let mut next = current_url.join(loc)
                         .map_err(|e| format!("invalid redirect URL {loc}: {e}"))?;
+                    if current_url.scheme() == "https" && next.scheme() == "http" {
+                        let _ = next.set_scheme("https");
+                    }
+                    current_url = next;
                     continue;
                 }
             }
@@ -164,8 +168,12 @@ impl NetworkClient {
             if (300..400).contains(&status) {
                 if let Some(location) = response.headers().get("location") {
                     let loc = location.to_str().map_err(|e| format!("invalid Location header: {e}"))?;
-                    current_url = current_url.join(loc)
+                    let mut next = current_url.join(loc)
                         .map_err(|e| format!("invalid redirect URL {loc}: {e}"))?;
+                    if current_url.scheme() == "https" && next.scheme() == "http" {
+                        let _ = next.set_scheme("https");
+                    }
+                    current_url = next;
                     if (301..=303).contains(&status) {
                         current_method = "GET".to_string();
                         current_body = None;

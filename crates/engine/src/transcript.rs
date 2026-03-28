@@ -6,11 +6,13 @@ use crate::navigation::FetchProvider;
 /// A single request/response exchange in a recorded session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Exchange {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub requests: Vec<FetchRequest>,
     pub results: Vec<FetchResult>,
 }
 
-/// A recorded session transcript: the URL visited and all fetch exchanges.
+/// A recorded session transcript: all fetch exchanges across commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transcript {
     pub url: String,
@@ -41,6 +43,7 @@ impl<F: FetchProvider> FetchProvider for RecordingFetcher<F> {
     fn fetch_batch(&mut self, requests: Vec<FetchRequest>) -> Vec<FetchResult> {
         let results = self.inner.fetch_batch(requests.clone());
         self.exchanges.push(Exchange {
+            label: None,
             requests,
             results: results.clone(),
         });

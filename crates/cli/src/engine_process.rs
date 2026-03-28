@@ -173,6 +173,7 @@ fn do_fetch(
     let mut current_method = method.to_uppercase();
     let mut current_body: Option<String> = body.map(|s| s.to_string());
     let mut accumulated_cookies: Vec<(String, String)> = Vec::new();
+    let mut redirect_chain: Vec<braille_wire::RedirectHop> = Vec::new();
 
     for _ in 0..max_redirects {
         let mut builder = match current_method.as_str() {
@@ -235,10 +236,30 @@ fn do_fetch(
                     Ok(s) => s,
                     Err(e) => return FetchOutcome::Err(format!("invalid Location header: {e}")),
                 };
-                current_url = match current_url.join(location_str) {
+                let mut next_url = match current_url.join(location_str) {
                     Ok(u) => u,
                     Err(e) => return FetchOutcome::Err(format!("invalid redirect URL {location_str}: {e}")),
                 };
+
+                // Never downgrade from https to http (matches browser HSTS behavior)
+                if current_url.scheme() == "https" && next_url.scheme() == "http" {
+                    let _ = next_url.set_scheme("https");
+                }
+
+                // Record this hop's Set-Cookie headers
+                let hop_set_cookies: Vec<String> = response.headers().get_all("set-cookie")
+                    .iter()
+                    .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+                    .collect();
+
+                redirect_chain.push(braille_wire::RedirectHop {
+                    status,
+                    url: current_url.to_string(),
+                    location: next_url.to_string(),
+                    set_cookies: hop_set_cookies,
+                });
+
+                current_url = next_url;
 
                 // RFC 7231: 301/302/303 → switch to GET, drop body. 307/308 → preserve.
                 if (301..=303).contains(&status) {
@@ -279,29 +300,75 @@ fn do_fetch(
             headers: resp_headers,
             body,
             url: final_url,
+            redirect_chain,
         });
     }
-
-    FetchOutcome::Err(format!("too many redirects (>{max_redirects}) for {url}"))
+    let hops: Vec<String> = redirect_chain.iter().map(|h| format!("{} {} -> {}", h.status, h.url, h.location)).collect();
+    FetchOutcome::Err(format!("too many redirects (>{max_redirects}) for {url}\n  {}", hops.join("\n  ")))
 }
 
 /// Extract "name=value" pairs from Set-Cookie headers and join them into a Cookie header value.
+/// When the same cookie name appears multiple times (e.g., a clear followed by a set),
+/// the last value wins — matching how browsers process Set-Cookie headers.
 fn build_cookie_header_from_set_cookies(set_cookies: &[(String, String)]) -> String {
-    set_cookies
-        .iter()
-        .filter_map(|(_, v)| {
-            // Set-Cookie value format: "name=value; Path=/; ..."
-            // We only need the "name=value" part (everything before the first ';')
-            let name_value = v.split(';').next()?;
-            let name_value = name_value.trim();
-            if name_value.is_empty() {
-                None
-            } else {
-                Some(name_value.to_string())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("; ")
+    let mut names: Vec<String> = Vec::new();
+    let mut values: Vec<String> = Vec::new();
+    for (_, v) in set_cookies {
+        let name_value = match v.split(';').next() {
+            Some(nv) => nv.trim(),
+            None => continue,
+        };
+        if name_value.is_empty() {
+            continue;
+        }
+        let name = match name_value.find('=') {
+            Some(eq) => name_value[..eq].to_string(),
+            None => continue,
+        };
+        // If we already have this cookie name, replace it (last wins)
+        if let Some(pos) = names.iter().position(|n| *n == name) {
+            values[pos] = name_value.to_string();
+        } else {
+            names.push(name);
+            values.push(name_value.to_string());
+        }
+    }
+    values.join("; ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_cookie_header_deduplicates_by_name_last_wins() {
+        // Anubis pattern: 302 response sets auth= (clear) then auth=JWT (real value).
+        // The Cookie header sent on the redirect hop must contain only the last value.
+        let set_cookies = vec![
+            ("set-cookie".into(), "auth=; Path=/; Max-Age=0".into()),
+            ("set-cookie".into(), "verification=abc123; Path=/".into()),
+            ("set-cookie".into(), "auth=eyJhbGciOiJFZERTQSJ9.payload.sig; Path=/".into()),
+        ];
+        let cookie = build_cookie_header_from_set_cookies(&set_cookies);
+
+        // Should contain the JWT, not the empty value
+        assert!(
+            cookie.contains("auth=eyJ"),
+            "should contain the JWT auth value, got: {cookie}"
+        );
+        // Should NOT contain the bare "auth=" clear
+        // Count occurrences of "auth=" — should be exactly 1
+        let auth_count = cookie.matches("auth=").count();
+        assert_eq!(
+            auth_count, 1,
+            "should have exactly one auth= entry, got {auth_count} in: {cookie}"
+        );
+        // Should still contain verification
+        assert!(
+            cookie.contains("verification=abc123"),
+            "should contain verification cookie, got: {cookie}"
+        );
+    }
 }
 
 fn status_text_for_code(code: u16) -> &'static str {

@@ -314,6 +314,7 @@ impl MockFetcher {
                 headers: vec![("content-type".into(), "text/html".into())],
                 body: body.into(),
                 url: url.to_string(),
+                redirect_chain: vec![],
             },
         );
     }
@@ -333,6 +334,7 @@ impl MockFetcher {
                 headers,
                 body: body.into(),
                 url: url.to_string(),
+                redirect_chain: vec![],
             },
         );
     }
