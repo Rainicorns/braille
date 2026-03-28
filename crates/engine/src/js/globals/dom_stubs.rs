@@ -36,7 +36,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             preventDefault() { if (this.cancelable) { this.defaultPrevented = true; this.returnValue = false; } }
             stopPropagation() { this._stopPropagation = true; }
             stopImmediatePropagation() { this._stopImmediate = true; this._stopPropagation = true; }
-            composedPath() { return this._path || []; }
+            composedPath() { if (!this._dispatching && this.eventPhase === 0) return []; return this._path || []; }
             initEvent(type, bubbles, cancelable) {
                 if (arguments.length < 1) throw new TypeError("Failed to execute 'initEvent' on 'Event': 1 argument required, but only 0 present.");
                 if (this._dispatching) return;

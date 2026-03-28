@@ -658,5 +658,115 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         EP.DOCUMENT_POSITION_CONTAINED_BY = 16;
         EP.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32;
         globalThis.Node = Node;
+
+        // EventTarget constructor — standalone event targets (not backed by DOM nodes)
+        function EventTarget() {
+            this.__et_listeners = {};
+        }
+        EventTarget.prototype.addEventListener = function(type, cb, opts) {
+            if (typeof cb !== 'function' && !(cb && typeof cb.handleEvent === 'function')) return;
+            var capture = !!(opts === true || (opts && opts.capture));
+            var once = !!(opts && typeof opts === 'object' && opts.once);
+            var key = type + (capture ? '_c' : '_b');
+            if (!this.__et_listeners[key]) this.__et_listeners[key] = [];
+            for (var i = 0; i < this.__et_listeners[key].length; i++) {
+                if (this.__et_listeners[key][i] === cb || this.__et_listeners[key][i]._origCb === cb) return;
+            }
+            if (once) {
+                var self = this;
+                var wrapper = function(e) {
+                    if (typeof cb === 'function') cb.call(self, e);
+                    else cb.handleEvent(e);
+                    self.removeEventListener(type, cb, capture);
+                };
+                wrapper._origCb = cb;
+                this.__et_listeners[key].push(wrapper);
+            } else {
+                this.__et_listeners[key].push(cb);
+            }
+        };
+        EventTarget.prototype.removeEventListener = function(type, cb, opts) {
+            var capture = !!(opts === true || (opts && opts.capture));
+            var key = type + (capture ? '_c' : '_b');
+            if (this.__et_listeners[key]) {
+                this.__et_listeners[key] = this.__et_listeners[key].filter(function(f) { return f !== cb && f._origCb !== cb; });
+            }
+        };
+        EventTarget.prototype.dispatchEvent = function(event) {
+            event._dispatching = true;
+            event.target = this;
+            event.currentTarget = this;
+            event._path = [this];
+            event.eventPhase = 2;
+            var key = event.type + '_b';
+            var cbs = this.__et_listeners[key];
+            if (cbs) {
+                var snapshot = cbs.slice();
+                for (var i = 0; i < snapshot.length; i++) {
+                    var fn = snapshot[i];
+                    if (typeof fn === 'function') fn.call(this, event);
+                    else if (fn && typeof fn.handleEvent === 'function') fn.handleEvent(event);
+                    if (event._stopImmediate) break;
+                }
+            }
+            event._dispatching = false;
+            event._stopPropagation = false;
+            event._stopImmediate = false;
+            event.currentTarget = null;
+            event.eventPhase = 0;
+            return !event.defaultPrevented;
+        };
+        globalThis.EventTarget = EventTarget;
+
+        // CharacterData prototype — between Node.prototype and Text/Comment
+        var CharacterData = function CharacterData() {};
+        CharacterData.prototype = Object.create(EP);
+        CharacterData.prototype.constructor = CharacterData;
+        globalThis.CharacterData = CharacterData;
+
+        // Text constructor — creates a real text node in the DomTree
+        function Text(data) {
+            var str = arguments.length === 0 ? '' : String(data === undefined ? '' : data);
+            var nid = __n_createTextNode(str);
+            var obj = __w(nid);
+            Object.setPrototypeOf(obj, Text.prototype);
+            return obj;
+        }
+        Text.prototype = Object.create(CharacterData.prototype);
+        Text.prototype.constructor = Text;
+        Object.defineProperty(Text.prototype, 'wholeText', {
+            get: function() { return this.data; },
+            configurable: true
+        });
+        Text.prototype.splitText = function(offset) {
+            var d = this.data;
+            if (offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
+            var newData = d.substring(offset);
+            this.data = d.substring(0, offset);
+            var newNode = new Text(newData);
+            if (this.parentNode) {
+                this.parentNode.insertBefore(newNode, this.nextSibling);
+            }
+            return newNode;
+        };
+        globalThis.Text = Text;
+
+        // Comment constructor — creates a real comment node in the DomTree
+        function Comment(data) {
+            var str = arguments.length === 0 ? '' : String(data === undefined ? '' : data);
+            var nid = __n_createComment(str);
+            var obj = __w(nid);
+            Object.setPrototypeOf(obj, Comment.prototype);
+            return obj;
+        }
+        Comment.prototype = Object.create(CharacterData.prototype);
+        Comment.prototype.constructor = Comment;
+        globalThis.Comment = Comment;
+
+        // Document constructor
+        function Document() {}
+        Document.prototype = Object.create(EP);
+        Document.prototype.constructor = Document;
+        globalThis.Document = Document;
     "#
 }
