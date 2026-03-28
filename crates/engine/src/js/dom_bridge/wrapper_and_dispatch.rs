@@ -77,6 +77,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     if (event._stopImmediate) return;
                 }
             }
+            // Fire __et_listeners on an element (for listeners added via EventTarget.prototype)
+            function fireEt(obj, suffix) {
+                if (obj && obj.__et_listeners) {
+                    fireCbs(obj.__et_listeners[event.type + suffix], obj);
+                }
+            }
 
             // Run dispatch phases, then always clean up
             function runPhases() {
@@ -103,8 +109,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 // DOM elements capture: from root down to (but not including) target
                 for (var i = path.length - 1; i > 0; i--) {
                     var nid = path[i];
-                    event.currentTarget = __w(nid);
-                    fireCbs(_captureKeys[nid + ':' + event.type], event.currentTarget);
+                    var el = __w(nid);
+                    event.currentTarget = el;
+                    fireCbs(_captureKeys[nid + ':' + event.type], el);
+                    if (event._stopImmediate || event._stopPropagation) return;
+                    fireEt(el, '_c');
                     if (event._stopImmediate || event._stopPropagation) return;
                 }
 
@@ -124,7 +133,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 // Fire both capture and bubble listeners at target (per spec)
                 fireCbs(_captureKeys[targetNid + ':' + event.type], targetEl);
                 if (event._stopImmediate) return;
+                fireEt(targetEl, '_c');
+                if (event._stopImmediate) return;
                 fireCbs(_bubbleKeys[targetNid + ':' + event.type], targetEl);
+                if (event._stopImmediate) return;
+                fireEt(targetEl, '_b');
                 if (event._stopImmediate) return;
 
                 if (!event.bubbles) return;
@@ -134,8 +147,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 for (var i = 1; i < path.length; i++) {
                     if (event._stopPropagation) break;
                     var nid = path[i];
-                    event.currentTarget = __w(nid);
-                    fireCbs(_bubbleKeys[nid + ':' + event.type], event.currentTarget);
+                    var el = __w(nid);
+                    event.currentTarget = el;
+                    fireCbs(_bubbleKeys[nid + ':' + event.type], el);
+                    if (event._stopImmediate) return;
+                    fireEt(el, '_b');
                     if (event._stopImmediate) return;
                 }
 
