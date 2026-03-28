@@ -7,25 +7,20 @@ A browser for those who read, not see.
 **Spike:** [SPIKE.md](./SPIKE.md) — COMPLETE (46 tests, core loop proven)
 **WPT Status:** [WPT_STATUS.md](./WPT_STATUS.md) — per-file test status, skip reasons
 
-## Current Status (2026-03-27)
+## Current Status (2026-03-28)
 
 ### What's Working
-- **600+ tests passing** across lib, integration, WPT, framework suites
+- **2600+ tests passing** across lib, integration, WPT, framework suites
+- **Anubis bot protection — fully defeated end-to-end.** Solves PoW challenges (Preact bundled SHA-256), follows 302 redirects with cookie accumulation, loads real Docusaurus site with full JS hydration. Multi-page navigation across Anubis-protected sites works (homepage → docs → subpages → blog → back).
 - **Wikipedia** loads and renders correctly (homepage, articles, search flow)
 - **Codeberg/GitHub** loads fully (JS-heavy sites with Gitea/GitHub frontend)
-- **ES modules** — custom `ModuleRegistry` with `BrailleResolver` + `BrailleLoader`. Import maps resolve bare specifiers. import/export, dynamic import(), top-level await, re-exports all working.
-- **Form features complete** — input/change/invalid events, requestSubmit(), constraint validation (stepMismatch, badInput, all input types), label association, document.forms, live HTMLCollections, select.options/selectedOptions, textarea properties, form element properties (enctype, noValidate, target, etc.)
-- **React integration fixed** — `__reactProps$` hack removed, proper capture-phase event delegation, property/attribute separation (spec-compliant)
-- **Meta refresh** — engine detects `<meta http-equiv="refresh">`, CLI follows redirects automatically
-- **Anubis challenge support** — metarefresh challenges work end-to-end. Preact challenges partially work (ES modules execute, SHA-256 works, URL.searchParams.set() fixed). PoW challenges blocked on Web Workers.
-- **Container persistence foundation** — Dockerfile (musl static build), session storage module, Close command bug fixed
-
-### TDD Backlog (red tests = real gaps)
-
-From `crates/engine/tests/anubis_challenges.rs`:
-1. **`preact_full_solver_flow`** — URL.searchParams.set() fixed, may need re-verify
-2. **`pow_web_worker_basic_functionality`** — Worker constructor exists but doesn't execute code
-3. **`anubis_dependency_secure_context`** — Fixed (window.isSecureContext = false)
+- **ES modules** — custom `ModuleRegistry` with `BrailleResolver` + `BrailleLoader`. Import maps, dynamic import(), top-level await all working.
+- **Web Workers** — process-based implementation. Worker scripts executed in separate QuickJS child processes. postMessage/onmessage IPC via CLI. Used by Anubis PoW solver.
+- **HTTP redirect handling** — manual redirect following with cookie accumulation across hops, HSTS-style https downgrade prevention, cross-origin header stripping, redirect chain captured in transcripts.
+- **Session recording** — `--record` flag enables session-scoped transcript capture. `mark` command inserts labeled checkpoints. `transcript` command retrieves. Full redirect chains (status, URL, Location, Set-Cookie per hop) recorded.
+- **Form features complete** — constraint validation, requestSubmit(), label association, live HTMLCollections
+- **React integration** — proper capture-phase event delegation, property/attribute separation
+- **Container persistence foundation** — Dockerfile (musl static build), session storage module
 
 ### Architectural Decisions
 
@@ -72,12 +67,25 @@ Cookie sync between JS and HTTP cookie jar was implemented but couldn't merge cl
 
 ### Priority Roadmap
 
-1. **lib.rs / dom_bridge.rs refactor** — in progress, unblocks everything else
-2. **document.cookie redo** — redo in new cookies.rs after refactor
-3. **Web Workers (process-based)** — new wire protocol messages, CLI worker management
-4. **innerText vs textContent** — should exclude display:none content
-5. **Real-site testing grind** — Amazon, Gmail, Salesforce, etc.
-6. **Session persistence (CRIU)** — container checkpoint/restore for production
+1. **On-demand rendering & canvas fingerprinting defense** — see Future: Rendering below
+2. **innerText vs textContent** — should exclude display:none content
+3. **Real-site testing grind** — Amazon, Gmail, Salesforce, etc.
+4. **Session persistence (CRIU)** — container checkpoint/restore for production
+5. **Layout engine (Taffy)** — compute box positions for getBoundingClientRect, offsetWidth/Height
+
+### Future: On-Demand Rendering
+
+Anubis's roadmap includes browser fingerprinting via font rendering (canvas-based). The PoW challenge is explicitly described as a "placeholder" while they build fingerprinting. When deployed, a fingerprinting script would render text to a `<canvas>`, read back pixels, and hash them. Braille currently has no rendering — we'd return nothing.
+
+The architecture supports on-demand rendering without changing the core:
+
+- **Canvas 2D stub** — intercept `getContext('2d')` calls, record drawing commands lazily. Only rasterize when `toDataURL()` or `getImageData()` reads pixels back.
+- **tiny-skia** — software rasterizer for canvas paint commands. ~200KB, pure Rust, no GPU.
+- **Bundled font** — ship a single font (Noto Sans) for text shaping via HarfBuzz.
+- **Taffy layout** — compute box positions from CSS cascade. Enables accurate `getBoundingClientRect()`, `offsetWidth`/`offsetHeight` (currently return 0, which is itself a fingerprinting signal).
+- **`braille render`** — optional full-page screenshot command for debugging.
+
+The default path (99% of pages) has zero rendering overhead. Canvas commands are only materialized when JS reads pixels. Layout is only computed when JS queries element dimensions or when explicitly requested.
 
 ## Completed Work Summary
 
