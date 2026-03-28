@@ -5,6 +5,7 @@
 //! `crypto.subtle` API surface (returning Promises).
 
 use rquickjs::{Ctx, Function};
+use sha2::{Digest, Sha256};
 
 /// Register all native crypto helper functions on the global object.
 pub fn register(ctx: &Ctx<'_>) {
@@ -23,17 +24,28 @@ pub fn register(ctx: &Ctx<'_>) {
     .unwrap();
 
     // __braille_crypto_digest(algo, data) -> Vec<u8>
+    // SHA-256 uses the `sha2` crate directly for speed (PoW hot path).
+    // Other algorithms fall back to `ring`.
     g.set(
         "__braille_crypto_digest",
         Function::new(ctx.clone(), |algo: String, data: Vec<u8>| -> Vec<u8> {
-            let algorithm = match algo.as_str() {
-                "SHA-1" => &ring::digest::SHA1_FOR_LEGACY_USE_ONLY,
-                "SHA-256" => &ring::digest::SHA256,
-                "SHA-384" => &ring::digest::SHA384,
-                "SHA-512" => &ring::digest::SHA512,
+            match algo.as_str() {
+                "SHA-256" => {
+                    let mut hasher = Sha256::new();
+                    hasher.update(&data);
+                    hasher.finalize().to_vec()
+                }
+                "SHA-1" => ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, &data)
+                    .as_ref()
+                    .to_vec(),
+                "SHA-384" => ring::digest::digest(&ring::digest::SHA384, &data)
+                    .as_ref()
+                    .to_vec(),
+                "SHA-512" => ring::digest::digest(&ring::digest::SHA512, &data)
+                    .as_ref()
+                    .to_vec(),
                 other => panic!("NotSupportedError: digest algorithm '{other}' not supported"),
-            };
-            ring::digest::digest(algorithm, &data).as_ref().to_vec()
+            }
         })
         .unwrap(),
     )
