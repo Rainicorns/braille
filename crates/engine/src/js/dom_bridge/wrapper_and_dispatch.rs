@@ -1,0 +1,611 @@
+/// Wrapper factory, event dispatch with capture+bubble phases, and Node constants
+/// (compareDocumentPosition, DOCUMENT_POSITION_*).
+pub(super) fn wrapper_and_dispatch_js() -> &'static str {
+    r#"
+        // Tag → constructor map for React's node.constructor.prototype lookup
+        var _ctorMap = {
+            INPUT: HTMLInputElement, TEXTAREA: HTMLTextAreaElement,
+            SELECT: HTMLSelectElement, FORM: HTMLFormElement,
+            A: HTMLAnchorElement, IMG: HTMLImageElement,
+            BUTTON: HTMLButtonElement, OPTION: HTMLOptionElement,
+            IFRAME: HTMLIFrameElement,
+        };
+
+        // Wrapper factory
+        function __w(nodeId) {
+            if (_cache[nodeId]) return _cache[nodeId];
+            var obj = Object.create(EP);
+            obj.__nid = nodeId;
+            obj.__props = {}; // per-element property store (dirty value/checked/selected)
+            // Set constructor so React's inputValueTracking can find
+            // the native value descriptor via node.constructor.prototype
+            var tag = __n_getTagName(nodeId);
+            var ctor = _ctorMap[tag];
+            if (ctor) obj.constructor = ctor;
+            _cache[nodeId] = obj;
+            return obj;
+        }
+        globalThis.__braille_get_element_wrapper = __w;
+
+        // Collect all dirty property values from cached wrappers.
+        // Returns a JSON string: [[nodeId, value], ...]
+        globalThis.__braille_collect_dirty_values = function() {
+            var result = [];
+            for (var nid in _cache) {
+                var el = _cache[nid];
+                if (el.__props && el.__props._value !== undefined) {
+                    result.push([parseInt(nid), String(el.__props._value)]);
+                }
+            }
+            return JSON.stringify(result);
+        };
+
+        // Event dispatch with capture + bubble phases
+        function __dispatch(nodeId, event) {
+            // Build path: target -> parent -> ... -> root
+            var path = [];
+            var cur = nodeId;
+            while (cur >= 0) {
+                path.push(cur);
+                cur = __n_getParent(cur);
+            }
+
+            event.target = __w(nodeId);
+            event.eventPhase = 0;
+
+            // Build composedPath: wrapped elements + document + window
+            var composedPath = [];
+            for (var pi = 0; pi < path.length; pi++) composedPath.push(__w(path[pi]));
+            composedPath.push(document);
+            composedPath.push(window);
+            event._path = composedPath;
+
+            // Helper to fire a list of callbacks
+            function fireCbs(cbs, thisObj) {
+                if (!cbs || !cbs.length) return;
+                var snapshot = cbs.slice();
+                for (var j = 0; j < snapshot.length; j++) {
+                    snapshot[j].call(thisObj, event);
+                    if (event._stopImmediate) return;
+                }
+            }
+
+            // === CAPTURE PHASE (root → target) ===
+            // Window capture
+            event.eventPhase = 1;
+            event.currentTarget = window;
+            fireCbs(_winCapture[event.type], window);
+            if (event._stopImmediate || event._stopPropagation) return;
+
+            // Document capture
+            event.currentTarget = document;
+            fireCbs(_docCapture[event.type], document);
+            if (event._stopImmediate || event._stopPropagation) return;
+
+            // DOM elements capture: from root down to (but not including) target
+            for (var i = path.length - 1; i > 0; i--) {
+                var nid = path[i];
+                event.currentTarget = __w(nid);
+                fireCbs(_captureKeys[nid + ':' + event.type], event.currentTarget);
+                if (event._stopImmediate || event._stopPropagation) return;
+            }
+
+            // === AT-TARGET PHASE ===
+            event.eventPhase = 2;
+            var targetNid = path[0];
+            var targetEl = __w(targetNid);
+            event.currentTarget = targetEl;
+
+            // Inline event handler (e.g. onclick="...")
+            var attrHandler = __n_getAttribute(targetNid, 'on' + event.type);
+            if (attrHandler) {
+                (new Function('event', attrHandler)).call(targetEl, event);
+                if (event._stopImmediate) return;
+            }
+
+            // Fire both capture and bubble listeners at target (per spec)
+            fireCbs(_captureKeys[targetNid + ':' + event.type], targetEl);
+            if (event._stopImmediate) return;
+            fireCbs(_bubbleKeys[targetNid + ':' + event.type], targetEl);
+            if (event._stopImmediate) return;
+
+            if (!event.bubbles) return;
+
+            // === BUBBLE PHASE (target+1 → root → document → window) ===
+            event.eventPhase = 3;
+            for (var i = 1; i < path.length; i++) {
+                if (event._stopPropagation) break;
+                var nid = path[i];
+                event.currentTarget = __w(nid);
+                fireCbs(_bubbleKeys[nid + ':' + event.type], event.currentTarget);
+                if (event._stopImmediate) return;
+            }
+
+            // Document bubble
+            if (!event._stopPropagation) {
+                event.currentTarget = document;
+                fireCbs(doc.__listeners[event.type], document);
+                if (event._stopImmediate) return;
+            }
+
+            // Window bubble
+            if (!event._stopPropagation) {
+                event.currentTarget = window;
+                fireCbs(_winListeners[event.type], window);
+            }
+        }
+
+        // __braille_click(nodeId) — called from Rust
+        globalThis.__braille_click = function(nodeId) {
+            var el = __w(nodeId);
+            el.click();
+        };
+
+        // Fire load event on <link> elements (CSS, prefetch, etc.)
+        // We don't actually load CSS, but frameworks need the onload to resolve promises.
+        globalThis.__braille_maybe_load_link = function(node) {
+            if (!node || node.tagName !== 'LINK') return;
+            var rel = node.rel || node.getAttribute('rel') || '';
+            if (rel === 'stylesheet' || rel === 'prefetch' || rel === 'preload') {
+                setTimeout(function() {
+                    if (typeof node.onload === 'function') {
+                        node.onload({type: 'load', target: node});
+                    }
+                    node.dispatchEvent(new Event('load'));
+                }, 0);
+            }
+        };
+
+        // Dynamic script loading: fetch and eval <script src="..."> on insertion
+        globalThis.__braille_script_log = [];
+        globalThis.__braille_maybe_load_script = function(node) {
+            if (!node || node.tagName !== 'SCRIPT') return;
+            var src = node.getAttribute('src');
+            if (!src) return;
+            var shortSrc = src.substring(src.lastIndexOf('/') + 1).substring(0, 40);
+            __braille_script_log.push('FETCH: ' + shortSrc);
+            fetch(src).then(function(resp) {
+                __braille_script_log.push('RESP: ' + shortSrc + ' ok=' + resp.ok + ' status=' + resp.status);
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                return resp.text();
+            }).then(function(code) {
+                __braille_script_log.push('EVAL: ' + shortSrc + ' len=' + code.length);
+                document.currentScript = node;
+                (0, eval)(code);
+                document.currentScript = null;
+                __braille_script_log.push('OK: ' + shortSrc);
+                if (typeof node.onload === 'function') {
+                    node.onload({type: 'load', target: node});
+                }
+                node.dispatchEvent(new Event('load'));
+            }).catch(function(err) {
+                document.currentScript = null;
+                __braille_script_log.push('ERR: ' + shortSrc + ' -> ' + String(err).substring(0, 100));
+                if (typeof node.onerror === 'function') {
+                    node.onerror({type: 'error', target: node, message: String(err)});
+                }
+                node.dispatchEvent(new Event('error'));
+            });
+        };
+
+        // Element mutation methods that operate on the real DomTree
+        EP.appendChild = function(child) {
+            if (child && child.__nid !== undefined && this.__nid !== undefined) {
+                if (child.nodeType === 11) {
+                    var kids = __n_getAllChildIds(child.__nid);
+                    var added = [];
+                    for (var i = 0; i < kids.length; i++) {
+                        __n_appendChild(this.__nid, kids[i]);
+                        added.push(__w(kids[i]));
+                    }
+                    if (typeof __mo_notify === 'function' && added.length) __mo_notify('childList', this, {addedNodes: added});
+                } else {
+                    __n_appendChild(this.__nid, child.__nid);
+                    if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [child]});
+                }
+            }
+            __braille_maybe_load_script(child);
+            __braille_maybe_load_link(child);
+            return child;
+        };
+        EP.removeChild = function(child) {
+            if (child && child.__nid !== undefined && this.__nid !== undefined) {
+                __n_removeChild(this.__nid, child.__nid);
+                if (typeof __mo_notify === 'function') __mo_notify('childList', this, {removedNodes: [child]});
+            }
+            return child;
+        };
+        EP.insertBefore = function(newChild, refChild) {
+            if (newChild && newChild.__nid !== undefined && this.__nid !== undefined) {
+                var refId = (refChild && refChild.__nid !== undefined) ? refChild.__nid : -1;
+                if (newChild.nodeType === 11) {
+                    var kids = __n_getAllChildIds(newChild.__nid);
+                    var added = [];
+                    for (var i = 0; i < kids.length; i++) {
+                        __n_insertBefore(this.__nid, kids[i], refId);
+                        added.push(__w(kids[i]));
+                    }
+                    if (typeof __mo_notify === 'function' && added.length) __mo_notify('childList', this, {addedNodes: added});
+                } else {
+                    __n_insertBefore(this.__nid, newChild.__nid, refId);
+                    if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [newChild]});
+                }
+            }
+            __braille_maybe_load_script(newChild);
+            __braille_maybe_load_link(newChild);
+            return newChild;
+        };
+
+        // Fullscreen tracking
+        var __fullscreenElement = null;
+        EP.requestFullscreen = function() { __fullscreenElement = this; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
+
+        // Override document methods
+        var doc = globalThis.document;
+        doc.__listeners = {};
+        doc.getElementById = function(id) {
+            var nid = __n_getElementById(id);
+            return nid >= 0 ? __w(nid) : null;
+        };
+        doc.querySelector = function(sel) {
+            var nid = __n_querySelector(0, sel);
+            return nid >= 0 ? __w(nid) : null;
+        };
+        doc.querySelectorAll = function(sel) {
+            return __n_querySelectorAll(0, sel).map(__w);
+        };
+        doc.createElement = function(tag) {
+            var nid = __n_createElement(tag);
+            return __w(nid);
+        };
+        doc.createElementNS = function(ns, tag) {
+            var nid = __n_createElement(tag);
+            var el = __w(nid);
+            el.namespaceURI = ns;
+            return el;
+        };
+        doc.createTextNode = function(text) {
+            var nid = __n_createTextNode(text);
+            var node = __w(nid);
+            return node;
+        };
+        doc.createComment = function(text) { return { nodeType: 8, textContent: text }; };
+        doc.createDocumentFragment = function() {
+            var nid = __n_createDocFragment();
+            return __w(nid);
+        };
+        doc.getElementsByTagName = function(tag) {
+            return new Proxy([], {
+                get: function(t, p) {
+                    var live = doc.querySelectorAll(tag);
+                    if (p === 'length') return live.length;
+                    if (p === 'item') return function(i) { return live[i] || null; };
+                    if (p === 'namedItem') return function(name) {
+                        for (var i = 0; i < live.length; i++) {
+                            if (live[i].getAttribute('name') === name || live[i].getAttribute('id') === name) return live[i];
+                        }
+                        return null;
+                    };
+                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
+                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
+                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                    return live[p];
+                }
+            });
+        };
+        doc.getElementsByClassName = function(cls) {
+            return new Proxy([], {
+                get: function(t, p) {
+                    var live = doc.querySelectorAll('.' + cls);
+                    if (p === 'length') return live.length;
+                    if (p === 'item') return function(i) { return live[i] || null; };
+                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
+                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
+                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                    return live[p];
+                }
+            });
+        };
+        doc.addEventListener = function(type, cb, opts) {
+            if (typeof cb !== 'function') return;
+            var capture = !!(opts === true || (opts && opts.capture));
+            var once = !!(opts && typeof opts === 'object' && opts.once);
+            var store = capture ? _docCapture : doc.__listeners;
+            if (!store[type]) store[type] = [];
+            if (once) {
+                var wrapper = function(e) { cb.call(document, e); doc.removeEventListener(type, wrapper, capture); };
+                wrapper._origCb = cb;
+                store[type].push(wrapper);
+            } else {
+                store[type].push(cb);
+            }
+        };
+        doc.removeEventListener = function(type, cb, opts) {
+            var capture = !!(opts === true || (opts && opts.capture));
+            var store = capture ? _docCapture : doc.__listeners;
+            if (store[type]) store[type] = store[type].filter(function(f){return f!==cb && f._origCb!==cb;});
+        };
+
+        doc.createComment = function(text) {
+            var nid = __n_createComment(text || '');
+            return __w(nid);
+        };
+
+        function BrailleRange() {
+            this.startContainer = null; this.startOffset = 0;
+            this.endContainer = null; this.endOffset = 0;
+            this.collapsed = true; this.commonAncestorContainer = null;
+        }
+        BrailleRange.START_TO_START = 0; BrailleRange.START_TO_END = 1;
+        BrailleRange.END_TO_END = 2; BrailleRange.END_TO_START = 3;
+        BrailleRange.prototype.setStart = function(node, offset) { this.startContainer = node; this.startOffset = offset; this._update(); };
+        BrailleRange.prototype.setEnd = function(node, offset) { this.endContainer = node; this.endOffset = offset; this._update(); };
+        BrailleRange.prototype.setStartBefore = function(node) { this.startContainer = node.parentNode; this.startOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) : 0; this._update(); };
+        BrailleRange.prototype.setStartAfter = function(node) { this.startContainer = node.parentNode; this.startOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1 : 0; this._update(); };
+        BrailleRange.prototype.setEndBefore = function(node) { this.endContainer = node.parentNode; this.endOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) : 0; this._update(); };
+        BrailleRange.prototype.setEndAfter = function(node) { this.endContainer = node.parentNode; this.endOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1 : 0; this._update(); };
+        BrailleRange.prototype.selectNode = function(node) { this.setStartBefore(node); this.setEndAfter(node); };
+        BrailleRange.prototype.selectNodeContents = function(node) { this.startContainer = node; this.startOffset = 0; this.endContainer = node; this.endOffset = node.childNodes ? node.childNodes.length : 0; this._update(); };
+        BrailleRange.prototype.collapse = function(toStart) { if (toStart || toStart === undefined) { this.endContainer = this.startContainer; this.endOffset = this.startOffset; } else { this.startContainer = this.endContainer; this.startOffset = this.endOffset; } this.collapsed = true; };
+        BrailleRange.prototype.cloneRange = function() { var r = new BrailleRange(); r.startContainer = this.startContainer; r.startOffset = this.startOffset; r.endContainer = this.endContainer; r.endOffset = this.endOffset; r._update(); return r; };
+        BrailleRange.prototype.detach = function() {};
+        BrailleRange.prototype.getBoundingClientRect = function() {
+            var el = this.startContainer;
+            if (el && el.nodeType === 3) el = el.parentNode;
+            return el && el.getBoundingClientRect ? el.getBoundingClientRect() : {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
+        };
+        BrailleRange.prototype.getClientRects = function() { return [this.getBoundingClientRect()]; };
+        BrailleRange.prototype.toString = function() {
+            if (this.startContainer && this.endContainer && this.startContainer === this.endContainer && this.startContainer.nodeType === 3) {
+                return (this.startContainer.textContent || '').substring(this.startOffset, this.endOffset);
+            }
+            return this.startContainer ? (this.startContainer.textContent || '') : '';
+        };
+        BrailleRange.prototype.createContextualFragment = function(html) {
+            var temp = document.createElement('div');
+            __n_setInnerHTML(temp.__nid, html);
+            var frag = document.createDocumentFragment();
+            while (temp.firstChild) frag.appendChild(temp.firstChild);
+            return frag;
+        };
+        BrailleRange.prototype._update = function() {
+            this.collapsed = (this.startContainer === this.endContainer && this.startOffset === this.endOffset);
+            // Walk ancestors of startContainer and endContainer to find common ancestor
+            if (this.startContainer && this.endContainer) {
+                var ancestors = [];
+                var cur = this.startContainer;
+                while (cur) { ancestors.push(cur); cur = cur.parentNode; }
+                cur = this.endContainer;
+                while (cur) { if (ancestors.indexOf(cur) >= 0) { this.commonAncestorContainer = cur; return; } cur = cur.parentNode; }
+            }
+            this.commonAncestorContainer = null;
+        };
+        globalThis.Range = BrailleRange;
+        doc.createRange = function() { return new BrailleRange(); };
+
+        // window.addEventListener / removeEventListener
+        window.addEventListener = function(type, cb, opts) {
+            if (typeof cb !== 'function') return;
+            var capture = !!(opts === true || (opts && opts.capture));
+            var once = !!(opts && typeof opts === 'object' && opts.once);
+            var store = capture ? _winCapture : _winListeners;
+            if (!store[type]) store[type] = [];
+            if (once) {
+                var wrapper = function(e) { cb.call(window, e); window.removeEventListener(type, wrapper, capture); };
+                wrapper._origCb = cb;
+                store[type].push(wrapper);
+            } else {
+                store[type].push(cb);
+            }
+        };
+        window.removeEventListener = function(type, cb, opts) {
+            var capture = !!(opts === true || (opts && opts.capture));
+            var store = capture ? _winCapture : _winListeners;
+            if (store[type]) {
+                store[type] = store[type].filter(function(f){return f!==cb && f._origCb!==cb;});
+            }
+        };
+
+        doc.dispatchEvent = function(event) {
+            event.target = document;
+            event.currentTarget = document;
+            var cbs = doc.__listeners[event.type];
+            if (cbs) {
+                var snapshot = cbs.slice();
+                for (var i = 0; i < snapshot.length; i++) snapshot[i].call(document, event);
+            }
+            return !event.defaultPrevented;
+        };
+        doc.createEvent = function(type) { return new Event(type); };
+        doc.createTreeWalker = function(root, whatToShow, filter) {
+            // Minimal TreeWalker: pre-order traversal of element nodes
+            var current = root;
+            return {
+                currentNode: root,
+                nextNode: function() {
+                    // depth-first walk
+                    if (current.firstChild) { current = current.firstChild; this.currentNode = current; return current; }
+                    while (current) {
+                        if (current.nextSibling) { current = current.nextSibling; this.currentNode = current; return current; }
+                        current = current.parentNode;
+                        if (current === root) { current = null; this.currentNode = null; return null; }
+                    }
+                    return null;
+                },
+                previousNode: function() { return null; },
+                firstChild: function() { var c = current.firstChild; if (c) { current = c; this.currentNode = c; } return c; },
+                lastChild: function() { var c = current.lastChild; if (c) { current = c; this.currentNode = c; } return c; },
+                nextSibling: function() { var s = current.nextSibling; if (s) { current = s; this.currentNode = s; } return s; },
+                previousSibling: function() { var s = current.previousSibling; if (s) { current = s; this.currentNode = s; } return s; },
+                parentNode: function() { var p = current.parentNode; if (p && p !== root) { current = p; this.currentNode = p; return p; } return null; },
+            };
+        };
+        doc.createNodeIterator = function(root) { return doc.createTreeWalker(root); };
+        doc.importNode = function(node, deep) {
+            if (!node) return node;
+            if (node.__nid !== undefined) return node.cloneNode(!!deep);
+            return node;
+        };
+        doc.adoptNode = function(node) { return node; };
+        doc.exitFullscreen = function() { __fullscreenElement = null; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
+        doc.getAnimations = function() { return []; };
+
+        window.dispatchEvent = function(event) {
+            event.target = window;
+            event.currentTarget = window;
+            var cbs = _winListeners[event.type];
+            if (cbs) {
+                var snapshot = cbs.slice();
+                for (var i = 0; i < snapshot.length; i++) snapshot[i].call(window, event);
+            }
+            return !event.defaultPrevented;
+        };
+
+        // Track focused element for document.activeElement
+        var __focusedElement = null;
+        EP.focus = function() { __focusedElement = this; };
+        EP.blur = function() { if (__focusedElement === this) __focusedElement = null; };
+
+        // document.cookie implementation (JS-side cookie jar)
+        var _cookieJar = {};
+        Object.defineProperties(doc, {
+            body: { get: function() { return doc.querySelector('body'); }, configurable: true },
+            head: { get: function() { return doc.querySelector('head'); }, configurable: true },
+            documentElement: { get: function() { return doc.querySelector('html'); }, configurable: true },
+            activeElement: { get: function() { return __focusedElement || doc.querySelector('body'); }, configurable: true },
+            cookie: {
+                get: function() {
+                    var now = Date.now();
+                    var parts = [];
+                    for (var name in _cookieJar) {
+                        var c = _cookieJar[name];
+                        if (c.expires && c.expires <= now) { delete _cookieJar[name]; continue; }
+                        parts.push(name + '=' + c.value);
+                    }
+                    return parts.join('; ');
+                },
+                set: function(s) {
+                    if (typeof s !== 'string') return;
+                    var parts = s.split(';');
+                    var nv = parts[0].trim().split('=');
+                    if (nv.length < 2) return;
+                    var name = nv[0].trim();
+                    var value = nv.slice(1).join('=').trim();
+                    var expires = null;
+                    for (var i = 1; i < parts.length; i++) {
+                        var p = parts[i].trim().toLowerCase();
+                        if (p.indexOf('expires=') === 0) {
+                            expires = Date.parse(parts[i].trim().substring(8));
+                        } else if (p.indexOf('max-age=') === 0) {
+                            var sec = parseInt(parts[i].trim().substring(8));
+                            if (!isNaN(sec)) expires = Date.now() + sec * 1000;
+                        }
+                    }
+                    if (expires !== null && expires < Date.now()) {
+                        delete _cookieJar[name];
+                    } else {
+                        _cookieJar[name] = { value: value, expires: expires };
+                    }
+                },
+                configurable: true
+            },
+            title: {
+                get: function() {
+                    var t = doc.querySelector('title');
+                    return t ? t.textContent : '';
+                },
+                set: function(v) {
+                    var t = doc.querySelector('title');
+                    if (t) t.textContent = String(v);
+                },
+                configurable: true
+            },
+            currentScript: { value: null, writable: true, configurable: true },
+            doctype: {
+                get: function() {
+                    var json = __n_getDoctypeInfo();
+                    if (!json) return null;
+                    var info = JSON.parse(json);
+                    return { name: info.name, publicId: info.publicId, systemId: info.systemId, nodeType: 10, nodeName: info.name };
+                },
+                configurable: true
+            },
+            domain: {
+                get: function() { return doc.__domain || location.hostname; },
+                set: function(v) {
+                    var cur = location.hostname;
+                    if (cur === v || cur.endsWith('.' + v)) doc.__domain = v;
+                },
+                configurable: true
+            },
+            fullscreenElement: { get: function() { return __fullscreenElement; }, configurable: true },
+            fullscreenEnabled: { value: true, configurable: true },
+            referrer: { value: '', writable: true, configurable: true },
+            characterSet: { value: 'UTF-8', configurable: true },
+            contentType: { value: 'text/html', configurable: true },
+            hidden: { value: false, configurable: true },
+            visibilityState: { value: 'visible', configurable: true },
+            forms: { get: function() {
+                return new Proxy([], {
+                    get: function(t, p) {
+                        var live = doc.querySelectorAll('form');
+                        if (p === 'length') return live.length;
+                        if (p === 'item') return function(i) { return live[i] || null; };
+                        if (p === 'namedItem') return function(name) {
+                            for (var i = 0; i < live.length; i++) {
+                                if (live[i].getAttribute('name') === name || live[i].getAttribute('id') === name) return live[i];
+                            }
+                            return null;
+                        };
+                        if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
+                        if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
+                        if (typeof p === 'string') {
+                            for (var i = 0; i < live.length; i++) {
+                                if (live[i].getAttribute('id') === p || live[i].getAttribute('name') === p) return live[i];
+                            }
+                        }
+                        if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                        return live[p];
+                    }
+                });
+            }, configurable: true },
+            implementation: { value: {
+                createHTMLDocument: function(title) {
+                    var div = document.createElement('div');
+                    return {
+                        documentElement: div, body: div, head: null,
+                        title: title || '', readyState: 'complete',
+                        querySelector: function(sel) { return div.querySelector(sel); },
+                        querySelectorAll: function(sel) { return div.querySelectorAll(sel); },
+                        getElementById: function(id) { return div.querySelector('#' + id) || null; },
+                        getElementsByTagName: function(tag) { return div.getElementsByTagName(tag); },
+                        getElementsByClassName: function(cls) { return div.getElementsByClassName(cls); },
+                        createElement: function(tag) { return document.createElement(tag); },
+                        createTextNode: function(text) { return document.createTextNode(text); },
+                        createDocumentFragment: function() { return document.createDocumentFragment(); },
+                    };
+                },
+                hasFeature: function() { return true; },
+            }, configurable: true },
+        });
+        // Node constructor with constants (used by React, etc.)
+        var Node = function Node() {};
+        Node.prototype = EP;
+        Node.ELEMENT_NODE = 1;
+        Node.ATTRIBUTE_NODE = 2;
+        Node.TEXT_NODE = 3;
+        Node.CDATA_SECTION_NODE = 4;
+        Node.PROCESSING_INSTRUCTION_NODE = 7;
+        Node.COMMENT_NODE = 8;
+        Node.DOCUMENT_NODE = 9;
+        Node.DOCUMENT_TYPE_NODE = 10;
+        Node.DOCUMENT_FRAGMENT_NODE = 11;
+        Node.DOCUMENT_POSITION_DISCONNECTED = 1;
+        Node.DOCUMENT_POSITION_PRECEDING = 2;
+        Node.DOCUMENT_POSITION_FOLLOWING = 4;
+        Node.DOCUMENT_POSITION_CONTAINS = 8;
+        Node.DOCUMENT_POSITION_CONTAINED_BY = 16;
+        Node.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32;
+        globalThis.Node = Node;
+    "#
+}
