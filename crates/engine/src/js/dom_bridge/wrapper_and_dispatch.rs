@@ -288,6 +288,62 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         var __fullscreenElement = null;
         EP.requestFullscreen = function() { __fullscreenElement = this; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
 
+        // Helper: create a standalone document-like wrapper around a root element.
+        // Used by createHTMLDocument() and document.cloneNode().
+        function __makeDocumentLike(rootEl) {
+            var newDoc = {
+                nodeType: 9, nodeName: '#document', readyState: 'complete',
+                __listeners: {}, __captureListeners: {},
+                get documentElement() { return rootEl; },
+                get body() {
+                    var kids = rootEl.childNodes;
+                    for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'BODY') return kids[i];
+                    return null;
+                },
+                get head() {
+                    var kids = rootEl.childNodes;
+                    for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'HEAD') return kids[i];
+                    return null;
+                },
+                querySelector: function(sel) { return rootEl.querySelector(sel); },
+                querySelectorAll: function(sel) { return rootEl.querySelectorAll(sel); },
+                getElementById: function(id) { return rootEl.querySelector('#' + id) || null; },
+                getElementsByTagName: function(tag) { return rootEl.querySelectorAll(tag); },
+                getElementsByClassName: function(cls) { return rootEl.querySelectorAll('.' + cls); },
+                createElement: function(tag) { return document.createElement(tag); },
+                createTextNode: function(text) { return document.createTextNode(text); },
+                createDocumentFragment: function() { return document.createDocumentFragment(); },
+                createEvent: function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; },
+                appendChild: function(child) { return rootEl.appendChild(child); },
+                addEventListener: function(type, cb, opts) {
+                    if (typeof cb !== 'function') return;
+                    var capture = !!(opts === true || (opts && opts.capture));
+                    var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
+                    if (!store[type]) store[type] = [];
+                    store[type].push(cb);
+                },
+                removeEventListener: function(type, cb, opts) {
+                    var capture = !!(opts === true || (opts && opts.capture));
+                    var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
+                    if (store[type]) store[type] = store[type].filter(function(f){return f!==cb;});
+                },
+                dispatchEvent: function(event) {
+                    event._dispatching = true;
+                    event.target = newDoc;
+                    event.currentTarget = newDoc;
+                    var cbs = newDoc.__listeners[event.type];
+                    if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(newDoc, event); }
+                    event._dispatching = false;
+                    event._stopPropagation = false;
+                    event._stopImmediate = false;
+                    event.currentTarget = null;
+                    event.eventPhase = 0;
+                    return !event.defaultPrevented;
+                },
+            };
+            return newDoc;
+        }
+
         // Override document methods
         var doc = globalThis.document;
         doc.__listeners = {};
@@ -472,7 +528,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             event.eventPhase = 0;
             return !event.defaultPrevented;
         };
-        doc.createEvent = function(type) { return new Event(type); };
+        doc.createEvent = function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; };
         doc.createTreeWalker = function(root, whatToShow, filter) {
             // Minimal TreeWalker: pre-order traversal of element nodes
             var current = root;

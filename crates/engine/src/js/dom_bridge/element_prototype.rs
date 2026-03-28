@@ -266,7 +266,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
         EP.append = function() {
             for (var i = 0; i < arguments.length; i++) {
                 var arg = arguments[i];
-                if (typeof arg === 'string') arg = document.createTextNode(arg);
+                if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
                 this.appendChild(arg);
             }
         };
@@ -274,7 +274,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             var first = this.firstChild;
             for (var i = 0; i < arguments.length; i++) {
                 var arg = arguments[i];
-                if (typeof arg === 'string') arg = document.createTextNode(arg);
+                if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
                 if (first) this.insertBefore(arg, first);
                 else this.appendChild(arg);
             }
@@ -283,7 +283,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             while (this.firstChild) this.removeChild(this.firstChild);
             for (var i = 0; i < arguments.length; i++) {
                 var arg = arguments[i];
-                if (typeof arg === 'string') arg = document.createTextNode(arg);
+                if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
                 this.appendChild(arg);
             }
         };
@@ -856,6 +856,17 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     }
                     s += '>' + (this.innerHTML || '') + '</' + tag + '>';
                     return s;
+                },
+                set: function(v) {
+                    var parent = this.parentNode;
+                    if (!parent) return;
+                    var temp = document.createElement('div');
+                    temp.innerHTML = String(v);
+                    var frag = document.createDocumentFragment();
+                    while (temp.firstChild) {
+                        frag.appendChild(temp.firstChild);
+                    }
+                    parent.replaceChild(frag, this);
                 },
                 configurable: true
             },
