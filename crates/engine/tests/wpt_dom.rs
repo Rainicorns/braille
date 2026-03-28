@@ -396,6 +396,10 @@ fn expected_failures(rel_path: &str) -> usize {
         ("historical.html", 5),
         // 1 failure: "Real clicks on disabled elements" needs test_driver browser automation
         ("Event-dispatch-on-disabled-elements", 1),
+        // 1 failure: "In new Document()" — Document constructor returns plain JS object,
+        // native functions fail when cloning elements into standalone document context
+        ("Event-dispatch-bubbles-true", 1),
+        ("Event-dispatch-bubbles-false", 1),
         // 6 failures: inline style toggle, setAttribute first-match, prefix preservation,
         // non-HTML uppercase, own-property-names enumeration
         ("/attributes.html", 6),
