@@ -124,6 +124,47 @@ fn walk_compact(
                             continue;
                         }
 
+                        // List items: bullet prefix
+                        if tag == "li" {
+                            if !output.is_empty() && !output.ends_with('\n') {
+                                output.push('\n');
+                            }
+                            let parent_tag = node.parent.and_then(|pid| {
+                                if let NodeData::Element { tag_name, .. } =
+                                    &tree.get_node(pid).data
+                                {
+                                    Some(tag_name.to_ascii_lowercase())
+                                } else {
+                                    None
+                                }
+                            });
+                            if parent_tag.as_deref() == Some("ol") {
+                                let parent_id = node.parent.unwrap();
+                                let parent_node = tree.get_node(parent_id);
+                                let li_index = parent_node
+                                    .children
+                                    .iter()
+                                    .filter(|&&cid| {
+                                        matches!(
+                                            &tree.get_node(cid).data,
+                                            NodeData::Element { tag_name, .. }
+                                                if tag_name.eq_ignore_ascii_case("li")
+                                        )
+                                    })
+                                    .position(|&cid| cid == node_id)
+                                    .unwrap_or(0);
+                                output.push_str(&format!("{}. ", li_index + 1));
+                            } else {
+                                output.push_str("- ");
+                            }
+                            stack.push(Work::CloseBlock);
+                            let children: Vec<NodeId> = node.children.clone();
+                            for child_id in children.into_iter().rev() {
+                                stack.push(Work::Open(child_id));
+                            }
+                            continue;
+                        }
+
                         // Block elements: newline before, push close marker
                         if is_block {
                             if !output.is_empty() && !output.ends_with('\n') {
