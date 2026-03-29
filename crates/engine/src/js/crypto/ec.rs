@@ -147,6 +147,57 @@ pub fn register(ctx: &Ctx<'_>) {
     )
     .unwrap();
 
+    // Ed448 key generation: returns [pub_bytes(57), priv_bytes(57)]
+    g.set(
+        "__braille_crypto_ed448_generate",
+        Function::new(ctx.clone(), || -> Vec<Vec<u8>> {
+            use ed448_goldilocks::elliptic_curve::Generate;
+            let signing_key = ed448_goldilocks::SigningKey::generate();
+            let verifying_key = signing_key.verifying_key();
+            vec![
+                verifying_key.to_bytes().to_vec(),
+                signing_key.to_bytes().to_vec(),
+            ]
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Ed448 sign: (priv_bytes, data) -> signature(114)
+    g.set(
+        "__braille_crypto_ed448_sign",
+        Function::new(
+            ctx.clone(),
+            |priv_bytes: Vec<u8>, data: Vec<u8>| -> Vec<u8> {
+                let signing_key = ed448_goldilocks::SigningKey::try_from(priv_bytes.as_slice())
+                    .expect("invalid Ed448 signing key");
+                let sig = signing_key.sign_raw(&data);
+                sig.to_bytes().to_vec()
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Ed448 verify: (pub_bytes, signature, data) -> bool
+    g.set(
+        "__braille_crypto_ed448_verify",
+        Function::new(
+            ctx.clone(),
+            |pub_bytes: Vec<u8>, signature: Vec<u8>, data: Vec<u8>| -> bool {
+                let mut pub_arr = [0u8; 57];
+                pub_arr.copy_from_slice(&pub_bytes);
+                let verifying_key = ed448_goldilocks::VerifyingKey::from_bytes(&pub_arr)
+                    .expect("invalid Ed448 verifying key");
+                let sig = ed448_goldilocks::Signature::try_from(signature.as_slice())
+                    .expect("invalid Ed448 signature");
+                verifying_key.verify_raw(&sig, &data).is_ok()
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
     // ECDH P-256/P-384/P-521 key generation: (curve) -> [pub_uncompressed, priv_bytes]
     g.set(
         "__braille_crypto_ecdh_generate",
@@ -396,6 +447,139 @@ pub fn register(ctx: &Ctx<'_>) {
                         vk.verify(&data, &sig).is_ok()
                     }
                     other => panic!("NotSupportedError: ECDSA curve '{other}' not supported"),
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // EC SPKI export: (curve, pub_uncompressed) -> spki_der
+    g.set(
+        "__braille_crypto_ec_spki_export",
+        Function::new(
+            ctx.clone(),
+            |curve: String, pub_bytes: Vec<u8>| -> Vec<u8> {
+                use p256::pkcs8::EncodePublicKey;
+                match curve.as_str() {
+                    "P-256" => {
+                        use p256::elliptic_curve::sec1::FromEncodedPoint;
+                        let ep = p256::EncodedPoint::from_bytes(&pub_bytes)
+                            .expect("invalid P-256 public key");
+                        let pk = p256::PublicKey::from_encoded_point(&ep)
+                            .expect("invalid P-256 point");
+                        pk.to_public_key_der().expect("encode failed").into_vec()
+                    }
+                    "P-384" => {
+                        use p384::elliptic_curve::sec1::FromEncodedPoint;
+                        let ep = p384::EncodedPoint::from_bytes(&pub_bytes)
+                            .expect("invalid P-384 public key");
+                        let pk = p384::PublicKey::from_encoded_point(&ep)
+                            .expect("invalid P-384 point");
+                        pk.to_public_key_der().expect("encode failed").into_vec()
+                    }
+                    "P-521" => {
+                        use p521::elliptic_curve::sec1::FromEncodedPoint;
+                        let ep = p521::EncodedPoint::from_bytes(&pub_bytes)
+                            .expect("invalid P-521 public key");
+                        let pk = p521::PublicKey::from_encoded_point(&ep)
+                            .expect("invalid P-521 point");
+                        pk.to_public_key_der().expect("encode failed").into_vec()
+                    }
+                    other => panic!("NotSupportedError: SPKI export for curve '{other}' not supported"),
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // EC PKCS8 export: (curve, priv_scalar, pub_uncompressed) -> pkcs8_der
+    g.set(
+        "__braille_crypto_ec_pkcs8_export",
+        Function::new(
+            ctx.clone(),
+            |curve: String, priv_bytes: Vec<u8>, _pub_bytes: Vec<u8>| -> Vec<u8> {
+                use p256::pkcs8::EncodePrivateKey;
+                match curve.as_str() {
+                    "P-256" => {
+                        let sk = p256::SecretKey::from_bytes(
+                            p256::FieldBytes::from_slice(&priv_bytes),
+                        )
+                        .expect("invalid P-256 private key");
+                        sk.to_pkcs8_der().expect("encode failed").to_bytes().to_vec()
+                    }
+                    "P-384" => {
+                        let sk = p384::SecretKey::from_bytes(
+                            p384::FieldBytes::from_slice(&priv_bytes),
+                        )
+                        .expect("invalid P-384 private key");
+                        sk.to_pkcs8_der().expect("encode failed").to_bytes().to_vec()
+                    }
+                    "P-521" => {
+                        let sk = p521::SecretKey::from_bytes(
+                            p521::FieldBytes::from_slice(&priv_bytes),
+                        )
+                        .expect("invalid P-521 private key");
+                        sk.to_pkcs8_der().expect("encode failed").to_bytes().to_vec()
+                    }
+                    other => panic!("NotSupportedError: PKCS8 export for curve '{other}' not supported"),
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // EC JWK export: (curve, pub_uncompressed, priv_scalar_or_empty) -> json_string
+    g.set(
+        "__braille_crypto_ec_jwk_export",
+        Function::new(
+            ctx.clone(),
+            |curve: String, pub_bytes: Vec<u8>, priv_bytes: Vec<u8>| -> String {
+                // pub_bytes is uncompressed SEC1: 04 || x || y
+                let coord_len = match curve.as_str() {
+                    "P-256" => 32,
+                    "P-384" => 48,
+                    "P-521" => 66,
+                    other => panic!("NotSupportedError: JWK export for curve '{other}' not supported"),
+                };
+                let crv = curve.as_str();
+                // Skip the 04 prefix
+                let x = &pub_bytes[1..1 + coord_len];
+                let y = &pub_bytes[1 + coord_len..1 + 2 * coord_len];
+
+                fn b64url(data: &[u8]) -> String {
+                    use std::fmt::Write;
+                    // Manual base64url encoding
+                    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+                    let mut out = String::new();
+                    let mut i = 0;
+                    while i < data.len() {
+                        let b0 = data[i] as u32;
+                        let b1 = if i + 1 < data.len() { data[i + 1] as u32 } else { 0 };
+                        let b2 = if i + 2 < data.len() { data[i + 2] as u32 } else { 0 };
+                        let triple = (b0 << 16) | (b1 << 8) | b2;
+                        let _ = write!(out, "{}", TABLE[(triple >> 18 & 0x3F) as usize] as char);
+                        let _ = write!(out, "{}", TABLE[(triple >> 12 & 0x3F) as usize] as char);
+                        if i + 1 < data.len() {
+                            let _ = write!(out, "{}", TABLE[(triple >> 6 & 0x3F) as usize] as char);
+                        }
+                        if i + 2 < data.len() {
+                            let _ = write!(out, "{}", TABLE[(triple & 0x3F) as usize] as char);
+                        }
+                        i += 3;
+                    }
+                    out
+                }
+
+                let x_b64 = b64url(x);
+                let y_b64 = b64url(y);
+                if priv_bytes.is_empty() {
+                    format!(r#"{{"kty":"EC","crv":"{}","x":"{}","y":"{}"}}"#, crv, x_b64, y_b64)
+                } else {
+                    let d_b64 = b64url(&priv_bytes);
+                    format!(r#"{{"kty":"EC","crv":"{}","x":"{}","y":"{}","d":"{}"}}"#, crv, x_b64, y_b64, d_b64)
                 }
             },
         )

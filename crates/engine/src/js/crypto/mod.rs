@@ -7,6 +7,7 @@ mod kdf;
 mod mlkem;
 mod ocb3;
 mod random;
+mod rsa;
 
 use rquickjs::Ctx;
 
@@ -19,4 +20,5 @@ pub fn register(ctx: &Ctx<'_>) {
     ec::register(ctx);
     mlkem::register(ctx);
     chacha::register(ctx);
+    rsa::register(ctx);
 }

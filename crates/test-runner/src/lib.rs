@@ -280,6 +280,21 @@ pub fn testharness_preamble() -> String {
         }
         if (!threw) throw new AssertionError(msg || "assert_throws_dom(" + name + "): no error thrown");
     };
+    self.assert_throws_quotaexceedederror = function(fnOrCtor, reqOrFn, quotaOrReq, descOrQuota, maybeDesc) {
+        // Simplified: just check that fn throws a DOMException with name QuotaExceededError
+        var fn2, desc;
+        if (typeof fnOrCtor === 'function' && fnOrCtor.name !== 'QuotaExceededError') {
+            fn2 = fnOrCtor; desc = descOrQuota || quotaOrReq || '';
+        } else {
+            fn2 = reqOrFn; desc = maybeDesc || descOrQuota || '';
+        }
+        var threw = false;
+        try { fn2(); } catch(e) {
+            threw = true;
+            if (!e || e.name !== 'QuotaExceededError') throw new AssertionError(desc || "assert_throws_quotaexceedederror: wrong error: " + (e && e.name));
+        }
+        if (!threw) throw new AssertionError(desc || "assert_throws_quotaexceedederror: no error thrown");
+    };
     self.assert_throws_exactly = function(expected, fn, msg) {
         var threw = false;
         try { fn(); } catch(e) {
