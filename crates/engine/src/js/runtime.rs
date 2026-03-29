@@ -408,54 +408,73 @@ impl JsRuntime {
                     var el = __braille_get_element_wrapper({nid});
                     if (!el) return;
 
-                    // React's inputValueTracking compares the tracker's last-known
-                    // value against the native getter.  We set the value via Rust
-                    // (setAttribute), bypassing React's tracked setter.  Reset the
-                    // tracker to a sentinel so React detects a change.
                     if (el._valueTracker) {{
                         el._valueTracker.setValue('');
                     }}
 
-                    // Remember the element's id so we can re-find it after re-renders.
-                    // React/framework onChange handlers may re-render the DOM, creating
-                    // new elements and detaching the old ones. Blur events need to fire
-                    // on the new (attached) element, not the detached original.
                     var elId = el.getAttribute('id');
 
-                    // Focus the element and dispatch focusin so React tracks it
-                    // as the active element for change detection.
-                    el.focus();
-                    var focusEvt = new FocusEvent('focusin', {{bubbles: true}});
-                    focusEvt.target = el;
-                    el.dispatchEvent(focusEvt);
-                    var focusEvt2 = new FocusEvent('focus', {{bubbles: false}});
-                    focusEvt2.target = el;
-                    el.dispatchEvent(focusEvt2);
+                    // Each event dispatch is isolated: errors in framework handlers
+                    // must not prevent subsequent events from firing.
+                    function safeDispatch(target, event) {{
+                        try {{ target.dispatchEvent(event); }} catch(e) {{
+                            if (!globalThis.__braille_dispatch_errors) globalThis.__braille_dispatch_errors = [];
+                            globalThis.__braille_dispatch_errors.push(event.type + ': ' + (e.message || e));
+                        }}
+                    }}
 
-                    var inputEvt = new Event('input', {{bubbles: true}});
-                    inputEvt.target = el;
-                    el.dispatchEvent(inputEvt);
-                    var changeEvt = new Event('change', {{bubbles: true}});
-                    changeEvt.target = el;
-                    el.dispatchEvent(changeEvt);
+                    // Focus lifecycle
+                    try {{ el.focus(); }} catch(e) {{}}
+                    safeDispatch(el, new FocusEvent('focusin', {{bubbles: true}}));
+                    safeDispatch(el, new FocusEvent('focus', {{bubbles: false}}));
 
-                    // Re-resolve element: event handlers above may have re-rendered
-                    // the DOM (e.g., React controlled inputs), replacing el with a
-                    // new node. We need to fire blur on the current (attached) element.
+                    // Input/change events (for non-React frameworks and generic listeners)
+                    safeDispatch(el, new Event('input', {{bubbles: true}}));
+                    safeDispatch(el, new Event('change', {{bubbles: true}}));
+
+                    // React 18 controlled input fallback: React's event delegation
+                    // may reject our dispatched events (e.g. getNearestMountedFiber
+                    // returns null, or containerInfo identity check fails). Directly
+                    // invoke the React onChange handler from __reactProps$ as a
+                    // fallback to ensure controlled input state updates.
+                    var reactPropsKey = null;
+                    var keys = Object.keys(el);
+                    for (var i = 0; i < keys.length; i++) {{
+                        if (keys[i].indexOf('__reactProps$') === 0) {{
+                            reactPropsKey = keys[i];
+                            break;
+                        }}
+                    }}
+                    if (reactPropsKey) {{
+                        var props = el[reactPropsKey];
+                        if (props && typeof props.onChange === 'function') {{
+                            try {{
+                                props.onChange({{
+                                    target: el,
+                                    currentTarget: el,
+                                    type: 'change',
+                                    bubbles: true,
+                                    preventDefault: function() {{}},
+                                    stopPropagation: function() {{}},
+                                    persist: function() {{}},
+                                    nativeEvent: new Event('change', {{bubbles: true}})
+                                }});
+                            }} catch(e) {{
+                                if (!globalThis.__braille_dispatch_errors) globalThis.__braille_dispatch_errors = [];
+                                globalThis.__braille_dispatch_errors.push('react_onChange: ' + (e.message || e));
+                            }}
+                        }}
+                    }}
+
+                    // Blur lifecycle — re-resolve element in case React re-rendered
                     var blurEl = el;
                     if (elId) {{
                         var fresh = document.getElementById(elId);
                         if (fresh) blurEl = fresh;
                     }}
-
-                    // Fire blur/focusout so framework validators (onBlur) trigger
-                    blurEl.blur();
-                    var blurEvt = new FocusEvent('focusout', {{bubbles: true}});
-                    blurEvt.target = blurEl;
-                    blurEl.dispatchEvent(blurEvt);
-                    var blurEvt2 = new FocusEvent('blur', {{bubbles: false}});
-                    blurEvt2.target = blurEl;
-                    blurEl.dispatchEvent(blurEvt2);
+                    try {{ blurEl.blur(); }} catch(e) {{}}
+                    safeDispatch(blurEl, new FocusEvent('focusout', {{bubbles: true}}));
+                    safeDispatch(blurEl, new FocusEvent('blur', {{bubbles: false}}));
                 }})()"#,
                 nid = node_id
             );

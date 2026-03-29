@@ -67,14 +67,10 @@ fn proton_signup_type_username() {
 
 /// Full daemon flow: navigate, click free plan with fetch resolution, then type.
 /// This reproduces the live daemon behavior where React re-renders between interactions
-/// due to API responses. Currently fails because our event dispatch doesn't bubble
-/// to React's root container, so React's onChange never fires and React overwrites
-/// our value with its stale internal state on re-render.
-///
-/// Known remaining issue: event delegation (React 18 listens on root container,
-/// our dispatchEvent bubbles through the DOM tree but React's listener doesn't fire).
+/// due to API responses. React 18's event delegation rejects our dispatched events
+/// (likely due to internal fiber mounting checks), so fire_input_events directly
+/// invokes the React onChange handler from __reactProps$ as a fallback.
 #[test]
-#[ignore] // TODO: fix event delegation so React's root listener catches our events
 fn proton_signup_type_with_full_fetch_resolution() {
     let mut fetcher = ReplayFetcher::load("tests/fixtures/proton_signup_full.json").unwrap();
     let mut engine = Engine::new();
