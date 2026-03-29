@@ -2,7 +2,9 @@ mod console;
 mod css;
 mod dom_stubs;
 mod fetch;
+mod iframe;
 mod intl_js;
+mod messaging;
 mod timers;
 mod worker;
 
@@ -25,6 +27,8 @@ pub fn register_all(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell
     super::crypto::register(ctx);
     super::dom_bridge::install(ctx, Rc::clone(&tree), Rc::clone(&state));
     css::register_css_object(ctx);
+    messaging::register_messaging(ctx);
+    iframe::register_iframe(ctx);
     super::intl::register_intl(ctx);
     intl_js::register_intl_js(ctx);
 }

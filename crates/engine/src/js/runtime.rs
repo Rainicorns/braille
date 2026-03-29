@@ -89,7 +89,7 @@ impl JsRuntime {
         module_loader::clear_registry(&self.module_registry);
 
         // Clear JS-side wrapper cache + DOM state
-        let _ = self.eval(r#"
+        self.eval_or_log(r#"
             if (typeof __braille_reset_dom_cache === 'function') __braille_reset_dom_cache();
             if (typeof _cookieJar !== 'undefined') {
                 for (var k in _cookieJar) delete _cookieJar[k];
@@ -105,6 +105,18 @@ impl JsRuntime {
         "#);
 
         self.flush_jobs();
+    }
+
+    /// Evaluate a JS source string, logging errors to the console buffer
+    /// instead of returning them. Use this for fire-and-forget eval sites
+    /// where the error should be visible to the user via `drain_console`.
+    ///
+    /// All error routing goes through `with_state_mut` (thread-local) so it
+    /// remains correct after `rebind_for_new_page` swaps the state.
+    pub fn eval_or_log(&mut self, code: &str) {
+        if let Err(e) = self.eval(code) {
+            log_eval_error_to_console(e);
+        }
     }
 
     /// Evaluate a JS source string. Errors are returned as strings.
@@ -230,7 +242,7 @@ impl JsRuntime {
             };
 
             if let Some(code) = callback_code {
-                let _ = self.eval(&code);
+                self.eval_or_log(&code);
             }
         }
 
@@ -294,7 +306,9 @@ impl JsRuntime {
             let global = ctx.globals();
             // Call __braille_click(nodeId) which dispatches through JS
             if let Ok(click_fn) = global.get::<_, Function>("__braille_click") {
-                let _ = click_fn.call::<_, ()>((node_id as u32,));
+                if let Err(e) = click_fn.call::<_, ()>((node_id as u32,)) {
+                    log_eval_error_to_console(format_js_error(&ctx, e));
+                }
             }
         });
     }
@@ -338,7 +352,9 @@ impl JsRuntime {
                 let global = ctx.globals();
                 if let Ok(resolve_fn) = global.get::<_, Function>("__braille_resolve_fetch") {
                     let response_json = serde_json::to_string(response).unwrap_or_default();
-                    let _ = resolve_fn.call::<_, ()>((pf.resolve_id, response_json));
+                    if let Err(e) = resolve_fn.call::<_, ()>((pf.resolve_id, response_json)) {
+                        log_eval_error_to_console(format_js_error(&ctx, e));
+                    }
                 }
             });
             self.flush_jobs();
@@ -357,7 +373,9 @@ impl JsRuntime {
             self.context.with(|ctx| {
                 let global = ctx.globals();
                 if let Ok(reject_fn) = global.get::<_, Function>("__braille_reject_fetch") {
-                    let _ = reject_fn.call::<_, ()>((pf.reject_id, error.to_string()));
+                    if let Err(e) = reject_fn.call::<_, ()>((pf.reject_id, error.to_string())) {
+                        log_eval_error_to_console(format_js_error(&ctx, e));
+                    }
                 }
             });
             self.flush_jobs();
@@ -389,15 +407,19 @@ impl JsRuntime {
     /// Fire `window.onload` handler.
     pub fn fire_window_load(&mut self) {
         self.context.with(|ctx| {
-            let _ = ctx.eval::<(), _>(
+            eval_or_log_ctx(
+                &ctx,
                 "if(typeof window !== 'undefined' && typeof window.onload === 'function') { window.onload(new Event('load')); }",
             );
         });
     }
 
-    /// Process iframe loads.
+    /// Process iframe loads — find all <iframe> elements with pre-fetched content,
+    /// create JS realms for them, execute their scripts, and fire onload.
     pub fn process_iframe_loads(&mut self, _tree: &Rc<RefCell<DomTree>>) {
-        // TODO: implement iframe onload when iframe support is ported
+        self.eval_or_log("if (typeof __braille_process_iframes === 'function') __braille_process_iframes();");
+        // Drain any timers that iframe scripts may have scheduled at delay 0
+        self.flush_jobs();
     }
 
     /// Fire input and change events on an element (after handle_type sets the value).
@@ -418,8 +440,7 @@ impl JsRuntime {
                     // must not prevent subsequent events from firing.
                     function safeDispatch(target, event) {{
                         try {{ target.dispatchEvent(event); }} catch(e) {{
-                            if (!globalThis.__braille_dispatch_errors) globalThis.__braille_dispatch_errors = [];
-                            globalThis.__braille_dispatch_errors.push(event.type + ': ' + (e.message || e));
+                            console.error(event.type + ': ' + (e.message || e));
                         }}
                     }}
 
@@ -460,8 +481,7 @@ impl JsRuntime {
                                     nativeEvent: new Event('change', {{bubbles: true}})
                                 }});
                             }} catch(e) {{
-                                if (!globalThis.__braille_dispatch_errors) globalThis.__braille_dispatch_errors = [];
-                                globalThis.__braille_dispatch_errors.push('react_onChange: ' + (e.message || e));
+                                console.error('react_onChange: ' + (e.message || e));
                             }}
                         }}
                     }}
@@ -478,7 +498,7 @@ impl JsRuntime {
                 }})()"#,
                 nid = node_id
             );
-            let _ = ctx.eval::<(), _>(code.as_str());
+            eval_or_log_ctx(&ctx, code.as_str());
         });
         self.flush_jobs();
         // Drain 0ms timers (React scheduler uses MessageChannel shimmed to setTimeout(fn, 0))
@@ -496,7 +516,9 @@ impl JsRuntime {
 
     fn flush_jobs(&self) {
         while self.runtime.is_job_pending() {
-            let _ = self.runtime.execute_pending_job();
+            if let Err(e) = self.runtime.execute_pending_job() {
+                log_eval_error_to_console(format!("{e:?}"));
+            }
         }
         // Drain any pending unhandled promise rejections
         let rejections: Vec<String> = PENDING_REJECTIONS.with(|pr| pr.borrow_mut().drain(..).collect());
@@ -505,15 +527,33 @@ impl JsRuntime {
             self.context.with(|ctx| {
                 for reason in &rejections {
                     let escaped = reason.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "\\r");
-                    let _ = ctx.eval::<(), _>(format!("__braille_pending_rejections.push('{escaped}')"));
+                    eval_or_log_ctx(&ctx, &format!("__braille_pending_rejections.push('{escaped}')"));
                 }
-                let _ = ctx.eval::<(), _>("if(typeof __braille_drain_rejections==='function')__braille_drain_rejections()");
+                eval_or_log_ctx(&ctx, "if(typeof __braille_drain_rejections==='function')__braille_drain_rejections()");
             });
             // Flush any jobs that the rejection handlers may have queued
             while self.runtime.is_job_pending() {
-                let _ = self.runtime.execute_pending_job();
+                if let Err(e) = self.runtime.execute_pending_job() {
+                    log_eval_error_to_console(format!("{e:?}"));
+                }
             }
         }
+    }
+}
+
+/// Log an eval error to the console buffer via thread-local state.
+/// Safe across `rebind_for_new_page` because it never captures `Rc<RefCell<EngineState>>`.
+fn log_eval_error_to_console(error: String) {
+    super::dom_bridge::with_state_mut(|s| {
+        s.console_buffer.push(format!("[error] {error}"));
+    });
+}
+
+/// Evaluate JS inside a `context.with` closure, logging errors to console.
+/// Use when `self` is already borrowed by `context.with(|ctx| ...)`.
+fn eval_or_log_ctx(ctx: &rquickjs::Ctx<'_>, code: &str) {
+    if let Err(e) = ctx.eval::<(), _>(code).map_err(|e| format_js_error(ctx, e)) {
+        log_eval_error_to_console(e);
     }
 }
 
