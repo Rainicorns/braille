@@ -1,4 +1,5 @@
 mod console;
+mod crypto_subtle;
 mod css;
 mod dom_stubs;
 mod fetch;
@@ -25,6 +26,7 @@ pub fn register_all(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell
     worker::register_worker(ctx);
     fetch::register_fetch(ctx);
     super::crypto::register(ctx);
+    crypto_subtle::register_crypto(ctx);
     super::dom_bridge::install(ctx, Rc::clone(&tree), Rc::clone(&state));
     css::register_css_object(ctx);
     messaging::register_messaging(ctx);

@@ -120,9 +120,12 @@ impl JsRuntime {
     }
 
     /// Evaluate a JS source string. Errors are returned as strings.
+    /// Uses non-strict mode like browsers (allows implicit globals, etc.).
     pub fn eval(&mut self, code: &str) -> Result<(), String> {
         self.context.with(|ctx| {
-            ctx.eval::<(), _>(code)
+            let mut opts = rquickjs::context::EvalOptions::default();
+            opts.strict = false;
+            ctx.eval_with_options::<(), _>(code, opts)
                 .map_err(|e| format_js_error(&ctx, e))
         })?;
         self.flush_jobs();
@@ -130,9 +133,14 @@ impl JsRuntime {
     }
 
     /// Evaluate JS and return the result as a string.
+    /// Uses non-strict mode like browsers.
     pub fn eval_to_string(&mut self, code: &str) -> Result<String, String> {
         let result = self.context.with(|ctx| {
-            let val: rquickjs::Value = ctx.eval(code).map_err(|e| format_js_error(&ctx, e))?;
+            let mut opts = rquickjs::context::EvalOptions::default();
+            opts.strict = false;
+            let val: rquickjs::Value = ctx
+                .eval_with_options(code, opts)
+                .map_err(|e| format_js_error(&ctx, e))?;
             Ok(js_value_to_string(&val))
         });
         self.flush_jobs();

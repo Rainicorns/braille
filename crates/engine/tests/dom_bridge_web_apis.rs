@@ -498,6 +498,250 @@ fn crypto_subtle_hmac_sign_verify() {
 }
 
 #[test]
+fn crypto_x25519_import_and_derive() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    e.eval_js(r#"
+        var result = 'pending';
+        var pkcs8 = new Uint8Array([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 110, 4, 34, 4, 32, 200, 131, 142, 118, 208, 87, 223, 183, 216, 201, 90, 105, 225, 56, 22, 10, 221, 99, 115, 253, 113, 164, 210, 118, 187, 86, 227, 168, 27, 100, 255, 97]);
+        var spki = new Uint8Array([48, 42, 48, 5, 6, 3, 43, 101, 110, 3, 33, 0, 28, 242, 177, 230, 2, 46, 197, 55, 55, 30, 215, 245, 62, 84, 250, 17, 84, 216, 62, 152, 235, 100, 234, 81, 250, 229, 179, 48, 124, 254, 151, 6]);
+        var expected = new Uint8Array([39, 104, 64, 157, 250, 185, 158, 194, 59, 140, 137, 185, 63, 245, 136, 2, 149, 247, 97, 118, 8, 143, 137, 228, 61, 254, 190, 126, 161, 149, 0, 8]);
+
+        Promise.all([
+            crypto.subtle.importKey("pkcs8", pkcs8, {name: "X25519"}, false, ["deriveBits", "deriveKey"]),
+            crypto.subtle.importKey("spki", spki, {name: "X25519"}, false, [])
+        ]).then(function(keys) {
+            var privKey = keys[0];
+            var pubKey = keys[1];
+            result = 'imported: priv=' + privKey.type + ' pub=' + pubKey.type;
+            return crypto.subtle.deriveBits({name: "X25519", public: pubKey}, privKey, 256);
+        }).then(function(derived) {
+            var a = new Uint8Array(derived);
+            var match = true;
+            for (var i = 0; i < expected.length; i++) {
+                if (a[i] !== expected[i]) { match = false; break; }
+            }
+            result = match ? 'PASS' : 'FAIL: derived mismatch';
+        }).catch(function(e) {
+            result = 'ERROR: ' + e.name + ': ' + e.message;
+        });
+    "#).unwrap();
+    e.settle();
+    let val = e.eval_js("result").unwrap();
+    assert_eq!(val, "PASS");
+}
+
+#[test]
+fn crypto_cryptokey_class() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    e.eval_js(r#"
+        var result = 'pending';
+        crypto.subtle.generateKey({name:'AES-GCM',length:256}, true, ['encrypt','decrypt'])
+        .then(function(key) {
+            var checks = [];
+            checks.push('ctor=' + (key.constructor === CryptoKey));
+            checks.push('type=' + key.type);
+            checks.push('extractable=' + key.extractable);
+            checks.push('algoName=' + key.algorithm.name);
+            result = checks.join(',');
+        });
+    "#).unwrap();
+    e.settle();
+    assert_eq!(e.eval_js("result").unwrap(), "ctor=true,type=secret,extractable=true,algoName=AES-GCM");
+}
+
+#[test]
+fn crypto_x25519_import_chain_debug() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    e.eval_js(r#"
+        var result = 'pending';
+        var pkcs8 = new Uint8Array([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 110, 4, 34, 4, 32, 200, 131, 142, 118, 208, 87, 223, 183, 216, 201, 90, 105, 225, 56, 22, 10, 221, 99, 115, 253, 113, 164, 210, 118, 187, 86, 227, 168, 27, 100, 255, 97]);
+        var spki = new Uint8Array([48, 42, 48, 5, 6, 3, 43, 101, 110, 3, 33, 0, 28, 242, 177, 230, 2, 46, 197, 55, 55, 30, 215, 245, 62, 84, 250, 17, 84, 216, 62, 152, 235, 100, 234, 81, 250, 229, 179, 48, 124, 254, 151, 6]);
+        var ecSPKI = new Uint8Array([48, 89, 48, 19, 6, 7, 42, 134, 72, 206, 61, 2, 1, 6, 8, 42, 134, 72, 206, 61, 3, 1, 7, 3, 66, 0, 4, 154, 116, 32, 120, 126, 95, 77, 105, 211, 232, 34, 114, 115, 1, 109, 56, 224, 71, 129, 133, 223, 127, 238, 156, 142, 103, 60, 202, 211, 79, 126, 128, 254, 49, 141, 182, 221, 107, 119, 218, 99, 32, 165, 246, 151, 89, 9, 68, 23, 177, 52, 239, 138, 139, 116, 193, 101, 4, 57, 198, 115, 0, 90, 61]);
+
+        var subtle = crypto.subtle;
+        var promises = [];
+        var privateKeys = {};
+        var publicKeys = {};
+        var noDeriveBitsKeys = {};
+        var ecdhPublicKeys = {};
+
+        promises.push(
+            subtle.importKey("pkcs8", pkcs8, {name: "X25519"}, false, ["deriveBits", "deriveKey"])
+            .then(function(key) { privateKeys["X25519"] = key; result = 'pkcs8-ok'; },
+                  function(err) { privateKeys["X25519"] = null; result = 'pkcs8-err:' + err.message; })
+        );
+        promises.push(
+            subtle.importKey("pkcs8", pkcs8, {name: "X25519"}, false, ["deriveKey"])
+            .then(function(key) { noDeriveBitsKeys["X25519"] = key; },
+                  function(err) { noDeriveBitsKeys["X25519"] = null; })
+        );
+        promises.push(
+            subtle.importKey("spki", spki, {name: "X25519"}, false, [])
+            .then(function(key) { publicKeys["X25519"] = key; },
+                  function(err) { publicKeys["X25519"] = null; result = 'spki-err:' + err.message; })
+        );
+        // ecSPKI as ECDH P-256 (not pushed to promises)
+        subtle.importKey("spki", ecSPKI, {name: "ECDH", namedCurve: "P-256"}, false, [])
+            .then(function(key) { ecdhPublicKeys["X25519"] = key; })
+            .catch(function(err) { result = 'ecdh-spki-err:' + err.message; });
+
+        Promise.all(promises).then(function() {
+            result = 'all-resolved: priv=' + (privateKeys["X25519"] !== null) + ' pub=' + (publicKeys["X25519"] !== null);
+        }).catch(function(err) {
+            result = 'all-rejected: ' + err.message;
+        });
+    "#).unwrap();
+    e.settle();
+    let val = e.eval_js("result").unwrap();
+    eprintln!("crypto_x25519_import_chain_debug result: {}", val);
+    assert!(val.starts_with("all-resolved"), "Expected all-resolved but got: {}", val);
+}
+
+#[test]
+fn crypto_x25519_wpt_pattern_debug() {
+    // Reproduce the exact WPT test pattern that fails
+    let mut e = engine_with_html("<html><body></body></html>");
+    e.eval_js(r#"
+        var results = [];
+        self.promise_test = function(fn, name) {
+            var result = { name: name || "(unnamed)", status: 0, message: "" };
+            results.push(result);
+            var cleanups = [];
+            var t = {
+                name: name || "(unnamed)",
+                step_func: function(f) { return function() { return f.apply(t, arguments); }; },
+                done: function() { t._done = true; },
+                unreached_func: function(msg) { return function() { throw new Error(msg || "unreached"); }; },
+                add_cleanup: function(f) { cleanups.push(f); },
+                step_timeout: function(fn, timeout) { fn(); },
+                _done: false
+            };
+            try {
+                var p = fn(t);
+                if (p && typeof p.then === 'function') {
+                    p.then(function() {}, function(e) {
+                        result.status = 1;
+                        result.message = e.message || String(e);
+                    });
+                }
+            } catch(e) {
+                result.status = 1;
+                result.message = e.message || String(e);
+            }
+            for (var i = 0; i < cleanups.length; i++) {
+                try { cleanups[i](); } catch(ce) {}
+            }
+        };
+        self.assert_true = function(val, msg) { if (val !== true) throw new Error(msg || "assert_true: got " + val); };
+        self.assert_equals = function(a, b, msg) { if (a !== b) throw new Error(msg || "assert_equals: " + a + " !== " + b); };
+        self.assert_unreached = function(msg) { throw new Error(msg || "assert_unreached"); };
+        self.subsetTest = function(testFunc) { var args = Array.prototype.slice.call(arguments, 1); testFunc.apply(this, args); };
+
+        // Now run the pattern from the WPT test
+        function define_tests() {
+            var subtle = crypto.subtle;
+            var pkcs8 = {"X25519": new Uint8Array([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 110, 4, 34, 4, 32, 200, 131, 142, 118, 208, 87, 223, 183, 216, 201, 90, 105, 225, 56, 22, 10, 221, 99, 115, 253, 113, 164, 210, 118, 187, 86, 227, 168, 27, 100, 255, 97])};
+            var spki = {"X25519": new Uint8Array([48, 42, 48, 5, 6, 3, 43, 101, 110, 3, 33, 0, 28, 242, 177, 230, 2, 46, 197, 55, 55, 30, 215, 245, 62, 84, 250, 17, 84, 216, 62, 152, 235, 100, 234, 81, 250, 229, 179, 48, 124, 254, 151, 6])};
+            var ecSPKI = new Uint8Array([48, 89, 48, 19, 6, 7, 42, 134, 72, 206, 61, 2, 1, 6, 8, 42, 134, 72, 206, 61, 3, 1, 7, 3, 66, 0, 4, 154, 116, 32, 120, 126, 95, 77, 105, 211, 232, 34, 114, 115, 1, 109, 56, 224, 71, 129, 133, 223, 127, 238, 156, 142, 103, 60, 202, 211, 79, 126, 128, 254, 49, 141, 182, 221, 107, 119, 218, 99, 32, 165, 246, 151, 89, 9, 68, 23, 177, 52, 239, 138, 139, 116, 193, 101, 4, 57, 198, 115, 0, 90, 61]);
+            var algorithmName = "X25519";
+            var sizes = {"X25519": 32};
+            var derivations = {"X25519": new Uint8Array([39, 104, 64, 157, 250, 185, 158, 194, 59, 140, 137, 185, 63, 245, 136, 2, 149, 247, 97, 118, 8, 143, 137, 228, 61, 254, 190, 126, 161, 149, 0, 8])};
+
+            return importKeys(pkcs8, spki, sizes)
+            .then(function(r) {
+                self.__debug_r = JSON.stringify(Object.keys(r));
+                self.__debug_pub = r.publicKeys ? JSON.stringify(Object.keys(r.publicKeys)) : 'null';
+                self.__debug_strict = (function() { return !this; })();
+                publicKeys = r.publicKeys;
+                self.__debug_pubAssigned = typeof publicKeys;
+                privateKeys = r.privateKeys;
+                noDeriveBitsKeys = r.noDeriveBitsKeys;
+                ecdhKeys = r.ecdhKeys;
+
+                promise_test(function(test) {
+                    return subtle.deriveBits({name: algorithmName, public: publicKeys[algorithmName]}, privateKeys[algorithmName], 8 * sizes[algorithmName])
+                    .then(function(derivation) {
+                        var a = new Uint8Array(derivation);
+                        var exp = derivations[algorithmName];
+                        var ok = a.length === exp.length;
+                        for (var i = 0; ok && i < a.length; i++) if (a[i] !== exp[i]) ok = false;
+                        assert_true(ok, "Derived correct bits");
+                    }, function(err) {
+                        assert_unreached("deriveBits failed with error " + err.name + ": " + err.message);
+                    });
+                }, algorithmName + " good parameters");
+            });
+
+            function importKeys(pkcs8, spki, sizes) {
+                var privateKeys = {};
+                var publicKeys = {};
+                var noDeriveBitsKeys = {};
+                var ecdhPublicKeys = {};
+                var promises = [];
+                promises.push(subtle.importKey("pkcs8", pkcs8[algorithmName], {name: algorithmName}, false, ["deriveBits", "deriveKey"])
+                    .then(function(key) { privateKeys[algorithmName] = key; }, function(err) { privateKeys[algorithmName] = null; }));
+                promises.push(subtle.importKey("pkcs8", pkcs8[algorithmName], {name: algorithmName}, false, ["deriveKey"])
+                    .then(function(key) { noDeriveBitsKeys[algorithmName] = key; }, function(err) { noDeriveBitsKeys[algorithmName] = null; }));
+                promises.push(subtle.importKey("spki", spki[algorithmName], {name: algorithmName}, false, [])
+                    .then(function(key) { publicKeys[algorithmName] = key; }, function(err) { publicKeys[algorithmName] = null; }));
+                try {
+                    subtle.importKey("spki", ecSPKI, {name: "ECDH", namedCurve: "P-256"}, false, [])
+                        .then(function(key) { ecdhPublicKeys[algorithmName] = key; });
+                } catch(ecdherr) {
+                    // ignore - P-256 ECDH import failure shouldn't block test
+                }
+                return Promise.all(promises)
+                    .then(function() { return {privateKeys: privateKeys, publicKeys: publicKeys, noDeriveBitsKeys: noDeriveBitsKeys, ecdhKeys: ecdhPublicKeys}; });
+            }
+        }
+
+        promise_test(define_tests, 'setup - define tests');
+    "#).unwrap();
+    e.settle();
+    // Debug output
+    let debug_r = e.eval_js("typeof self.__debug_r !== 'undefined' ? self.__debug_r : 'NOT_SET'").unwrap();
+    let debug_pub = e.eval_js("typeof self.__debug_pub !== 'undefined' ? self.__debug_pub : 'NOT_SET'").unwrap();
+    let debug_strict = e.eval_js("typeof self.__debug_strict !== 'undefined' ? String(self.__debug_strict) : 'NOT_SET'").unwrap();
+    let top_level_strict = e.eval_js("(function() { return !this; })()").unwrap();
+    eprintln!("top_level_strict: {}", top_level_strict);
+    let debug_assigned = e.eval_js("typeof self.__debug_pubAssigned !== 'undefined' ? self.__debug_pubAssigned : 'NOT_SET'").unwrap();
+    eprintln!("strict: {}", debug_strict);
+    eprintln!("pubAssigned: {}", debug_assigned);
+    eprintln!("globalThis.publicKeys type: {}", e.eval_js("typeof globalThis.publicKeys").unwrap());
+    eprintln!("debug_r: {}", debug_r);
+    eprintln!("debug_pub: {}", debug_pub);
+    // Check unhandled rejections
+    let rejections = e.eval_js("typeof __braille_pending_rejections !== 'undefined' ? JSON.stringify(__braille_pending_rejections) : '[]'").unwrap();
+    eprintln!("Pending rejections: {}", rejections);
+    let val = e.eval_js("JSON.stringify(results)").unwrap();
+    eprintln!("WPT pattern results: {}", val);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&val).unwrap();
+    for r in &parsed {
+        let status = r["status"].as_i64().unwrap();
+        let name = r["name"].as_str().unwrap();
+        let msg = r["message"].as_str().unwrap_or("");
+        if status != 0 {
+            eprintln!("  FAIL: {} — {}", name, msg);
+        }
+    }
+    assert!(parsed.iter().all(|r| r["status"].as_i64() == Some(0)), "Not all tests passed");
+}
+
+#[test]
+fn crypto_domexception() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    e.eval_js(r#"
+        var result = 'pending';
+        crypto.subtle.generateKey({name:'FAKE_ALGO'}, true, ['encrypt'])
+        .catch(function(e) {
+            result = e.name + ',' + (e instanceof DOMException);
+        });
+    "#).unwrap();
+    e.settle();
+    assert_eq!(e.eval_js("result").unwrap(), "NotSupportedError,true");
+}
+
+#[test]
 fn dynamic_script_no_src_does_not_fetch() {
     let mut e = engine_with_html("<html><head></head><body></body></html>");
     e.eval_js(r#"

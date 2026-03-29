@@ -100,6 +100,8 @@ The loop:
 
 The manifest is committed to the repo. The high water mark is the permanent scoreboard.
 
+**Never read, edit, or peek at the manifest directly.** The manifest is the ratchet's data — only `cargo run -p test-runner` interacts with it. Don't `cat`, `grep`, `read`, or `sed` the manifest file. Let the ratchet tell you what failed.
+
 ## Background Agents & Worktrees
 
 1. **Always instruct agents to commit their changes.** Worktrees are temporary — uncommitted work is lost on cleanup. Every agent prompt must include "commit your changes."

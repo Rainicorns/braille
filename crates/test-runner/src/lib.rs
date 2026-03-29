@@ -374,6 +374,9 @@ pub fn resolve_script_src(
     if src == "/resources/testharnessreport.js" {
         return Some(report_shim.to_string());
     }
+    if src == "/common/subset-tests.js" {
+        return Some("function subsetTest(testFunc) { var args = Array.prototype.slice.call(arguments, 1); testFunc.apply(this, args); }".to_string());
+    }
 
     let resolved_path = if src.starts_with('/') {
         wpt_root().join(src.trim_start_matches('/'))
@@ -517,7 +520,11 @@ pub fn wrap_js_in_html(js_path: &Path) -> String {
     for line in js_content.lines() {
         if let Some(rest) = line.strip_prefix("// META: script=") {
             let script_path = rest.trim();
-            let resolved = js_path.parent().unwrap().join(script_path);
+            let resolved = if script_path.starts_with('/') {
+                wpt_root().join(script_path.trim_start_matches('/'))
+            } else {
+                js_path.parent().unwrap().join(script_path)
+            };
             if let Ok(script_content) = std::fs::read_to_string(&resolved) {
                 meta_scripts.push_str(&format!("<script>\n{script_content}\n</script>\n"));
             }
@@ -666,6 +673,9 @@ pub fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> WptT
             is_crash_test: true,
         };
     }
+
+    // Drain microtask queue so promise_test chains resolve before reading results
+    engine.settle();
 
     let has_test_fn = engine.eval_js("typeof test").unwrap_or_default();
     if has_test_fn != "function" {
