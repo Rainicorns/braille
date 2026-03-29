@@ -1,0 +1,54 @@
+#!/bin/bash
+# Guard: never reorder entries below the high water mark in the manifest.
+# The high water mark = contiguous PASS block from the top of the manifest.
+
+MANIFEST="tests/manifest.txt"
+
+# Only check if manifest is staged
+if ! git diff --cached --name-only | grep -q "^${MANIFEST}$"; then
+    exit 0
+fi
+
+# Get old manifest from HEAD (empty if first commit)
+OLD=$(git show HEAD:"$MANIFEST" 2>/dev/null || echo "")
+NEW=$(git show :"$MANIFEST" 2>/dev/null || echo "")
+
+if [ -z "$OLD" ]; then
+    exit 0
+fi
+
+# Extract PASS entries from old manifest (these are below the high water mark)
+OLD_PASS=$(echo "$OLD" | grep "^PASS " || true)
+
+if [ -z "$OLD_PASS" ]; then
+    exit 0
+fi
+
+# Check that every old PASS entry still exists in the new manifest and in the same relative order
+# Extract just the paths of old PASS entries
+OLD_PASS_PATHS=$(echo "$OLD_PASS" | sed 's/^PASS //')
+
+# Extract all entries from new manifest, keeping order
+NEW_ALL=$(echo "$NEW" | grep -v '^#' | grep -v '^$' || true)
+
+# For each old PASS path, find its position in the new manifest
+PREV_POS=-1
+while IFS= read -r path; do
+    # Find line number in new manifest (1-indexed)
+    # Use grep -F for fixed string, match " path" (with leading space) allowing alt: suffix
+    POS=$(echo "$NEW_ALL" | grep -nF " ${path}" | head -1 | cut -d: -f1)
+    if [ -z "$POS" ]; then
+        echo "ERROR: manifest guard: previously-PASS test was removed: $path"
+        echo "This is not allowed. PASS tests must remain in the manifest."
+        exit 1
+    fi
+    if [ "$POS" -le "$PREV_POS" ]; then
+        echo "ERROR: manifest guard: PASS entries were reordered below the high water mark."
+        echo "  '$path' moved before a test that was previously after it."
+        echo "This commit would scramble the ratchet. Fix the manifest order."
+        exit 1
+    fi
+    PREV_POS=$POS
+done <<< "$OLD_PASS_PATHS"
+
+exit 0

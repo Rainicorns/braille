@@ -96,7 +96,7 @@ The loop:
 4. Implement the real fix. No band-aids.
 5. Run the runner again. If the high water mark went up, commit the updated manifest.
 
-**Always use `cargo run -p test-runner` (the ratchet) to verify changes.** Do NOT use `cargo test --workspace` as verification — the ratchet is the real scoreboard. Do NOT run `--regression` unless explicitly asked.
+**Always use `cargo run -p test-runner` (the ratchet) to verify changes. Always run it in the background (`run_in_background: true`) so the user can see output streaming in real time.** Do NOT use `cargo test --workspace` as verification — the ratchet is the real scoreboard. Do NOT run `--regression` unless explicitly asked.
 
 The manifest is committed to the repo. The high water mark is the permanent scoreboard.
 
@@ -120,3 +120,4 @@ The manifest is committed to the repo. The high water mark is the permanent scor
 - Use `tsx` not `ts-node` for TypeScript execution.
 - No background colors without explicit instructions.
 - No code in PLAN documents.
+- **NEVER revert code without explicit user confirmation.** 99% of the time revert is the wrong call. Fix forward. If you think a revert is needed, ask first — double and triple check.

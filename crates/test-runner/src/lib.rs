@@ -39,6 +39,12 @@ pub fn testharness_preamble() -> String {
     var setup_ran = false;
     var single_test_mode = false;
 
+    function _progress(status) {
+        if (typeof __braille_test_progress === 'function') {
+            __braille_test_progress(status === 0);
+        }
+    }
+
     function run_setup() {
         if (!setup_ran && setup_fn) {
             setup_ran = true;
@@ -68,6 +74,7 @@ pub fn testharness_preamble() -> String {
             try { cleanups[i](); } catch(e) {}
         }
         results.push(result);
+        _progress(result.status);
     };
 
     self.async_test = function(fn, name) {
@@ -107,6 +114,7 @@ pub fn testharness_preamble() -> String {
             }
         }
         results.push(result);
+        _progress(result.status);
         return t;
     };
 
@@ -136,14 +144,20 @@ pub fn testharness_preamble() -> String {
             };
             var p = fn(t);
             if (p && typeof p.then === 'function') {
-                p.then(function() {}, function(e) {
+                p.then(function() {
+                    _progress(result.status);
+                }, function(e) {
                     result.status = 1;
                     result.message = e.message || String(e);
+                    _progress(result.status);
                 });
+            } else {
+                _progress(result.status);
             }
         } catch(e) {
             result.status = 1;
             result.message = e.message || String(e);
+            _progress(result.status);
         }
         for (var i = 0; i < cleanups.length; i++) {
             try { cleanups[i](); } catch(ce) {}
@@ -187,120 +201,138 @@ pub fn testharness_preamble() -> String {
         }
     };
 
+    // AssertionError (yes, WPT spells it this way)
+    function AssertionError(message) {
+        this.message = message || '';
+        this.stack = (new Error()).stack;
+    }
+    AssertionError.prototype = Object.create(Error.prototype);
+    AssertionError.prototype.constructor = AssertionError;
+    AssertionError.prototype.name = 'AssertionError';
+    self.AssertionError = AssertionError;
+
     // Assertions
     self.assert_true = function(val, msg) {
-        if (val !== true) throw new Error(msg || "assert_true: got " + val);
+        if (val !== true) throw new AssertionError(msg || "assert_true: got " + val);
     };
     self.assert_false = function(val, msg) {
-        if (val !== false) throw new Error(msg || "assert_false: got " + val);
+        if (val !== false) throw new AssertionError(msg || "assert_false: got " + val);
     };
     self.assert_equals = function(a, b, msg) {
-        if (a !== b) throw new Error(msg || "assert_equals: " + a + " !== " + b);
+        if (a !== b) throw new AssertionError(msg || "assert_equals: " + a + " !== " + b);
     };
     self.assert_not_equals = function(a, b, msg) {
-        if (a === b) throw new Error(msg || "assert_not_equals: values are equal: " + a);
+        if (a === b) throw new AssertionError(msg || "assert_not_equals: values are equal: " + a);
     };
     self.assert_in_array = function(val, arr, msg) {
-        if (arr.indexOf(val) === -1) throw new Error(msg || "assert_in_array: " + val + " not in array");
+        if (arr.indexOf(val) === -1) throw new AssertionError(msg || "assert_in_array: " + val + " not in array");
     };
     self.assert_greater_than = function(a, b, msg) {
-        if (!(a > b)) throw new Error(msg || "assert_greater_than: " + a + " <= " + b);
+        if (!(a > b)) throw new AssertionError(msg || "assert_greater_than: " + a + " <= " + b);
     };
     self.assert_less_than = function(a, b, msg) {
-        if (!(a < b)) throw new Error(msg || "assert_less_than: " + a + " >= " + b);
+        if (!(a < b)) throw new AssertionError(msg || "assert_less_than: " + a + " >= " + b);
     };
     self.assert_greater_than_equal = function(a, b, msg) {
-        if (!(a >= b)) throw new Error(msg || "assert_greater_than_equal: " + a + " < " + b);
+        if (!(a >= b)) throw new AssertionError(msg || "assert_greater_than_equal: " + a + " < " + b);
     };
     self.assert_less_than_equal = function(a, b, msg) {
-        if (!(a <= b)) throw new Error(msg || "assert_less_than_equal: " + a + " > " + b);
+        if (!(a <= b)) throw new AssertionError(msg || "assert_less_than_equal: " + a + " > " + b);
     };
     self.assert_array_equals = function(a, b, msg) {
         var aLen = a ? a.length : undefined;
         var bLen = b ? b.length : undefined;
         if (aLen === undefined || bLen === undefined || aLen !== bLen) {
-            throw new Error(msg || "assert_array_equals: length mismatch (" + aLen + " vs " + bLen + ")");
+            throw new AssertionError(msg || "assert_array_equals: length mismatch (" + aLen + " vs " + bLen + ")");
         }
         for (var i = 0; i < aLen; i++) {
-            if (a[i] !== b[i]) throw new Error(msg || "assert_array_equals: index " + i + ": " + a[i] + " !== " + b[i]);
+            if (a[i] !== b[i]) throw new AssertionError(msg || "assert_array_equals: index " + i + ": " + a[i] + " !== " + b[i]);
         }
     };
     self.assert_object_equals = function(a, b, msg) {
         var aStr = JSON.stringify(a);
         var bStr = JSON.stringify(b);
-        if (aStr !== bStr) throw new Error(msg || "assert_object_equals: " + aStr + " !== " + bStr);
+        if (aStr !== bStr) throw new AssertionError(msg || "assert_object_equals: " + aStr + " !== " + bStr);
     };
     self.assert_regexp_match = function(val, re, msg) {
-        if (!re.test(val)) throw new Error(msg || "assert_regexp_match: " + val + " doesn't match " + re);
+        if (!re.test(val)) throw new AssertionError(msg || "assert_regexp_match: " + val + " doesn't match " + re);
     };
     self.assert_own_property = function(obj, prop, msg) {
-        if (!obj.hasOwnProperty(prop)) throw new Error(msg || "assert_own_property: missing " + prop);
+        if (!obj.hasOwnProperty(prop)) throw new AssertionError(msg || "assert_own_property: missing " + prop);
     };
     self.assert_class_string = function(obj, expected, msg) {
         var actual = Object.prototype.toString.call(obj);
         var cls = actual.slice(8, -1);
-        if (cls !== expected) throw new Error(msg || "assert_class_string: " + cls + " !== " + expected);
+        if (cls !== expected) throw new AssertionError(msg || "assert_class_string: " + cls + " !== " + expected);
     };
     self.assert_throws_js = function(ctor, fn, msg) {
         var threw = false;
         try { fn(); } catch(e) {
             threw = true;
-            if (!(e instanceof ctor)) throw new Error(msg || "assert_throws_js: wrong error type: " + e);
+            if (!(e instanceof ctor)) throw new AssertionError(msg || "assert_throws_js: wrong error type: " + e);
         }
-        if (!threw) throw new Error(msg || "assert_throws_js: no error thrown");
+        if (!threw) throw new AssertionError(msg || "assert_throws_js: no error thrown");
     };
     self.assert_throws_dom = function(name, fn, msg) {
         var threw = false;
         try { fn(); } catch(e) {
             threw = true;
         }
-        if (!threw) throw new Error(msg || "assert_throws_dom(" + name + "): no error thrown");
+        if (!threw) throw new AssertionError(msg || "assert_throws_dom(" + name + "): no error thrown");
     };
     self.assert_throws_exactly = function(expected, fn, msg) {
         var threw = false;
         try { fn(); } catch(e) {
             threw = true;
-            if (e !== expected) throw new Error(msg || "assert_throws_exactly: wrong error");
+            if (e !== expected) throw new AssertionError(msg || "assert_throws_exactly: wrong error");
         }
-        if (!threw) throw new Error(msg || "assert_throws_exactly: no error thrown");
+        if (!threw) throw new AssertionError(msg || "assert_throws_exactly: no error thrown");
     };
     self.promise_rejects_js = function(test, constructor, promise, description) {
         return promise.then(
-            function() { throw new Error(description + ": promise resolved, expected rejection"); },
+            function() { throw new AssertionError(description + ": promise resolved, expected rejection"); },
             function(e) {
                 if (!(e instanceof constructor)) {
-                    throw new Error(description + ": wrong rejection type: " + e);
+                    throw new AssertionError(description + ": wrong rejection type: " + e);
                 }
             }
         );
     };
     self.promise_rejects_exactly = function(test, exception, promise, description) {
         return promise.then(
-            function() { throw new Error(description + ": promise resolved, expected rejection"); },
+            function() { throw new AssertionError(description + ": promise resolved, expected rejection"); },
             function(e) {
                 if (e !== exception) {
-                    throw new Error(description + ": wrong rejection value");
+                    throw new AssertionError(description + ": wrong rejection value");
                 }
             }
         );
     };
     self.assert_unreached = function(msg) {
-        throw new Error(msg || "assert_unreached");
+        throw new AssertionError(msg || "assert_unreached");
     };
     self.assert_readonly = function(obj, prop, msg) {
         var desc = Object.getOwnPropertyDescriptor(obj, prop);
         if (!desc || desc.writable !== false) {
-            if (!desc || desc.set) throw new Error(msg || "assert_readonly: " + prop + " is not readonly");
+            if (!desc || desc.set) throw new AssertionError(msg || "assert_readonly: " + prop + " is not readonly");
         }
     };
     self.assert_idl_attribute = function(obj, prop, msg) {
-        if (!(prop in obj)) throw new Error(msg || "assert_idl_attribute: missing " + prop);
+        if (!(prop in obj)) throw new AssertionError(msg || "assert_idl_attribute: missing " + prop);
     };
     self.assert_implements = function(val, msg) {
-        if (!val) throw new Error(msg || "assert_implements: not implemented");
+        if (!val) throw new AssertionError(msg || "assert_implements: not implemented");
     };
     self.assert_implements_optional = function(val, msg) {
-        if (!val) throw new Error(msg || "assert_implements_optional: not implemented");
+        if (!val) throw new AssertionError(msg || "assert_implements_optional: not implemented");
+    };
+    self.subsetTest = function(testFunc) {
+        var args = Array.prototype.slice.call(arguments, 1);
+        return testFunc.apply(null, args);
+    };
+    self.subsetTestByKey = function(key, testFunc) {
+        var args = Array.prototype.slice.call(arguments, 2);
+        return testFunc.apply(null, args);
     };
     self.format_value = function(val) {
         if (val === null) return "null";

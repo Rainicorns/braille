@@ -28,6 +28,8 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 p256 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
 p384 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
+p521 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
+x448 = { version = "0.14.0-pre.8", features = ["static_secrets"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 
 [lints]

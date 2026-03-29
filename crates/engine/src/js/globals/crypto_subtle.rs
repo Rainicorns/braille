@@ -78,7 +78,7 @@ fn crypto_js() -> &'static str {
     var algoNameMap = {
         'aes-gcm':'AES-GCM','aes-cbc':'AES-CBC','aes-ctr':'AES-CTR',
         'hmac':'HMAC','pbkdf2':'PBKDF2','hkdf':'HKDF',
-        'x25519':'X25519','ed25519':'Ed25519',
+        'x25519':'X25519','x448':'X448','ed25519':'Ed25519',
         'ecdh':'ECDH','ecdsa':'ECDSA',
         'argon2d':'Argon2d','argon2i':'Argon2i','argon2id':'Argon2id'
     };
@@ -128,7 +128,7 @@ fn crypto_js() -> &'static str {
     }
 
     function isCfrgAlgo(name) {
-        return name === 'X25519' || name === 'Ed25519';
+        return name === 'X25519' || name === 'X448' || name === 'Ed25519';
     }
     function isEcAlgo(name) {
         return name === 'ECDH' || name === 'ECDSA';
@@ -160,6 +160,12 @@ fn crypto_js() -> &'static str {
                 var pair = __braille_crypto_x25519_generate();
                 var pubKey = mkKey('public', {name:'X25519'}, true, [], {publicKeyBytes: pair[0]});
                 var privKey = mkKey('private', {name:'X25519'}, extractable, usages, {privateKeyBytes: pair[1], publicKeyBytes: pair[0]});
+                return Promise.resolve({publicKey: pubKey, privateKey: privKey});
+            }
+            if (name === 'X448') {
+                var pair = __braille_crypto_x448_generate();
+                var pubKey = mkKey('public', {name:'X448'}, true, [], {publicKeyBytes: pair[0]});
+                var privKey = mkKey('private', {name:'X448'}, extractable, usages, {privateKeyBytes: pair[1], publicKeyBytes: pair[0]});
                 return Promise.resolve({publicKey: pubKey, privateKey: privKey});
             }
             if (name === 'Ed25519') {
@@ -202,6 +208,9 @@ fn crypto_js() -> &'static str {
                 if (name === 'X25519') {
                     return Promise.resolve(mkKey('public', {name:'X25519'}, extractable, usages, {publicKeyBytes: raw}));
                 }
+                if (name === 'X448') {
+                    return Promise.resolve(mkKey('public', {name:'X448'}, extractable, usages, {publicKeyBytes: raw}));
+                }
                 if (name === 'Ed25519') {
                     return Promise.resolve(mkKey('public', {name:'Ed25519'}, extractable, usages, {publicKeyBytes: raw}));
                 }
@@ -216,17 +225,21 @@ fn crypto_js() -> &'static str {
                 var derBytes = toBytes(keyData);
                 if (name === 'X25519') {
                     var priv = extractX25519PrivateFromPkcs8(derBytes);
-                    // Derive public key from private using native function
-                    var pair = __braille_crypto_x25519_generate();
-                    // We can't derive the public from the private easily in JS, but we can store just the private
-                    // Actually, we need to compute the public key. We'll just do a dummy DH to get it...
-                    // Instead, let's pass through native: generate ephemeral, but import with known private
-                    // The simplest approach: store private bytes and compute public when needed
                     return Promise.resolve(mkKey('private', {name:'X25519'}, extractable, usages, {privateKeyBytes: priv}));
+                }
+                if (name === 'X448') {
+                    // X448 PKCS8: 30 3e 02 01 00 30 05 06 03 2b6571 04 3a 04 38 <56 bytes>
+                    var priv = Array.from(derBytes.slice(16, 72));
+                    return Promise.resolve(mkKey('private', {name:'X448'}, extractable, usages, {privateKeyBytes: priv}));
                 }
                 if (name === 'Ed25519') {
                     var priv = extractEd25519PrivateFromPkcs8(derBytes);
                     return Promise.resolve(mkKey('private', {name:'Ed25519'}, extractable, usages, {privateKeyBytes: priv}));
+                }
+                if (name === 'ECDH' || name === 'ECDSA') {
+                    var curve = a.namedCurve;
+                    var imported = __braille_crypto_ec_pkcs8_import(curve, Array.from(derBytes));
+                    return Promise.resolve(mkKey('private', {name: name, namedCurve: curve}, extractable, usages, {privateKeyBytes: imported[0], publicKeyBytes: imported[1]}));
                 }
                 return Promise.reject(new DOMException('importKey pkcs8 for ' + name + ' not supported', 'NotSupportedError'));
             }
@@ -238,47 +251,24 @@ fn crypto_js() -> &'static str {
                     var pub_bytes = extractX25519PublicFromSpki(derBytes);
                     return Promise.resolve(mkKey('public', {name:'X25519'}, extractable, usages, {publicKeyBytes: pub_bytes}));
                 }
+                if (name === 'X448') {
+                    // X448 SPKI: 30 42 30 05 06 03 2b6571 03 39 00 <56 bytes>
+                    var pub_bytes = Array.from(derBytes.slice(12, 68));
+                    return Promise.resolve(mkKey('public', {name:'X448'}, extractable, usages, {publicKeyBytes: pub_bytes}));
+                }
                 if (name === 'Ed25519') {
                     var pub_bytes = extractEd25519PublicFromSpki(derBytes);
                     return Promise.resolve(mkKey('public', {name:'Ed25519'}, extractable, usages, {publicKeyBytes: pub_bytes}));
                 }
                 if (name === 'ECDH' || name === 'ECDSA') {
-                    // For EC SPKI, extract the uncompressed point
-                    // EC SPKI: SEQUENCE { SEQUENCE { OID ecPublicKey, OID namedCurve }, BIT_STRING { 0x00, 0x04, x, y } }
-                    // Parse ASN.1 to find the BIT STRING content
-                    var bytes = Array.from(derBytes);
-                    // Find the BIT STRING (tag 0x03) - it's the last element in the outer SEQUENCE
-                    var idx = 0;
-                    // Skip outer SEQUENCE tag+len
-                    idx = 2; // 30 xx
-                    if (bytes[1] > 127) idx = 2 + (bytes[1] & 0x7f);
-                    // Skip inner SEQUENCE (algorithm identifier)
-                    var innerLen = bytes[idx + 1];
-                    if (bytes[idx + 1] > 127) {
-                        var numLenBytes = bytes[idx + 1] & 0x7f;
-                        innerLen = 0;
-                        for (var li = 0; li < numLenBytes; li++) innerLen = (innerLen << 8) | bytes[idx + 2 + li];
-                        idx += 2 + numLenBytes + innerLen;
-                    } else {
-                        idx += 2 + innerLen;
+                    var imported = __braille_crypto_ec_spki_import(Array.from(derBytes));
+                    var detectedCurve = '';
+                    for (var ci = 0; ci < imported[0].length; ci++) detectedCurve += String.fromCharCode(imported[0][ci]);
+                    var curve = a.namedCurve || detectedCurve;
+                    if (a.namedCurve && detectedCurve !== a.namedCurve) {
+                        return Promise.reject(new DOMException('SPKI curve ' + detectedCurve + ' does not match requested ' + a.namedCurve, 'DataError'));
                     }
-                    // Now idx points to BIT STRING tag (0x03)
-                    var bsLen = bytes[idx + 1];
-                    var bsStart = idx + 2;
-                    if (bytes[idx + 1] > 127) {
-                        var numLenBytes2 = bytes[idx + 1] & 0x7f;
-                        bsLen = 0;
-                        for (var li2 = 0; li2 < numLenBytes2; li2++) bsLen = (bsLen << 8) | bytes[idx + 2 + li2];
-                        bsStart = idx + 2 + numLenBytes2;
-                    }
-                    // Skip the 0x00 padding byte of BIT STRING
-                    var pubBytes = bytes.slice(bsStart + 1, bsStart + bsLen);
-                    var curve = a.namedCurve;
-                    if (!curve) {
-                        // Try to detect from OID in the SPKI
-                        curve = 'P-256';
-                    }
-                    return Promise.resolve(mkKey('public', {name: name, namedCurve: curve}, extractable, usages, {publicKeyBytes: pubBytes}));
+                    return Promise.resolve(mkKey('public', {name: name, namedCurve: curve}, extractable, usages, {publicKeyBytes: imported[1]}));
                 }
                 return Promise.reject(new DOMException('importKey spki for ' + name + ' not supported', 'NotSupportedError'));
             }
@@ -416,16 +406,47 @@ fn crypto_js() -> &'static str {
             return Promise.reject(new DOMException('verify ' + a.name + ' not supported', 'NotSupportedError'));
         },
 
-        deriveBits: function(algo, baseKey, length) {
+        deriveBits: function(algo, baseKey, length, _fromDeriveKey) {
             var a = normalizeAlgo(algo);
             if (a.name === 'PBKDF2') {
+                if (baseKey.algorithm.name !== 'PBKDF2') {
+                    return Promise.reject(new DOMException('baseKey algorithm does not match', 'InvalidAccessError'));
+                }
+                if (!_fromDeriveKey && baseKey.usages.indexOf('deriveBits') === -1) {
+                    return Promise.reject(new DOMException('baseKey usages do not include deriveBits', 'InvalidAccessError'));
+                }
+                if (length === 0) return Promise.resolve(new ArrayBuffer(0));
+                if (length === null || length === undefined || length % 8 !== 0) {
+                    return Promise.reject(new DOMException('PBKDF2 requires length that is a multiple of 8', 'OperationError'));
+                }
                 var h = hashName(a.hash);
+                var validHashes = ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'];
+                if (validHashes.indexOf(h) === -1) {
+                    return Promise.reject(new DOMException('Unrecognized hash name: ' + h, 'NotSupportedError'));
+                }
+                if (!a.iterations || a.iterations === 0) {
+                    return Promise.reject(new DOMException('iterations must be > 0', 'OperationError'));
+                }
                 var salt = Array.from(toBytes(a.salt));
                 var result = __braille_crypto_pbkdf2(h, baseKey._raw, salt, a.iterations, length/8);
                 return Promise.resolve(new Uint8Array(result).buffer);
             }
             if (a.name === 'HKDF') {
+                if (baseKey.algorithm.name !== 'HKDF') {
+                    return Promise.reject(new DOMException('baseKey algorithm does not match', 'InvalidAccessError'));
+                }
+                if (!_fromDeriveKey && baseKey.usages.indexOf('deriveBits') === -1) {
+                    return Promise.reject(new DOMException('baseKey usages do not include deriveBits', 'InvalidAccessError'));
+                }
+                if (length === 0) return Promise.resolve(new ArrayBuffer(0));
+                if (length === null || length === undefined || length % 8 !== 0) {
+                    return Promise.reject(new DOMException('HKDF requires length that is a multiple of 8', 'OperationError'));
+                }
                 var h = hashName(a.hash);
+                var validHashes = ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'];
+                if (validHashes.indexOf(h) === -1) {
+                    return Promise.reject(new DOMException('Unrecognized hash name: ' + h, 'NotSupportedError'));
+                }
                 var salt = a.salt ? Array.from(toBytes(a.salt)) : [];
                 var info = a.info ? Array.from(toBytes(a.info)) : [];
                 var result = __braille_crypto_hkdf(h, baseKey._raw, salt, info, length/8);
@@ -461,19 +482,68 @@ fn crypto_js() -> &'static str {
                 if (a.public.algorithm.name !== 'X25519') {
                     return Promise.reject(new DOMException('Algorithm mismatch', 'InvalidAccessError'));
                 }
-                if (baseKey.usages.indexOf('deriveBits') === -1) {
+                if (!_fromDeriveKey && baseKey.usages.indexOf('deriveBits') === -1) {
                     return Promise.reject(new DOMException('baseKey usages do not include deriveBits', 'InvalidAccessError'));
                 }
-                var requestedBytes = length / 8;
-                if (requestedBytes > 32) {
+                if (length === 0) {
+                    return Promise.resolve(new ArrayBuffer(0));
+                }
+                if (length !== null && length !== undefined && length > 256) {
                     return Promise.reject(new DOMException('Requested too many bits', 'OperationError'));
                 }
                 var shared = __braille_crypto_x25519_derive_bits(baseKey._privateKeyBytes, a.public._publicKeyBytes);
                 if (shared.length === 0) {
                     return Promise.reject(new DOMException('X25519 produced all-zero shared secret', 'OperationError'));
                 }
-                if (requestedBytes < 32) {
-                    shared = shared.slice(0, requestedBytes);
+                if (length === null || length === undefined) {
+                    return Promise.resolve(new Uint8Array(shared).buffer);
+                }
+                var requestedBytes = Math.ceil(length / 8);
+                shared = shared.slice(0, requestedBytes);
+                if (length % 8 !== 0) {
+                    shared[shared.length - 1] &= (0xFF << (8 - (length % 8)));
+                }
+                return Promise.resolve(new Uint8Array(shared).buffer);
+            }
+            if (a.name === 'X448') {
+                if (!a.public) {
+                    return Promise.reject(new TypeError('X448 deriveBits requires public property'));
+                }
+                if (!(a.public instanceof CryptoKey)) {
+                    return Promise.reject(new TypeError('public property must be a CryptoKey'));
+                }
+                if (baseKey.type !== 'private') {
+                    return Promise.reject(new DOMException('baseKey must be a private key', 'InvalidAccessError'));
+                }
+                if (a.public.type === 'private') {
+                    return Promise.reject(new DOMException('public property must not be a private key', 'InvalidAccessError'));
+                }
+                if (a.public.type === 'secret') {
+                    return Promise.reject(new DOMException('public property must be a public key', 'InvalidAccessError'));
+                }
+                if (a.public.algorithm.name !== 'X448') {
+                    return Promise.reject(new DOMException('Algorithm mismatch', 'InvalidAccessError'));
+                }
+                if (!_fromDeriveKey && baseKey.usages.indexOf('deriveBits') === -1) {
+                    return Promise.reject(new DOMException('baseKey usages do not include deriveBits', 'InvalidAccessError'));
+                }
+                if (length === 0) {
+                    return Promise.resolve(new ArrayBuffer(0));
+                }
+                if (length !== null && length !== undefined && length > 448) {
+                    return Promise.reject(new DOMException('Requested too many bits', 'OperationError'));
+                }
+                var shared = __braille_crypto_x448_derive_bits(baseKey._privateKeyBytes, a.public._publicKeyBytes);
+                if (shared.length === 0) {
+                    return Promise.reject(new DOMException('X448 produced all-zero shared secret', 'OperationError'));
+                }
+                if (length === null || length === undefined) {
+                    return Promise.resolve(new Uint8Array(shared).buffer);
+                }
+                var requestedBytes = Math.ceil(length / 8);
+                shared = shared.slice(0, requestedBytes);
+                if (length % 8 !== 0) {
+                    shared[shared.length - 1] &= (0xFF << (8 - (length % 8)));
                 }
                 return Promise.resolve(new Uint8Array(shared).buffer);
             }
@@ -481,20 +551,37 @@ fn crypto_js() -> &'static str {
                 if (!a.public || !(a.public instanceof CryptoKey)) {
                     return Promise.reject(new TypeError('ECDH deriveBits requires public CryptoKey'));
                 }
+                if (!_fromDeriveKey && baseKey.usages.indexOf('deriveBits') === -1) {
+                    return Promise.reject(new DOMException('baseKey usages do not include deriveBits', 'InvalidAccessError'));
+                }
                 if (baseKey.type !== 'private') {
                     return Promise.reject(new DOMException('baseKey must be a private key', 'InvalidAccessError'));
                 }
-                if (a.public.type !== 'public') {
+                if (a.public.type === 'private' || a.public.type === 'secret') {
                     return Promise.reject(new DOMException('public property must be a public key', 'InvalidAccessError'));
                 }
+                if (a.public.algorithm.name !== 'ECDH') {
+                    return Promise.reject(new DOMException('public key algorithm must be ECDH', 'InvalidAccessError'));
+                }
+                if (a.public.algorithm.namedCurve !== baseKey.algorithm.namedCurve) {
+                    return Promise.reject(new DOMException('public key curve does not match baseKey curve', 'InvalidAccessError'));
+                }
                 var curve = baseKey.algorithm.namedCurve;
+                var curveSize = {'P-256': 32, 'P-384': 48, 'P-521': 66}[curve] || 32;
                 var shared = __braille_crypto_ecdh_derive(curve, baseKey._privateKeyBytes, a.public._publicKeyBytes);
-                var requestedBytes = length / 8;
-                if (requestedBytes > shared.length) {
+                if (length === 0) {
+                    return Promise.resolve(new ArrayBuffer(0));
+                }
+                if (length === null || length === undefined) {
+                    return Promise.resolve(new Uint8Array(shared).buffer);
+                }
+                if (length > curveSize * 8) {
                     return Promise.reject(new DOMException('Requested too many bits', 'OperationError'));
                 }
-                if (requestedBytes < shared.length) {
-                    shared = shared.slice(0, requestedBytes);
+                var requestedBytes = Math.ceil(length / 8);
+                shared = shared.slice(0, requestedBytes);
+                if (length % 8 !== 0) {
+                    shared[shared.length - 1] &= (0xFF << (8 - (length % 8)));
                 }
                 return Promise.resolve(new Uint8Array(shared).buffer);
             }
@@ -505,7 +592,11 @@ fn crypto_js() -> &'static str {
             var a = normalizeAlgo(algo);
             var dka = normalizeAlgo(derivedKeyAlgo);
             var bitLen = dka.length || 256;
-            return subtle.deriveBits(a, baseKey, bitLen).then(function(bits) {
+            // deriveKey checks 'deriveKey' usage, not 'deriveBits'
+            if (baseKey.usages.indexOf('deriveKey') === -1) {
+                return Promise.reject(new DOMException('baseKey usages do not include deriveKey', 'InvalidAccessError'));
+            }
+            return subtle.deriveBits(a, baseKey, bitLen, true).then(function(bits) {
                 return subtle.importKey('raw', bits, dka, extractable, usages);
             });
         },

@@ -22,6 +22,7 @@ enum Status {
 struct ManifestEntry {
     status: Status,
     path: String,
+    alt: Option<String>,
 }
 
 fn parse_manifest(path: &std::path::Path) -> Vec<ManifestEntry> {
@@ -32,7 +33,7 @@ fn parse_manifest(path: &std::path::Path) -> Vec<ManifestEntry> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (status, path) = if let Some(rest) = line.strip_prefix("PASS ") {
+        let (status, rest) = if let Some(rest) = line.strip_prefix("PASS ") {
             (Status::Pass, rest.trim())
         } else if let Some(rest) = line.strip_prefix("FAIL ") {
             (Status::Fail, rest.trim())
@@ -42,9 +43,15 @@ fn parse_manifest(path: &std::path::Path) -> Vec<ManifestEntry> {
             eprintln!("warning: skipping malformed manifest line: {}", line);
             continue;
         };
+        let (path, alt) = if let Some(idx) = rest.find(" alt:") {
+            (rest[..idx].trim(), Some(rest[idx + 5..].trim().to_string()))
+        } else {
+            (rest, None)
+        };
         entries.push(ManifestEntry {
             status,
             path: path.to_string(),
+            alt,
         });
     }
     entries
@@ -58,7 +65,11 @@ fn write_manifest(path: &std::path::Path, entries: &[ManifestEntry]) {
             Status::Fail => "FAIL",
             Status::NotRun => "NOT_RUN",
         };
-        content.push_str(&format!("{} {}\n", status, entry.path));
+        if let Some(alt) = &entry.alt {
+            content.push_str(&format!("{} {} alt:{}\n", status, entry.path, alt));
+        } else {
+            content.push_str(&format!("{} {}\n", status, entry.path));
+        }
     }
     std::fs::write(path, content).unwrap();
 }
@@ -89,9 +100,17 @@ fn run_edge(manifest_path: &std::path::Path) {
         };
 
         let test_path = entries[edge_idx].path.clone();
+        let alt_path = entries[edge_idx].alt.clone();
         let display_idx = edge_idx + 1;
 
-        let result = run_single_test(&test_path);
+        let run_path = alt_path.as_deref().unwrap_or(&test_path);
+        if alt_path.is_some() {
+            eprint!("[{}/{}] {} (alt:{}) ", display_idx, total, test_path, run_path);
+        } else {
+            eprint!("[{}/{}] {} ", display_idx, total, test_path);
+        }
+        std::io::stderr().flush().unwrap();
+        let result = run_single_test(run_path);
 
         if result {
             entries[edge_idx].status = Status::Pass;
@@ -203,11 +222,11 @@ fn run_discover(manifest_path: &std::path::Path) {
     let mut added = 0;
     let mut removed = 0;
 
-    // Build new manifest: keep existing entries that still exist (preserving status),
-    // then append new entries as NOT_RUN
+    // Build new manifest: preserve existing entries in their current order,
+    // then append new entries (non-tentative first, tentative last)
     let mut new_entries: Vec<ManifestEntry> = Vec::new();
 
-    // Preserve existing entries that are still live
+    // Preserve existing entries that are still live (same order)
     for entry in &existing {
         if live_set.contains(&entry.path) {
             new_entries.push(entry.clone());
@@ -217,15 +236,45 @@ fn run_discover(manifest_path: &std::path::Path) {
         }
     }
 
-    // Append new entries
+    // Scan test files for "// alt_for:" comments
+    let alt_map = discover_alt_mappings();
+    let mut alt_count = 0;
+
+    // Collect new entries, split into non-tentative and tentative
+    let mut new_regular: Vec<ManifestEntry> = Vec::new();
+    let mut new_tentative: Vec<ManifestEntry> = Vec::new();
     for path in &live_tests {
         if !existing_paths.contains(path) {
-            new_entries.push(ManifestEntry {
+            added += 1;
+            let alt = alt_map.get(path).cloned();
+            let entry = ManifestEntry {
                 status: Status::NotRun,
                 path: path.clone(),
-            });
-            added += 1;
+                alt,
+            };
+            if path.contains(".tentative.") {
+                new_tentative.push(entry);
+            } else {
+                new_regular.push(entry);
+            }
         }
+    }
+
+    // Update alt mappings for existing entries too
+    for entry in &mut new_entries {
+        if let Some(alt) = alt_map.get(&entry.path) {
+            if entry.alt.as_ref() != Some(alt) {
+                entry.alt = Some(alt.clone());
+                alt_count += 1;
+            }
+        }
+    }
+
+    // Append new non-tentative first, then new tentative
+    new_entries.extend(new_regular);
+    new_entries.extend(new_tentative);
+    if alt_count > 0 {
+        println!("  updated {} alt mappings", alt_count);
     }
 
     write_manifest(manifest_path, &new_entries);
@@ -308,6 +357,58 @@ fn discover_cargo_tests() -> Vec<String> {
     }
 
     tests
+}
+
+// ---------------------------------------------------------------------------
+// Alt-for discovery
+// ---------------------------------------------------------------------------
+
+/// Scan integration test files for `// alt_for: <test_id>` comments.
+/// Returns a map from the target test_id to the cargo test that replaces it.
+fn discover_alt_mappings() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let root = workspace_root();
+    let test_dir = root.join("crates/engine/tests");
+    if !test_dir.exists() {
+        return map;
+    }
+
+    for entry in std::fs::read_dir(&test_dir).unwrap().filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_str().unwrap_or("").to_string();
+        if !name.ends_with(".rs") || name.starts_with("html5lib") {
+            continue;
+        }
+        let test_file = name.strip_suffix(".rs").unwrap().to_string();
+        let content = match std::fs::read_to_string(entry.path()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Look for patterns like:
+        //   // alt_for: wpt:WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.js
+        //   #[test]
+        //   fn some_test_name() {
+        let lines: Vec<&str> = content.lines().collect();
+        for i in 0..lines.len() {
+            let line = lines[i].trim();
+            if let Some(target) = line.strip_prefix("// alt_for: ") {
+                let target = target.trim().to_string();
+                // Find the next #[test] fn name
+                for fline in lines.iter().skip(i + 1) {
+                    let fline = fline.trim();
+                    if let Some(rest) = fline.strip_prefix("fn ") {
+                        if let Some(fn_name) = rest.split('(').next() {
+                            let cargo_id = format!("cargo:{}::{}", test_file, fn_name.trim());
+                            println!("  alt: {} -> {}", target, cargo_id);
+                            map.insert(target, cargo_id);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    map
 }
 
 // ---------------------------------------------------------------------------
@@ -399,16 +500,20 @@ fn run_wpt_test_single(rel_path: &str) -> bool {
 
     match result {
         Ok(wpt_result) => {
+            let total = wpt_result.passed + wpt_result.failed;
+            if total > 1 {
+                eprintln!();
+            }
             if wpt_result.failed == 0 {
                 true
             } else {
                 for detail in &wpt_result.details {
-                    eprintln!("  {}", detail);
+                    eprintln!("    {}", detail);
                 }
                 eprintln!(
                     "  ({}/{} subtests passed)",
                     wpt_result.passed,
-                    wpt_result.passed + wpt_result.failed
+                    total
                 );
                 false
             }

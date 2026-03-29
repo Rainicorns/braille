@@ -1,3 +1,4 @@
+use rand_core::RngCore;
 use rquickjs::{Ctx, Function};
 
 pub fn register(ctx: &Ctx<'_>) {
@@ -12,6 +13,49 @@ pub fn register(ctx: &Ctx<'_>) {
             let public = PublicKey::from(&secret);
             vec![public.as_bytes().to_vec(), secret.to_bytes().to_vec()]
         })
+        .unwrap(),
+    )
+    .unwrap();
+
+    // X448 key generation: returns [pub_bytes(56), priv_bytes(56)]
+    g.set(
+        "__braille_crypto_x448_generate",
+        Function::new(ctx.clone(), || -> Vec<Vec<u8>> {
+            let mut priv_bytes = [0u8; 56];
+            rand_core::OsRng.fill_bytes(&mut priv_bytes);
+            // X448 base point (u=5)
+            let mut base_point = [0u8; 56];
+            base_point[0] = 5;
+            let pub_bytes = x448::x448(priv_bytes, base_point)
+                .expect("X448 key generation failed");
+            vec![pub_bytes.to_vec(), priv_bytes.to_vec()]
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    // X448 ECDH: derive_bits(priv_bytes, pub_bytes) -> shared_secret or empty on error
+    g.set(
+        "__braille_crypto_x448_derive_bits",
+        Function::new(
+            ctx.clone(),
+            |priv_bytes: Vec<u8>, pub_bytes: Vec<u8>| -> Vec<u8> {
+                let mut priv_arr = [0u8; 56];
+                priv_arr.copy_from_slice(&priv_bytes);
+                let mut pub_arr = [0u8; 56];
+                pub_arr.copy_from_slice(&pub_bytes);
+
+                match x448::x448(priv_arr, pub_arr) {
+                    Some(shared) => {
+                        if shared.iter().all(|&b| b == 0) {
+                            return vec![];
+                        }
+                        shared.to_vec()
+                    }
+                    None => vec![],
+                }
+            },
+        )
         .unwrap(),
     )
     .unwrap();
@@ -103,7 +147,7 @@ pub fn register(ctx: &Ctx<'_>) {
     )
     .unwrap();
 
-    // ECDH P-256/P-384 key generation: (curve) -> [pub_uncompressed, priv_bytes]
+    // ECDH P-256/P-384/P-521 key generation: (curve) -> [pub_uncompressed, priv_bytes]
     g.set(
         "__braille_crypto_ecdh_generate",
         Function::new(ctx.clone(), |curve: String| -> Vec<Vec<u8>> {
@@ -118,6 +162,13 @@ pub fn register(ctx: &Ctx<'_>) {
                 "P-384" => {
                     let nz = p384::NonZeroScalar::random(&mut rand_core::OsRng);
                     let public = p384::PublicKey::from_secret_scalar(&nz);
+                    let priv_bytes = nz.to_bytes().to_vec();
+                    let pub_bytes = public.to_sec1_bytes().to_vec();
+                    vec![pub_bytes, priv_bytes]
+                }
+                "P-521" => {
+                    let nz = p521::NonZeroScalar::random(&mut rand_core::OsRng);
+                    let public = p521::PublicKey::from_secret_scalar(&nz);
                     let priv_bytes = nz.to_bytes().to_vec();
                     let pub_bytes = public.to_sec1_bytes().to_vec();
                     vec![pub_bytes, priv_bytes]
@@ -164,6 +215,20 @@ pub fn register(ctx: &Ctx<'_>) {
                         let shared = diffie_hellman(scalar, public.as_affine());
                         shared.raw_secret_bytes().to_vec()
                     }
+                    "P-521" => {
+                        use p521::ecdh::diffie_hellman;
+                        use p521::elliptic_curve::sec1::FromEncodedPoint;
+                        let scalar = p521::NonZeroScalar::from_repr(
+                            *p521::FieldBytes::from_slice(&priv_bytes),
+                        )
+                        .expect("invalid P-521 private key");
+                        let encoded = p521::EncodedPoint::from_bytes(&pub_bytes)
+                            .expect("invalid P-521 public key encoding");
+                        let public = p521::PublicKey::from_encoded_point(&encoded)
+                            .expect("invalid P-521 public key point");
+                        let shared = diffie_hellman(scalar, public.as_affine());
+                        shared.raw_secret_bytes().to_vec()
+                    }
                     other => panic!("NotSupportedError: ECDH curve '{other}' not supported"),
                 }
             },
@@ -199,8 +264,86 @@ pub fn register(ctx: &Ctx<'_>) {
                         let sig: Signature = signing_key.sign(&data);
                         sig.to_bytes().to_vec()
                     }
+                    "P-521" => {
+                        use p521::ecdsa::{SigningKey, Signature};
+                        use p521::ecdsa::signature::Signer;
+                        let signing_key = SigningKey::from_bytes(
+                            p521::FieldBytes::from_slice(&priv_bytes),
+                        )
+                        .expect("invalid P-521 signing key");
+                        let sig: Signature = signing_key.sign(&data);
+                        sig.to_bytes().to_vec()
+                    }
                     other => panic!("NotSupportedError: ECDSA curve '{other}' not supported"),
                 }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // EC PKCS8 import: (curve, der_bytes) -> [priv_scalar, pub_uncompressed]
+    g.set(
+        "__braille_crypto_ec_pkcs8_import",
+        Function::new(
+            ctx.clone(),
+            |curve: String, der_bytes: Vec<u8>| -> Vec<Vec<u8>> {
+                match curve.as_str() {
+                    "P-256" => {
+                        use p256::pkcs8::DecodePrivateKey;
+                        let secret_key = p256::SecretKey::from_pkcs8_der(&der_bytes)
+                            .expect("invalid P-256 PKCS8 DER");
+                        let public_key = secret_key.public_key();
+                        let priv_bytes = secret_key.to_bytes().to_vec();
+                        let pub_bytes = public_key.to_sec1_bytes().to_vec();
+                        vec![priv_bytes, pub_bytes]
+                    }
+                    "P-384" => {
+                        use p384::pkcs8::DecodePrivateKey;
+                        let secret_key = p384::SecretKey::from_pkcs8_der(&der_bytes)
+                            .expect("invalid P-384 PKCS8 DER");
+                        let public_key = secret_key.public_key();
+                        let priv_bytes = secret_key.to_bytes().to_vec();
+                        let pub_bytes = public_key.to_sec1_bytes().to_vec();
+                        vec![priv_bytes, pub_bytes]
+                    }
+                    "P-521" => {
+                        use p521::pkcs8::DecodePrivateKey;
+                        let secret_key = p521::SecretKey::from_pkcs8_der(&der_bytes)
+                            .expect("invalid P-521 PKCS8 DER");
+                        let public_key = secret_key.public_key();
+                        let priv_bytes = secret_key.to_bytes().to_vec();
+                        let pub_bytes = public_key.to_sec1_bytes().to_vec();
+                        vec![priv_bytes, pub_bytes]
+                    }
+                    other => panic!("NotSupportedError: EC PKCS8 import for curve '{other}' not supported"),
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // EC SPKI import: (der_bytes) -> [curve_name_bytes, pub_uncompressed]
+    g.set(
+        "__braille_crypto_ec_spki_import",
+        Function::new(
+            ctx.clone(),
+            |der_bytes: Vec<u8>| -> Vec<Vec<u8>> {
+                use p256::pkcs8::DecodePublicKey;
+                // Try P-256 first
+                if let Ok(pk) = p256::PublicKey::from_public_key_der(&der_bytes) {
+                    return vec![b"P-256".to_vec(), pk.to_sec1_bytes().to_vec()];
+                }
+                // Try P-384
+                if let Ok(pk) = p384::PublicKey::from_public_key_der(&der_bytes) {
+                    return vec![b"P-384".to_vec(), pk.to_sec1_bytes().to_vec()];
+                }
+                // Try P-521
+                if let Ok(pk) = p521::PublicKey::from_public_key_der(&der_bytes) {
+                    return vec![b"P-521".to_vec(), pk.to_sec1_bytes().to_vec()];
+                }
+                panic!("DataError: could not parse EC SPKI - unsupported curve");
             },
         )
         .unwrap(),
@@ -239,6 +382,17 @@ pub fn register(ctx: &Ctx<'_>) {
                             .expect("invalid P-384 verifying key");
                         let sig = Signature::from_slice(&signature)
                             .expect("invalid P-384 signature");
+                        vk.verify(&data, &sig).is_ok()
+                    }
+                    "P-521" => {
+                        use p521::ecdsa::{Signature, VerifyingKey};
+                        use p521::ecdsa::signature::Verifier;
+                        let encoded = p521::EncodedPoint::from_bytes(&pub_bytes)
+                            .expect("invalid P-521 public key");
+                        let vk = VerifyingKey::from_encoded_point(&encoded)
+                            .expect("invalid P-521 verifying key");
+                        let sig = Signature::from_slice(&signature)
+                            .expect("invalid P-521 signature");
                         vk.verify(&data, &sig).is_ok()
                     }
                     other => panic!("NotSupportedError: ECDSA curve '{other}' not supported"),
