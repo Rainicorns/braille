@@ -232,31 +232,50 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         globalThis.__braille_maybe_load_script = function(node) {
             if (!node || node.tagName !== 'SCRIPT') return;
             var src = node.getAttribute('src');
-            if (!src) return;
-            var shortSrc = src.substring(src.lastIndexOf('/') + 1).substring(0, 40);
-            __braille_script_log.push('FETCH: ' + shortSrc);
-            fetch(src).then(function(resp) {
-                __braille_script_log.push('RESP: ' + shortSrc + ' ok=' + resp.ok + ' status=' + resp.status);
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                return resp.text();
-            }).then(function(code) {
-                __braille_script_log.push('EVAL: ' + shortSrc + ' len=' + code.length);
-                document.currentScript = node;
-                (0, eval)(code);
-                document.currentScript = null;
-                __braille_script_log.push('OK: ' + shortSrc);
-                if (typeof node.onload === 'function') {
-                    node.onload({type: 'load', target: node});
+            if (src) {
+                var shortSrc = src.substring(src.lastIndexOf('/') + 1).substring(0, 40);
+                __braille_script_log.push('FETCH: ' + shortSrc);
+                fetch(src).then(function(resp) {
+                    __braille_script_log.push('RESP: ' + shortSrc + ' ok=' + resp.ok + ' status=' + resp.status);
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    return resp.text();
+                }).then(function(code) {
+                    __braille_script_log.push('EVAL: ' + shortSrc + ' len=' + code.length);
+                    document.currentScript = node;
+                    (0, eval)(code);
+                    document.currentScript = null;
+                    __braille_script_log.push('OK: ' + shortSrc);
+                    if (typeof node.onload === 'function') {
+                        node.onload({type: 'load', target: node});
+                    }
+                    node.dispatchEvent(new Event('load'));
+                }).catch(function(err) {
+                    document.currentScript = null;
+                    __braille_script_log.push('ERR: ' + shortSrc + ' -> ' + String(err).substring(0, 100));
+                    if (typeof node.onerror === 'function') {
+                        node.onerror({type: 'error', target: node, message: String(err)});
+                    }
+                    node.dispatchEvent(new Event('error'));
+                });
+            } else {
+                var code = (node.__nid !== undefined) ? __n_getTextContent(node.__nid) : (node.textContent || '');
+                if (code && code.trim()) {
+                    var iframeRealm = __braille_find_owning_iframe_realm(node);
+                    if (iframeRealm) {
+                        setTimeout(function() {
+                            __braille_exec_in_iframe(iframeRealm, code);
+                            node.dispatchEvent(new Event('load'));
+                        }, 0);
+                    } else {
+                        setTimeout(function() {
+                            document.currentScript = node;
+                            (0, eval)(code);
+                            document.currentScript = null;
+                            node.dispatchEvent(new Event('load'));
+                        }, 0);
+                    }
                 }
-                node.dispatchEvent(new Event('load'));
-            }).catch(function(err) {
-                document.currentScript = null;
-                __braille_script_log.push('ERR: ' + shortSrc + ' -> ' + String(err).substring(0, 100));
-                if (typeof node.onerror === 'function') {
-                    node.onerror({type: 'error', target: node, message: String(err)});
-                }
-                node.dispatchEvent(new Event('error'));
-            });
+            }
         };
 
         // Helper: throw DOMException from validation error string "ErrorName:message"
@@ -299,6 +318,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
             __braille_maybe_load_script(child);
             __braille_maybe_load_link(child);
+            if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(child);
             return child;
         };
         EP.removeChild = function(child) {
@@ -350,6 +370,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
             __braille_maybe_load_script(newChild);
             __braille_maybe_load_link(newChild);
+            if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(newChild);
             return newChild;
         };
 
@@ -439,6 +460,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (rootEl) rootEl.__ownerDoc = newDoc;
             return newDoc;
         }
+        globalThis.__makeDocumentLike = __makeDocumentLike;
+        globalThis.__w = __w;
 
         // Override document methods
         var doc = globalThis.document;

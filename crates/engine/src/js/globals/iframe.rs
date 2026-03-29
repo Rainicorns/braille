@@ -49,151 +49,9 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
         (function() {
             var iframeRealms = {};
 
-            // Extract inline <script> content from HTML (simple regex, like Worker does)
-            function extractScripts(html) {
-                var scripts = [];
-                var re = /<script[^>]*>([\s\S]*?)<\/script>/gi;
-                var m;
-                while ((m = re.exec(html)) !== null) {
-                    var tag = m[0];
-                    // Skip external scripts (those with src attribute)
-                    if (/\bsrc\s*=/i.test(tag.substring(0, tag.indexOf('>')))) continue;
-                    if (m[1].trim()) scripts.push(m[1]);
-                }
-                return scripts;
-            }
+            function buildIframeWindow(iframeEl, iframeDoc) {
+                var iframeWindow;
 
-            // Create an iframe realm for a given iframe nodeId and HTML content
-            globalThis.__braille_create_iframe_realm = function(iframeNodeId, html) {
-                var iframeEl = __braille_get_element_wrapper(iframeNodeId);
-
-                // Build the realm's window proxy and document
-                var realm = {
-                    _listeners: {},
-                    _onmessage: null
-                };
-
-                // Iframe document stub — minimal DOM for challenge scripts
-                var iframeDoc = {
-                    nodeType: 9,
-                    nodeName: '#document',
-                    readyState: 'complete',
-                    cookie: '',
-                    title: '',
-                    _elements: [],
-                    _elementsById: {},
-                    createElement: function(tag) {
-                        var el = {
-                            tagName: tag.toUpperCase(),
-                            nodeName: tag.toUpperCase(),
-                            nodeType: 1,
-                            childNodes: [],
-                            children: [],
-                            attributes: {},
-                            style: {},
-                            className: '',
-                            id: '',
-                            textContent: '',
-                            innerHTML: '',
-                            _listeners: {},
-                            appendChild: function(child) {
-                                this.childNodes.push(child);
-                                this.children.push(child);
-                                child.parentNode = this;
-                                child.parentElement = this;
-                                // Track in doc's element lists
-                                iframeDoc._elements.push(child);
-                                if (child.id) iframeDoc._elementsById[child.id] = child;
-                                return child;
-                            },
-                            removeChild: function(child) {
-                                this.childNodes = this.childNodes.filter(function(c) { return c !== child; });
-                                this.children = this.children.filter(function(c) { return c !== child; });
-                                return child;
-                            },
-                            getAttribute: function(name) { return this.attributes[name] || null; },
-                            setAttribute: function(name, value) {
-                                this.attributes[name] = String(value);
-                                if (name === 'id') {
-                                    this.id = String(value);
-                                    iframeDoc._elementsById[this.id] = this;
-                                }
-                            },
-                            removeAttribute: function(name) { delete this.attributes[name]; },
-                            hasAttribute: function(name) { return name in this.attributes; },
-                            addEventListener: function(type, cb) {
-                                if (!this._listeners[type]) this._listeners[type] = [];
-                                this._listeners[type].push(cb);
-                            },
-                            removeEventListener: function(type, cb) {
-                                if (this._listeners[type]) {
-                                    this._listeners[type] = this._listeners[type].filter(function(f) { return f !== cb; });
-                                }
-                            },
-                            dispatchEvent: function(event) {
-                                var cbs = this._listeners[event.type];
-                                if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(this, event); }
-                                return true;
-                            },
-                            querySelector: function() { return null; },
-                            querySelectorAll: function() { return []; },
-                            getBoundingClientRect: function() { return {top:0,left:0,right:0,bottom:0,width:0,height:0}; },
-                            cloneNode: function() { return iframeDoc.createElement(this.tagName.toLowerCase()); }
-                        };
-                        return el;
-                    },
-                    createTextNode: function(text) {
-                        return { nodeType: 3, textContent: text, nodeName: '#text', data: text };
-                    },
-                    createDocumentFragment: function() {
-                        return {
-                            nodeType: 11,
-                            childNodes: [],
-                            children: [],
-                            appendChild: function(child) { this.childNodes.push(child); this.children.push(child); return child; },
-                            querySelectorAll: function() { return []; }
-                        };
-                    },
-                    getElementById: function(id) {
-                        return iframeDoc._elementsById[id] || null;
-                    },
-                    querySelector: function(sel) {
-                        // Very basic: only supports #id selectors
-                        if (sel.charAt(0) === '#') return iframeDoc._elementsById[sel.substring(1)] || null;
-                        return null;
-                    },
-                    querySelectorAll: function() { return []; },
-                    addEventListener: function(type, cb) {
-                        if (!iframeDoc._docListeners) iframeDoc._docListeners = {};
-                        if (!iframeDoc._docListeners[type]) iframeDoc._docListeners[type] = [];
-                        iframeDoc._docListeners[type].push(cb);
-                    },
-                    removeEventListener: function(type, cb) {
-                        if (iframeDoc._docListeners && iframeDoc._docListeners[type]) {
-                            iframeDoc._docListeners[type] = iframeDoc._docListeners[type].filter(function(f) { return f !== cb; });
-                        }
-                    },
-                    dispatchEvent: function(event) {
-                        if (iframeDoc._docListeners) {
-                            var cbs = iframeDoc._docListeners[event.type];
-                            if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(iframeDoc, event); }
-                        }
-                        return true;
-                    },
-                    createEvent: function(type) {
-                        return new Event(type);
-                    }
-                };
-
-                // Body element
-                var body = iframeDoc.createElement('body');
-                iframeDoc.body = body;
-                iframeDoc.documentElement = iframeDoc.createElement('html');
-                iframeDoc.documentElement.appendChild(body);
-                iframeDoc.head = iframeDoc.createElement('head');
-
-                // Parent proxy: wraps the real parent window but overrides postMessage
-                // so that event.source is the iframe's window, not the parent's.
                 var parentProxy = new Proxy(window, {
                     get: function(target, prop) {
                         if (prop === 'postMessage') {
@@ -226,8 +84,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     }
                 });
 
-                // Build the iframe window proxy
-                var iframeWindow = {
+                iframeWindow = {
                     document: iframeDoc,
                     parent: parentProxy,
                     top: parentProxy,
@@ -299,7 +156,6 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                         }
                         return true;
                     },
-                    // iframe's postMessage: receives messages FROM parent
                     postMessage: function(data, targetOrigin) {
                         var serialized = data;
                         if (typeof data === 'object' && data !== null) {
@@ -320,57 +176,171 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 iframeWindow.window = iframeWindow;
                 iframeDoc.defaultView = iframeWindow;
 
-                // Store the realm
-                realm.window = iframeWindow;
-                realm.document = iframeDoc;
+                return { window: iframeWindow, parentProxy: parentProxy };
+            }
+
+            function execScriptInIframe(realm, code) {
+                var iw = realm.window;
+                var pp = realm._parentProxy;
+                var fn = new Function(
+                    'window', 'document', 'self', 'parent', 'top',
+                    'postMessage', 'addEventListener', 'removeEventListener',
+                    'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+                    'console', 'location', 'navigator', 'JSON', 'MessageEvent',
+                    'crypto', 'TextEncoder', 'TextDecoder',
+                    code
+                );
+                fn(
+                    iw, iw.document, iw, pp, pp,
+                    function(data, targetOrigin) {
+                        var serialized = data;
+                        if (typeof data === 'object' && data !== null) {
+                            serialized = JSON.parse(JSON.stringify(data));
+                        }
+                        setTimeout(function() {
+                            var event = new MessageEvent('message', {
+                                data: serialized,
+                                origin: (typeof location !== 'undefined' && location.origin) || '',
+                                source: iw
+                            });
+                            if (window.__et_listeners) {
+                                var cbs = window.__et_listeners['message_b'];
+                                if (cbs) { var s = cbs.slice(); for (var j = 0; j < s.length; j++) s[j].call(window, event); }
+                                cbs = window.__et_listeners['message_c'];
+                                if (cbs) { var s = cbs.slice(); for (var j = 0; j < s.length; j++) s[j].call(window, event); }
+                            }
+                            if (typeof window.onmessage === 'function') {
+                                window.onmessage(event);
+                            }
+                        }, 0);
+                    },
+                    iw.addEventListener,
+                    iw.removeEventListener,
+                    setTimeout, setInterval, clearTimeout, clearInterval,
+                    console,
+                    iw.location, iw.navigator, JSON, MessageEvent,
+                    (typeof crypto !== 'undefined') ? crypto : undefined,
+                    (typeof TextEncoder !== 'undefined') ? TextEncoder : undefined,
+                    (typeof TextDecoder !== 'undefined') ? TextDecoder : undefined
+                );
+            }
+
+            function buildRealDomDocument(iframeNodeId) {
+                var htmlNid = __n_createElement('html');
+                __n_appendChild(iframeNodeId, htmlNid);
+                var headNid = __n_createElement('head');
+                __n_appendChild(htmlNid, headNid);
+                var bodyNid = __n_createElement('body');
+                __n_appendChild(htmlNid, bodyNid);
+                var htmlEl = __w(htmlNid);
+                return __makeDocumentLike(htmlEl);
+            }
+
+            // Initialize about:blank iframe realm on appendChild
+            globalThis.__braille_maybe_init_iframe = function(node) {
+                if (!node || node.tagName !== 'IFRAME') return;
+                if (node.__nid === undefined) return;
+                if (iframeRealms[node.__nid]) return;
+
+                var src = node.getAttribute('src');
+                if (src) return;
+
+                var iframeDoc = buildRealDomDocument(node.__nid);
+                var built = buildIframeWindow(node, iframeDoc);
+
+                var realm = {
+                    window: built.window,
+                    document: iframeDoc,
+                    _parentProxy: built.parentProxy,
+                    _iframeNodeId: node.__nid
+                };
+                iframeRealms[node.__nid] = realm;
+            };
+
+            // Find the iframe realm that owns a given node (walk up parent chain)
+            globalThis.__braille_find_owning_iframe_realm = function(node) {
+                if (!node || node.__nid === undefined) return null;
+                var nid = node.__nid;
+                var cur = __n_getParent(nid);
+                while (cur >= 0) {
+                    if (__n_getTagName(cur) === 'IFRAME') {
+                        return iframeRealms[cur] || null;
+                    }
+                    cur = __n_getParent(cur);
+                }
+                return null;
+            };
+
+            // Execute code in an iframe's scoped context
+            globalThis.__braille_exec_in_iframe = function(realm, code) {
+                execScriptInIframe(realm, code);
+            };
+
+            // Extract inline <script> content from HTML (simple regex)
+            function extractScripts(html) {
+                var scripts = [];
+                var re = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+                var m;
+                while ((m = re.exec(html)) !== null) {
+                    var tag = m[0];
+                    if (/\bsrc\s*=/i.test(tag.substring(0, tag.indexOf('>')))) continue;
+                    if (m[1].trim()) scripts.push(m[1]);
+                }
+                return scripts;
+            }
+
+            // Create an iframe realm for a given iframe nodeId and HTML content
+            globalThis.__braille_create_iframe_realm = function(iframeNodeId, html) {
+                var iframeEl = __braille_get_element_wrapper(iframeNodeId);
+
+                // Build real DOM subtree under the iframe element
+                var iframeDoc;
+                if (html) {
+                    // Parse HTML into real nodes via a temp container, then move under iframe
+                    var htmlNid = __n_createElement('html');
+                    __n_appendChild(iframeNodeId, htmlNid);
+                    __n_setInnerHTML(htmlNid, html);
+
+                    // Ensure <head> and <body> exist
+                    var htmlEl = __w(htmlNid);
+                    var hasHead = false, hasBody = false;
+                    var kids = htmlEl.childNodes;
+                    for (var i = 0; i < kids.length; i++) {
+                        if (kids[i].tagName === 'HEAD') hasHead = true;
+                        if (kids[i].tagName === 'BODY') hasBody = true;
+                    }
+                    if (!hasHead) {
+                        var headNid = __n_createElement('head');
+                        if (kids.length > 0 && kids[0].__nid !== undefined) {
+                            __n_insertBefore(htmlNid, headNid, kids[0].__nid);
+                        } else {
+                            __n_appendChild(htmlNid, headNid);
+                        }
+                    }
+                    if (!hasBody) {
+                        var bodyNid = __n_createElement('body');
+                        __n_appendChild(htmlNid, bodyNid);
+                    }
+
+                    iframeDoc = __makeDocumentLike(htmlEl);
+                } else {
+                    iframeDoc = buildRealDomDocument(iframeNodeId);
+                }
+
+                var built = buildIframeWindow(iframeEl, iframeDoc);
+
+                var realm = {
+                    window: built.window,
+                    document: iframeDoc,
+                    _parentProxy: built.parentProxy,
+                    _iframeNodeId: iframeNodeId
+                };
                 iframeRealms[iframeNodeId] = realm;
 
-                // Extract and execute scripts from the iframe HTML
+                // Execute inline scripts from the HTML content
                 var scripts = extractScripts(html || '');
                 for (var i = 0; i < scripts.length; i++) {
-                    var fn = new Function(
-                        'window', 'document', 'self', 'parent', 'top',
-                        'postMessage', 'addEventListener', 'removeEventListener',
-                        'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
-                        'console', 'location', 'navigator', 'JSON', 'MessageEvent',
-                        'crypto', 'TextEncoder', 'TextDecoder',
-                        scripts[i]
-                    );
-                    fn(
-                        iframeWindow, iframeDoc, iframeWindow, parentProxy, parentProxy,
-                        function(data, targetOrigin) {
-                            // iframe calling postMessage -> deliver to parent
-                            var serialized = data;
-                            if (typeof data === 'object' && data !== null) {
-                                serialized = JSON.parse(JSON.stringify(data));
-                            }
-                            setTimeout(function() {
-                                var event = new MessageEvent('message', {
-                                    data: serialized,
-                                    origin: (typeof location !== 'undefined' && location.origin) || '',
-                                    source: iframeWindow
-                                });
-                                // Deliver to parent window message listeners
-                                if (window.__et_listeners) {
-                                    var cbs = window.__et_listeners['message_b'];
-                                    if (cbs) { var s = cbs.slice(); for (var j = 0; j < s.length; j++) s[j].call(window, event); }
-                                    cbs = window.__et_listeners['message_c'];
-                                    if (cbs) { var s = cbs.slice(); for (var j = 0; j < s.length; j++) s[j].call(window, event); }
-                                }
-                                if (typeof window.onmessage === 'function') {
-                                    window.onmessage(event);
-                                }
-                            }, 0);
-                        },
-                        iframeWindow.addEventListener,
-                        iframeWindow.removeEventListener,
-                        setTimeout, setInterval, clearTimeout, clearInterval,
-                        console,
-                        iframeWindow.location, iframeWindow.navigator, JSON, MessageEvent,
-                        (typeof crypto !== 'undefined') ? crypto : undefined,
-                        (typeof TextEncoder !== 'undefined') ? TextEncoder : undefined,
-                        (typeof TextDecoder !== 'undefined') ? TextDecoder : undefined
-                    );
+                    execScriptInIframe(realm, scripts[i]);
                 }
 
                 return realm;
@@ -386,7 +356,6 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 var iframeIds = __braille_find_iframes();
                 for (var i = 0; i < iframeIds.length; i++) {
                     var nid = iframeIds[i];
-                    // Skip if already processed
                     if (iframeRealms[nid]) continue;
 
                     var src = __braille_iframe_get_src(nid);
@@ -397,14 +366,12 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
 
                     __braille_create_iframe_realm(nid, content);
 
-                    // Fire iframe.onload
                     var el = __braille_get_element_wrapper(nid);
                     if (el) {
                         var loadEvent = new Event('load');
                         if (typeof el.onload === 'function') {
                             el.onload(loadEvent);
                         }
-                        // Also dispatch via addEventListener
                         if (el.dispatchEvent) {
                             el.dispatchEvent(loadEvent);
                         }
@@ -412,8 +379,6 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 }
             };
 
-            // contentWindow/contentDocument on __ElemProto (the actual prototype
-            // chain used by wrapper objects). Check tag name to only work on iframes.
             Object.defineProperty(__ElemProto, 'contentWindow', {
                 get: function() {
                     if (this.__nid === undefined) return undefined;
@@ -434,7 +399,6 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 configurable: true
             });
 
-            // Reset iframe realms on page rebind
             var origReset = globalThis.__braille_reset_dom_cache;
             globalThis.__braille_reset_dom_cache = function() {
                 if (origReset) origReset();

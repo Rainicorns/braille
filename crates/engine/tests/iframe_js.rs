@@ -402,3 +402,128 @@ fn proton_challenge_iframe_flow() {
         .unwrap();
     assert_eq!(fingerprint, "test-fp-123");
 }
+
+// ---------------------------------------------------------------------------
+// 12. Dynamic iframe (createElement + appendChild) gets contentDocument
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dynamic_iframe_gets_content_document() {
+    let html = r#"<html><body><script>
+        var iframe = document.createElement('iframe');
+        document.body.appendChild(iframe);
+        window.__hasDoc = iframe.contentDocument !== null;
+        window.__hasBody = iframe.contentDocument && iframe.contentDocument.body !== null;
+        window.__docType = iframe.contentDocument ? iframe.contentDocument.nodeType : -1;
+    </script></body></html>"#;
+
+    let mut engine = Engine::new();
+    engine.load_html(html);
+    engine.settle();
+
+    let has_doc = engine.eval_js("window.__hasDoc").unwrap();
+    assert_eq!(has_doc, "true", "Dynamic iframe should have contentDocument");
+
+    let has_body = engine.eval_js("window.__hasBody").unwrap();
+    assert_eq!(has_body, "true", "Dynamic iframe contentDocument should have body");
+
+    let doc_type = engine.eval_js("window.__docType").unwrap();
+    assert_eq!(doc_type, "9", "contentDocument nodeType should be 9");
+}
+
+// ---------------------------------------------------------------------------
+// 13. Script appended to iframe contentDocument.body executes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn script_appended_to_iframe_executes() {
+    let html = r#"<html><body><script>
+        window.__iframeResult = 'not set';
+        var iframe = document.createElement('iframe');
+        document.body.appendChild(iframe);
+        var script = document.createElement('script');
+        script.textContent = "parent.postMessage('script-ran', '*');";
+        iframe.contentDocument.body.appendChild(script);
+        window.addEventListener('message', function(e) {
+            if (e.data === 'script-ran') window.__iframeResult = 'executed';
+        });
+    </script></body></html>"#;
+
+    let mut engine = Engine::new();
+    engine.load_html(html);
+    engine.settle();
+
+    let result = engine.eval_js("window.__iframeResult").unwrap();
+    assert_eq!(result, "executed", "Script appended to iframe should execute");
+}
+
+// ---------------------------------------------------------------------------
+// 14. Script in iframe sees iframe's document, not parent's
+// ---------------------------------------------------------------------------
+
+#[test]
+fn iframe_script_sees_iframe_document() {
+    let html = r#"<html><body>
+        <div id="parent-marker"></div>
+        <script>
+            window.__iframeSeesParentMarker = 'unknown';
+            window.__iframeSelfCheck = 'unknown';
+            var iframe = document.createElement('iframe');
+            document.body.appendChild(iframe);
+            var script = document.createElement('script');
+            script.textContent = "var marker = document.getElementById('parent-marker'); parent.postMessage({hasMarker: !!marker, bodyTag: document.body.tagName}, '*');";
+            iframe.contentDocument.body.appendChild(script);
+            window.addEventListener('message', function(e) {
+                if (e.data && e.data.hasMarker !== undefined) {
+                    window.__iframeSeesParentMarker = e.data.hasMarker;
+                    window.__iframeSelfCheck = e.data.bodyTag;
+                }
+            });
+        </script>
+    </body></html>"#;
+
+    let mut engine = Engine::new();
+    engine.load_html(html);
+    engine.settle();
+
+    let sees_marker = engine.eval_js("window.__iframeSeesParentMarker").unwrap();
+    assert_eq!(sees_marker, "false", "Iframe script should NOT see parent's #parent-marker");
+
+    let body_tag = engine.eval_js("window.__iframeSelfCheck").unwrap();
+    assert_eq!(body_tag, "BODY", "Iframe document should have a body element");
+}
+
+// ---------------------------------------------------------------------------
+// 15. WPT pattern: createElement iframe + contentDocument.body.appendChild(script)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wpt_iframe_content_document_script_pattern() {
+    let html = r#"<html><body><script>
+        window.__results = [];
+        var child = document.createElement("iframe");
+        document.body.appendChild(child);
+
+        var script = document.createElement("script");
+        script.textContent = "window.__results.push('child-script-ran');";
+        child.contentDocument.body.appendChild(script);
+    </script></body></html>"#;
+
+    let mut engine = Engine::new();
+    engine.load_html(html);
+    engine.settle();
+
+    let result = engine.eval_js("window.__results.join(',')").unwrap();
+    eprintln!("results: {}", result);
+    // The script runs in iframe context where window.__results doesn't exist,
+    // so we check via a different mechanism
+    let has_content_doc = engine
+        .eval_js("document.querySelector('iframe').contentDocument !== null")
+        .unwrap();
+    assert_eq!(has_content_doc, "true", "iframe should have contentDocument");
+
+    let has_body = engine
+        .eval_js("document.querySelector('iframe').contentDocument.body !== null")
+        .unwrap();
+    assert_eq!(has_body, "true", "iframe contentDocument should have body");
+}

@@ -95,7 +95,8 @@ The loop:
 3. Think deeply about what's missing. What capability does the engine lack? What other tests and real sites would benefit from adding it properly?
 4. Implement the real fix. No band-aids.
 5. Run the runner again. If the high water mark went up, commit the updated manifest.
-6. `cargo run -p test-runner -- --regression` periodically to catch regressions.
+
+**Always use `cargo run -p test-runner` (the ratchet) to verify changes.** Do NOT use `cargo test --workspace` as verification — the ratchet is the real scoreboard. Do NOT run `--regression` unless explicitly asked.
 
 The manifest is committed to the repo. The high water mark is the permanent scoreboard.
 
