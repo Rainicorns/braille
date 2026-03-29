@@ -1,8 +1,11 @@
 mod digest;
 mod aes;
+mod chacha;
 mod ec;
 mod hmac;
 mod kdf;
+mod mlkem;
+mod ocb3;
 mod random;
 
 use rquickjs::Ctx;
@@ -14,4 +17,6 @@ pub fn register(ctx: &Ctx<'_>) {
     hmac::register(ctx);
     kdf::register(ctx);
     ec::register(ctx);
+    mlkem::register(ctx);
+    chacha::register(ctx);
 }

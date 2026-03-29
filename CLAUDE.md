@@ -56,7 +56,7 @@ When testing against an external system (e.g., Anubis), read their source code a
 
 ## Code Structure
 
-- **New tests go in `crates/engine/tests/`**, not inline in source files. Use the public API (`eval_js`, `handle_click`, `handle_type`, `snapshot`, etc.) from external test files.
+- **New tests go in `crates/engine/tests/`**, not inline in source files and never in `/tmp`. Use the public API (`eval_js`, `handle_click`, `handle_type`, `snapshot`, etc.) from external test files.
 - **Don't grow big files.** `lib.rs` and `dom_bridge.rs` are already too large. New Engine functionality goes in its own module. New JS bindings go in `js/bindings/` (one file per API surface).
 
 ## Code Style
@@ -97,6 +97,10 @@ The loop:
 5. Run the runner again. If the high water mark went up, commit the updated manifest.
 
 **Always use `cargo run -p test-runner` (the ratchet) to verify changes. Always run it in the background (`run_in_background: true`) so the user can see output streaming in real time.** Do NOT use `cargo test --workspace` as verification — the ratchet is the real scoreboard. Do NOT run `--regression` unless explicitly asked.
+
+**Never run more than one ratchet at a time.** Before starting a ratchet, always check that no other ratchet is currently running. Wait for completion before starting a new one.
+
+**Never create alt tests without explicit user permission.** When a test fails, the first instinct must be to polyfill or implement the missing feature — not to reach for an alt test. Only the user decides when a test should be alted. Ask and get explicit approval before creating any alt test.
 
 The manifest is committed to the repo. The high water mark is the permanent scoreboard.
 

@@ -70,17 +70,47 @@ fn crypto_js() -> &'static str {
 
     // ---- Helpers ----
     function toBytes(data) {
-        if (data instanceof ArrayBuffer) return new Uint8Array(data);
-        if (data instanceof Uint8Array) return data;
-        if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        if (data instanceof ArrayBuffer) {
+            if (data.byteLength === 0) return new Uint8Array(0);
+            return new Uint8Array(data);
+        }
+        if (ArrayBuffer.isView(data)) {
+            if (data.byteLength === 0) return new Uint8Array(0);
+            return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        }
         return new Uint8Array(data);
+    }
+    function toBytesSnapshot(data) {
+        // Snapshot data into a plain array, tolerant of detached buffers.
+        // Per spec, digest() reads algo first (triggering getters), then reads data.
+        // If the buffer was detached during algo reading, we must see 0 bytes.
+        // Note: Array.from(typedArray) throws on detached buffers in QuickJS,
+        // but manual iteration via .length/.byteLength works fine (returns 0).
+        if (ArrayBuffer.isView(data)) {
+            var len = data.length;
+            if (len === 0) return [];
+            var arr = [];
+            for (var i = 0; i < len; i++) arr.push(data[i]);
+            return arr;
+        }
+        if (data instanceof ArrayBuffer) {
+            if (data.byteLength === 0) return [];
+            var view = new Uint8Array(data);
+            var arr = [];
+            for (var i = 0; i < view.length; i++) arr.push(view[i]);
+            return arr;
+        }
+        return Array.from(toBytes(data));
     }
     var algoNameMap = {
         'aes-gcm':'AES-GCM','aes-cbc':'AES-CBC','aes-ctr':'AES-CTR',
         'hmac':'HMAC','pbkdf2':'PBKDF2','hkdf':'HKDF',
         'x25519':'X25519','x448':'X448','ed25519':'Ed25519',
         'ecdh':'ECDH','ecdsa':'ECDSA',
-        'argon2d':'Argon2d','argon2i':'Argon2i','argon2id':'Argon2id'
+        'argon2d':'Argon2d','argon2i':'Argon2i','argon2id':'Argon2id',
+        'ml-kem-512':'ML-KEM-512','ml-kem-768':'ML-KEM-768','ml-kem-1024':'ML-KEM-1024',
+        'aes-ocb':'AES-OCB',
+        'chacha20-poly1305':'ChaCha20-Poly1305'
     };
     function normalizeAlgo(a) {
         var o = typeof a === 'string' ? {name:a} : Object.assign({}, a);
@@ -88,7 +118,17 @@ fn crypto_js() -> &'static str {
         if (algoNameMap[lower]) o.name = algoNameMap[lower];
         return o;
     }
-    function hashName(h) { var n = typeof h === 'string' ? h : (h && h.name) || h; return String(n).toUpperCase(); }
+    function hashName(h) {
+        var n = typeof h === 'string' ? h : (h && h.name) || h;
+        var s = String(n);
+        // Preserve casing for known algorithms that need it
+        var upper = s.toUpperCase();
+        // Map to canonical names used by Rust side
+        var map = {'SHA-1':'SHA-1','SHA-256':'SHA-256','SHA-384':'SHA-384','SHA-512':'SHA-512',
+            'SHA3-256':'SHA3-256','SHA3-384':'SHA3-384','SHA3-512':'SHA3-512',
+            'CSHAKE128':'CSHAKE128','CSHAKE256':'CSHAKE256'};
+        return map[upper] || upper;
+    }
     function normName(name) { return name.toLowerCase(); }
 
     // ASN.1 helpers for PKCS8/SPKI (minimal, for known OIDs)
@@ -137,8 +177,19 @@ fn crypto_js() -> &'static str {
     // ---- subtle ----
     var subtle = {
         digest: function(algo, data) {
-            var h = hashName(algo), d = Array.from(toBytes(data));
-            var result = __braille_crypto_digest(h, d);
+            var a = typeof algo === 'string' ? {name: algo} : algo;
+            var algoName = a.name;
+            if (!algoName && typeof a !== 'string') {
+                return Promise.reject(new TypeError('Missing algorithm name'));
+            }
+            var h = hashName(algoName || a);
+            var validDigests = {'SHA-1':1,'SHA-256':1,'SHA-384':1,'SHA-512':1,'SHA3-256':1,'SHA3-384':1,'SHA3-512':1,'CSHAKE128':1,'CSHAKE256':1};
+            if (!validDigests[h]) {
+                return Promise.reject(new DOMException('digest algorithm ' + h + ' not supported', 'NotSupportedError'));
+            }
+            var d = toBytesSnapshot(data);
+            var outputLen = a.length || 0;
+            var result = __braille_crypto_digest(h, d, outputLen);
             return Promise.resolve(new Uint8Array(result).buffer);
         },
 
@@ -190,12 +241,35 @@ fn crypto_js() -> &'static str {
                 var privKey = mkKey('private', algoObj, extractable, ['sign'], {privateKeyBytes: pair[1], publicKeyBytes: pair[0]});
                 return Promise.resolve({publicKey: pubKey, privateKey: privKey});
             }
+            if (name === 'ChaCha20-Poly1305') {
+                var raw = __braille_crypto_get_random_bytes(32);
+                return Promise.resolve(mkKey('secret', {name:'ChaCha20-Poly1305'}, extractable, usages, {raw:raw}));
+            }
+            if (name === 'ML-KEM-512' || name === 'ML-KEM-768' || name === 'ML-KEM-1024') {
+                var pair = __braille_crypto_mlkem_generate(name);
+                var algoObj = {name: name};
+                var pubKey = mkKey('public', algoObj, true, usages.filter(function(u){return u==='encapsulateBits'||u==='encapsulateKey';}), {publicKeyBytes: pair[0]});
+                var privUsages = usages.filter(function(u){return u==='decapsulateBits'||u==='decapsulateKey';});
+                var privKey = mkKey('private', algoObj, extractable, privUsages, {privateKeyBytes: pair[1], publicKeyBytes: pair[0]});
+                return Promise.resolve({publicKey: pubKey, privateKey: privKey});
+            }
             return Promise.reject(new DOMException('generateKey for ' + name + ' not supported', 'NotSupportedError'));
         },
 
         importKey: function(format, keyData, algo, extractable, usages) {
             var a = normalizeAlgo(algo);
             var name = a.name;
+
+            // ML-KEM raw-seed import (64-byte seed → dk + ek)
+            if (format === 'raw-seed') {
+                if (name === 'ML-KEM-512' || name === 'ML-KEM-768' || name === 'ML-KEM-1024') {
+                    var seedBytes = Array.from(toBytes(keyData));
+                    var pair = __braille_crypto_mlkem_from_seed(name, seedBytes);
+                    var algoObj = {name: name};
+                    return Promise.resolve(mkKey('private', algoObj, extractable, usages, {privateKeyBytes: seedBytes, publicKeyBytes: pair[0]}));
+                }
+                return Promise.reject(new DOMException('importKey format raw-seed for ' + name + ' not supported', 'NotSupportedError'));
+            }
 
             // Symmetric / KDF raw import
             if (format === 'raw' || format === 'raw-secret') {
@@ -320,23 +394,62 @@ fn crypto_js() -> &'static str {
 
         encrypt: function(algo, key, data) {
             var a = normalizeAlgo(algo);
+            if (key.usages.indexOf('encrypt') === -1) {
+                return Promise.reject(new DOMException('key usages do not include encrypt', 'InvalidAccessError'));
+            }
+            if (key.algorithm.name !== a.name) {
+                return Promise.reject(new DOMException('key algorithm does not match', 'InvalidAccessError'));
+            }
+            var pt = toBytesSnapshot(data);
             if (a.name === 'AES-GCM') {
                 var iv = Array.from(toBytes(a.iv));
                 var aad = a.additionalData ? Array.from(toBytes(a.additionalData)) : [];
-                var pt = Array.from(toBytes(data));
-                var result = __braille_crypto_aes_gcm_encrypt(key._raw, iv, pt, aad);
+                var tagLen = a.tagLength || 128;
+                var validTags = {32:1,64:1,96:1,104:1,112:1,120:1,128:1};
+                if (!validTags[tagLen]) {
+                    return Promise.reject(new DOMException('tagLength must be 32, 64, 96, 104, 112, 120, or 128', 'OperationError'));
+                }
+                var result = __braille_crypto_aes_gcm_encrypt(key._raw, iv, pt, aad, tagLen);
                 return Promise.resolve(new Uint8Array(result).buffer);
             }
             if (a.name === 'AES-CBC') {
                 var iv = Array.from(toBytes(a.iv));
-                var pt = Array.from(toBytes(data));
+                if (iv.length !== 16) {
+                    return Promise.reject(new DOMException('AES-CBC IV must be 16 bytes', 'OperationError'));
+                }
                 var result = __braille_crypto_aes_cbc_encrypt(key._raw, iv, pt);
                 return Promise.resolve(new Uint8Array(result).buffer);
             }
             if (a.name === 'AES-CTR') {
                 var counter = Array.from(toBytes(a.counter));
-                var pt = Array.from(toBytes(data));
+                var ctrLen = a.length;
+                if (!ctrLen || ctrLen < 1 || ctrLen > 128) {
+                    return Promise.reject(new DOMException('AES-CTR counter length must be between 1 and 128', 'OperationError'));
+                }
                 var result = __braille_crypto_aes_ctr_encrypt(key._raw, counter, pt);
+                return Promise.resolve(new Uint8Array(result).buffer);
+            }
+            if (a.name === 'AES-OCB') {
+                var iv = Array.from(toBytes(a.iv));
+                if (iv.length === 0 || iv.length > 15) {
+                    return Promise.reject(new DOMException('AES-OCB IV must be 1-15 bytes', 'OperationError'));
+                }
+                var aad = a.additionalData ? Array.from(toBytes(a.additionalData)) : [];
+                var tagLen = a.tagLength || 128;
+                var validTags = {64:1,96:1,128:1};
+                if (!validTags[tagLen]) {
+                    return Promise.reject(new DOMException('AES-OCB tagLength must be 64, 96, or 128', 'OperationError'));
+                }
+                var result = __braille_crypto_aes_ocb_encrypt(key._raw, iv, pt, aad, tagLen);
+                return Promise.resolve(new Uint8Array(result).buffer);
+            }
+            if (a.name === 'ChaCha20-Poly1305') {
+                var iv = Array.from(toBytes(a.iv));
+                if (iv.length !== 12) {
+                    return Promise.reject(new DOMException('ChaCha20-Poly1305 IV must be 12 bytes', 'OperationError'));
+                }
+                var aad = a.additionalData ? Array.from(toBytes(a.additionalData)) : [];
+                var result = __braille_crypto_chacha20_encrypt(key._raw, iv, pt, aad);
                 return Promise.resolve(new Uint8Array(result).buffer);
             }
             return Promise.reject(new DOMException('encrypt ' + a.name + ' not supported', 'NotSupportedError'));
@@ -344,24 +457,75 @@ fn crypto_js() -> &'static str {
 
         decrypt: function(algo, key, data) {
             var a = normalizeAlgo(algo);
+            if (key.usages.indexOf('decrypt') === -1) {
+                return Promise.reject(new DOMException('key usages do not include decrypt', 'InvalidAccessError'));
+            }
+            if (key.algorithm.name !== a.name) {
+                return Promise.reject(new DOMException('key algorithm does not match', 'InvalidAccessError'));
+            }
+            var ct = toBytesSnapshot(data);
             if (a.name === 'AES-GCM') {
                 var iv = Array.from(toBytes(a.iv));
                 var aad = a.additionalData ? Array.from(toBytes(a.additionalData)) : [];
-                var ct = Array.from(toBytes(data));
-                var result = __braille_crypto_aes_gcm_decrypt(key._raw, iv, ct, aad);
-                return Promise.resolve(new Uint8Array(result).buffer);
+                var tagLen = a.tagLength || 128;
+                var validTags = {32:1,64:1,96:1,104:1,112:1,120:1,128:1};
+                if (!validTags[tagLen]) {
+                    return Promise.reject(new DOMException('tagLength must be 32, 64, 96, 104, 112, 120, or 128', 'OperationError'));
+                }
+                var result = __braille_crypto_aes_gcm_decrypt(key._raw, iv, ct, aad, tagLen);
+                if (result[0][0] === 0) {
+                    return Promise.reject(new DOMException('AES-GCM decryption failed', 'OperationError'));
+                }
+                return Promise.resolve(new Uint8Array(result[1]).buffer);
             }
             if (a.name === 'AES-CBC') {
                 var iv = Array.from(toBytes(a.iv));
-                var ct = Array.from(toBytes(data));
+                if (iv.length !== 16) {
+                    return Promise.reject(new DOMException('AES-CBC IV must be 16 bytes', 'OperationError'));
+                }
                 var result = __braille_crypto_aes_cbc_decrypt(key._raw, iv, ct);
-                return Promise.resolve(new Uint8Array(result).buffer);
+                if (result[0][0] === 0) {
+                    return Promise.reject(new DOMException('AES-CBC decryption failed', 'OperationError'));
+                }
+                return Promise.resolve(new Uint8Array(result[1]).buffer);
             }
             if (a.name === 'AES-CTR') {
                 var counter = Array.from(toBytes(a.counter));
-                var ct = Array.from(toBytes(data));
+                var ctrLen = a.length;
+                if (!ctrLen || ctrLen < 1 || ctrLen > 128) {
+                    return Promise.reject(new DOMException('AES-CTR counter length must be between 1 and 128', 'OperationError'));
+                }
                 var result = __braille_crypto_aes_ctr_decrypt(key._raw, counter, ct);
                 return Promise.resolve(new Uint8Array(result).buffer);
+            }
+            if (a.name === 'AES-OCB') {
+                var iv = Array.from(toBytes(a.iv));
+                if (iv.length === 0 || iv.length > 15) {
+                    return Promise.reject(new DOMException('AES-OCB IV must be 1-15 bytes', 'OperationError'));
+                }
+                var aad = a.additionalData ? Array.from(toBytes(a.additionalData)) : [];
+                var tagLen = a.tagLength || 128;
+                var validTags = {64:1,96:1,128:1};
+                if (!validTags[tagLen]) {
+                    return Promise.reject(new DOMException('AES-OCB tagLength must be 64, 96, or 128', 'OperationError'));
+                }
+                var result = __braille_crypto_aes_ocb_decrypt(key._raw, iv, ct, aad, tagLen);
+                if (result[0][0] === 0) {
+                    return Promise.reject(new DOMException('AES-OCB decryption failed', 'OperationError'));
+                }
+                return Promise.resolve(new Uint8Array(result[1]).buffer);
+            }
+            if (a.name === 'ChaCha20-Poly1305') {
+                var iv = Array.from(toBytes(a.iv));
+                if (iv.length !== 12) {
+                    return Promise.reject(new DOMException('ChaCha20-Poly1305 IV must be 12 bytes', 'OperationError'));
+                }
+                var aad = a.additionalData ? Array.from(toBytes(a.additionalData)) : [];
+                var result = __braille_crypto_chacha20_decrypt(key._raw, iv, ct, aad);
+                if (result[0][0] === 0) {
+                    return Promise.reject(new DOMException('ChaCha20-Poly1305 decryption failed', 'OperationError'));
+                }
+                return Promise.resolve(new Uint8Array(result[1]).buffer);
             }
             return Promise.reject(new DOMException('decrypt ' + a.name + ' not supported', 'NotSupportedError'));
         },
@@ -620,6 +784,59 @@ fn crypto_js() -> &'static str {
                 }
                 return subtle.importKey(format, keyData, unwrappedKeyAlgorithm, extractable, keyUsages);
             });
+        },
+
+        encapsulateBits: function(algo, publicKey) {
+            var a = normalizeAlgo(algo);
+            var name = a.name;
+            if (name !== 'ML-KEM-512' && name !== 'ML-KEM-768' && name !== 'ML-KEM-1024') {
+                return Promise.reject(new DOMException('encapsulateBits for ' + name + ' not supported', 'NotSupportedError'));
+            }
+            var result = __braille_crypto_mlkem_encapsulate(name, publicKey._publicKeyBytes);
+            return Promise.resolve({
+                ciphertext: new Uint8Array(result[0]).buffer,
+                sharedKey: new Uint8Array(result[1]).buffer
+            });
+        },
+
+        decapsulateBits: function(algo, privateKey, ciphertext) {
+            var a = normalizeAlgo(algo);
+            var name = a.name;
+            if (name !== 'ML-KEM-512' && name !== 'ML-KEM-768' && name !== 'ML-KEM-1024') {
+                return Promise.reject(new DOMException('decapsulateBits for ' + name + ' not supported', 'NotSupportedError'));
+            }
+            var ctBytes = Array.from(toBytes(ciphertext));
+            var result = __braille_crypto_mlkem_decapsulate(name, privateKey._privateKeyBytes, ctBytes);
+            return Promise.resolve(new Uint8Array(result).buffer);
+        },
+
+        encapsulateKey: function(algo, publicKey, derivedKeyAlgo, extractable, usages) {
+            var a = normalizeAlgo(algo);
+            var name = a.name;
+            if (name !== 'ML-KEM-512' && name !== 'ML-KEM-768' && name !== 'ML-KEM-1024') {
+                return Promise.reject(new DOMException('encapsulateKey for ' + name + ' not supported', 'NotSupportedError'));
+            }
+            var result = __braille_crypto_mlkem_encapsulate(name, publicKey._publicKeyBytes);
+            var sharedBytes = result[1];
+            var dka = normalizeAlgo(derivedKeyAlgo);
+            return subtle.importKey('raw', new Uint8Array(sharedBytes), dka, extractable, usages).then(function(sharedKey) {
+                return {
+                    ciphertext: new Uint8Array(result[0]).buffer,
+                    sharedKey: sharedKey
+                };
+            });
+        },
+
+        decapsulateKey: function(algo, privateKey, ciphertext, derivedKeyAlgo, extractable, usages) {
+            var a = normalizeAlgo(algo);
+            var name = a.name;
+            if (name !== 'ML-KEM-512' && name !== 'ML-KEM-768' && name !== 'ML-KEM-1024') {
+                return Promise.reject(new DOMException('decapsulateKey for ' + name + ' not supported', 'NotSupportedError'));
+            }
+            var ctBytes = Array.from(toBytes(ciphertext));
+            var result = __braille_crypto_mlkem_decapsulate(name, privateKey._privateKeyBytes, ctBytes);
+            var dka = normalizeAlgo(derivedKeyAlgo);
+            return subtle.importKey('raw', new Uint8Array(result), dka, extractable, usages);
         }
     };
 

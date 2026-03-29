@@ -308,6 +308,16 @@ pub fn testharness_preamble() -> String {
             }
         );
     };
+    self.promise_rejects_dom = function(test, type, promise, description) {
+        return promise.then(
+            function() { throw new AssertionError((description || "") + ": should have rejected: " + type); },
+            function(e) {
+                if (e.name !== type) {
+                    throw new AssertionError((description || "") + ": expected " + type + " but got " + e.name + ": " + e.message);
+                }
+            }
+        );
+    };
     self.assert_unreached = function(msg) {
         throw new AssertionError(msg || "assert_unreached");
     };
