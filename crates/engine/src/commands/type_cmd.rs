@@ -31,7 +31,7 @@ impl Engine {
                     if let Some(runtime) = self.runtime.as_mut() {
                         // Set the JS-side __props._value so the property reflects the new value
                         let escaped = text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n");
-                        let _ = runtime.eval(&format!(
+                        runtime.eval_or_log(&format!(
                             "var __el = __braille_get_element_wrapper({nid}); if(__el) {{ if(!__el.__props) __el.__props={{}}; __el.__props._value = '{val}'; }}",
                             nid = node_id, val = escaped
                         ));
@@ -47,7 +47,7 @@ impl Engine {
                     if let Some(runtime) = self.runtime.as_mut() {
                         // Set the JS-side __props._value so the property reflects the new value
                         let escaped = text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n");
-                        let _ = runtime.eval(&format!(
+                        runtime.eval_or_log(&format!(
                             "var __el = __braille_get_element_wrapper({nid}); if(__el) {{ if(!__el.__props) __el.__props={{}}; __el.__props._value = '{val}'; }}",
                             nid = node_id, val = escaped
                         ));

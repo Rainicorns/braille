@@ -51,7 +51,7 @@ pub(super) fn register_timers(ctx: &Ctx<'_>) {
                 globalThis.__braille_fire_timer = function(id) {
                     if (_cbs[id]) {
                         try { _cbs[id](); }
-                        catch(e) { __braille_timer_errors.push('timer ' + id + ': ' + (e instanceof Error ? e.message + '\n' + (e.stack || '') : String(e))); }
+                        catch(e) { console.error('timer ' + id + ': ' + (e instanceof Error ? e.message + '\n' + (e.stack || '') : String(e))); }
                     }
                 };
             })();

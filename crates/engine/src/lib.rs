@@ -292,11 +292,26 @@ impl Engine {
         self.ref_map.get(ref_str).copied()
     }
 
+    /// Returns true if a JS runtime is loaded (i.e., a page has been loaded).
+    pub fn has_runtime(&self) -> bool {
+        self.runtime.is_some()
+    }
+
     /// Evaluate a JavaScript expression and return the result as a string.
     /// Panics if no runtime is loaded (call load_html or execute_scripts first).
     pub fn eval_js(&mut self, code: &str) -> Result<String, String> {
         let runtime = self.runtime.as_mut().expect("eval_js: no runtime loaded");
         runtime.eval_to_string(code)
+    }
+
+    /// Evaluate JS, logging any errors to the console buffer instead of returning them.
+    /// Errors appear via `drain_console()` as `[error] ...` entries.
+    pub fn eval_js_or_log(&mut self, code: &str) {
+        if let Err(e) = self.eval_js(code) {
+            crate::js::dom_bridge::with_state_mut(|s| {
+                s.console_buffer.push(format!("[error] {e}"));
+            });
+        }
     }
 
     /// Returns all console output (log, warn, error, etc.) since last drain.

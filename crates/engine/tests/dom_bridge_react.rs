@@ -608,3 +608,83 @@ fn react_onchange_via_delegation_not_hack() {
         snap2
     );
 }
+
+// =========================================================================
+// React 18 controlled input fix regression tests (commit c084265)
+// =========================================================================
+
+#[test]
+fn event_dispatch_isolated_from_handler_errors() {
+    // A throwing focusin handler must not prevent input/change events from firing.
+    let mut e = engine_with_html(r#"<html><body>
+        <input id="i" type="text">
+        <script>
+            window.__inputFired = false;
+            document.getElementById('i').addEventListener('focusin', function() {
+                throw new Error('focusin boom');
+            });
+            document.getElementById('i').addEventListener('input', function() {
+                window.__inputFired = true;
+            });
+        </script>
+    </body></html>"#);
+
+    e.handle_type("#i", "hello").unwrap();
+
+    let fired = e.eval_js("window.__inputFired").unwrap();
+    assert_eq!(fired, "true", "input handler should still fire despite focusin throw");
+}
+
+#[test]
+fn react_props_onchange_fallback() {
+    // When __reactProps$.onChange is set on an input, handle_type should invoke it directly.
+    let mut e = engine_with_html(r#"<html><body>
+        <input id="i" type="text">
+        <script>
+            window.__onChangeCalled = false;
+            window.__onChangeValue = '';
+            var el = document.getElementById('i');
+            el['__reactProps$testkey'] = {
+                onChange: function(e) {
+                    window.__onChangeCalled = true;
+                    window.__onChangeValue = e.target.value;
+                }
+            };
+        </script>
+    </body></html>"#);
+
+    e.handle_type("#i", "world").unwrap();
+
+    let called = e.eval_js("window.__onChangeCalled").unwrap();
+    assert_eq!(called, "true", "__reactProps$.onChange should be called");
+    let val = e.eval_js("window.__onChangeValue").unwrap();
+    assert_eq!(val, "world", "onChange should receive correct target.value");
+}
+
+#[test]
+fn react_controlled_input_value_survives_settle() {
+    // A minimal React-like controlled input: onChange sets value via setTimeout re-render.
+    let mut e = engine_with_html(r#"<html><body>
+        <input id="i" type="text">
+        <script>
+            var el = document.getElementById('i');
+            var currentValue = '';
+            el['__reactProps$testkey'] = {
+                onChange: function(e) {
+                    currentValue = e.target.value;
+                    // React re-render via setTimeout(0) — sets value back
+                    setTimeout(function() {
+                        el.setAttribute('value', currentValue);
+                        if (el.__props) el.__props._value = currentValue;
+                    }, 0);
+                }
+            };
+        </script>
+    </body></html>"#);
+
+    e.handle_type("#i", "controlled").unwrap();
+    e.settle();
+
+    let val = e.eval_js("document.getElementById('i').getAttribute('value')").unwrap();
+    assert_eq!(val, "controlled", "value should persist through React-like re-render");
+}

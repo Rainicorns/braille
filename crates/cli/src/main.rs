@@ -89,6 +89,8 @@ enum SessionAction {
     Forward,
     /// Show console output (log/warn/error) from JS
     Console,
+    /// Evaluate a JavaScript expression and return the result
+    Eval { code: String },
     /// Insert a labeled marker into the transcript
     Mark { label: String },
     /// Show the last recorded network transcript
@@ -176,6 +178,7 @@ fn session_action_to_daemon_command(action: SessionAction, session_id: &str) -> 
         SessionAction::Back => DaemonCommand::Back,
         SessionAction::Forward => DaemonCommand::Forward,
         SessionAction::Console => DaemonCommand::Console,
+        SessionAction::Eval { code } => DaemonCommand::Eval { code },
         SessionAction::Mark { label } => DaemonCommand::Mark { label },
         SessionAction::Transcript => unreachable!("transcript handled before daemon dispatch"),
         SessionAction::Close => DaemonCommand::Close,

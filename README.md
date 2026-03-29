@@ -277,7 +277,7 @@ crates/
 | Smoke integration | **20 passed** |
 | CSS adversarial | **32 passed** |
 | Snapshot views | **16 passed** |
-| WPT DOM | ~187/353 (spec compliance gaps, not regressions) |
+| WPT (Web Platform Tests) | **1274 tests tracked** via manifest ratchet |
 
 **Zero clippy warnings.** Strict workspace-wide lints enabled.
 
@@ -502,6 +502,72 @@ Braille now gets through Anubis end-to-end: solve the challenge, follow the redi
 
 Session recording was essential for diagnosing these — the transcript showed exactly which requests had cookies, which didn't, and what the server returned for each.
 
+## Testing Philosophy
+
+### Truth over green
+
+We practice TDD where red tests are good. A failing test is a roadmap item. A test that passes because someone rewrote the code to avoid a gap tells us nothing.
+
+- Tests use real code patterns from target sites, not simplified versions that dodge missing features
+- No `expected_failures` counts, tolerance thresholds, or any mechanism that hides partial failures behind a number
+- No workarounds in the test harness. Test Braille the way a real user would use it
+- If 51/80 subtests pass, that's a FAIL with 29 subtests to fix
+
+### The ratchet
+
+WPT (Web Platform Tests) compliance is tracked by a **manifest ratchet** — a monotonically increasing high water mark of passing tests. The system is designed to constrain AI agents (and humans) into focused, serial progress instead of death-spiraling on too many failures at once.
+
+**How it works:**
+
+The manifest at `tests/wpt/manifest.txt` lists every WPT test with a status:
+
+```
+PASS dom/nodes/Node-cloneNode.html
+PASS dom/nodes/Node-contains.html
+FAIL dom/nodes/Node-parentNode.html
+NOT_RUN dom/events/Event-dispatch.html
+```
+
+The runner has three modes:
+
+| Mode | What it does |
+|------|-------------|
+| **Edge** (default) | Finds the first non-PASS test, runs only that one. If it passes, flips to PASS. |
+| **Regression** | Re-runs only PASS tests. Stops on first failure, flips to FAIL. |
+| **Discover** | Walks the WPT filesystem, appends new tests as NOT_RUN. |
+
+**Edge mode** is the key insight: the agent only ever sees one failing test. It can't spiral into fixing 30 things at once. Like blinders on a horse — the whole picture is death for an LLM, but one test at a time is perfectly tractable.
+
+The ratchet is monotonic: once a test passes, the high water mark advances. If a regression is detected, the mark drops back and must be re-earned. Progress is real and permanent.
+
+**There is no skip list.** Every WPT test is in the manifest. Tests that can't pass yet are FAIL or NOT_RUN — visible, tracked, and honest. Nothing is hidden.
+
+```bash
+# Run the edge test (first non-PASS)
+cargo run -p test-runner
+
+# Check for regressions in passing tests
+cargo run -p test-runner -- --regression
+
+# Discover new test files and add them to the manifest
+cargo run -p test-runner -- --discover
+```
+
+Output looks like:
+```
+[426/1274] FAIL dom/nodes/Node-parentNode.html — high water mark: 425
+```
+
+### Test organization
+
+| Suite | Location | How to run |
+|-------|----------|-----------|
+| Engine unit tests | `crates/engine/src/` | `cargo test -p braille-engine --lib` |
+| Integration tests | `crates/engine/tests/` | `cargo test -p braille-engine --test <name>` |
+| html5lib compliance | `crates/engine/tests/html5lib_*.rs` | `cargo test -p braille-engine --test html5lib_tree_construction` |
+| WPT compliance | `tests/wpt/` + `crates/test-runner/` | `cargo run -p test-runner` |
+| All tests | workspace | `cargo test --workspace` |
+
 ## Building
 
 ```bash
@@ -510,6 +576,9 @@ cargo build --workspace
 
 # Run all tests
 cargo test --workspace
+
+# Run WPT edge test
+cargo run -p test-runner
 
 # Run benchmarks
 cargo bench -p braille-engine

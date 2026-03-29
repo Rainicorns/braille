@@ -48,18 +48,3 @@ harness = false
 name = "html5lib_serializer"
 harness = false
 
-[[test]]
-name = "wpt_dom"
-harness = false
-
-[[test]]
-name = "wpt_workers"
-harness = false
-
-[[test]]
-name = "wpt_crypto"
-harness = false
-
-[[test]]
-name = "wpt_wasm"
-harness = false

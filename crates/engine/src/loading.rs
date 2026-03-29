@@ -98,10 +98,10 @@ impl Engine {
                 ScriptDescriptor::Inline(text, nid) => {
                     if !text.trim().is_empty() {
                         if let Some(nid) = nid {
-                            let _ = runtime.eval(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
+                            runtime.eval_or_log(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
                         }
                         runtime.eval(text).unwrap();
-                        let _ = runtime.eval("document.currentScript = null");
+                        runtime.eval_or_log("document.currentScript = null");
                         runtime.notify_mutation_observers();
                     }
                 }
@@ -109,10 +109,10 @@ impl Engine {
                     if let Some(script_content) = fetched.scripts.get(url) {
                         if !script_content.trim().is_empty() {
                             if let Some(nid) = nid {
-                                let _ = runtime.eval(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
+                                runtime.eval_or_log(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
                             }
                             runtime.eval(script_content).unwrap();
-                            let _ = runtime.eval("document.currentScript = null");
+                            runtime.eval_or_log("document.currentScript = null");
                             runtime.notify_mutation_observers();
                         }
                     }
@@ -138,7 +138,7 @@ impl Engine {
         }
 
         // Fire DOMContentLoaded on document (defer scripts have all run)
-        let _ = runtime.eval("document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));");
+        runtime.eval_or_log("document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));");
         runtime.run_jobs();
 
         // Fire onload handlers for iframes with pre-fetched content
@@ -232,7 +232,7 @@ impl Engine {
             // Set document.currentScript for classic scripts
             if !is_module {
                 if let Some(nid) = script_nid {
-                    let _ = runtime.eval(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
+                    runtime.eval_or_log(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
                 }
             }
             let result = if is_module {
@@ -248,7 +248,7 @@ impl Engine {
             };
             // Clear document.currentScript
             if !is_module {
-                let _ = runtime.eval("document.currentScript = null");
+                runtime.eval_or_log("document.currentScript = null");
             }
             match result {
                 Ok(Ok(_)) => {
@@ -273,7 +273,7 @@ impl Engine {
 
         // Fire DOMContentLoaded on document (defer scripts have all run)
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime.eval("document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));")
+            runtime.eval_or_log("document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));");
         }));
         runtime.run_jobs();
 
@@ -432,11 +432,11 @@ impl Engine {
         if scripts.is_empty() {
             return;
         }
-        let _ = runtime.eval("if (!globalThis.__braille_worker_scripts) globalThis.__braille_worker_scripts = {};");
+        runtime.eval_or_log("if (!globalThis.__braille_worker_scripts) globalThis.__braille_worker_scripts = {};");
         for (url, content) in scripts {
             let url_json = serde_json::to_string(url).unwrap();
             let content_json = serde_json::to_string(content).unwrap();
-            let _ = runtime.eval(&format!(
+            runtime.eval_or_log(&format!(
                 "globalThis.__braille_worker_scripts[{}] = {};",
                 url_json, content_json
             ));

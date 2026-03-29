@@ -10,6 +10,8 @@ pub struct Exchange {
     pub label: Option<String>,
     pub requests: Vec<FetchRequest>,
     pub results: Vec<FetchResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub console: Vec<String>,
 }
 
 /// A recorded session transcript: all fetch exchanges across commands.
@@ -46,6 +48,7 @@ impl<F: FetchProvider> FetchProvider for RecordingFetcher<F> {
             label: None,
             requests,
             results: results.clone(),
+            console: vec![],
         });
         results
     }

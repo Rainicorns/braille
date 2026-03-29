@@ -277,11 +277,35 @@ fn handle_command_inner(
             // Return empty OK — the console field on the response has the data.
             DaemonResponse::ok(String::new())
         }
+        DaemonCommand::Eval { code } => {
+            let result = if session.engine.has_runtime() {
+                session.engine.eval_js(&code)
+            } else {
+                Err("no page loaded — use goto first".to_string())
+            };
+            let is_recording = session.record_path.is_some() || std::env::var("BRAILLE_RECORD").is_ok();
+            if is_recording {
+                let console = session.engine.console_output();
+                let eval_label = format!("eval {}", &code[..code.len().min(80)]);
+                session.transcript_exchanges.push(Exchange {
+                    label: Some(eval_label),
+                    requests: vec![],
+                    results: vec![],
+                    console,
+                });
+                save_transcript(session);
+            }
+            match result {
+                Ok(val) => DaemonResponse::ok(val),
+                Err(e) => DaemonResponse::err(e),
+            }
+        }
         DaemonCommand::Mark { label } => {
             session.transcript_exchanges.push(Exchange {
                 label: Some(label.clone()),
                 requests: vec![],
                 results: vec![],
+                console: vec![],
             });
             save_transcript(session);
             DaemonResponse::ok(format!("mark: {label}"))
@@ -347,6 +371,7 @@ fn fetch_and_load(
     // Append exchanges to session transcript and save
     let new_exchanges = recorder.into_exchanges();
     if session.record_path.is_some() || std::env::var("BRAILLE_RECORD").is_ok() {
+        let console = session.engine.console_output();
         if session.transcript_url.is_empty() {
             session.transcript_url = url.to_string();
         }
@@ -354,6 +379,7 @@ fn fetch_and_load(
         let mut exchanges = new_exchanges;
         if let Some(first) = exchanges.first_mut() {
             first.label = Some(format!("goto {}", &url[..url.len().min(100)]));
+            first.console = console;
         }
         session.transcript_exchanges.extend(exchanges);
         save_transcript(session);
@@ -395,12 +421,23 @@ fn resolve_pending_fetches(
     if is_recording {
         let mut recorder = RecordingFetcher::new(ipc);
         session.engine.settle_with_fetches(&mut recorder);
+        let console = session.engine.console_output();
         let mut exchanges = recorder.into_exchanges();
         if !exchanges.is_empty() {
             if let Some(first) = exchanges.first_mut() {
                 first.label = Some(label.to_string());
+                first.console = console;
             }
             session.transcript_exchanges.extend(exchanges);
+            save_transcript(session);
+        } else if !console.is_empty() {
+            // No fetches but console output — create a synthetic exchange
+            session.transcript_exchanges.push(Exchange {
+                label: Some(label.to_string()),
+                requests: vec![],
+                results: vec![],
+                console,
+            });
             save_transcript(session);
         }
     } else {
@@ -416,7 +453,7 @@ fn handle_worker_message(session: &mut Session, worker_id: u64, data: &str) {
         worker_id,
         serde_json::to_string(data).unwrap_or_else(|_| "\"\"".to_string())
     );
-    let _ = session.engine.eval_js(&js);
+    session.engine.eval_js_or_log(&js);
     session.engine.settle_no_advance();
 }
 
@@ -427,7 +464,7 @@ fn deliver_worker_error(session: &mut Session, worker_id: u64, error: &str) {
         worker_id,
         serde_json::to_string(error).unwrap_or_else(|_| "\"\"".to_string())
     );
-    let _ = session.engine.eval_js(&js);
+    session.engine.eval_js_or_log(&js);
     session.engine.settle_no_advance();
 }
 
@@ -446,7 +483,7 @@ fn drain_pending_workers(session: &mut Session, writer: &mut impl Write) {
         );
         // Tell JS the worker_id so it can route messages
         let js = format!("__braille_assign_worker_id({worker_id})");
-        let _ = session.engine.eval_js(&js);
+        session.engine.eval_js_or_log(&js);
         send(writer, &EngineMessage::SpawnWorker { worker_id, url });
     }
     let messages = session.engine.drain_pending_worker_messages();

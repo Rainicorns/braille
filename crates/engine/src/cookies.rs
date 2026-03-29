@@ -137,7 +137,7 @@ fn sync_cookies_to_runtime(http_cookie_jar: &[StoredCookie], runtime: &mut JsRun
         let escaped_name = cookie.name.replace('\\', "\\\\").replace('"', "\\\"");
         let escaped_value = cookie.value.replace('\\', "\\\\").replace('"', "\\\"");
         let js = format!("document.cookie = \"{}={}\"", escaped_name, escaped_value);
-        let _ = runtime.eval(&js);
+        runtime.eval_or_log(&js);
     }
 }
 

@@ -182,6 +182,7 @@ pub enum DaemonCommand {
     Back,
     Forward,
     Console,
+    Eval { code: String },
     Mark { label: String },
     Close,
     DaemonStop,
