@@ -55,6 +55,12 @@ pub struct EngineState {
     pub pending_worker_terminates: Vec<PendingWorkerTerminate>,
 }
 
+impl Default for EngineState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngineState {
     pub fn new() -> Self {
         Self {

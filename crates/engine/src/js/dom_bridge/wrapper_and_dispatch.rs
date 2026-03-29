@@ -1125,7 +1125,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         // DOMImplementation constructor (for instanceof checks)
         function DOMImplementation() {}
-        DOMImplementation.prototype = Object.getPrototypeOf(document.implementation) || {};
+        DOMImplementation.prototype = Object.create(Object.getPrototypeOf(document.implementation) || {});
         DOMImplementation.prototype.constructor = DOMImplementation;
         Object.setPrototypeOf(document.implementation, DOMImplementation.prototype);
         globalThis.DOMImplementation = DOMImplementation;

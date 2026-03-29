@@ -244,7 +244,7 @@ fn handle_command_inner(
                 EngineAction::Error(msg) => DaemonResponse::err(msg),
                 EngineAction::None => {
                     session.engine.settle();
-                    resolve_pending_fetches(session, reader, writer);
+                    resolve_pending_fetches(session, reader, writer, &format!("click {selector}"));
                     DaemonResponse::ok(session.engine.snapshot(SnapMode::Compact))
                 }
             }
@@ -254,7 +254,7 @@ fn handle_command_inner(
             match session.engine.handle_type(&selector, &text) {
                 Ok(()) => {
                     session.engine.settle();
-                    resolve_pending_fetches(session, reader, writer);
+                    resolve_pending_fetches(session, reader, writer, &format!("type {selector}"));
                     DaemonResponse::ok(session.engine.snapshot(SnapMode::Compact))
                 }
                 Err(e) => DaemonResponse::err(e),
@@ -265,7 +265,7 @@ fn handle_command_inner(
             match session.engine.handle_select(&selector, &value) {
                 Ok(()) => {
                     session.engine.settle();
-                    resolve_pending_fetches(session, reader, writer);
+                    resolve_pending_fetches(session, reader, writer, &format!("select {selector}"));
                     DaemonResponse::ok(session.engine.snapshot(SnapMode::Compact))
                 }
                 Err(e) => DaemonResponse::err(e),
@@ -383,13 +383,30 @@ fn save_transcript(session: &Session) {
 }
 
 /// Service all pending fetch requests from the engine's JS runtime via IPC.
+/// When recording, appends exchanges to the session transcript with the given label.
 fn resolve_pending_fetches(
     session: &mut Session,
     reader: &mut impl BufRead,
     writer: &mut impl Write,
+    label: &str,
 ) {
-    let mut fetcher = IpcFetchProvider { reader, writer };
-    session.engine.settle_with_fetches(&mut fetcher);
+    let ipc = IpcFetchProvider { reader, writer };
+    let is_recording = session.record_path.is_some() || std::env::var("BRAILLE_RECORD").is_ok();
+    if is_recording {
+        let mut recorder = RecordingFetcher::new(ipc);
+        session.engine.settle_with_fetches(&mut recorder);
+        let mut exchanges = recorder.into_exchanges();
+        if !exchanges.is_empty() {
+            if let Some(first) = exchanges.first_mut() {
+                first.label = Some(label.to_string());
+            }
+            session.transcript_exchanges.extend(exchanges);
+            save_transcript(session);
+        }
+    } else {
+        let mut fetcher = ipc;
+        session.engine.settle_with_fetches(&mut fetcher);
+    }
 }
 
 /// Deliver a worker message to the JS runtime via __braille_deliver_worker_message.
