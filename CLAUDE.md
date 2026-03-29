@@ -74,10 +74,30 @@ When testing against an external system (e.g., Anubis), read their source code a
 cargo build --workspace
 cargo test --workspace              # all tests
 cargo test -p braille-engine --lib  # engine unit tests only
-cargo test -p braille-engine --test anubis_challenges  # Anubis TDD suite
-./dev.sh check                      # clippy, zero warnings required
-./dev.sh test                       # full suite
+cargo clippy --workspace            # zero warnings required
 ```
+
+## The Ratchet — High Water Mark Workflow
+
+All tests (920 cargo + 1403 WPT = 2323 total) are tracked in `tests/manifest.txt` with status PASS, FAIL, or NOT_RUN. The test runner grinds through them in order, stopping at the first failure.
+
+```bash
+cargo run -p test-runner              # run from high water mark until failure
+cargo run -p test-runner -- --regression  # re-check all PASS tests
+cargo run -p test-runner -- --discover    # sync manifest with filesystem
+```
+
+**"Grind the high water mark"** means: run the runner, read the failing test, analyze what real web platform capability is missing, implement the proper fix (not a point hack), run again, watch the high water mark go up. Repeat.
+
+The loop:
+1. `cargo run -p test-runner` — find the edge (first failing test)
+2. Read the test source. Understand what it's actually testing — not just the error, but the web platform pattern.
+3. Think deeply about what's missing. What capability does the engine lack? What other tests and real sites would benefit from adding it properly?
+4. Implement the real fix. No band-aids.
+5. Run the runner again. If the high water mark went up, commit the updated manifest.
+6. `cargo run -p test-runner -- --regression` periodically to catch regressions.
+
+The manifest is committed to the repo. The high water mark is the permanent scoreboard.
 
 ## Background Agents & Worktrees
 

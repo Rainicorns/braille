@@ -277,7 +277,7 @@ crates/
 | Smoke integration | **20 passed** |
 | CSS adversarial | **32 passed** |
 | Snapshot views | **16 passed** |
-| WPT (Web Platform Tests) | **1274 tests tracked** via manifest ratchet |
+| Test ratchet | **920/2323 passing** (cargo + WPT, manifest-tracked) |
 
 **Zero clippy warnings.** Strict workspace-wide lints enabled.
 
@@ -519,14 +519,16 @@ WPT (Web Platform Tests) compliance is tracked by a **manifest ratchet** — a m
 
 **How it works:**
 
-The manifest at `tests/wpt/manifest.txt` lists every WPT test with a status:
+The manifest at `tests/manifest.txt` lists every test with a status:
 
 ```
-PASS dom/nodes/Node-cloneNode.html
-PASS dom/nodes/Node-contains.html
-FAIL dom/nodes/Node-parentNode.html
-NOT_RUN dom/events/Event-dispatch.html
+PASS cargo:lib::a11y::serialize::tests::empty_elements_are_skipped
+PASS cargo:integration::link_click_returns_navigate_action_with_correct_url
+FAIL wpt:WebCryptoAPI/algorithm-discards-context.https.window.js
+NOT_RUN wpt:dom/nodes/Node-cloneNode.html
 ```
+
+Cargo tests (unit + integration) come first, then WPT tests. The `cargo:` prefix runs via `cargo test`; the `wpt:` prefix runs via the built-in WPT harness.
 
 The runner has three modes:
 
@@ -540,23 +542,38 @@ The runner has three modes:
 
 The ratchet is monotonic: once a test passes, the high water mark advances. If a regression is detected, the mark drops back and must be re-earned. Progress is real and permanent.
 
-**There is no skip list.** Every WPT test is in the manifest. Tests that can't pass yet are FAIL or NOT_RUN — visible, tracked, and honest. Nothing is hidden.
+**There is no skip list.** Every test is in the manifest. Tests that can't pass yet are FAIL or NOT_RUN — visible, tracked, and honest. Nothing is hidden.
 
 ```bash
-# Run the edge test (first non-PASS)
+# Run tests from the high water mark until failure
 cargo run -p test-runner
 
 # Check for regressions in passing tests
 cargo run -p test-runner -- --regression
 
-# Discover new test files and add them to the manifest
+# Discover new/removed test files and sync the manifest
 cargo run -p test-runner -- --discover
 ```
 
 Output looks like:
 ```
-[426/1274] FAIL dom/nodes/Node-parentNode.html — high water mark: 425
+[918/2323] PASS cargo:webpack_chunks::webpack_chunk_loading_via_script_tags
+[919/2323] PASS cargo:webpack_chunks::preloaded_chunks_before_runtime
+[920/2323] PASS cargo:webpack_chunks::dynamic_script_tag_insertion_fires_onload
+[921/2323] FAIL wpt:WebCryptoAPI/algorithm-discards-context.https.window.js — high water mark: 920
 ```
+
+### Development workflow
+
+The ratchet defines the development loop:
+
+1. **Run the runner.** `cargo run -p test-runner`. It blasts through all passing tests, then stops at the edge — the first failing test.
+2. **Analyze the failure.** Read the failing test's source code. Understand what web platform feature it's actually testing. Don't just look at the error message — read the test to understand what real-world pattern it represents.
+3. **Design real solutions.** The goal is to increase Braille's authentic web compatibility, not to make one test go green. Ask: what capability is missing? What other tests and real-world sites would benefit from adding it? Build the right abstraction, not a point fix.
+4. **Implement and verify.** Make the change, run the runner again. If the high water mark goes up, you've made real progress. If it doesn't, your fix was wrong or incomplete.
+5. **Check for regressions.** Periodically run `cargo run -p test-runner -- --regression` to make sure nothing slipped.
+
+The manifest is committed to the repo. When the high water mark advances, commit the updated manifest — that's the permanent record of progress.
 
 ### Test organization
 
@@ -565,8 +582,7 @@ Output looks like:
 | Engine unit tests | `crates/engine/src/` | `cargo test -p braille-engine --lib` |
 | Integration tests | `crates/engine/tests/` | `cargo test -p braille-engine --test <name>` |
 | html5lib compliance | `crates/engine/tests/html5lib_*.rs` | `cargo test -p braille-engine --test html5lib_tree_construction` |
-| WPT compliance | `tests/wpt/` + `crates/test-runner/` | `cargo run -p test-runner` |
-| All tests | workspace | `cargo test --workspace` |
+| All tests (ratchet) | `tests/manifest.txt` | `cargo run -p test-runner` |
 
 ## Building
 
