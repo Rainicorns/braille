@@ -8,6 +8,7 @@ mod mlkem;
 mod ocb3;
 mod random;
 mod rsa;
+pub(crate) mod utils;
 
 use rquickjs::Ctx;
 

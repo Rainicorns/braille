@@ -176,35 +176,10 @@ pub fn register(ctx: &Ctx<'_>) {
                 use rsa::pkcs8::DecodePublicKey;
                 use rsa::traits::PublicKeyParts;
 
-                fn b64url(data: &[u8]) -> String {
-                    use std::fmt::Write;
-                    const TABLE: &[u8] =
-                        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-                    let mut out = String::new();
-                    let mut i = 0;
-                    while i < data.len() {
-                        let b0 = data[i] as u32;
-                        let b1 = if i + 1 < data.len() { data[i + 1] as u32 } else { 0 };
-                        let b2 = if i + 2 < data.len() { data[i + 2] as u32 } else { 0 };
-                        let triple = (b0 << 16) | (b1 << 8) | b2;
-                        let _ = write!(out, "{}", TABLE[(triple >> 18 & 0x3F) as usize] as char);
-                        let _ = write!(out, "{}", TABLE[(triple >> 12 & 0x3F) as usize] as char);
-                        if i + 1 < data.len() {
-                            let _ =
-                                write!(out, "{}", TABLE[(triple >> 6 & 0x3F) as usize] as char);
-                        }
-                        if i + 2 < data.len() {
-                            let _ = write!(out, "{}", TABLE[(triple & 0x3F) as usize] as char);
-                        }
-                        i += 3;
-                    }
-                    out
-                }
-
                 let pk = rsa::RsaPublicKey::from_public_key_der(&pub_der)
                     .expect("invalid RSA public key");
-                let n = b64url(&pk.n().to_bytes_be());
-                let e = b64url(&pk.e().to_bytes_be());
+                let n = super::utils::b64url_encode(&pk.n().to_bytes_be());
+                let e = super::utils::b64url_encode(&pk.e().to_bytes_be());
 
                 if priv_der.is_empty() {
                     format!(r#"{{"kty":"RSA","n":"{}","e":"{}"}}"#, n, e)
@@ -213,23 +188,23 @@ pub fn register(ctx: &Ctx<'_>) {
                     use rsa::traits::PrivateKeyParts;
                     let sk = rsa::RsaPrivateKey::from_pkcs8_der(&priv_der)
                         .expect("invalid RSA private key");
-                    let d = b64url(&sk.d().to_bytes_be());
+                    let d = super::utils::b64url_encode(&sk.d().to_bytes_be());
                     let primes = sk.primes();
-                    let p = b64url(&primes[0].to_bytes_be());
-                    let q = b64url(&primes[1].to_bytes_be());
+                    let p = super::utils::b64url_encode(&primes[0].to_bytes_be());
+                    let q = super::utils::b64url_encode(&primes[1].to_bytes_be());
                     let dp = sk
                         .dp()
-                        .map(|v| b64url(&v.to_bytes_be()))
+                        .map(|v| super::utils::b64url_encode(&v.to_bytes_be()))
                         .unwrap_or_default();
                     let dq = sk
                         .dq()
-                        .map(|v| b64url(&v.to_bytes_be()))
+                        .map(|v| super::utils::b64url_encode(&v.to_bytes_be()))
                         .unwrap_or_default();
                     let qi = sk
                         .qinv()
                         .map(|v| {
                             let (_, bytes) = v.to_bytes_be();
-                            b64url(&bytes)
+                            super::utils::b64url_encode(&bytes)
                         })
                         .unwrap_or_default();
                     format!(
@@ -353,6 +328,19 @@ pub fn register(ctx: &Ctx<'_>) {
     )
     .unwrap();
 
+    // Macro to dispatch across hash algorithms — expands to match arms with the hash as a type param
+    macro_rules! match_hash {
+        ($hash:expr, $err_ctx:expr, |$T:ident| $body:expr) => {
+            match $hash {
+                "SHA-1" => { type $T = sha1::Sha1; $body }
+                "SHA-256" => { type $T = sha2::Sha256; $body }
+                "SHA-384" => { type $T = sha2::Sha384; $body }
+                "SHA-512" => { type $T = sha2::Sha512; $body }
+                other => panic!("NotSupportedError: hash '{other}' not supported for {}", $err_ctx),
+            }
+        };
+    }
+
     // RSA-PSS sign: (priv_der, hash, salt_length, data) -> signature
     g.set(
         "__braille_crypto_rsa_pss_sign",
@@ -360,48 +348,14 @@ pub fn register(ctx: &Ctx<'_>) {
             ctx.clone(),
             |priv_der: Vec<u8>, hash: String, salt_len: u32, data: Vec<u8>| -> Vec<u8> {
                 use rsa::pkcs8::DecodePrivateKey;
-                use rsa::pss::BlindedSigningKey;
-                use rsa::signature::RandomizedSigner;
+                use rsa::signature::{RandomizedSigner, SignatureEncoding};
                 let private_key = rsa::RsaPrivateKey::from_pkcs8_der(&priv_der)
                     .expect("invalid RSA private key");
                 let mut rng = rand_core::OsRng;
-                match hash.as_str() {
-                    "SHA-256" => {
-                        let signing_key =
-                            BlindedSigningKey::<sha2::Sha256>::new_with_salt_len(
-                                private_key,
-                                salt_len as usize,
-                            );
-                        {use rsa::signature::SignatureEncoding; signing_key.sign_with_rng(&mut rng, &data).to_vec()}
-                    }
-                    "SHA-384" => {
-                        let signing_key =
-                            BlindedSigningKey::<sha2::Sha384>::new_with_salt_len(
-                                private_key,
-                                salt_len as usize,
-                            );
-                        {use rsa::signature::SignatureEncoding; signing_key.sign_with_rng(&mut rng, &data).to_vec()}
-                    }
-                    "SHA-512" => {
-                        let signing_key =
-                            BlindedSigningKey::<sha2::Sha512>::new_with_salt_len(
-                                private_key,
-                                salt_len as usize,
-                            );
-                        {use rsa::signature::SignatureEncoding; signing_key.sign_with_rng(&mut rng, &data).to_vec()}
-                    }
-                    "SHA-1" => {
-                        let signing_key =
-                            BlindedSigningKey::<sha1::Sha1>::new_with_salt_len(
-                                private_key,
-                                salt_len as usize,
-                            );
-                        {use rsa::signature::SignatureEncoding; signing_key.sign_with_rng(&mut rng, &data).to_vec()}
-                    }
-                    other => panic!(
-                        "NotSupportedError: hash '{other}' not supported for RSA-PSS"
-                    ),
-                }
+                match_hash!(hash.as_str(), "RSA-PSS", |H| {
+                    let sk = rsa::pss::BlindedSigningKey::<H>::new_with_salt_len(private_key, salt_len as usize);
+                    sk.sign_with_rng(&mut rng, &data).to_vec()
+                })
             },
         )
         .unwrap(),
@@ -413,62 +367,15 @@ pub fn register(ctx: &Ctx<'_>) {
         "__braille_crypto_rsa_pss_verify",
         Function::new(
             ctx.clone(),
-            |pub_der: Vec<u8>,
-             hash: String,
-             salt_len: u32,
-             signature: Vec<u8>,
-             data: Vec<u8>|
-             -> bool {
+            |pub_der: Vec<u8>, hash: String, salt_len: u32, signature: Vec<u8>, data: Vec<u8>| -> bool {
                 use rsa::pkcs8::DecodePublicKey;
-                use rsa::pss::VerifyingKey;
                 use rsa::signature::Verifier;
                 let public_key = rsa::RsaPublicKey::from_public_key_der(&pub_der)
                     .expect("invalid RSA public key");
-                match hash.as_str() {
-                    "SHA-256" => {
-                        let vk = VerifyingKey::<sha2::Sha256>::new_with_salt_len(
-                            public_key,
-                            salt_len as usize,
-                        );
-                        let sig =
-                            rsa::pss::Signature::try_from(signature.as_slice())
-                                .expect("invalid signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    "SHA-384" => {
-                        let vk = VerifyingKey::<sha2::Sha384>::new_with_salt_len(
-                            public_key,
-                            salt_len as usize,
-                        );
-                        let sig =
-                            rsa::pss::Signature::try_from(signature.as_slice())
-                                .expect("invalid signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    "SHA-512" => {
-                        let vk = VerifyingKey::<sha2::Sha512>::new_with_salt_len(
-                            public_key,
-                            salt_len as usize,
-                        );
-                        let sig =
-                            rsa::pss::Signature::try_from(signature.as_slice())
-                                .expect("invalid signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    "SHA-1" => {
-                        let vk = VerifyingKey::<sha1::Sha1>::new_with_salt_len(
-                            public_key,
-                            salt_len as usize,
-                        );
-                        let sig =
-                            rsa::pss::Signature::try_from(signature.as_slice())
-                                .expect("invalid signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    other => panic!(
-                        "NotSupportedError: hash '{other}' not supported for RSA-PSS"
-                    ),
-                }
+                let sig = rsa::pss::Signature::try_from(signature.as_slice()).expect("invalid signature");
+                match_hash!(hash.as_str(), "RSA-PSS", |H| {
+                    rsa::pss::VerifyingKey::<H>::new_with_salt_len(public_key, salt_len as usize).verify(&data, &sig).is_ok()
+                })
             },
         )
         .unwrap(),
@@ -481,32 +388,13 @@ pub fn register(ctx: &Ctx<'_>) {
         Function::new(
             ctx.clone(),
             |priv_der: Vec<u8>, hash: String, data: Vec<u8>| -> Vec<u8> {
-                use rsa::pkcs1v15::SigningKey;
                 use rsa::pkcs8::DecodePrivateKey;
-                use rsa::signature::Signer;
+                use rsa::signature::{Signer, SignatureEncoding};
                 let private_key = rsa::RsaPrivateKey::from_pkcs8_der(&priv_der)
                     .expect("invalid RSA private key");
-                match hash.as_str() {
-                    "SHA-256" => {
-                        let signing_key = SigningKey::<sha2::Sha256>::new(private_key);
-                        {use rsa::signature::SignatureEncoding; signing_key.sign(&data).to_vec()}
-                    }
-                    "SHA-384" => {
-                        let signing_key = SigningKey::<sha2::Sha384>::new(private_key);
-                        {use rsa::signature::SignatureEncoding; signing_key.sign(&data).to_vec()}
-                    }
-                    "SHA-512" => {
-                        let signing_key = SigningKey::<sha2::Sha512>::new(private_key);
-                        {use rsa::signature::SignatureEncoding; signing_key.sign(&data).to_vec()}
-                    }
-                    "SHA-1" => {
-                        let signing_key = SigningKey::<sha1::Sha1>::new(private_key);
-                        {use rsa::signature::SignatureEncoding; signing_key.sign(&data).to_vec()}
-                    }
-                    other => panic!(
-                        "NotSupportedError: hash '{other}' not supported for RSASSA-PKCS1-v1_5"
-                    ),
-                }
+                match_hash!(hash.as_str(), "RSASSA-PKCS1-v1_5", |H| {
+                    rsa::pkcs1v15::SigningKey::<H>::new(private_key).sign(&data).to_vec()
+                })
             },
         )
         .unwrap(),
@@ -519,40 +407,14 @@ pub fn register(ctx: &Ctx<'_>) {
         Function::new(
             ctx.clone(),
             |pub_der: Vec<u8>, hash: String, signature: Vec<u8>, data: Vec<u8>| -> bool {
-                use rsa::pkcs1v15::VerifyingKey;
                 use rsa::pkcs8::DecodePublicKey;
                 use rsa::signature::Verifier;
                 let public_key = rsa::RsaPublicKey::from_public_key_der(&pub_der)
                     .expect("invalid RSA public key");
-                match hash.as_str() {
-                    "SHA-256" => {
-                        let vk = VerifyingKey::<sha2::Sha256>::new(public_key);
-                        let sig = rsa::pkcs1v15::Signature::try_from(signature.as_slice())
-                            .expect("invalid signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    "SHA-384" => {
-                        let vk = VerifyingKey::<sha2::Sha384>::new(public_key);
-                        let sig = rsa::pkcs1v15::Signature::try_from(signature.as_slice())
-                            .expect("invalid signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    "SHA-512" => {
-                        let vk = VerifyingKey::<sha2::Sha512>::new(public_key);
-                        let sig = rsa::pkcs1v15::Signature::try_from(signature.as_slice())
-                            .expect("invalid signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    "SHA-1" => {
-                        let vk = VerifyingKey::<sha1::Sha1>::new(public_key);
-                        let sig = rsa::pkcs1v15::Signature::try_from(signature.as_slice())
-                            .expect("invalid signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    other => panic!(
-                        "NotSupportedError: hash '{other}' not supported for RSASSA-PKCS1-v1_5"
-                    ),
-                }
+                let sig = rsa::pkcs1v15::Signature::try_from(signature.as_slice()).expect("invalid signature");
+                match_hash!(hash.as_str(), "RSASSA-PKCS1-v1_5", |H| {
+                    rsa::pkcs1v15::VerifyingKey::<H>::new(public_key).verify(&data, &sig).is_ok()
+                })
             },
         )
         .unwrap(),
@@ -561,47 +423,5 @@ pub fn register(ctx: &Ctx<'_>) {
 }
 
 fn b64url_decode(input: &str) -> Vec<u8> {
-    let s = input.replace('-', "+").replace('_', "/");
-    let padded = match s.len() % 4 {
-        2 => format!("{s}=="),
-        3 => format!("{s}="),
-        _ => s,
-    };
-    // Simple base64 decode
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = Vec::new();
-    let bytes = padded.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'=' {
-            break;
-        }
-        let b0 = TABLE.iter().position(|&c| c == bytes[i]).unwrap_or(0) as u32;
-        let b1 = if i + 1 < bytes.len() && bytes[i + 1] != b'=' {
-            TABLE.iter().position(|&c| c == bytes[i + 1]).unwrap_or(0) as u32
-        } else {
-            0
-        };
-        let b2 = if i + 2 < bytes.len() && bytes[i + 2] != b'=' {
-            TABLE.iter().position(|&c| c == bytes[i + 2]).unwrap_or(0) as u32
-        } else {
-            0
-        };
-        let b3 = if i + 3 < bytes.len() && bytes[i + 3] != b'=' {
-            TABLE.iter().position(|&c| c == bytes[i + 3]).unwrap_or(0) as u32
-        } else {
-            0
-        };
-        let triple = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
-        out.push((triple >> 16) as u8);
-        if i + 2 < bytes.len() && bytes[i + 2] != b'=' {
-            out.push((triple >> 8 & 0xFF) as u8);
-        }
-        if i + 3 < bytes.len() && bytes[i + 3] != b'=' {
-            out.push((triple & 0xFF) as u8);
-        }
-        i += 4;
-    }
-    out
+    super::utils::b64url_decode_url(input)
 }

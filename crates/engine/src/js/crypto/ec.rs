@@ -362,40 +362,20 @@ pub fn register(ctx: &Ctx<'_>) {
                     "SHA-512" => Sha512::digest(&data).to_vec(),
                     other => panic!("NotSupportedError: hash '{other}' not supported"),
                 };
+                macro_rules! ecdsa_sign {
+                    ($mod:ident, $priv:expr, $digest:expr) => {{
+                        let sk = $mod::ecdsa::SigningKey::from_bytes(
+                            $mod::FieldBytes::from_slice($priv),
+                        ).expect(concat!("invalid ", stringify!($mod), " signing key"));
+                        let sig: $mod::ecdsa::Signature = sk.sign_prehash($digest)
+                            .expect(concat!(stringify!($mod), " sign failed"));
+                        sig.to_bytes().to_vec()
+                    }};
+                }
                 match curve.as_str() {
-                    "P-256" => {
-                        use p256::ecdsa::SigningKey;
-                        let signing_key = SigningKey::from_bytes(
-                            p256::FieldBytes::from_slice(&priv_bytes),
-                        )
-                        .expect("invalid P-256 signing key");
-                        let (sig, _) = signing_key
-                            .sign_prehash(&digest)
-                            .expect("P-256 sign failed");
-                        sig.to_bytes().to_vec()
-                    }
-                    "P-384" => {
-                        use p384::ecdsa::SigningKey;
-                        let signing_key = SigningKey::from_bytes(
-                            p384::FieldBytes::from_slice(&priv_bytes),
-                        )
-                        .expect("invalid P-384 signing key");
-                        let (sig, _) = signing_key
-                            .sign_prehash(&digest)
-                            .expect("P-384 sign failed");
-                        sig.to_bytes().to_vec()
-                    }
-                    "P-521" => {
-                        use p521::ecdsa::SigningKey;
-                        let signing_key = SigningKey::from_bytes(
-                            p521::FieldBytes::from_slice(&priv_bytes),
-                        )
-                        .expect("invalid P-521 signing key");
-                        let sig: p521::ecdsa::Signature = signing_key
-                            .sign_prehash(&digest)
-                            .expect("P-521 sign failed");
-                        sig.to_bytes().to_vec()
-                    }
+                    "P-256" => ecdsa_sign!(p256, &priv_bytes, &digest),
+                    "P-384" => ecdsa_sign!(p384, &priv_bytes, &digest),
+                    "P-521" => ecdsa_sign!(p521, &priv_bytes, &digest),
                     other => panic!("NotSupportedError: ECDSA curve '{other}' not supported"),
                 }
             },
@@ -649,36 +629,12 @@ pub fn register(ctx: &Ctx<'_>) {
                 let x = &pub_bytes[1..1 + coord_len];
                 let y = &pub_bytes[1 + coord_len..1 + 2 * coord_len];
 
-                fn b64url(data: &[u8]) -> String {
-                    use std::fmt::Write;
-                    // Manual base64url encoding
-                    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-                    let mut out = String::new();
-                    let mut i = 0;
-                    while i < data.len() {
-                        let b0 = data[i] as u32;
-                        let b1 = if i + 1 < data.len() { data[i + 1] as u32 } else { 0 };
-                        let b2 = if i + 2 < data.len() { data[i + 2] as u32 } else { 0 };
-                        let triple = (b0 << 16) | (b1 << 8) | b2;
-                        let _ = write!(out, "{}", TABLE[(triple >> 18 & 0x3F) as usize] as char);
-                        let _ = write!(out, "{}", TABLE[(triple >> 12 & 0x3F) as usize] as char);
-                        if i + 1 < data.len() {
-                            let _ = write!(out, "{}", TABLE[(triple >> 6 & 0x3F) as usize] as char);
-                        }
-                        if i + 2 < data.len() {
-                            let _ = write!(out, "{}", TABLE[(triple & 0x3F) as usize] as char);
-                        }
-                        i += 3;
-                    }
-                    out
-                }
-
-                let x_b64 = b64url(x);
-                let y_b64 = b64url(y);
+                let x_b64 = super::utils::b64url_encode(x);
+                let y_b64 = super::utils::b64url_encode(y);
                 if priv_bytes.is_empty() {
                     format!(r#"{{"kty":"EC","crv":"{}","x":"{}","y":"{}"}}"#, crv, x_b64, y_b64)
                 } else {
-                    let d_b64 = b64url(&priv_bytes);
+                    let d_b64 = super::utils::b64url_encode(&priv_bytes);
                     format!(r#"{{"kty":"EC","crv":"{}","x":"{}","y":"{}","d":"{}"}}"#, crv, x_b64, y_b64, d_b64)
                 }
             },
