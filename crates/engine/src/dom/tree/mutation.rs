@@ -332,7 +332,7 @@ impl DomTree {
     }
 
     /// Checks if `ancestor_id` is an inclusive ancestor of `node_id`.
-    fn is_inclusive_ancestor(&self, ancestor_id: NodeId, node_id: NodeId) -> bool {
+    pub fn is_inclusive_ancestor(&self, ancestor_id: NodeId, node_id: NodeId) -> bool {
         let mut current = node_id;
         loop {
             if current == ancestor_id {

@@ -136,32 +136,21 @@ pub(crate) fn element_prototype_js() -> &'static str {
             }
             // relatedTarget retargeting per DOM spec §2.9
             var origRelatedTarget = event.relatedTarget;
-            if (origRelatedTarget !== null && origRelatedTarget !== undefined) {
+            var _hasRelatedTarget = (origRelatedTarget !== null && origRelatedTarget !== undefined);
+            if (_hasRelatedTarget) {
                 var rtNid = origRelatedTarget.__nid;
                 var targetNid = this.__nid;
-                var retargetedNid;
+                // Retarget relatedTarget against target
                 if (rtNid !== undefined) {
-                    retargetedNid = __jsRetarget(rtNid, targetNid);
-                } else {
-                    // relatedTarget is non-node (XHR, etc.) — can't retarget it
-                    // Proceed with dispatch normally
-                    retargetedNid = -1;
-                }
-                // Spec: skip dispatch if retargetedRT === target AND origRT is a node !== target
-                if (retargetedNid >= 0 && retargetedNid === targetNid && origRelatedTarget !== this) {
-                    event.target = null;
-                    event.relatedTarget = null;
-                    return !event.defaultPrevented;
-                }
-                // Set retargeted relatedTarget for dispatch
-                if (retargetedNid >= 0 && retargetedNid !== rtNid) {
-                    var retargetedObj = __w(retargetedNid);
-                    event.relatedTarget = retargetedObj;
+                    var retargetedNid = __jsRetarget(rtNid, targetNid);
+                    if (retargetedNid !== rtNid) {
+                        event.relatedTarget = __w(retargetedNid);
+                    }
                 }
             }
 
-            // Mark event for target reset after dispatch (before activation behavior)
-            // Reset if target was in shadow tree or relatedTarget was retargeted
+            // clearTargets: set if target is inside a shadow tree
+            // (the event path includes shadow-internal nodes)
             var _targetInShadow = __n_isShadowRoot(__n_rootOf(this.__nid));
             if (_targetInShadow) {
                 event._resetTargetsAfterDispatch = true;
