@@ -263,6 +263,9 @@
             // JWK import
             if (format === 'jwk') {
                 var jwk = _jwk;
+                if (jwk.ext === false && extractable) {
+                    return Promise.reject(new DOMException('JWK ext is false but extractable requested', 'DataError'));
+                }
                 if (jwk.kty === 'oct' || jwk.k) {
                     var b64 = jwk.k.replace(/-/g,'+').replace(/_/g,'/');
                     while (b64.length % 4) b64 += '=';

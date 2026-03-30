@@ -117,7 +117,9 @@
         return out;
     }
     function normalizeAlgo(a) {
-        var o = typeof a === 'string' ? {name:a} : Object.assign({}, a);
+        if (typeof a === 'string') return {name: algoNameMap[asciiLower(a)] || a};
+        var o = {};
+        for (var k in a) o[k] = a[k];
         var lower = asciiLower(o.name);
         if (algoNameMap[lower]) o.name = algoNameMap[lower];
         return o;
