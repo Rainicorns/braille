@@ -193,7 +193,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this.eventPhase = 0;
                 this._isTrusted = false;
                 Object.defineProperty(this, 'isTrusted', {get: __isTrustedGetter, configurable: false});
-                this.timeStamp = Date.now();
+                this.timeStamp = performance.now();
                 this._stopPropagation = false;
                 this._stopImmediate = false;
                 this._dispatching = false;
@@ -245,35 +245,80 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this.detail = arguments.length > 3 ? arguments[3] : null;
             }
         };
-        globalThis.MouseEvent = class MouseEvent extends Event {
+        globalThis.UIEvent = class UIEvent extends Event {
             constructor(type, opts) {
                 super(type, opts);
-                this.button = (opts && opts.button) || 0;
-                this.clientX = (opts && opts.clientX) || 0;
-                this.clientY = (opts && opts.clientY) || 0;
+                var v = opts && opts.view !== undefined ? opts.view : null;
+                if (v !== null && v !== window) {
+                    throw new TypeError("Failed to construct 'UIEvent': member view is not of type Window.");
+                }
+                this.view = v;
+                this.detail = (opts && opts.detail) || 0;
             }
         };
-        globalThis.KeyboardEvent = class KeyboardEvent extends Event {
+        globalThis.FocusEvent = class FocusEvent extends UIEvent {
+            constructor(type, opts) {
+                super(type, opts);
+                this.relatedTarget = (opts && opts.relatedTarget !== undefined) ? opts.relatedTarget : null;
+            }
+        };
+        globalThis.MouseEvent = class MouseEvent extends UIEvent {
+            constructor(type, opts) {
+                super(type, opts);
+                this.screenX = (opts && opts.screenX) || 0;
+                this.screenY = (opts && opts.screenY) || 0;
+                this.clientX = (opts && opts.clientX) || 0;
+                this.clientY = (opts && opts.clientY) || 0;
+                this.button = (opts && opts.button) || 0;
+                this.buttons = (opts && opts.buttons) || 0;
+                this.relatedTarget = (opts && opts.relatedTarget !== undefined) ? opts.relatedTarget : null;
+                this.ctrlKey = !!(opts && opts.ctrlKey);
+                this.shiftKey = !!(opts && opts.shiftKey);
+                this.altKey = !!(opts && opts.altKey);
+                this.metaKey = !!(opts && opts.metaKey);
+            }
+        };
+        globalThis.KeyboardEvent = class KeyboardEvent extends UIEvent {
             constructor(type, opts) {
                 super(type, opts);
                 this.key = (opts && opts.key) || '';
                 this.code = (opts && opts.code) || '';
+                this.location = (opts && opts.location) || 0;
+                this.repeat = !!(opts && opts.repeat);
+                this.isComposing = !!(opts && opts.isComposing);
+                this.charCode = (opts && opts.charCode) || 0;
+                this.keyCode = (opts && opts.keyCode) || 0;
+                this.which = (opts && opts.which) || 0;
+                this.ctrlKey = !!(opts && opts.ctrlKey);
+                this.shiftKey = !!(opts && opts.shiftKey);
+                this.altKey = !!(opts && opts.altKey);
+                this.metaKey = !!(opts && opts.metaKey);
             }
         };
-        globalThis.FocusEvent = class FocusEvent extends Event {
-            constructor(type, opts) { super(type, opts); this.relatedTarget = (opts && opts.relatedTarget) || null; }
-        };
-        globalThis.InputEvent = class InputEvent extends Event {
+        globalThis.InputEvent = class InputEvent extends UIEvent {
             constructor(type, opts) { super(type, opts); this.data = (opts && opts.data) || null; this.inputType = (opts && opts.inputType) || ''; }
-        };
-        globalThis.UIEvent = class UIEvent extends Event {
-            constructor(type, opts) { super(type, opts); this.detail = (opts && opts.detail) || 0; }
         };
         globalThis.AnimationEvent = class AnimationEvent extends Event { constructor(t,o){super(t,o);} };
         globalThis.TransitionEvent = class TransitionEvent extends Event { constructor(t,o){super(t,o);} };
-        globalThis.WheelEvent = class WheelEvent extends MouseEvent { constructor(t,o){super(t,o);} };
-        globalThis.CompositionEvent = class CompositionEvent extends UIEvent { constructor(t,o){super(t,o);} };
+        globalThis.WheelEvent = class WheelEvent extends MouseEvent {
+            constructor(type, opts) {
+                super(type, opts);
+                this.deltaX = (opts && opts.deltaX) || 0.0;
+                this.deltaY = (opts && opts.deltaY) || 0.0;
+                this.deltaZ = (opts && opts.deltaZ) || 0.0;
+                this.deltaMode = (opts && opts.deltaMode) || 0;
+            }
+        };
+        globalThis.CompositionEvent = class CompositionEvent extends UIEvent {
+            constructor(type, opts) {
+                super(type, opts);
+                this.data = (opts && opts.data !== undefined) ? String(opts.data) : '';
+            }
+        };
         globalThis.ErrorEvent = class ErrorEvent extends Event { constructor(t,o){super(t,o);this.message=o&&o.message||'';this.filename=o&&o.filename||'';} };
+        globalThis.GamepadEvent = class GamepadEvent extends Event {
+            constructor(type, opts) { super(type, opts); this.gamepad = (opts && opts.gamepad) || null; }
+        };
         globalThis.PointerEvent = class PointerEvent extends MouseEvent {
             constructor(t,o){super(t,o);this.pointerId=(o&&o.pointerId)||0;this.width=(o&&o.width)||1;this.height=(o&&o.height)||1;this.pressure=(o&&o.pressure)||0;this.tiltX=(o&&o.tiltX)||0;this.tiltY=(o&&o.tiltY)||0;this.pointerType=(o&&o.pointerType)||'mouse';this.isPrimary=(o&&o.isPrimary)!==undefined?o.isPrimary:true;}
         };

@@ -27,7 +27,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
 
         EP.addEventListener = function(type, cb, opts) {
-            if (typeof cb !== 'function') return;
+            if (typeof cb !== 'function' && !(cb && typeof cb === 'object')) return;
             var capture = !!(opts === true || (opts && opts.capture));
             var once = !!(opts && typeof opts === 'object' && opts.once);
             var signal = (opts && typeof opts === 'object') ? opts.signal : undefined;
@@ -40,7 +40,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
             if (!store[key]) store[key] = [];
             if (once) {
                 var el = this;
-                var wrapper = function(e) { el.removeEventListener(type, wrapper, capture); cb.call(el, e); };
+                var wrapper = function(e) {
+                    el.removeEventListener(type, wrapper, capture);
+                    if (typeof cb === 'function') cb.call(el, e);
+                    else if (cb && typeof cb.handleEvent === 'function') cb.handleEvent(e);
+                };
                 wrapper._origCb = cb;
                 store[key].push(wrapper);
             } else {

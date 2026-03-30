@@ -156,12 +156,24 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             // Helper to fire a list of callbacks.
             // Per WHATWG DOM spec "inner invoke": if a listener throws, report the
             // exception and continue to the next listener.
+            // Supports both function listeners and object listeners with handleEvent.
             function fireCbs(cbs, thisObj) {
                 if (!cbs || !cbs.length) return;
                 var snapshot = cbs.slice();
                 for (var j = 0; j < snapshot.length; j++) {
+                    var cb = snapshot[j];
                     try {
-                        snapshot[j].call(thisObj, event);
+                        if (typeof cb === 'function') {
+                            cb.call(thisObj, event);
+                        } else if (cb && typeof cb === 'object') {
+                            // Per spec: perform a fresh Get of handleEvent each time
+                            var handler = cb.handleEvent;
+                            if (typeof handler === 'function') {
+                                handler.call(cb, event);
+                            } else {
+                                throw new TypeError("EventListener.handleEvent is not a function");
+                            }
+                        }
                     } catch (ex) {
                         __reportListenerError(ex);
                     }
