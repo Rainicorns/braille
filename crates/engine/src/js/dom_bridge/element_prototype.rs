@@ -149,10 +149,29 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 }
             }
 
-            // clearTargets: set if target is inside a shadow tree
-            // (the event path includes shadow-internal nodes)
-            var _targetInShadow = __n_isShadowRoot(__n_rootOf(this.__nid));
-            if (_targetInShadow) {
+            // clearTargets: set if target is in a shadow tree, or origRelatedTarget IS a shadow root
+            var _clearTargets = __n_isShadowRoot(__n_rootOf(this.__nid));
+            if (!_clearTargets && _hasRelatedTarget && origRelatedTarget.__nid !== undefined) {
+                _clearTargets = __n_isShadowRoot(origRelatedTarget.__nid);
+            }
+
+            // Skip dispatch when retargetedRelatedTarget === target but origRelatedTarget !== target
+            if (_hasRelatedTarget && origRelatedTarget.__nid !== undefined) {
+                var retargetedNid = __jsRetarget(origRelatedTarget.__nid, this.__nid);
+                if (retargetedNid === this.__nid && origRelatedTarget !== this) {
+                    // Early return: set target/relatedTarget but don't fire listeners
+                    event.target = this;
+                    event.relatedTarget = __w(retargetedNid);
+                    if (_clearTargets && event.defaultPrevented) {
+                        event.target = null;
+                        event.relatedTarget = null;
+                        event._path = [];
+                    }
+                    return !event.defaultPrevented;
+                }
+            }
+
+            if (_clearTargets) {
                 event._resetTargetsAfterDispatch = true;
             }
 

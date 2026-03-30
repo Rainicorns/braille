@@ -1167,8 +1167,8 @@ PASS wpt:dom/events/non-cancelable-when-passive/synthetic-events-cancelable.html
 PASS wpt:dom/events/passive-by-default.html
 PASS wpt:dom/events/pointer-event-document-move.html
 PASS wpt:dom/events/preventDefault-during-activation-behavior.html
-FAIL wpt:dom/events/relatedTarget.window.js
-NOT_RUN wpt:dom/events/remove-all-listeners.html
+PASS wpt:dom/events/relatedTarget.window.js
+FAIL wpt:dom/events/remove-all-listeners.html
 NOT_RUN wpt:dom/events/replace-event-listener-null-browsing-context-crash.html
 NOT_RUN wpt:dom/events/resources/empty-document.html
 NOT_RUN wpt:dom/events/resources/event-global-extra-frame.html
