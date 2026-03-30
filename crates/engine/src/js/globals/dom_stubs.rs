@@ -396,9 +396,11 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             window.__scrollY = ny;
             if (changed) {
                 window.dispatchEvent(new Event('scroll', {bubbles: false}));
+                window.dispatchEvent(new Event('scrollend', {bubbles: false}));
             }
         };
         window.scroll = window.scrollTo;
+        window.onscrollend = null;
         window.scrollBy = function(xOrOpts, y) {
             var dx, dy;
             if (typeof xOrOpts === 'object' && xOrOpts !== null) {

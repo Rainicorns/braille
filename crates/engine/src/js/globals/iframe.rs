@@ -232,9 +232,11 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     iframeWindow.__scrollY = ny;
                     if (changed) {
                         iframeWindow.dispatchEvent(new Event('scroll', {bubbles: false}));
+                        iframeWindow.dispatchEvent(new Event('scrollend', {bubbles: false}));
                     }
                 };
                 iframeWindow.scroll = iframeWindow.scrollTo;
+                iframeWindow.onscrollend = null;
                 iframeWindow.scrollBy = function(xOrOpts, y) {
                     var dx, dy;
                     if (typeof xOrOpts === 'object' && xOrOpts !== null) {

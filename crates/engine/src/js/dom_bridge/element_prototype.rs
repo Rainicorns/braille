@@ -396,6 +396,33 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.getClientRects = function() { return [this.getBoundingClientRect()]; };
         // focus/blur defined later after defineProperties to track activeElement
         ElemProto.scrollIntoView = function() {};
+        ElemProto.animate = function(keyframes, options) {
+            return { finished: Promise.resolve(), cancel: function(){}, play: function(){}, pause: function(){} };
+        };
+        ElemProto.scrollTo = function(xOrOpts, y) {
+            var nx, ny;
+            if (typeof xOrOpts === 'object' && xOrOpts !== null) {
+                nx = ('left' in xOrOpts) ? xOrOpts.left|0 : this.scrollLeft;
+                ny = ('top' in xOrOpts) ? xOrOpts.top|0 : this.scrollTop;
+            } else {
+                nx = (xOrOpts|0);
+                ny = (y|0);
+            }
+            this.scrollLeft = nx;
+            this.scrollTop = ny;
+        };
+        ElemProto.scroll = ElemProto.scrollTo;
+        ElemProto.scrollBy = function(xOrOpts, y) {
+            var dx, dy;
+            if (typeof xOrOpts === 'object' && xOrOpts !== null) {
+                dx = xOrOpts.left || 0;
+                dy = xOrOpts.top || 0;
+            } else {
+                dx = xOrOpts || 0;
+                dy = y || 0;
+            }
+            this.scrollTo(this.scrollLeft + dx, this.scrollTop + dy);
+        };
         ElemProto.setSelectionRange = function(start, end, direction) {
             if (!this.__props) this.__props = {};
             var len = (this.value || '').length;
@@ -1144,6 +1171,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     this.__props._scrollTop = v;
                     if (old !== v) {
                         this.dispatchEvent(new Event('scroll', {bubbles: false}));
+                        this.dispatchEvent(new Event('scrollend', {bubbles: false}));
                     }
                 },
                 configurable: true
@@ -1162,6 +1190,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     this.__props._scrollLeft = v;
                     if (old !== v) {
                         this.dispatchEvent(new Event('scroll', {bubbles: false}));
+                        this.dispatchEvent(new Event('scrollend', {bubbles: false}));
                     }
                 },
                 configurable: true
