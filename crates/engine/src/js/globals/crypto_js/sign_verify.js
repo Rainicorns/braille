@@ -11,6 +11,12 @@
                 var result = __braille_crypto_hmac_sign(h, key._raw, Array.from(toBytes(data)));
                 return Promise.resolve(new Uint8Array(result).buffer);
             }
+            if (a.name === 'KMAC128' || a.name === 'KMAC256') {
+                var lengthBits = a.length || (a.name === 'KMAC128' ? 256 : 512);
+                var cust = a.customization ? Array.from(toBytes(a.customization)) : [];
+                var result = __braille_crypto_kmac_sign(a.name, key._raw, Array.from(toBytes(data)), lengthBits, cust);
+                return Promise.resolve(new Uint8Array(result).buffer);
+            }
             if (a.name === 'Ed25519' || a.name === 'Ed448') {
                 if (key.type !== 'private') {
                     return Promise.reject(new DOMException('key type must be private for sign', 'InvalidAccessError'));
@@ -76,6 +82,12 @@
             if (a.name === 'HMAC') {
                 var h = hashName(key.algorithm && key.algorithm.hash);
                 var ok = __braille_crypto_hmac_verify(h, key._raw, Array.from(toBytes(signature)), Array.from(toBytes(data)));
+                return Promise.resolve(ok);
+            }
+            if (a.name === 'KMAC128' || a.name === 'KMAC256') {
+                var lengthBits = a.length || (a.name === 'KMAC128' ? 256 : 512);
+                var cust = a.customization ? Array.from(toBytes(a.customization)) : [];
+                var ok = __braille_crypto_kmac_verify(a.name, key._raw, Array.from(toBytes(signature)), Array.from(toBytes(data)), lengthBits, cust);
                 return Promise.resolve(ok);
             }
             if (a.name === 'Ed25519' || a.name === 'Ed448') {
