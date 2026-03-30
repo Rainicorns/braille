@@ -3,38 +3,44 @@ use rquickjs::{Ctx, Function};
 pub fn register(ctx: &Ctx<'_>) {
     let g = ctx.globals();
 
-    // RSA SPKI import: parse DER, return [der_bytes, modulus_bits_bytes, pub_exp_bytes]
+    // RSA SPKI import: parse DER, return [der_bytes, modulus_bits_bytes, pub_exp_bytes] or empty on error
     g.set(
         "__braille_crypto_rsa_spki_import",
         Function::new(ctx.clone(), |der: Vec<u8>| -> Vec<Vec<u8>> {
             use rsa::pkcs8::DecodePublicKey;
             use rsa::traits::PublicKeyParts;
-            let pk = rsa::RsaPublicKey::from_public_key_der(&der)
-                .expect("DataError: invalid RSA SPKI DER");
-            let mod_bits = (pk.n().bits() as u32).to_be_bytes().to_vec();
-            let pub_exp = pk.e().to_bytes_be();
-            vec![der, mod_bits, pub_exp]
+            match rsa::RsaPublicKey::from_public_key_der(&der) {
+                Ok(pk) => {
+                    let mod_bits = (pk.n().bits() as u32).to_be_bytes().to_vec();
+                    let pub_exp = pk.e().to_bytes_be();
+                    vec![der, mod_bits, pub_exp]
+                }
+                Err(_) => vec![],
+            }
         })
         .unwrap(),
     )
     .unwrap();
 
-    // RSA PKCS8 import: parse DER, return [priv_der, pub_spki_der, modulus_bits_bytes, pub_exp_bytes]
+    // RSA PKCS8 import: parse DER, return [priv_der, pub_spki_der, modulus_bits_bytes, pub_exp_bytes] or empty
     g.set(
         "__braille_crypto_rsa_pkcs8_import",
         Function::new(ctx.clone(), |der: Vec<u8>| -> Vec<Vec<u8>> {
             use rsa::pkcs8::{DecodePrivateKey, EncodePublicKey};
             use rsa::traits::PublicKeyParts;
-            let private_key = rsa::RsaPrivateKey::from_pkcs8_der(&der)
-                .expect("DataError: invalid RSA PKCS8 DER");
-            let public_key = private_key.to_public_key();
-            let pub_der = public_key
-                .to_public_key_der()
-                .expect("failed to encode RSA public key")
-                .into_vec();
-            let mod_bits = (public_key.n().bits() as u32).to_be_bytes().to_vec();
-            let pub_exp = public_key.e().to_bytes_be();
-            vec![der, pub_der, mod_bits, pub_exp]
+            match rsa::RsaPrivateKey::from_pkcs8_der(&der) {
+                Ok(private_key) => {
+                    let public_key = private_key.to_public_key();
+                    let pub_der = public_key
+                        .to_public_key_der()
+                        .expect("failed to encode RSA public key")
+                        .into_vec();
+                    let mod_bits = (public_key.n().bits() as u32).to_be_bytes().to_vec();
+                    let pub_exp = public_key.e().to_bytes_be();
+                    vec![der, pub_der, mod_bits, pub_exp]
+                }
+                Err(_) => vec![],
+            }
         })
         .unwrap(),
     )
@@ -266,4 +272,336 @@ pub fn register(ctx: &Ctx<'_>) {
         .unwrap(),
     )
     .unwrap();
+
+    // RSA JWK import (private): (json_string) -> [priv_der, pub_der, mod_bits, pub_exp]
+    g.set(
+        "__braille_crypto_rsa_jwk_import",
+        Function::new(
+            ctx.clone(),
+            |json: String| -> Vec<Vec<u8>> {
+                use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
+                use rsa::traits::PublicKeyParts;
+                use rsa::BigUint;
+
+                let v: serde_json::Value =
+                    serde_json::from_str(&json).expect("invalid JSON");
+                let n = v["n"].as_str().unwrap_or("");
+                let e = v["e"].as_str().unwrap_or("");
+                let d = v["d"].as_str().unwrap_or("");
+                let p = v["p"].as_str().unwrap_or("");
+                let q = v["q"].as_str().unwrap_or("");
+
+                let n_int = BigUint::from_bytes_be(&b64url_decode(n));
+                let e_int = BigUint::from_bytes_be(&b64url_decode(e));
+                let d_int = BigUint::from_bytes_be(&b64url_decode(d));
+
+                let primes: Vec<BigUint> = if !p.is_empty() && !q.is_empty() {
+                    vec![
+                        BigUint::from_bytes_be(&b64url_decode(p)),
+                        BigUint::from_bytes_be(&b64url_decode(q)),
+                    ]
+                } else {
+                    vec![]
+                };
+
+                let private_key =
+                    rsa::RsaPrivateKey::from_components(n_int, e_int, d_int, primes)
+                        .expect("DataError: invalid RSA JWK components");
+                let public_key = private_key.to_public_key();
+                let pub_der = public_key
+                    .to_public_key_der()
+                    .expect("failed to encode public key")
+                    .into_vec();
+                let priv_der = private_key
+                    .to_pkcs8_der()
+                    .expect("failed to encode private key")
+                    .to_bytes()
+                    .to_vec();
+                let mod_bits = (public_key.n().bits() as u32).to_be_bytes().to_vec();
+                let pub_exp = public_key.e().to_bytes_be();
+                vec![priv_der, pub_der, mod_bits, pub_exp]
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // RSA JWK public import: (n, e) -> [pub_der, mod_bits, pub_exp]
+    g.set(
+        "__braille_crypto_rsa_jwk_pub_import",
+        Function::new(ctx.clone(), |n: String, e: String| -> Vec<Vec<u8>> {
+            use rsa::pkcs8::EncodePublicKey;
+            use rsa::traits::PublicKeyParts;
+            use rsa::BigUint;
+
+            let n_bytes = b64url_decode(&n);
+            let e_bytes = b64url_decode(&e);
+            let n_int = BigUint::from_bytes_be(&n_bytes);
+            let e_int = BigUint::from_bytes_be(&e_bytes);
+
+            let public_key =
+                rsa::RsaPublicKey::new(n_int, e_int).expect("DataError: invalid RSA JWK");
+            let pub_der = public_key
+                .to_public_key_der()
+                .expect("failed to encode public key")
+                .into_vec();
+            let mod_bits = (public_key.n().bits() as u32).to_be_bytes().to_vec();
+            let pub_exp = public_key.e().to_bytes_be();
+            vec![pub_der, mod_bits, pub_exp]
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    // RSA-PSS sign: (priv_der, hash, salt_length, data) -> signature
+    g.set(
+        "__braille_crypto_rsa_pss_sign",
+        Function::new(
+            ctx.clone(),
+            |priv_der: Vec<u8>, hash: String, salt_len: u32, data: Vec<u8>| -> Vec<u8> {
+                use rsa::pkcs8::DecodePrivateKey;
+                use rsa::pss::BlindedSigningKey;
+                use rsa::signature::RandomizedSigner;
+                let private_key = rsa::RsaPrivateKey::from_pkcs8_der(&priv_der)
+                    .expect("invalid RSA private key");
+                let mut rng = rand_core::OsRng;
+                match hash.as_str() {
+                    "SHA-256" => {
+                        let signing_key =
+                            BlindedSigningKey::<sha2::Sha256>::new_with_salt_len(
+                                private_key,
+                                salt_len as usize,
+                            );
+                        {use rsa::signature::SignatureEncoding; signing_key.sign_with_rng(&mut rng, &data).to_vec()}
+                    }
+                    "SHA-384" => {
+                        let signing_key =
+                            BlindedSigningKey::<sha2::Sha384>::new_with_salt_len(
+                                private_key,
+                                salt_len as usize,
+                            );
+                        {use rsa::signature::SignatureEncoding; signing_key.sign_with_rng(&mut rng, &data).to_vec()}
+                    }
+                    "SHA-512" => {
+                        let signing_key =
+                            BlindedSigningKey::<sha2::Sha512>::new_with_salt_len(
+                                private_key,
+                                salt_len as usize,
+                            );
+                        {use rsa::signature::SignatureEncoding; signing_key.sign_with_rng(&mut rng, &data).to_vec()}
+                    }
+                    "SHA-1" => {
+                        let signing_key =
+                            BlindedSigningKey::<sha1::Sha1>::new_with_salt_len(
+                                private_key,
+                                salt_len as usize,
+                            );
+                        {use rsa::signature::SignatureEncoding; signing_key.sign_with_rng(&mut rng, &data).to_vec()}
+                    }
+                    other => panic!(
+                        "NotSupportedError: hash '{other}' not supported for RSA-PSS"
+                    ),
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // RSA-PSS verify: (pub_der, hash, salt_length, signature, data) -> bool
+    g.set(
+        "__braille_crypto_rsa_pss_verify",
+        Function::new(
+            ctx.clone(),
+            |pub_der: Vec<u8>,
+             hash: String,
+             salt_len: u32,
+             signature: Vec<u8>,
+             data: Vec<u8>|
+             -> bool {
+                use rsa::pkcs8::DecodePublicKey;
+                use rsa::pss::VerifyingKey;
+                use rsa::signature::Verifier;
+                let public_key = rsa::RsaPublicKey::from_public_key_der(&pub_der)
+                    .expect("invalid RSA public key");
+                match hash.as_str() {
+                    "SHA-256" => {
+                        let vk = VerifyingKey::<sha2::Sha256>::new_with_salt_len(
+                            public_key,
+                            salt_len as usize,
+                        );
+                        let sig =
+                            rsa::pss::Signature::try_from(signature.as_slice())
+                                .expect("invalid signature");
+                        vk.verify(&data, &sig).is_ok()
+                    }
+                    "SHA-384" => {
+                        let vk = VerifyingKey::<sha2::Sha384>::new_with_salt_len(
+                            public_key,
+                            salt_len as usize,
+                        );
+                        let sig =
+                            rsa::pss::Signature::try_from(signature.as_slice())
+                                .expect("invalid signature");
+                        vk.verify(&data, &sig).is_ok()
+                    }
+                    "SHA-512" => {
+                        let vk = VerifyingKey::<sha2::Sha512>::new_with_salt_len(
+                            public_key,
+                            salt_len as usize,
+                        );
+                        let sig =
+                            rsa::pss::Signature::try_from(signature.as_slice())
+                                .expect("invalid signature");
+                        vk.verify(&data, &sig).is_ok()
+                    }
+                    "SHA-1" => {
+                        let vk = VerifyingKey::<sha1::Sha1>::new_with_salt_len(
+                            public_key,
+                            salt_len as usize,
+                        );
+                        let sig =
+                            rsa::pss::Signature::try_from(signature.as_slice())
+                                .expect("invalid signature");
+                        vk.verify(&data, &sig).is_ok()
+                    }
+                    other => panic!(
+                        "NotSupportedError: hash '{other}' not supported for RSA-PSS"
+                    ),
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // RSASSA-PKCS1-v1_5 sign: (priv_der, hash, data) -> signature
+    g.set(
+        "__braille_crypto_rsa_pkcs1_sign",
+        Function::new(
+            ctx.clone(),
+            |priv_der: Vec<u8>, hash: String, data: Vec<u8>| -> Vec<u8> {
+                use rsa::pkcs1v15::SigningKey;
+                use rsa::pkcs8::DecodePrivateKey;
+                use rsa::signature::Signer;
+                let private_key = rsa::RsaPrivateKey::from_pkcs8_der(&priv_der)
+                    .expect("invalid RSA private key");
+                match hash.as_str() {
+                    "SHA-256" => {
+                        let signing_key = SigningKey::<sha2::Sha256>::new(private_key);
+                        {use rsa::signature::SignatureEncoding; signing_key.sign(&data).to_vec()}
+                    }
+                    "SHA-384" => {
+                        let signing_key = SigningKey::<sha2::Sha384>::new(private_key);
+                        {use rsa::signature::SignatureEncoding; signing_key.sign(&data).to_vec()}
+                    }
+                    "SHA-512" => {
+                        let signing_key = SigningKey::<sha2::Sha512>::new(private_key);
+                        {use rsa::signature::SignatureEncoding; signing_key.sign(&data).to_vec()}
+                    }
+                    "SHA-1" => {
+                        let signing_key = SigningKey::<sha1::Sha1>::new(private_key);
+                        {use rsa::signature::SignatureEncoding; signing_key.sign(&data).to_vec()}
+                    }
+                    other => panic!(
+                        "NotSupportedError: hash '{other}' not supported for RSASSA-PKCS1-v1_5"
+                    ),
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // RSASSA-PKCS1-v1_5 verify: (pub_der, hash, signature, data) -> bool
+    g.set(
+        "__braille_crypto_rsa_pkcs1_verify",
+        Function::new(
+            ctx.clone(),
+            |pub_der: Vec<u8>, hash: String, signature: Vec<u8>, data: Vec<u8>| -> bool {
+                use rsa::pkcs1v15::VerifyingKey;
+                use rsa::pkcs8::DecodePublicKey;
+                use rsa::signature::Verifier;
+                let public_key = rsa::RsaPublicKey::from_public_key_der(&pub_der)
+                    .expect("invalid RSA public key");
+                match hash.as_str() {
+                    "SHA-256" => {
+                        let vk = VerifyingKey::<sha2::Sha256>::new(public_key);
+                        let sig = rsa::pkcs1v15::Signature::try_from(signature.as_slice())
+                            .expect("invalid signature");
+                        vk.verify(&data, &sig).is_ok()
+                    }
+                    "SHA-384" => {
+                        let vk = VerifyingKey::<sha2::Sha384>::new(public_key);
+                        let sig = rsa::pkcs1v15::Signature::try_from(signature.as_slice())
+                            .expect("invalid signature");
+                        vk.verify(&data, &sig).is_ok()
+                    }
+                    "SHA-512" => {
+                        let vk = VerifyingKey::<sha2::Sha512>::new(public_key);
+                        let sig = rsa::pkcs1v15::Signature::try_from(signature.as_slice())
+                            .expect("invalid signature");
+                        vk.verify(&data, &sig).is_ok()
+                    }
+                    "SHA-1" => {
+                        let vk = VerifyingKey::<sha1::Sha1>::new(public_key);
+                        let sig = rsa::pkcs1v15::Signature::try_from(signature.as_slice())
+                            .expect("invalid signature");
+                        vk.verify(&data, &sig).is_ok()
+                    }
+                    other => panic!(
+                        "NotSupportedError: hash '{other}' not supported for RSASSA-PKCS1-v1_5"
+                    ),
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn b64url_decode(input: &str) -> Vec<u8> {
+    let s = input.replace('-', "+").replace('_', "/");
+    let padded = match s.len() % 4 {
+        2 => format!("{s}=="),
+        3 => format!("{s}="),
+        _ => s,
+    };
+    // Simple base64 decode
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::new();
+    let bytes = padded.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'=' {
+            break;
+        }
+        let b0 = TABLE.iter().position(|&c| c == bytes[i]).unwrap_or(0) as u32;
+        let b1 = if i + 1 < bytes.len() && bytes[i + 1] != b'=' {
+            TABLE.iter().position(|&c| c == bytes[i + 1]).unwrap_or(0) as u32
+        } else {
+            0
+        };
+        let b2 = if i + 2 < bytes.len() && bytes[i + 2] != b'=' {
+            TABLE.iter().position(|&c| c == bytes[i + 2]).unwrap_or(0) as u32
+        } else {
+            0
+        };
+        let b3 = if i + 3 < bytes.len() && bytes[i + 3] != b'=' {
+            TABLE.iter().position(|&c| c == bytes[i + 3]).unwrap_or(0) as u32
+        } else {
+            0
+        };
+        let triple = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
+        out.push((triple >> 16) as u8);
+        if i + 2 < bytes.len() && bytes[i + 2] != b'=' {
+            out.push((triple >> 8 & 0xFF) as u8);
+        }
+        if i + 3 < bytes.len() && bytes[i + 3] != b'=' {
+            out.push((triple & 0xFF) as u8);
+        }
+        i += 4;
+    }
+    out
 }

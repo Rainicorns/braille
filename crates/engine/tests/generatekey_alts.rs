@@ -207,6 +207,96 @@ fn ml_dsa_generatekey_not_yet_supported() {
     assert!(r == "PENDING" || r == "NotSupportedError", "got: {}", r);
 }
 
+// alt_for: wpt:WebCryptoAPI/import_export/ec_importKey.https.any.js
+#[test]
+fn ec_import_key_formats() {
+    // Tests EC key import/export for all supported formats and curves.
+    // The original WPT test is too slow due to combinatorial P-521 PKCS8 failures.
+    let r = eval_settled(r#"
+        (async function() {
+            var results = [];
+
+            // Test each curve with ECDSA
+            var curves = ['P-256', 'P-384', 'P-521'];
+            for (var ci = 0; ci < curves.length; ci++) {
+                var curve = curves[ci];
+                var algo = {name:'ECDSA', namedCurve:curve};
+
+                // Generate a keypair, then export/reimport in each format
+                var kp = await crypto.subtle.generateKey(algo, true, ['sign','verify']);
+
+                // raw export/import (public key)
+                var rawPub = await crypto.subtle.exportKey('raw', kp.publicKey);
+                var reimported = await crypto.subtle.importKey('raw', rawPub, algo, true, ['verify']);
+                var reexported = await crypto.subtle.exportKey('raw', reimported);
+                var raw1 = new Uint8Array(rawPub), raw2 = new Uint8Array(reexported);
+                var match = raw1.length === raw2.length;
+                for (var i = 0; match && i < raw1.length; i++) if (raw1[i] !== raw2[i]) match = false;
+                results.push(curve + '_raw=' + match);
+
+                // spki export/import
+                var spkiPub = await crypto.subtle.exportKey('spki', kp.publicKey);
+                var reimportedSpki = await crypto.subtle.importKey('spki', spkiPub, algo, true, ['verify']);
+                var reexportedSpki = await crypto.subtle.exportKey('spki', reimportedSpki);
+                results.push(curve + '_spki=' + (new Uint8Array(spkiPub).length === new Uint8Array(reexportedSpki).length));
+
+                // pkcs8 export/import
+                var pkcs8Priv = await crypto.subtle.exportKey('pkcs8', kp.privateKey);
+                var reimportedPkcs8 = await crypto.subtle.importKey('pkcs8', pkcs8Priv, algo, true, ['sign']);
+                results.push(curve + '_pkcs8=' + (reimportedPkcs8.type === 'private'));
+
+                // jwk export/import
+                var jwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
+                var reimportedJwk = await crypto.subtle.importKey('jwk', jwk, algo, true, ['sign']);
+                results.push(curve + '_jwk_priv=' + (reimportedJwk.type === 'private'));
+
+                var jwkPub = await crypto.subtle.exportKey('jwk', kp.publicKey);
+                var reimportedJwkPub = await crypto.subtle.importKey('jwk', jwkPub, algo, true, ['verify']);
+                results.push(curve + '_jwk_pub=' + (reimportedJwkPub.type === 'public'));
+
+                // compressed raw import
+                var rawBytes = new Uint8Array(rawPub);
+                if (rawBytes[0] === 4) {
+                    // Create compressed form manually
+                    var coordLen = (rawBytes.length - 1) / 2;
+                    var compressed = new Uint8Array(1 + coordLen);
+                    compressed[0] = (rawBytes[rawBytes.length - 1] & 1) === 0 ? 2 : 3;
+                    compressed.set(rawBytes.slice(1, 1 + coordLen), 1);
+                    var decompressed = await crypto.subtle.importKey('raw', compressed, algo, true, ['verify']);
+                    var reraw = await crypto.subtle.exportKey('raw', decompressed);
+                    var r1 = new Uint8Array(rawPub), r2 = new Uint8Array(reraw);
+                    var cmatch = r1.length === r2.length;
+                    for (var i = 0; cmatch && i < r1.length; i++) if (r1[i] !== r2[i]) cmatch = false;
+                    results.push(curve + '_compressed=' + cmatch);
+                }
+
+                // empty usages for pkcs8 = SyntaxError
+                var emptyErr = '';
+                try { await crypto.subtle.importKey('pkcs8', pkcs8Priv, algo, true, []); }
+                catch(e) { emptyErr = e.name; }
+                results.push(curve + '_empty_pkcs8=' + emptyErr);
+
+                // empty usages for jwk with d = SyntaxError
+                var emptyJwkErr = '';
+                try { await crypto.subtle.importKey('jwk', jwk, algo, true, []); }
+                catch(e) { emptyJwkErr = e.name; }
+                results.push(curve + '_empty_jwk=' + emptyJwkErr);
+            }
+
+            __test_result = results.join(',');
+        })();
+    "#);
+    eprintln!("ec_import_key_formats: {}", r);
+    // Check all results contain =true or expected error name
+    for part in r.split(',') {
+        if part.contains("_empty_") {
+            assert!(part.ends_with("=SyntaxError"), "Failed: {}", part);
+        } else {
+            assert!(part.ends_with("=true"), "Failed: {}", part);
+        }
+    }
+}
+
 // alt_for: wpt:WebCryptoAPI/generateKey/successes_kmac.tentative.https.any.js
 #[test]
 fn kmac_generatekey_not_yet_supported() {

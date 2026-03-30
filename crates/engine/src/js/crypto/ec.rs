@@ -1,5 +1,6 @@
 use rand_core::RngCore;
 use rquickjs::{Ctx, Function};
+use p256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
 
 pub fn register(ctx: &Ctx<'_>) {
     let g = ctx.globals();
@@ -101,6 +102,63 @@ pub fn register(ctx: &Ctx<'_>) {
                 verifying_key.as_bytes().to_vec(),
                 signing_key.to_bytes().to_vec(),
             ]
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Ed25519 get public key from private: (priv_bytes) -> pub_bytes(32)
+    g.set(
+        "__braille_crypto_ed25519_get_public",
+        Function::new(ctx.clone(), |priv_bytes: Vec<u8>| -> Vec<u8> {
+            use ed25519_dalek::SigningKey;
+            let mut key_arr = [0u8; 32];
+            key_arr.copy_from_slice(&priv_bytes);
+            let signing_key = SigningKey::from_bytes(&key_arr);
+            signing_key.verifying_key().as_bytes().to_vec()
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    // X25519 get public key from private: (priv_bytes) -> pub_bytes(32)
+    g.set(
+        "__braille_crypto_x25519_get_public",
+        Function::new(ctx.clone(), |priv_bytes: Vec<u8>| -> Vec<u8> {
+            use x25519_dalek::{PublicKey, StaticSecret};
+            let mut key_arr = [0u8; 32];
+            key_arr.copy_from_slice(&priv_bytes);
+            let secret = StaticSecret::from(key_arr);
+            let public = PublicKey::from(&secret);
+            public.as_bytes().to_vec()
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    // X448 get public key from private: (priv_bytes) -> pub_bytes(56)
+    g.set(
+        "__braille_crypto_x448_get_public",
+        Function::new(ctx.clone(), |priv_bytes: Vec<u8>| -> Vec<u8> {
+            let mut priv_arr = [0u8; 56];
+            priv_arr.copy_from_slice(&priv_bytes);
+            let mut base_point = [0u8; 56];
+            base_point[0] = 5;
+            let pub_bytes =
+                x448::x448(priv_arr, base_point).expect("X448 key derivation failed");
+            pub_bytes.to_vec()
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Ed448 get public key from private: (priv_bytes) -> pub_bytes(57)
+    g.set(
+        "__braille_crypto_ed448_get_public",
+        Function::new(ctx.clone(), |priv_bytes: Vec<u8>| -> Vec<u8> {
+            let signing_key = ed448_goldilocks::SigningKey::try_from(priv_bytes.as_slice())
+                .expect("invalid Ed448 signing key");
+            signing_key.verifying_key().to_bytes().to_vec()
         })
         .unwrap(),
     )
@@ -288,41 +346,54 @@ pub fn register(ctx: &Ctx<'_>) {
     )
     .unwrap();
 
-    // ECDSA sign: (curve, hash, priv_bytes, data) -> signature (DER)
+    // ECDSA sign: (curve, hash, priv_bytes, data) -> signature (r||s fixed-size)
     g.set(
         "__braille_crypto_ecdsa_sign",
         Function::new(
             ctx.clone(),
-            |curve: String, _hash: String, priv_bytes: Vec<u8>, data: Vec<u8>| -> Vec<u8> {
+            |curve: String, hash: String, priv_bytes: Vec<u8>, data: Vec<u8>| -> Vec<u8> {
+                use sha1::Sha1;
+                use sha2::{Digest, Sha256, Sha384, Sha512};
+                // Pre-hash the data with the specified hash
+                let digest: Vec<u8> = match hash.as_str() {
+                    "SHA-1" => Sha1::digest(&data).to_vec(),
+                    "SHA-256" => Sha256::digest(&data).to_vec(),
+                    "SHA-384" => Sha384::digest(&data).to_vec(),
+                    "SHA-512" => Sha512::digest(&data).to_vec(),
+                    other => panic!("NotSupportedError: hash '{other}' not supported"),
+                };
                 match curve.as_str() {
                     "P-256" => {
-                        use p256::ecdsa::{SigningKey, Signature};
-                        use p256::ecdsa::signature::Signer;
+                        use p256::ecdsa::SigningKey;
                         let signing_key = SigningKey::from_bytes(
                             p256::FieldBytes::from_slice(&priv_bytes),
                         )
                         .expect("invalid P-256 signing key");
-                        let sig: Signature = signing_key.sign(&data);
+                        let (sig, _) = signing_key
+                            .sign_prehash(&digest)
+                            .expect("P-256 sign failed");
                         sig.to_bytes().to_vec()
                     }
                     "P-384" => {
-                        use p384::ecdsa::{SigningKey, Signature};
-                        use p384::ecdsa::signature::Signer;
+                        use p384::ecdsa::SigningKey;
                         let signing_key = SigningKey::from_bytes(
                             p384::FieldBytes::from_slice(&priv_bytes),
                         )
                         .expect("invalid P-384 signing key");
-                        let sig: Signature = signing_key.sign(&data);
+                        let (sig, _) = signing_key
+                            .sign_prehash(&digest)
+                            .expect("P-384 sign failed");
                         sig.to_bytes().to_vec()
                     }
                     "P-521" => {
-                        use p521::ecdsa::{SigningKey, Signature};
-                        use p521::ecdsa::signature::Signer;
+                        use p521::ecdsa::SigningKey;
                         let signing_key = SigningKey::from_bytes(
                             p521::FieldBytes::from_slice(&priv_bytes),
                         )
                         .expect("invalid P-521 signing key");
-                        let sig: Signature = signing_key.sign(&data);
+                        let sig: p521::ecdsa::Signature = signing_key
+                            .sign_prehash(&digest)
+                            .expect("P-521 sign failed");
                         sig.to_bytes().to_vec()
                     }
                     other => panic!("NotSupportedError: ECDSA curve '{other}' not supported"),
@@ -333,7 +404,7 @@ pub fn register(ctx: &Ctx<'_>) {
     )
     .unwrap();
 
-    // EC PKCS8 import: (curve, der_bytes) -> [priv_scalar, pub_uncompressed]
+    // EC PKCS8 import: (curve, der_bytes) -> [priv_scalar, pub_uncompressed] or empty on error
     g.set(
         "__braille_crypto_ec_pkcs8_import",
         Function::new(
@@ -342,32 +413,35 @@ pub fn register(ctx: &Ctx<'_>) {
                 match curve.as_str() {
                     "P-256" => {
                         use p256::pkcs8::DecodePrivateKey;
-                        let secret_key = p256::SecretKey::from_pkcs8_der(&der_bytes)
-                            .expect("invalid P-256 PKCS8 DER");
-                        let public_key = secret_key.public_key();
-                        let priv_bytes = secret_key.to_bytes().to_vec();
-                        let pub_bytes = public_key.to_sec1_bytes().to_vec();
-                        vec![priv_bytes, pub_bytes]
+                        match p256::SecretKey::from_pkcs8_der(&der_bytes) {
+                            Ok(secret_key) => {
+                                let public_key = secret_key.public_key();
+                                vec![secret_key.to_bytes().to_vec(), public_key.to_sec1_bytes().to_vec()]
+                            }
+                            Err(_) => vec![],
+                        }
                     }
                     "P-384" => {
                         use p384::pkcs8::DecodePrivateKey;
-                        let secret_key = p384::SecretKey::from_pkcs8_der(&der_bytes)
-                            .expect("invalid P-384 PKCS8 DER");
-                        let public_key = secret_key.public_key();
-                        let priv_bytes = secret_key.to_bytes().to_vec();
-                        let pub_bytes = public_key.to_sec1_bytes().to_vec();
-                        vec![priv_bytes, pub_bytes]
+                        match p384::SecretKey::from_pkcs8_der(&der_bytes) {
+                            Ok(secret_key) => {
+                                let public_key = secret_key.public_key();
+                                vec![secret_key.to_bytes().to_vec(), public_key.to_sec1_bytes().to_vec()]
+                            }
+                            Err(_) => vec![],
+                        }
                     }
                     "P-521" => {
                         use p521::pkcs8::DecodePrivateKey;
-                        let secret_key = p521::SecretKey::from_pkcs8_der(&der_bytes)
-                            .expect("invalid P-521 PKCS8 DER");
-                        let public_key = secret_key.public_key();
-                        let priv_bytes = secret_key.to_bytes().to_vec();
-                        let pub_bytes = public_key.to_sec1_bytes().to_vec();
-                        vec![priv_bytes, pub_bytes]
+                        match p521::SecretKey::from_pkcs8_der(&der_bytes) {
+                            Ok(secret_key) => {
+                                let public_key = secret_key.public_key();
+                                vec![secret_key.to_bytes().to_vec(), public_key.to_sec1_bytes().to_vec()]
+                            }
+                            Err(_) => vec![],
+                        }
                     }
-                    other => panic!("NotSupportedError: EC PKCS8 import for curve '{other}' not supported"),
+                    _ => vec![],
                 }
             },
         )
@@ -394,7 +468,7 @@ pub fn register(ctx: &Ctx<'_>) {
                 if let Ok(pk) = p521::PublicKey::from_public_key_der(&der_bytes) {
                     return vec![b"P-521".to_vec(), pk.to_sec1_bytes().to_vec()];
                 }
-                panic!("DataError: could not parse EC SPKI - unsupported curve");
+                vec![] // Return empty on error — JS side rejects with DataError
             },
         )
         .unwrap(),
@@ -407,45 +481,38 @@ pub fn register(ctx: &Ctx<'_>) {
         Function::new(
             ctx.clone(),
             |curve: String,
-             _hash: String,
+             hash: String,
              pub_bytes: Vec<u8>,
              signature: Vec<u8>,
              data: Vec<u8>|
              -> bool {
+                use sha1::Sha1;
+                use sha2::{Digest, Sha256, Sha384, Sha512};
+                let digest: Vec<u8> = match hash.as_str() {
+                    "SHA-1" => Sha1::digest(&data).to_vec(),
+                    "SHA-256" => Sha256::digest(&data).to_vec(),
+                    "SHA-384" => Sha384::digest(&data).to_vec(),
+                    "SHA-512" => Sha512::digest(&data).to_vec(),
+                    other => panic!("NotSupportedError: hash '{other}' not supported"),
+                };
+                macro_rules! ecdsa_verify_prehash {
+                    ($mod:ident, $pub_bytes:expr, $signature:expr, $digest:expr) => {{
+                        use $mod::ecdsa::{Signature, VerifyingKey};
+                        let encoded = $mod::EncodedPoint::from_bytes($pub_bytes)
+                            .expect(concat!("invalid ", stringify!($mod), " public key"));
+                        let vk = VerifyingKey::from_encoded_point(&encoded)
+                            .expect(concat!("invalid ", stringify!($mod), " verifying key"));
+                        let sig = match Signature::from_slice($signature) {
+                            Ok(s) => s,
+                            Err(_) => return false,
+                        };
+                        vk.verify_prehash($digest, &sig).is_ok()
+                    }};
+                }
                 match curve.as_str() {
-                    "P-256" => {
-                        use p256::ecdsa::{Signature, VerifyingKey};
-                        use p256::ecdsa::signature::Verifier;
-                        let encoded = p256::EncodedPoint::from_bytes(&pub_bytes)
-                            .expect("invalid P-256 public key");
-                        let vk = VerifyingKey::from_encoded_point(&encoded)
-                            .expect("invalid P-256 verifying key");
-                        let sig = Signature::from_slice(&signature)
-                            .expect("invalid P-256 signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    "P-384" => {
-                        use p384::ecdsa::{Signature, VerifyingKey};
-                        use p384::ecdsa::signature::Verifier;
-                        let encoded = p384::EncodedPoint::from_bytes(&pub_bytes)
-                            .expect("invalid P-384 public key");
-                        let vk = VerifyingKey::from_encoded_point(&encoded)
-                            .expect("invalid P-384 verifying key");
-                        let sig = Signature::from_slice(&signature)
-                            .expect("invalid P-384 signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
-                    "P-521" => {
-                        use p521::ecdsa::{Signature, VerifyingKey};
-                        use p521::ecdsa::signature::Verifier;
-                        let encoded = p521::EncodedPoint::from_bytes(&pub_bytes)
-                            .expect("invalid P-521 public key");
-                        let vk = VerifyingKey::from_encoded_point(&encoded)
-                            .expect("invalid P-521 verifying key");
-                        let sig = Signature::from_slice(&signature)
-                            .expect("invalid P-521 signature");
-                        vk.verify(&data, &sig).is_ok()
-                    }
+                    "P-256" => ecdsa_verify_prehash!(p256, &pub_bytes, &signature, &digest),
+                    "P-384" => ecdsa_verify_prehash!(p384, &pub_bytes, &signature, &digest),
+                    "P-521" => ecdsa_verify_prehash!(p521, &pub_bytes, &signature, &digest),
                     other => panic!("NotSupportedError: ECDSA curve '{other}' not supported"),
                 }
             },
@@ -524,6 +591,39 @@ pub fn register(ctx: &Ctx<'_>) {
                         sk.to_pkcs8_der().expect("encode failed").to_bytes().to_vec()
                     }
                     other => panic!("NotSupportedError: PKCS8 export for curve '{other}' not supported"),
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // EC point decompress: (curve, compressed_bytes) -> uncompressed_bytes or empty on error
+    g.set(
+        "__braille_crypto_ec_decompress",
+        Function::new(
+            ctx.clone(),
+            |curve: String, point_bytes: Vec<u8>| -> Vec<u8> {
+                macro_rules! try_decompress {
+                    ($mod:ident) => {{
+                        use $mod::elliptic_curve::sec1::FromEncodedPoint;
+                        let ep = match $mod::EncodedPoint::from_bytes(&point_bytes) {
+                            Ok(ep) => ep,
+                            Err(_) => return vec![],
+                        };
+                        let opt: Option<$mod::PublicKey> =
+                            $mod::PublicKey::from_encoded_point(&ep).into();
+                        match opt {
+                            Some(pk) => pk.to_sec1_bytes().to_vec(),
+                            None => vec![],
+                        }
+                    }};
+                }
+                match curve.as_str() {
+                    "P-256" => try_decompress!(p256),
+                    "P-384" => try_decompress!(p384),
+                    "P-521" => try_decompress!(p521),
+                    _ => vec![],
                 }
             },
         )

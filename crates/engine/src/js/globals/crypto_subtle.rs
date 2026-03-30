@@ -63,7 +63,8 @@ fn crypto_js() -> &'static str {
             usages: {value: frozenUsages, enumerable: true},
             _raw: {value: internals && internals.raw || null},
             _privateKeyBytes: {value: internals && internals.privateKeyBytes || null},
-            _publicKeyBytes: {value: internals && internals.publicKeyBytes || null}
+            _publicKeyBytes: {value: internals && internals.publicKeyBytes || null},
+            _jwkAlg: {value: internals && internals.jwkAlg || null}
         });
         return key;
     }
@@ -116,9 +117,17 @@ fn crypto_js() -> &'static str {
         'aes-kw':'AES-KW',
         'kmac128':'KMAC128','kmac256':'KMAC256'
     };
+    function asciiLower(s) {
+        var out = '';
+        for (var i = 0; i < s.length; i++) {
+            var c = s.charCodeAt(i);
+            out += (c >= 65 && c <= 90) ? String.fromCharCode(c + 32) : s[i];
+        }
+        return out;
+    }
     function normalizeAlgo(a) {
         var o = typeof a === 'string' ? {name:a} : Object.assign({}, a);
-        var lower = o.name.toLowerCase();
+        var lower = asciiLower(o.name);
         if (algoNameMap[lower]) o.name = algoNameMap[lower];
         return o;
     }
@@ -401,12 +410,72 @@ fn crypto_js() -> &'static str {
             // Validate usages for secret/symmetric key imports
             // Secret keys with empty usages should fail with SyntaxError
             // (except for KDF algorithms like PBKDF2, HKDF which use deriveBits/deriveKey)
-            var isNonUsageKdf = (name === 'PBKDF2' || name === 'HKDF');
-            if ((format === 'raw' || format === 'raw-secret' || format === 'jwk') && !isNonUsageKdf) {
-                // For non-KDF symmetric algorithms and Argon2, empty usages = SyntaxError
+            if ((format === 'raw' || format === 'raw-secret' || format === 'jwk')) {
                 var needsUsages = {'AES-GCM':1,'AES-CBC':1,'AES-CTR':1,'AES-KW':1,'AES-OCB':1,'HMAC':1,'ChaCha20-Poly1305':1,'Argon2d':1,'Argon2i':1,'Argon2id':1,'KMAC128':1,'KMAC256':1};
+                // HKDF/PBKDF2 with extractable=false and empty usages = SyntaxError
+                if ((name === 'PBKDF2' || name === 'HKDF') && !extractable && usages && usages.length === 0) {
+                    return Promise.reject(new DOMException('usages cannot be empty for non-extractable keys', 'SyntaxError'));
+                }
                 if (needsUsages[name] && usages && usages.length === 0) {
                     return Promise.reject(new DOMException('usages cannot be empty for secret keys', 'SyntaxError'));
+                }
+            }
+
+            // Empty usages for private key imports = SyntaxError
+            // PKCS8 always imports private keys; JWK with 'd' is private
+            if (format === 'pkcs8' || format === 'raw-seed') {
+                if (usages && usages.length === 0) {
+                    var privNeedsUsages = {'ECDSA':1,'ECDH':1,'Ed25519':1,'Ed448':1,'X25519':1,'X448':1,'RSA-OAEP':1,'RSA-PSS':1,'RSASSA-PKCS1-v1_5':1,'ML-KEM-512':1,'ML-KEM-768':1,'ML-KEM-1024':1};
+                    if (privNeedsUsages[name]) {
+                        return Promise.reject(new DOMException('usages cannot be empty for private keys', 'SyntaxError'));
+                    }
+                }
+            }
+            if (format === 'jwk') {
+                var jwkCheck = typeof keyData === 'string' ? JSON.parse(keyData) : keyData;
+                if (jwkCheck.d && usages && usages.length === 0) {
+                    var privNeedsUsages2 = {'ECDSA':1,'ECDH':1,'Ed25519':1,'Ed448':1,'X25519':1,'X448':1,'RSA-OAEP':1,'RSA-PSS':1,'RSASSA-PKCS1-v1_5':1};
+                    if (privNeedsUsages2[name]) {
+                        return Promise.reject(new DOMException('usages cannot be empty for private keys', 'SyntaxError'));
+                    }
+                }
+            }
+
+            // Validate usages against valid operations for the algorithm + key type
+            // Public key formats: spki, raw (for EC/OKP), jwk without 'd'
+            // Private key formats: pkcs8, raw-seed, jwk with 'd'
+            if (usages && usages.length > 0) {
+                var isPrivFormat = (format === 'pkcs8' || format === 'raw-seed');
+                var isPubFormat = (format === 'spki' || format === 'raw' || format === 'raw-public');
+                var isJwkPriv = false;
+                if (format === 'jwk') {
+                    var jc = typeof keyData === 'string' ? JSON.parse(keyData) : keyData;
+                    isJwkPriv = !!jc.d;
+                }
+                // Valid usages per algorithm for public vs private
+                var pubUsagesMap = {
+                    'ECDH':[],'ECDSA':['verify'],'Ed25519':['verify'],'Ed448':['verify'],
+                    'X25519':[],'X448':[],
+                    'RSA-OAEP':['encrypt','wrapKey'],'RSA-PSS':['verify'],'RSASSA-PKCS1-v1_5':['verify']
+                };
+                var privUsagesMap = {
+                    'ECDH':['deriveKey','deriveBits'],'ECDSA':['sign'],'Ed25519':['sign'],'Ed448':['sign'],
+                    'X25519':['deriveKey','deriveBits'],'X448':['deriveKey','deriveBits'],
+                    'RSA-OAEP':['decrypt','unwrapKey'],'RSA-PSS':['sign'],'RSASSA-PKCS1-v1_5':['sign'],
+                    'ML-KEM-512':['decapsulateBits','decapsulateKey'],'ML-KEM-768':['decapsulateBits','decapsulateKey'],'ML-KEM-1024':['decapsulateBits','decapsulateKey']
+                };
+                var validUsages = null;
+                if (isPubFormat && pubUsagesMap[name] !== undefined) validUsages = pubUsagesMap[name];
+                else if (isPrivFormat && privUsagesMap[name] !== undefined) validUsages = privUsagesMap[name];
+                else if (format === 'jwk' && isJwkPriv && privUsagesMap[name] !== undefined) validUsages = privUsagesMap[name];
+                else if (format === 'jwk' && !isJwkPriv && pubUsagesMap[name] !== undefined) validUsages = pubUsagesMap[name];
+
+                if (validUsages !== null) {
+                    for (var ui = 0; ui < usages.length; ui++) {
+                        if (validUsages.indexOf(usages[ui]) === -1) {
+                            return Promise.reject(new DOMException('Cannot create a key using the specified key usages.', 'SyntaxError'));
+                        }
+                    }
                 }
             }
 
@@ -421,6 +490,14 @@ fn crypto_js() -> &'static str {
                 return Promise.reject(new DOMException('importKey format raw-seed for ' + name + ' not supported', 'NotSupportedError'));
             }
 
+            // ML-KEM raw-public import (public key bytes → public CryptoKey)
+            if (format === 'raw' || format === 'raw-public') {
+                if (name === 'ML-KEM-512' || name === 'ML-KEM-768' || name === 'ML-KEM-1024') {
+                    var pubBytes = Array.from(toBytes(keyData));
+                    return Promise.resolve(mkKey('public', {name: name}, extractable, usages, {publicKeyBytes: pubBytes}));
+                }
+            }
+
             // Symmetric / KDF raw import
             if (format === 'raw' || format === 'raw-secret') {
                 var raw = Array.from(toBytes(keyData));
@@ -432,17 +509,29 @@ fn crypto_js() -> &'static str {
                 if (name === 'PBKDF2') algoObj = {name:'PBKDF2'};
                 if (name === 'HKDF') algoObj = {name:'HKDF'};
                 if (name === 'Argon2d' || name === 'Argon2i' || name === 'Argon2id') algoObj = {name: name};
-                if (name === 'X25519') {
-                    return Promise.resolve(mkKey('public', {name:'X25519'}, extractable, usages, {publicKeyBytes: raw}));
-                }
-                if (name === 'X448') {
-                    return Promise.resolve(mkKey('public', {name:'X448'}, extractable, usages, {publicKeyBytes: raw}));
-                }
-                if (name === 'Ed25519') {
-                    return Promise.resolve(mkKey('public', {name:'Ed25519'}, extractable, usages, {publicKeyBytes: raw}));
+                if (name === 'X25519' || name === 'Ed25519' || name === 'X448' || name === 'Ed448') {
+                    var okpSizes = {'X25519':32,'Ed25519':32,'X448':56,'Ed448':57};
+                    if (raw.length !== okpSizes[name]) {
+                        return Promise.reject(new DOMException(name + ' raw key must be ' + okpSizes[name] + ' bytes', 'DataError'));
+                    }
+                    return Promise.resolve(mkKey('public', {name:name}, extractable, usages, {publicKeyBytes: raw}));
                 }
                 if (name === 'ECDH' || name === 'ECDSA') {
-                    return Promise.resolve(mkKey('public', {name: name, namedCurve: a.namedCurve}, extractable, usages, {publicKeyBytes: raw}));
+                    // Validate raw key length for the curve
+                    var ecSizes = {'P-256':{uncompressed:65,compressed:33},'P-384':{uncompressed:97,compressed:49},'P-521':{uncompressed:133,compressed:67}};
+                    var sizes = ecSizes[a.namedCurve];
+                    if (sizes && raw.length !== sizes.uncompressed && raw.length !== sizes.compressed) {
+                        return Promise.reject(new DOMException('EC raw key has incorrect length for ' + a.namedCurve, 'DataError'));
+                    }
+                    // Handle compressed points (02/03 prefix) by decompressing
+                    var pubRaw = raw;
+                    if (raw[0] === 0x02 || raw[0] === 0x03) {
+                        pubRaw = __braille_crypto_ec_decompress(a.namedCurve, raw);
+                        if (pubRaw.length === 0) {
+                            return Promise.reject(new DOMException('Failed to decompress EC point', 'DataError'));
+                        }
+                    }
+                    return Promise.resolve(mkKey('public', {name: name, namedCurve: a.namedCurve}, extractable, usages, {publicKeyBytes: pubRaw}));
                 }
                 return Promise.resolve(mkKey('secret', algoObj, extractable, usages, {raw:raw}));
             }
@@ -451,29 +540,56 @@ fn crypto_js() -> &'static str {
             if (format === 'pkcs8') {
                 var derBytes = toBytes(keyData);
                 if (name === 'X25519') {
+                    if (derBytes.length !== 48) {
+                        return Promise.reject(new DOMException('X25519 PKCS8 must be 48 bytes', 'DataError'));
+                    }
                     var priv = extractX25519PrivateFromPkcs8(derBytes);
                     return Promise.resolve(mkKey('private', {name:'X25519'}, extractable, usages, {privateKeyBytes: priv}));
                 }
                 if (name === 'X448') {
-                    // X448 PKCS8: 30 3e 02 01 00 30 05 06 03 2b6571 04 3a 04 38 <56 bytes>
+                    if (derBytes.length !== 72) {
+                        return Promise.reject(new DOMException('X448 PKCS8 must be 72 bytes', 'DataError'));
+                    }
                     var priv = Array.from(derBytes.slice(16, 72));
                     return Promise.resolve(mkKey('private', {name:'X448'}, extractable, usages, {privateKeyBytes: priv}));
                 }
                 if (name === 'Ed25519') {
+                    if (derBytes.length !== 48) {
+                        return Promise.reject(new DOMException('Ed25519 PKCS8 must be 48 bytes', 'DataError'));
+                    }
                     var priv = extractEd25519PrivateFromPkcs8(derBytes);
                     return Promise.resolve(mkKey('private', {name:'Ed25519'}, extractable, usages, {privateKeyBytes: priv}));
                 }
                 if (name === 'ECDH' || name === 'ECDSA') {
                     var curve = a.namedCurve;
                     var imported = __braille_crypto_ec_pkcs8_import(curve, Array.from(derBytes));
+                    if (imported.length === 0) {
+                        return Promise.reject(new DOMException('invalid EC PKCS8 key data', 'DataError'));
+                    }
                     return Promise.resolve(mkKey('private', {name: name, namedCurve: curve}, extractable, usages, {privateKeyBytes: imported[0], publicKeyBytes: imported[1]}));
                 }
                 if (isRsaAlgo(name)) {
                     var imported = __braille_crypto_rsa_pkcs8_import(Array.from(derBytes));
+                    if (imported.length === 0) {
+                        return Promise.reject(new DOMException('invalid RSA PKCS8 key data', 'DataError'));
+                    }
                     var h = hashName(a.hash);
                     var modBits = (imported[2][0]<<24)|(imported[2][1]<<16)|(imported[2][2]<<8)|imported[2][3];
                     var algoObj = {name: name, modulusLength: modBits, publicExponent: new Uint8Array(imported[3]), hash: {name: h}};
                     return Promise.resolve(mkKey('private', algoObj, extractable, usages, {privateKeyBytes: imported[0], publicKeyBytes: imported[1]}));
+                }
+                if (name === 'ML-KEM-512' || name === 'ML-KEM-768' || name === 'ML-KEM-1024') {
+                    // PKCS8 for ML-KEM: extract 64-byte seed from DER structure
+                    var seed = __braille_crypto_mlkem_pkcs8_import(name, Array.from(derBytes));
+                    var pair = __braille_crypto_mlkem_from_seed(name, seed);
+                    return Promise.resolve(mkKey('private', {name: name}, extractable, usages, {privateKeyBytes: seed, publicKeyBytes: pair[0]}));
+                }
+                if (name === 'Ed448') {
+                    if (derBytes.length !== 73) {
+                        return Promise.reject(new DOMException('Ed448 PKCS8 must be 73 bytes', 'DataError'));
+                    }
+                    var priv = Array.from(derBytes.slice(16, 73));
+                    return Promise.resolve(mkKey('private', {name:'Ed448'}, extractable, usages, {privateKeyBytes: priv}));
                 }
                 return Promise.reject(new DOMException('importKey pkcs8 for ' + name + ' not supported', 'NotSupportedError'));
             }
@@ -482,20 +598,31 @@ fn crypto_js() -> &'static str {
             if (format === 'spki') {
                 var derBytes = toBytes(keyData);
                 if (name === 'X25519') {
+                    if (derBytes.length !== 44) {
+                        return Promise.reject(new DOMException('X25519 SPKI must be 44 bytes', 'DataError'));
+                    }
                     var pub_bytes = extractX25519PublicFromSpki(derBytes);
                     return Promise.resolve(mkKey('public', {name:'X25519'}, extractable, usages, {publicKeyBytes: pub_bytes}));
                 }
                 if (name === 'X448') {
-                    // X448 SPKI: 30 42 30 05 06 03 2b6571 03 39 00 <56 bytes>
+                    if (derBytes.length !== 68) {
+                        return Promise.reject(new DOMException('X448 SPKI must be 68 bytes', 'DataError'));
+                    }
                     var pub_bytes = Array.from(derBytes.slice(12, 68));
                     return Promise.resolve(mkKey('public', {name:'X448'}, extractable, usages, {publicKeyBytes: pub_bytes}));
                 }
                 if (name === 'Ed25519') {
+                    if (derBytes.length !== 44) {
+                        return Promise.reject(new DOMException('Ed25519 SPKI must be 44 bytes', 'DataError'));
+                    }
                     var pub_bytes = extractEd25519PublicFromSpki(derBytes);
                     return Promise.resolve(mkKey('public', {name:'Ed25519'}, extractable, usages, {publicKeyBytes: pub_bytes}));
                 }
                 if (name === 'ECDH' || name === 'ECDSA') {
                     var imported = __braille_crypto_ec_spki_import(Array.from(derBytes));
+                    if (imported.length === 0) {
+                        return Promise.reject(new DOMException('invalid EC SPKI key data', 'DataError'));
+                    }
                     var detectedCurve = '';
                     for (var ci = 0; ci < imported[0].length; ci++) detectedCurve += String.fromCharCode(imported[0][ci]);
                     var curve = a.namedCurve || detectedCurve;
@@ -506,10 +633,25 @@ fn crypto_js() -> &'static str {
                 }
                 if (isRsaAlgo(name)) {
                     var imported = __braille_crypto_rsa_spki_import(Array.from(derBytes));
+                    if (imported.length === 0) {
+                        return Promise.reject(new DOMException('invalid RSA SPKI key data', 'DataError'));
+                    }
                     var h = hashName(a.hash);
                     var modBits = (imported[1][0]<<24)|(imported[1][1]<<16)|(imported[1][2]<<8)|imported[1][3];
                     var algoObj = {name: name, modulusLength: modBits, publicExponent: new Uint8Array(imported[2]), hash: {name: h}};
                     return Promise.resolve(mkKey('public', algoObj, extractable, usages, {publicKeyBytes: imported[0]}));
+                }
+                if (name === 'ML-KEM-512' || name === 'ML-KEM-768' || name === 'ML-KEM-1024') {
+                    // SPKI for ML-KEM: extract public key bytes from DER structure
+                    var pubBytes = __braille_crypto_mlkem_spki_import(name, Array.from(derBytes));
+                    return Promise.resolve(mkKey('public', {name: name}, extractable, usages, {publicKeyBytes: pubBytes}));
+                }
+                if (name === 'Ed448') {
+                    if (derBytes.length !== 69) {
+                        return Promise.reject(new DOMException('Ed448 SPKI must be 69 bytes', 'DataError'));
+                    }
+                    var pub_bytes = Array.from(derBytes.slice(12, 69));
+                    return Promise.resolve(mkKey('public', {name:'Ed448'}, extractable, usages, {publicKeyBytes: pub_bytes}));
                 }
                 return Promise.reject(new DOMException('importKey spki for ' + name + ' not supported', 'NotSupportedError'));
             }
@@ -517,7 +659,7 @@ fn crypto_js() -> &'static str {
             // JWK import
             if (format === 'jwk') {
                 var jwk = typeof keyData === 'string' ? JSON.parse(keyData) : keyData;
-                if (jwk.k) {
+                if (jwk.kty === 'oct' || jwk.k) {
                     var b64 = jwk.k.replace(/-/g,'+').replace(/_/g,'/');
                     while (b64.length % 4) b64 += '=';
                     var raw = Array.from((function(s){
@@ -531,6 +673,167 @@ fn crypto_js() -> &'static str {
                     if (name === 'HMAC' && a.hash) algoObj = {name:'HMAC',hash:{name:hashName(a.hash)},length:raw.length*8};
                     if (name === 'KMAC128' || name === 'KMAC256') algoObj = {name:name,length:raw.length*8};
                     return Promise.resolve(mkKey('secret', algoObj, extractable, usages, {raw:raw}));
+                }
+                // JWK validation: check required fields and constraints
+                if (isEcAlgo(name)) {
+                    if (!jwk.kty) return Promise.reject(new DOMException('Missing JWK kty', 'DataError'));
+                    if (jwk.kty !== 'EC') return Promise.reject(new DOMException("Invalid JWK kty: expected 'EC'", 'DataError'));
+                    if (!jwk.crv) return Promise.reject(new DOMException('Missing JWK crv', 'DataError'));
+                    if (!jwk.x) return Promise.reject(new DOMException('Missing JWK x', 'DataError'));
+                    if (a.namedCurve && jwk.crv !== a.namedCurve) {
+                        return Promise.reject(new DOMException('JWK curve does not match algorithm', 'DataError'));
+                    }
+                    if (jwk.use && jwk.use !== 'sig' && jwk.use !== 'enc') {
+                        return Promise.reject(new DOMException("Invalid JWK use field", 'DataError'));
+                    }
+                    if (name === 'ECDSA' && jwk.use && jwk.use !== 'sig') {
+                        return Promise.reject(new DOMException("JWK use must be 'sig' for ECDSA", 'DataError'));
+                    }
+                    if (name === 'ECDH' && jwk.use && jwk.use !== 'enc') {
+                        return Promise.reject(new DOMException("JWK use must be 'enc' for ECDH", 'DataError'));
+                    }
+                    // Check ext field
+                    if (jwk.ext === false && extractable) {
+                        return Promise.reject(new DOMException('JWK ext is false but extractable requested', 'DataError'));
+                    }
+                }
+                if (isCfrgAlgo(name)) {
+                    if (!jwk.kty) return Promise.reject(new DOMException('Missing JWK kty', 'DataError'));
+                    if (jwk.kty !== 'OKP') return Promise.reject(new DOMException("Invalid JWK kty: expected 'OKP'", 'DataError'));
+                    if (!jwk.crv) return Promise.reject(new DOMException('Missing JWK crv', 'DataError'));
+                    if (jwk.crv !== name) return Promise.reject(new DOMException('JWK crv does not match algorithm', 'DataError'));
+                    if (!jwk.x) return Promise.reject(new DOMException('Missing JWK x', 'DataError'));
+                    if (jwk.ext === false && extractable) {
+                        return Promise.reject(new DOMException('JWK ext is false but extractable requested', 'DataError'));
+                    }
+                    // Validate alg: must be algorithm name or EdDSA (for Ed curves)
+                    if (jwk.alg !== undefined) {
+                        var validAlgs = [name];
+                        if (name === 'Ed25519' || name === 'Ed448') validAlgs.push('EdDSA');
+                        if (validAlgs.indexOf(jwk.alg) === -1) {
+                            return Promise.reject(new DOMException("Invalid JWK alg: '" + jwk.alg + "'", 'DataError'));
+                        }
+                    }
+                    // Validate use
+                    if (jwk.use !== undefined) {
+                        var expectedUse = (name === 'Ed25519' || name === 'Ed448') ? 'sig' : 'enc';
+                        if (jwk.use !== expectedUse) {
+                            return Promise.reject(new DOMException("Invalid JWK use for " + name, 'DataError'));
+                        }
+                    }
+                    // Validate key sizes
+                    var okpKeySize = {'X25519':32,'Ed25519':32,'X448':56,'Ed448':57}[name];
+                    if (okpKeySize) {
+                        // b64url decode and check size
+                        function b64urlDecSize(s) {
+                            var b = s.replace(/-/g,'+').replace(/_/g,'/');
+                            while (b.length % 4) b += '=';
+                            return atob(b).length;
+                        }
+                        if (b64urlDecSize(jwk.x) !== okpKeySize) {
+                            return Promise.reject(new DOMException(name + ' JWK x has incorrect size', 'DataError'));
+                        }
+                        if (jwk.d && b64urlDecSize(jwk.d) !== okpKeySize) {
+                            return Promise.reject(new DOMException(name + ' JWK d has incorrect size', 'DataError'));
+                        }
+                    }
+                }
+                if (isRsaAlgo(name)) {
+                    if (!jwk.kty) return Promise.reject(new DOMException('Missing JWK kty', 'DataError'));
+                    if (jwk.kty !== 'RSA') return Promise.reject(new DOMException("Invalid JWK kty: expected 'RSA'", 'DataError'));
+                    if (jwk.ext === false && extractable) {
+                        return Promise.reject(new DOMException('JWK ext is false but extractable requested', 'DataError'));
+                    }
+                }
+                // EC JWK import
+                if (jwk.kty === 'EC' && isEcAlgo(name)) {
+                    var crv = jwk.crv || a.namedCurve;
+                    if (a.namedCurve && jwk.crv && a.namedCurve !== jwk.crv) {
+                        return Promise.reject(new DOMException('JWK curve does not match algorithm', 'DataError'));
+                    }
+                    var coordLen = {'P-256':32,'P-384':48,'P-521':66}[crv];
+                    if (!coordLen) return Promise.reject(new DOMException('Unsupported curve: ' + crv, 'NotSupportedError'));
+                    function b64urlDecode(s) {
+                        var b = s.replace(/-/g,'+').replace(/_/g,'/');
+                        while (b.length % 4) b += '=';
+                        var bin = atob(b), arr = new Uint8Array(bin.length);
+                        for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+                        return arr;
+                    }
+                    var xBytes = b64urlDecode(jwk.x);
+                    var yBytes = jwk.y ? b64urlDecode(jwk.y) : new Uint8Array(0);
+                    // JWK coordinates must be exactly coordLen bytes
+                    if (xBytes.length !== coordLen || (jwk.y && yBytes.length !== coordLen)) {
+                        return Promise.reject(new DOMException('EC JWK coordinate has incorrect size for ' + crv, 'DataError'));
+                    }
+                    // Build uncompressed point: 04 || x || y
+                    var pubBytes = [4];
+                    for (var i=0;i<xBytes.length;i++) pubBytes.push(xBytes[i]);
+                    for (var i=0;i<yBytes.length;i++) pubBytes.push(yBytes[i]);
+                    if (jwk.d) {
+                        var dBytes = b64urlDecode(jwk.d);
+                        if (dBytes.length !== coordLen) {
+                            return Promise.reject(new DOMException('EC JWK d has incorrect size for ' + crv, 'DataError'));
+                        }
+                        var privScalar = Array.from(dBytes);
+                        return Promise.resolve(mkKey('private', {name:name,namedCurve:crv}, extractable, usages, {privateKeyBytes:privScalar, publicKeyBytes:pubBytes}));
+                    }
+                    return Promise.resolve(mkKey('public', {name:name,namedCurve:crv}, extractable, usages, {publicKeyBytes:pubBytes}));
+                }
+                // OKP JWK import (Ed25519, Ed448, X25519, X448)
+                if (jwk.kty === 'OKP' && isCfrgAlgo(name)) {
+                    function b64urlDec(s) {
+                        var b = s.replace(/-/g,'+').replace(/_/g,'/');
+                        while (b.length % 4) b += '=';
+                        var bin = atob(b), arr = new Uint8Array(bin.length);
+                        for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+                        return arr;
+                    }
+                    var pubBytes = Array.from(b64urlDec(jwk.x));
+                    var okpJwkAlg = jwk.alg || null;
+                    if (jwk.d) {
+                        var privBytes = Array.from(b64urlDec(jwk.d));
+                        // Validate key pair: derive public from private and compare
+                        var derivedPub = null;
+                        if (name === 'Ed25519') derivedPub = __braille_crypto_ed25519_get_public(privBytes);
+                        else if (name === 'Ed448') derivedPub = __braille_crypto_ed448_get_public(privBytes);
+                        else if (name === 'X25519') derivedPub = __braille_crypto_x25519_get_public(privBytes);
+                        else if (name === 'X448') derivedPub = __braille_crypto_x448_get_public(privBytes);
+                        if (derivedPub) {
+                            var mismatch = false;
+                            if (derivedPub.length !== pubBytes.length) mismatch = true;
+                            for (var ki = 0; !mismatch && ki < derivedPub.length; ki++) {
+                                if (derivedPub[ki] !== pubBytes[ki]) mismatch = true;
+                            }
+                            if (mismatch) return Promise.reject(new DOMException(name + ' JWK key pair mismatch', 'DataError'));
+                        }
+                        return Promise.resolve(mkKey('private', {name:name}, extractable, usages, {privateKeyBytes:privBytes, publicKeyBytes:pubBytes, jwkAlg:okpJwkAlg}));
+                    }
+                    return Promise.resolve(mkKey('public', {name:name}, extractable, usages, {publicKeyBytes:pubBytes, jwkAlg:okpJwkAlg}));
+                }
+                // RSA JWK import
+                if (jwk.kty === 'RSA' && isRsaAlgo(name)) {
+                    function b64urlDecRsa(s) {
+                        var b = s.replace(/-/g,'+').replace(/_/g,'/');
+                        while (b.length % 4) b += '=';
+                        var bin = atob(b), arr = new Uint8Array(bin.length);
+                        for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+                        return arr;
+                    }
+                    var h = hashName(a.hash);
+                    if (jwk.d) {
+                        // Private key JWK import: reconstruct PKCS8 DER via Rust
+                        var imported = __braille_crypto_rsa_jwk_import(JSON.stringify(jwk));
+                        var modBits = (imported[2][0]<<24)|(imported[2][1]<<16)|(imported[2][2]<<8)|imported[2][3];
+                        var algoObj = {name:name, modulusLength:modBits, publicExponent:new Uint8Array(imported[3]), hash:{name:h}};
+                        return Promise.resolve(mkKey('private', algoObj, extractable, usages, {privateKeyBytes:imported[0], publicKeyBytes:imported[1]}));
+                    } else {
+                        // Public key JWK import: reconstruct SPKI DER via Rust
+                        var imported = __braille_crypto_rsa_jwk_pub_import(jwk.n, jwk.e);
+                        var modBits = (imported[1][0]<<24)|(imported[1][1]<<16)|(imported[1][2]<<8)|imported[1][3];
+                        var algoObj = {name:name, modulusLength:modBits, publicExponent:new Uint8Array(imported[2]), hash:{name:h}};
+                        return Promise.resolve(mkKey('public', algoObj, extractable, usages, {publicKeyBytes:imported[0]}));
+                    }
                 }
             }
 
@@ -572,7 +875,8 @@ fn crypto_js() -> &'static str {
                     return Promise.resolve(new Uint8Array(der).buffer);
                 }
                 if (key.algorithm.name && key.algorithm.name.indexOf('ML-KEM') === 0 && key._publicKeyBytes) {
-                    return Promise.resolve(new Uint8Array(key._publicKeyBytes).buffer);
+                    var spkiDer = __braille_crypto_mlkem_spki_export(key.algorithm.name, key._publicKeyBytes);
+                    return Promise.resolve(new Uint8Array(spkiDer).buffer);
                 }
             }
             if (format === 'pkcs8' && key.type === 'private') {
@@ -602,7 +906,8 @@ fn crypto_js() -> &'static str {
                     return Promise.resolve(new Uint8Array(der).buffer);
                 }
                 if (key.algorithm.name && key.algorithm.name.indexOf('ML-KEM') === 0 && key._privateKeyBytes) {
-                    return Promise.resolve(new Uint8Array(key._privateKeyBytes).buffer);
+                    var pkcs8Der = __braille_crypto_mlkem_pkcs8_export(key.algorithm.name, key._privateKeyBytes);
+                    return Promise.resolve(new Uint8Array(pkcs8Der).buffer);
                 }
             }
             if (format === 'jwk') {
@@ -639,11 +944,23 @@ fn crypto_js() -> &'static str {
                     var jwk = JSON.parse(json);
                     jwk.ext = key.extractable;
                     jwk.key_ops = Array.from(key.usages);
-                    jwk.alg = key.algorithm.name === 'RSA-OAEP' ? 'RSA-OAEP-256' : key.algorithm.name;
+                    // Map algorithm + hash to JWK alg
+                    var rsaHash = key.algorithm.hash && key.algorithm.hash.name;
+                    if (key.algorithm.name === 'RSA-OAEP') {
+                        jwk.alg = rsaHash === 'SHA-256' ? 'RSA-OAEP-256' : rsaHash === 'SHA-384' ? 'RSA-OAEP-384' : rsaHash === 'SHA-512' ? 'RSA-OAEP-512' : 'RSA-OAEP';
+                    } else if (key.algorithm.name === 'RSA-PSS') {
+                        jwk.alg = rsaHash === 'SHA-256' ? 'PS256' : rsaHash === 'SHA-384' ? 'PS384' : rsaHash === 'SHA-512' ? 'PS512' : 'PS1';
+                    } else if (key.algorithm.name === 'RSASSA-PKCS1-v1_5') {
+                        jwk.alg = rsaHash === 'SHA-256' ? 'RS256' : rsaHash === 'SHA-384' ? 'RS384' : rsaHash === 'SHA-512' ? 'RS512' : 'RS1';
+                    }
                     return Promise.resolve(jwk);
                 }
                 if (isCfrgAlgo(key.algorithm.name) && key._publicKeyBytes) {
                     var jwk = {kty:'OKP',crv:key.algorithm.name,x:b64url(key._publicKeyBytes),ext:key.extractable,key_ops:Array.from(key.usages)};
+                    // Per spec, Ed25519/Ed448 export alg = algorithm.name
+                    if (key.algorithm.name === 'Ed25519' || key.algorithm.name === 'Ed448') {
+                        jwk.alg = key.algorithm.name;
+                    }
                     if (key.type === 'private' && key._privateKeyBytes) {
                         jwk.d = b64url(key._privateKeyBytes);
                     }
@@ -830,6 +1147,17 @@ fn crypto_js() -> &'static str {
                 var result = __braille_crypto_ecdsa_sign(curve, h, key._privateKeyBytes, Array.from(toBytes(data)));
                 return Promise.resolve(new Uint8Array(result).buffer);
             }
+            if (a.name === 'RSA-PSS') {
+                var h = key.algorithm.hash.name;
+                var saltLen = a.saltLength || 0;
+                var result = __braille_crypto_rsa_pss_sign(key._privateKeyBytes, h, saltLen, Array.from(toBytes(data)));
+                return Promise.resolve(new Uint8Array(result).buffer);
+            }
+            if (a.name === 'RSASSA-PKCS1-v1_5') {
+                var h = key.algorithm.hash.name;
+                var result = __braille_crypto_rsa_pkcs1_sign(key._privateKeyBytes, h, Array.from(toBytes(data)));
+                return Promise.resolve(new Uint8Array(result).buffer);
+            }
             return Promise.reject(new DOMException('sign ' + a.name + ' not supported', 'NotSupportedError'));
         },
 
@@ -852,6 +1180,17 @@ fn crypto_js() -> &'static str {
                 var curve = key.algorithm.namedCurve;
                 var h = hashName(a.hash);
                 var ok = __braille_crypto_ecdsa_verify(curve, h, key._publicKeyBytes, Array.from(toBytes(signature)), Array.from(toBytes(data)));
+                return Promise.resolve(ok);
+            }
+            if (a.name === 'RSA-PSS') {
+                var h = key.algorithm.hash.name;
+                var saltLen = a.saltLength || 0;
+                var ok = __braille_crypto_rsa_pss_verify(key._publicKeyBytes, h, saltLen, Array.from(toBytes(signature)), Array.from(toBytes(data)));
+                return Promise.resolve(ok);
+            }
+            if (a.name === 'RSASSA-PKCS1-v1_5') {
+                var h = key.algorithm.hash.name;
+                var ok = __braille_crypto_rsa_pkcs1_verify(key._publicKeyBytes, h, Array.from(toBytes(signature)), Array.from(toBytes(data)));
                 return Promise.resolve(ok);
             }
             return Promise.reject(new DOMException('verify ' + a.name + ' not supported', 'NotSupportedError'));
