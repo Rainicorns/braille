@@ -140,6 +140,19 @@ pub fn testharness_preamble() -> String {
                 },
                 add_cleanup: function(f) { cleanups.push(f); },
                 step_timeout: function(fn, timeout) { fn(); },
+                step_wait: function(cond, description, timeout, interval) {
+                    return new Promise(function(resolve, reject) {
+                        if (cond()) { resolve(); return; }
+                        var attempts = 0;
+                        var maxAttempts = Math.ceil((timeout || 3000) / (interval || 10));
+                        function check() {
+                            if (cond()) { resolve(); return; }
+                            if (++attempts >= maxAttempts) { reject(new Error(description || "step_wait timed out")); return; }
+                            setTimeout(check, interval || 10);
+                        }
+                        setTimeout(check, interval || 10);
+                    });
+                },
                 _done: false
             };
             var p = fn(t);
@@ -439,28 +452,129 @@ pub fn resolve_script_src(
     }
     if src.contains("testdriver") {
         return Some(r#"
-            var test_driver = {
-                click: function(element) {
-                    element.click();
-                    return Promise.resolve();
-                },
-                send_keys: function(element, keys) {
-                    return Promise.resolve();
-                },
-                bless: function(intent, action) {
-                    if (typeof action === 'function') return Promise.resolve(action());
-                    return Promise.resolve();
-                },
-                set_permission: function() { return Promise.resolve(); },
-                Actions: function() {
-                    this.pointerMove = function() { return this; };
-                    this.pointerDown = function() { return this; };
-                    this.pointerUp = function() { return this; };
-                    this.pause = function() { return this; };
-                    this.send = function() { return Promise.resolve(); };
-                },
-            };
-            var test_driver_internal = {};
+            function __hasPassiveListener(target, eventType) {
+                // Check the target and its ancestors, plus always check document and window
+                var el = target;
+                while (el) {
+                    if (el.__passiveTypes && el.__passiveTypes[eventType]) return true;
+                    if (el === window) break;
+                    el = el.parentNode || null;
+                }
+                // Always check document and window explicitly (they may not be in the wrapper chain)
+                if (document.__passiveTypes && document.__passiveTypes[eventType]) return true;
+                if (window.__passiveTypes && window.__passiveTypes[eventType]) return true;
+                return false;
+            }
+            if (typeof test_driver_internal === 'undefined') {
+                var test_driver_internal = {
+                    action_sequence: function(actions, context) {
+                        return new Promise(function(resolve) {
+                            for (var i = 0; i < actions.length; i++) {
+                                var source = actions[i];
+                                if (source.type === "wheel") {
+                                    for (var j = 0; j < source.actions.length; j++) {
+                                        var action = source.actions[j];
+                                        if (action.type === "scroll") {
+                                            var target = (typeof document !== 'undefined' && document.elementFromPoint)
+                                                ? document.elementFromPoint(action.x || 0, action.y || 0)
+                                                : null;
+                                            if (!target) target = (typeof document !== 'undefined' && document.body) || null;
+                                            if (target) {
+                                                var cancelable = !__hasPassiveListener(target, "wheel");
+                                                target.dispatchEvent(new WheelEvent("wheel", {
+                                                    bubbles: true, cancelable: cancelable,
+                                                    deltaX: action.deltaX || 0, deltaY: action.deltaY || 0,
+                                                    clientX: action.x || 0, clientY: action.y || 0, view: window
+                                                }));
+                                                cancelable = !__hasPassiveListener(target, "mousewheel");
+                                                target.dispatchEvent(new WheelEvent("mousewheel", {
+                                                    bubbles: true, cancelable: cancelable,
+                                                    deltaX: action.deltaX || 0, deltaY: action.deltaY || 0,
+                                                    clientX: action.x || 0, clientY: action.y || 0, view: window
+                                                }));
+                                            }
+                                        }
+                                    }
+                                } else if (source.type === "pointer" && source.parameters && source.parameters.pointerType === "touch") {
+                                    for (var j = 0; j < source.actions.length; j++) {
+                                        var action = source.actions[j];
+                                        var target = (typeof document !== 'undefined' && document.body) || null;
+                                        if (target) {
+                                            if (action.type === "pointerDown") {
+                                                var cancelable = !__hasPassiveListener(target, "touchstart");
+                                                var te = new Event("touchstart", {bubbles: true, cancelable: cancelable});
+                                                te.touches = []; te.changedTouches = []; te.targetTouches = [];
+                                                target.dispatchEvent(te);
+                                            } else if (action.type === "pointerMove") {
+                                                var cancelable = !__hasPassiveListener(target, "touchmove");
+                                                var te = new Event("touchmove", {bubbles: true, cancelable: cancelable});
+                                                te.touches = []; te.changedTouches = []; te.targetTouches = [];
+                                                target.dispatchEvent(te);
+                                            } else if (action.type === "pointerUp") {
+                                                var cancelable = !__hasPassiveListener(target, "touchend");
+                                                var te = new Event("touchend", {bubbles: true, cancelable: cancelable});
+                                                te.touches = []; te.changedTouches = []; te.targetTouches = [];
+                                                target.dispatchEvent(te);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            resolve();
+                        });
+                    },
+                };
+            }
+            if (typeof test_driver === 'undefined') {
+                var test_driver = {
+                    click: function(element) {
+                        if (element && typeof element.click === 'function') element.click();
+                        return Promise.resolve();
+                    },
+                    send_keys: function(element, keys) { return Promise.resolve(); },
+                    bless: function(intent, action) {
+                        if (typeof action === 'function') return Promise.resolve(action());
+                        return Promise.resolve();
+                    },
+                    set_permission: function() { return Promise.resolve(); },
+                    action_sequence: function(actions, context) {
+                        return test_driver_internal.action_sequence(actions, context);
+                    },
+                    Actions: function() {
+                        var self = this;
+                        self._actions = [];
+                        self._pointerType = "mouse";
+                        self.addPointer = function(name, pointerType) { self._pointerType = pointerType || "mouse"; return self; };
+                        self.pointerMove = function(x, y, opts) {
+                            self._actions.push({source:"pointer",type:"pointerMove",x:x||0,y:y||0});
+                            return self;
+                        };
+                        self.pointerDown = function(opts) { self._actions.push({source:"pointer",type:"pointerDown"}); return self; };
+                        self.pointerUp = function(opts) { self._actions.push({source:"pointer",type:"pointerUp"}); return self; };
+                        self.pause = function(duration) { return self; };
+                        self.addTick = function() { return self; };
+                        self.scroll = function(x, y, deltaX, deltaY, opts) {
+                            self._actions.push({source:"wheel",type:"scroll",x:x,y:y,deltaX:deltaX,deltaY:deltaY});
+                            return self;
+                        };
+                        self.keyDown = function(key) { return self; };
+                        self.keyUp = function(key) { return self; };
+                        self.send = function() {
+                            var serialized = [];
+                            var wheelActions = [];
+                            var pointerActions = [];
+                            for (var i = 0; i < self._actions.length; i++) {
+                                var a = self._actions[i];
+                                if (a.source === "wheel") wheelActions.push(a);
+                                else if (a.source === "pointer") pointerActions.push(a);
+                            }
+                            if (wheelActions.length) serialized.push({type:"wheel",actions:wheelActions});
+                            if (pointerActions.length) serialized.push({type:"pointer",parameters:{pointerType:self._pointerType},actions:pointerActions});
+                            return test_driver.action_sequence(serialized);
+                        };
+                    },
+                };
+            }
         "#.to_string());
     }
 

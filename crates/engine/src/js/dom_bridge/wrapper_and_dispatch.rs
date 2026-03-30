@@ -851,6 +851,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (opts && typeof opts === 'object' && opts !== null) {
                 capture = !!opts.capture;
                 once = !!opts.once;
+                if (opts.passive) {
+                    if (!document.__passiveTypes) document.__passiveTypes = {};
+                    document.__passiveTypes[type] = true;
+                }
             } else {
                 capture = !!opts;
                 once = false;
@@ -1323,6 +1327,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 passive = false;
                 signal = undefined;
             }
+            if (passive) {
+                if (!self.__passiveTypes) self.__passiveTypes = {};
+                self.__passiveTypes[type] = true;
+            }
             if (signal !== undefined) {
                 if (!signal || typeof signal !== 'object' || !('aborted' in signal)) throw new TypeError("Failed to execute 'addEventListener': member signal is not of type AbortSignal.");
                 if (signal.aborted) return;
@@ -1370,31 +1378,32 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
         };
         EventTarget.prototype.dispatchEvent = function(event) {
+            var self = (this == null || this === undefined) ? window : this;
             if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
             if (event._initialized === false) throw new DOMException("The event is not initialized.", "InvalidStateError");
             var __prevEvent = __currentEvent;
             __currentEvent = event;
             event._dispatching = true;
-            event.target = this;
-            event.srcElement = this;
-            event.currentTarget = this;
-            event._path = [this];
+            event.target = self;
+            event.srcElement = self;
+            event.currentTarget = self;
+            event._path = [self];
             event.eventPhase = 2;
             // At AT_TARGET, fire both capture and bubble listeners in registration order
             var phases = [event.type + '_c', event.type + '_b'];
             for (var ph = 0; ph < phases.length; ph++) {
                 var key = phases[ph];
-                var cbs = this.__et_listeners ? this.__et_listeners[key] : undefined;
+                var cbs = self.__et_listeners ? self.__et_listeners[key] : undefined;
                 if (cbs) {
                     var snapshot = cbs.slice();
                     for (var i = 0; i < snapshot.length; i++) {
                         var fn = snapshot[i];
                         // Check if listener was removed (e.g. by abort signal) during dispatch
-                        var live = this.__et_listeners[key];
+                        var live = self.__et_listeners[key];
                         if (live.indexOf(fn) === -1) continue;
                         var wasPassive = event._inPassiveListener;
                         if (fn._passive) event._inPassiveListener = true;
-                        if (typeof fn === 'function') fn.call(this, event);
+                        if (typeof fn === 'function') fn.call(self, event);
                         else if (fn && typeof fn.handleEvent === 'function') fn.handleEvent(event);
                         event._inPassiveListener = wasPassive;
                         if (event._stopImmediate) break;

@@ -41,15 +41,22 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
 
         EP.addEventListener = function(type, cb, opts) {
-            var capture, once, signal;
+            var capture, once, signal, passive;
             if (opts && typeof opts === 'object' && opts !== null) {
                 capture = !!opts.capture;
                 once = !!opts.once;
                 signal = opts.signal;
+                passive = !!opts.passive;
             } else {
                 capture = !!opts;
                 once = false;
                 signal = undefined;
+                passive = false;
+            }
+            // Track passive listeners for synthetic event cancelability
+            if (passive) {
+                if (!this.__passiveTypes) this.__passiveTypes = {};
+                this.__passiveTypes[type] = true;
             }
             if (typeof cb !== 'function' && !(cb && typeof cb === 'object')) return;
             if (signal !== undefined) {
