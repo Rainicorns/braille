@@ -222,7 +222,30 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 }
             }
 
+            // Activation behavior pre-step: toggle checkbox/radio before listeners fire
+            var _activationRevert = null;
+            if (event.type === 'click') {
+                var targetEl = __w(nodeId);
+                if (targetEl.tagName === 'INPUT') {
+                    var itype = (targetEl.getAttribute('type') || '').toLowerCase();
+                    if (itype === 'checkbox') {
+                        var oldChecked = targetEl.checked;
+                        targetEl.checked = !oldChecked;
+                        _activationRevert = function() { targetEl.checked = oldChecked; };
+                    } else if (itype === 'radio') {
+                        var oldChecked = targetEl.checked;
+                        targetEl.checked = true;
+                        _activationRevert = function() { targetEl.checked = oldChecked; };
+                    }
+                }
+            }
+
             if (!event._stopPropagation) runPhases();
+
+            // Activation behavior post-step: revert if event was canceled
+            if (_activationRevert && event.defaultPrevented) {
+                _activationRevert();
+            }
 
             // Per spec step 14: unset dispatching, stop propagation, and stop immediate flags
             event._dispatching = false;

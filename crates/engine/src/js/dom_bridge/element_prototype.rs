@@ -97,9 +97,18 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.hasPointerCapture = function(pointerId) { return __pointerCaptures[pointerId] === this.__nid; };
 
         ElemProto.click = function() {
+            // Per spec: click() on disabled form controls is a no-op for event dispatch
+            // but activation behavior (checkbox toggle) still runs
+            var isDisabled = this.disabled;
+            var tag = this.tagName;
+            var isFormControl = (tag === 'INPUT' || tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA');
             var event = new MouseEvent('click', {bubbles: true, cancelable: true});
             event.target = this;
             event.currentTarget = this;
+            if (isFormControl && isDisabled) {
+                // Disabled: no event dispatch, no activation behavior from click()
+                return;
+            }
             __dispatch(this.__nid, event);
 
             // <details>/<summary> toggle
@@ -118,9 +127,23 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 var btype = (this.getAttribute('type') || '').toLowerCase();
                 if ((tag === 'BUTTON' && (btype === 'submit' || btype === '')) || (tag === 'INPUT' && btype === 'submit')) {
                     var form = this.form;
-                    if (form) {
+                    // Only submit if form is connected to the document
+                    var formConnected = false;
+                    if (form && form.__nid !== undefined) {
+                        var cur = form.__nid;
+                        while (cur >= 0) {
+                            if (__n_getNodeType(cur) === 9) { formConnected = true; break; }
+                            cur = __n_getParent(cur);
+                        }
+                    }
+                    if (form && formConnected) {
                         var submitEvt = new Event('submit', {bubbles: true, cancelable: true});
                         submitEvt.submitter = this;
+                        // Fire onsubmit IDL handler
+                        if (typeof form.onsubmit === 'function') {
+                            var ret = form.onsubmit(submitEvt);
+                            if (ret === false) submitEvt.preventDefault();
+                        }
                         form.dispatchEvent(submitEvt);
                     }
                 }
@@ -706,6 +729,29 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     else if (this.tagName === 'TEXTAREA') val = __n_getTextContent(this.__nid);
                     else val = this.getAttribute('value') || '';
                     return val.length;
+                },
+                configurable: true
+            },
+            type: {
+                get: function() { return this.getAttribute('type') || ''; },
+                set: function(v) { this.setAttribute('type', String(v)); },
+                configurable: true
+            },
+            disabled: {
+                get: function() { return this.hasAttribute('disabled'); },
+                set: function(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); },
+                configurable: true
+            },
+            form: {
+                get: function() {
+                    if (this.__nid === undefined) return null;
+                    var cur = __n_getParent(this.__nid);
+                    while (cur >= 0) {
+                        var w = __w(cur);
+                        if (w.tagName === 'FORM') return w;
+                        cur = __n_getParent(cur);
+                    }
+                    return null;
                 },
                 configurable: true
             },
