@@ -785,9 +785,15 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return __makeHTMLCollection(function() { return doc.querySelectorAll('.' + cls); });
         };
         doc.addEventListener = function(type, cb, opts) {
-            if (typeof cb !== 'function') return;
-            var capture = !!(opts === true || (opts && opts.capture));
-            var once = !!(opts && typeof opts === 'object' && opts.once);
+            var capture, once;
+            if (opts && typeof opts === 'object' && opts !== null) {
+                capture = !!opts.capture;
+                once = !!opts.once;
+            } else {
+                capture = !!opts;
+                once = false;
+            }
+            if (typeof cb !== 'function' && !(cb && typeof cb === 'object')) return;
             var store = capture ? _docCapture : doc.__listeners;
             if (!store[type]) store[type] = [];
             if (once) {
@@ -799,7 +805,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
         };
         doc.removeEventListener = function(type, cb, opts) {
-            var capture = !!(opts === true || (opts && opts.capture));
+            var capture = (opts && typeof opts === 'object' && opts !== null) ? !!opts.capture : !!opts;
             var store = capture ? _docCapture : doc.__listeners;
             if (store[type]) store[type] = store[type].filter(function(f){return f!==cb && f._origCb!==cb;});
         };
@@ -1238,17 +1244,24 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         EventTarget.prototype.addEventListener = function(type, cb, opts) {
             var self = (this == null) ? window : this;
             if (!self.__et_listeners) self.__et_listeners = {};
-            // Read all options first (spec requires this even if cb is null)
-            var capture = !!(opts === true || (opts && opts.capture));
-            var once = !!(opts && typeof opts === 'object' && opts.once);
-            var passive = !!(opts && typeof opts === 'object' && opts.passive);
-            var signal = (opts && typeof opts === 'object') ? opts.signal : undefined;
-            // Validate signal before checking callback
+            // Read all options first (spec requires Get even if cb is null)
+            var capture, once, passive, signal;
+            if (opts && typeof opts === 'object' && opts !== null) {
+                capture = !!opts.capture;
+                once = !!opts.once;
+                passive = !!opts.passive;
+                signal = opts.signal;
+            } else {
+                capture = !!opts;
+                once = false;
+                passive = false;
+                signal = undefined;
+            }
             if (signal !== undefined) {
                 if (!signal || typeof signal !== 'object' || !('aborted' in signal)) throw new TypeError("Failed to execute 'addEventListener': member signal is not of type AbortSignal.");
                 if (signal.aborted) return;
             }
-            if (typeof cb !== 'function' && !(cb && typeof cb.handleEvent === 'function')) return;
+            if (typeof cb !== 'function' && !(cb && typeof cb === 'object')) return;
             var key = type + (capture ? '_c' : '_b');
             if (!self.__et_listeners[key]) self.__et_listeners[key] = [];
             for (var i = 0; i < self.__et_listeners[key].length; i++) {
@@ -1284,7 +1297,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
         EventTarget.prototype.removeEventListener = function(type, cb, opts) {
             if (!this.__et_listeners) return;
-            var capture = !!(opts === true || (opts && opts.capture));
+            var capture = (opts && typeof opts === 'object' && opts !== null) ? !!opts.capture : !!opts;
             var key = type + (capture ? '_c' : '_b');
             if (this.__et_listeners[key]) {
                 this.__et_listeners[key] = this.__et_listeners[key].filter(function(f) { return f !== cb && f._origCb !== cb; });

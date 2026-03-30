@@ -27,10 +27,17 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
 
         EP.addEventListener = function(type, cb, opts) {
+            var capture, once, signal;
+            if (opts && typeof opts === 'object' && opts !== null) {
+                capture = !!opts.capture;
+                once = !!opts.once;
+                signal = opts.signal;
+            } else {
+                capture = !!opts;
+                once = false;
+                signal = undefined;
+            }
             if (typeof cb !== 'function' && !(cb && typeof cb === 'object')) return;
-            var capture = !!(opts === true || (opts && opts.capture));
-            var once = !!(opts && typeof opts === 'object' && opts.once);
-            var signal = (opts && typeof opts === 'object') ? opts.signal : undefined;
             if (signal !== undefined) {
                 if (!signal || typeof signal !== 'object' || !('aborted' in signal)) throw new TypeError("Failed to execute 'addEventListener': member signal is not of type AbortSignal.");
                 if (signal.aborted) return;
@@ -58,7 +65,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             }
         };
         EP.removeEventListener = function(type, cb, opts) {
-            var capture = !!(opts === true || (opts && opts.capture));
+            var capture = (opts && typeof opts === 'object' && opts !== null) ? !!opts.capture : !!opts;
             var key = this.__nid + ':' + type;
             var store = capture ? _captureKeys : _bubbleKeys;
             if (store[key]) {
