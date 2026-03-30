@@ -1,6 +1,6 @@
         encrypt: function(algo, key, data) {
             var a = normalizeAlgo(algo);
-            if (key.usages.indexOf('encrypt') === -1) {
+            if (key.usages.indexOf('encrypt') === -1 && key.usages.indexOf('wrapKey') === -1) {
                 return Promise.reject(new DOMException('key usages do not include encrypt', 'InvalidAccessError'));
             }
             if (key.algorithm.name !== a.name) {
@@ -72,7 +72,7 @@
 
         decrypt: function(algo, key, data) {
             var a = normalizeAlgo(algo);
-            if (key.usages.indexOf('decrypt') === -1) {
+            if (key.usages.indexOf('decrypt') === -1 && key.usages.indexOf('unwrapKey') === -1) {
                 return Promise.reject(new DOMException('key usages do not include decrypt', 'InvalidAccessError'));
             }
             if (key.algorithm.name !== a.name) {

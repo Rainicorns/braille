@@ -1,4 +1,4 @@
-use aes_gcm::aead::consts::{U12, U32};
+use aes_gcm::aead::consts::{U12, U16, U32};
 use aes_gcm::aead::{AeadInPlace, KeyInit};
 use aes_gcm::AesGcm;
 use rquickjs::{Ctx, Function};
@@ -53,6 +53,9 @@ fn aes_gcm_encrypt_impl(
         (16, 12) => gcm_encrypt!(aes::Aes128, U12, key, iv, plaintext, aad, tag_bytes),
         (24, 12) => gcm_encrypt!(aes::Aes192, U12, key, iv, plaintext, aad, tag_bytes),
         (32, 12) => gcm_encrypt!(aes::Aes256, U12, key, iv, plaintext, aad, tag_bytes),
+        (16, 16) => gcm_encrypt!(aes::Aes128, U16, key, iv, plaintext, aad, tag_bytes),
+        (24, 16) => gcm_encrypt!(aes::Aes192, U16, key, iv, plaintext, aad, tag_bytes),
+        (32, 16) => gcm_encrypt!(aes::Aes256, U16, key, iv, plaintext, aad, tag_bytes),
         (16, 32) => gcm_encrypt!(aes::Aes128, U32, key, iv, plaintext, aad, tag_bytes),
         (24, 32) => gcm_encrypt!(aes::Aes192, U32, key, iv, plaintext, aad, tag_bytes),
         (32, 32) => gcm_encrypt!(aes::Aes256, U32, key, iv, plaintext, aad, tag_bytes),
@@ -84,6 +87,9 @@ fn aes_gcm_decrypt_impl(
         (16, 12) => gcm_decrypt!(aes::Aes128, U12, key, iv, ct, truncated_tag, aad, tag_bytes),
         (24, 12) => gcm_decrypt!(aes::Aes192, U12, key, iv, ct, truncated_tag, aad, tag_bytes),
         (32, 12) => gcm_decrypt!(aes::Aes256, U12, key, iv, ct, truncated_tag, aad, tag_bytes),
+        (16, 16) => gcm_decrypt!(aes::Aes128, U16, key, iv, ct, truncated_tag, aad, tag_bytes),
+        (24, 16) => gcm_decrypt!(aes::Aes192, U16, key, iv, ct, truncated_tag, aad, tag_bytes),
+        (32, 16) => gcm_decrypt!(aes::Aes256, U16, key, iv, ct, truncated_tag, aad, tag_bytes),
         (16, 32) => gcm_decrypt!(aes::Aes128, U32, key, iv, ct, truncated_tag, aad, tag_bytes),
         (24, 32) => gcm_decrypt!(aes::Aes192, U32, key, iv, ct, truncated_tag, aad, tag_bytes),
         (32, 32) => gcm_decrypt!(aes::Aes256, U32, key, iv, ct, truncated_tag, aad, tag_bytes),
