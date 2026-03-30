@@ -1059,8 +1059,8 @@ PASS wpt:dom/events/Event-dispatch-click.tentative.html
 PASS wpt:dom/events/Event-dispatch-detached-click.html
 PASS wpt:dom/events/Event-dispatch-detached-input-and-change.html
 PASS wpt:dom/events/Event-dispatch-handlers-changed.html
-FAIL wpt:dom/events/Event-dispatch-listener-order.window.js
-NOT_RUN wpt:dom/events/Event-dispatch-multiple-cancelBubble.html
+PASS wpt:dom/events/Event-dispatch-listener-order.window.js
+FAIL wpt:dom/events/Event-dispatch-multiple-cancelBubble.html
 NOT_RUN wpt:dom/events/Event-dispatch-multiple-stopPropagation.html
 NOT_RUN wpt:dom/events/Event-dispatch-omitted-capture.html
 NOT_RUN wpt:dom/events/Event-dispatch-on-disabled-elements.html

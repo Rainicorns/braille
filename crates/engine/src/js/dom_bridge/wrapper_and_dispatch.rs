@@ -90,11 +90,21 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // ownerDoc: optional non-global document that owns the target element
         function __dispatch(nodeId, event, ownerDoc) {
             // Build path: target -> parent -> ... -> root
+            // For composed events, follow shadow host links across shadow boundaries
             var path = [];
             var cur = nodeId;
             while (cur >= 0) {
                 path.push(cur);
-                cur = __n_getParent(cur);
+                var parent = __n_getParent(cur);
+                if (parent < 0 && event.composed) {
+                    // Check if this is a shadow root with a host
+                    var wrapper = __w(cur);
+                    if (wrapper._shadowHost && wrapper._shadowHost.__nid !== undefined) {
+                        cur = wrapper._shadowHost.__nid;
+                        continue;
+                    }
+                }
+                cur = parent;
             }
 
             // Determine if we're dispatching in the global document tree or a standalone one
