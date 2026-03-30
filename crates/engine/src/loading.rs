@@ -12,6 +12,21 @@ use super::{Engine, FetchedResources, RuntimeMode, ScriptDescriptor};
 
 impl Engine {
     /// Create or rebind a JsRuntime for the current tree, respecting runtime_mode.
+    /// Register all elements with `id` attributes as named globals on `window`.
+    /// Per HTML spec, elements with an id are accessible as `window[id]`.
+    fn register_named_elements(runtime: &mut JsRuntime) {
+        runtime.eval_or_log(
+            r#"(function() {
+                var all = document.querySelectorAll('[id]');
+                for (var i = 0; i < all.length; i++) {
+                    var el = all[i];
+                    var id = el.getAttribute('id');
+                    if (id && !globalThis[id]) globalThis[id] = el;
+                }
+            })()"#,
+        );
+    }
+
     fn make_runtime(&mut self) -> JsRuntime {
         let new_state = Rc::new(RefCell::new(EngineState::new()));
         if self.runtime_mode == RuntimeMode::Fast {
@@ -31,7 +46,10 @@ impl Engine {
         // 2. Create a new JsRuntime bound to this tree
         let mut runtime = self.make_runtime();
 
-        // 3. Walk the tree to find all <script> elements in document order,
+        // 3. Register named elements (id → global) per HTML spec
+        Self::register_named_elements(&mut runtime);
+
+        // 4. Walk the tree to find all <script> elements in document order,
         //    collect their text content, and execute each one.
         let scripts = self.collect_scripts();
         for script_content in scripts {
@@ -92,6 +110,9 @@ impl Engine {
 
         // Make all fetched scripts available to inline Worker execution
         Self::populate_worker_scripts(&fetched.scripts, &mut runtime);
+
+        // Register named elements (id → global) per HTML spec
+        Self::register_named_elements(&mut runtime);
 
         for descriptor in descriptors {
             match descriptor {
@@ -203,6 +224,9 @@ impl Engine {
 
         // Make all fetched scripts available to inline Worker execution
         Self::populate_worker_scripts(&fetched.scripts, &mut runtime);
+
+        // Register named elements (id → global) per HTML spec
+        Self::register_named_elements(&mut runtime);
 
         for descriptor in descriptors {
             if let ScriptDescriptor::ImportMap(json) = descriptor {

@@ -14,6 +14,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             name = String(name).toLowerCase();
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
             __n_setAttribute(this.__nid, name, String(value));
+            if (name === 'id' && value && !globalThis[value]) globalThis[value] = this;
             if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
         };
         ElemProto.removeAttribute = function(name) {

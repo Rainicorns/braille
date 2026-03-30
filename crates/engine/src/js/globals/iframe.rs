@@ -131,6 +131,8 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     crypto: (typeof crypto !== 'undefined') ? crypto : undefined,
                     TextEncoder: (typeof TextEncoder !== 'undefined') ? TextEncoder : undefined,
                     TextDecoder: (typeof TextDecoder !== 'undefined') ? TextDecoder : undefined,
+                    AbortSignal: (typeof AbortSignal !== 'undefined') ? AbortSignal : undefined,
+                    AbortController: (typeof AbortController !== 'undefined') ? AbortController : undefined,
                     Uint8Array: Uint8Array,
                     ArrayBuffer: ArrayBuffer,
                     DataView: DataView,
@@ -383,6 +385,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 get: function() {
                     if (this.__nid === undefined) return undefined;
                     if (__n_getTagName(this.__nid) !== 'IFRAME') return undefined;
+                    if (!iframeRealms[this.__nid]) __braille_maybe_init_iframe(this);
                     var realm = iframeRealms[this.__nid];
                     return realm ? realm.window : null;
                 },
@@ -393,6 +396,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 get: function() {
                     if (this.__nid === undefined) return undefined;
                     if (__n_getTagName(this.__nid) !== 'IFRAME') return undefined;
+                    if (!iframeRealms[this.__nid]) __braille_maybe_init_iframe(this);
                     var realm = iframeRealms[this.__nid];
                     return realm ? realm.document : null;
                 },

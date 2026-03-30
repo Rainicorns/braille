@@ -1022,11 +1022,11 @@ PASS wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js
 PASS wpt:dom/abort/AbortSignal.any.js
 PASS wpt:dom/abort/abort-signal-any-crash.html
 PASS wpt:dom/abort/abort-signal-any.any.js
-FAIL wpt:dom/abort/abort-signal-timeout.html
-NOT_RUN wpt:dom/abort/crashtests/any-on-abort.html
-NOT_RUN wpt:dom/abort/crashtests/timeout-close.html
-NOT_RUN wpt:dom/abort/event.any.js
-NOT_RUN wpt:dom/abort/reason-constructor.html
+PASS wpt:dom/abort/abort-signal-timeout.html
+PASS wpt:dom/abort/crashtests/any-on-abort.html
+PASS wpt:dom/abort/crashtests/timeout-close.html
+PASS wpt:dom/abort/event.any.js
+FAIL wpt:dom/abort/reason-constructor.html
 NOT_RUN wpt:dom/abort/timeout-shadowrealm.any.js
 NOT_RUN wpt:dom/abort/timeout.any.js
 NOT_RUN wpt:dom/attributes-are-nodes.html
@@ -2350,3 +2350,4 @@ NOT_RUN cargo:generatekey_alts::ml_dsa_importkey_not_yet_supported
 NOT_RUN cargo:generatekey_alts::ec_import_key_formats
 NOT_RUN cargo:mlkem_import_debug::mlkem_pkcs8_roundtrip
 NOT_RUN cargo:mlkem_import_debug::mlkem_pkcs8_wpt_fixture
+NOT_RUN wpt:dom/abort/abort-signal-timeout.alt.html

@@ -663,7 +663,9 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             AbortSignal.prototype.addEventListener = function(type, cb) { if (type === 'abort') { if (!this._listeners) this._listeners = []; this._listeners.push(cb); } };
             AbortSignal.prototype.removeEventListener = function(type, cb) { if (type === 'abort' && this._listeners) this._listeners = this._listeners.filter(function(f){return f!==cb;}); };
             AbortSignal.prototype._fire = function() {
-                var ev = {type: 'abort', target: this};
+                var ev = new Event('abort', {bubbles: false, cancelable: false});
+                Object.defineProperty(ev, 'target', {value: this, writable: false});
+                Object.defineProperty(ev, 'isTrusted', {value: true, writable: false, configurable: false});
                 if (this.onabort) this.onabort(ev);
                 if (this._listeners) for (var i = 0; i < this._listeners.length; i++) this._listeners[i](ev);
             };
