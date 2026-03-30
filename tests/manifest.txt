@@ -1049,9 +1049,9 @@ PASS wpt:dom/events/CustomEvent.html
 PASS wpt:dom/events/Event-cancelBubble.html
 PASS wpt:dom/events/Event-constants.html
 PASS wpt:dom/events/Event-constructors.any.js
-FAIL wpt:dom/events/Event-defaultPrevented-after-dispatch.html
-NOT_RUN wpt:dom/events/Event-defaultPrevented.html
-NOT_RUN wpt:dom/events/Event-dispatch-bubble-canceled.html
+PASS wpt:dom/events/Event-defaultPrevented-after-dispatch.html
+PASS wpt:dom/events/Event-defaultPrevented.html
+FAIL wpt:dom/events/Event-dispatch-bubble-canceled.html
 NOT_RUN wpt:dom/events/Event-dispatch-bubbles-false.html
 NOT_RUN wpt:dom/events/Event-dispatch-bubbles-true.html
 NOT_RUN wpt:dom/events/Event-dispatch-click.html

@@ -67,6 +67,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 // Standalone node with no DomTree backing — fire EventTarget listeners only
                 event._dispatching = true;
                 event.target = this;
+                event.srcElement = this;
                 event.currentTarget = this;
                 event._path = [this];
                 event.eventPhase = 2;

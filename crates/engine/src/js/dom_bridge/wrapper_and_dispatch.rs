@@ -103,6 +103,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
             event._dispatching = true;
             event.target = __w(nodeId);
+            event.srcElement = event.target;
             event.eventPhase = 0;
 
             // Build composedPath: wrapped elements + document (+ window for global)
@@ -1023,6 +1024,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
             event._dispatching = true;
             event.target = this;
+            event.srcElement = this;
             event.currentTarget = this;
             event._path = [this];
             event.eventPhase = 2;
