@@ -20,7 +20,7 @@
             // PKCS8 always imports private keys; JWK with 'd' is private
             if (format === 'pkcs8' || format === 'raw-seed') {
                 if (usages && usages.length === 0) {
-                    var privNeedsUsages = {'ECDSA':1,'ECDH':1,'Ed25519':1,'Ed448':1,'X25519':1,'X448':1,'RSA-OAEP':1,'RSA-PSS':1,'RSASSA-PKCS1-v1_5':1,'ML-KEM-512':1,'ML-KEM-768':1,'ML-KEM-1024':1};
+                    var privNeedsUsages = {'ECDSA':1,'ECDH':1,'Ed25519':1,'Ed448':1,'X25519':1,'X448':1,'RSA-OAEP':1,'RSA-PSS':1,'RSASSA-PKCS1-v1_5':1,'ML-KEM-512':1,'ML-KEM-768':1,'ML-KEM-1024':1,'ML-DSA-44':1,'ML-DSA-65':1,'ML-DSA-87':1};
                     if (privNeedsUsages[name]) {
                         return Promise.reject(new DOMException('usages cannot be empty for private keys', 'SyntaxError'));
                     }
@@ -44,13 +44,15 @@
                 var pubUsagesMap = {
                     'ECDH':[],'ECDSA':['verify'],'Ed25519':['verify'],'Ed448':['verify'],
                     'X25519':[],'X448':[],
-                    'RSA-OAEP':['encrypt','wrapKey'],'RSA-PSS':['verify'],'RSASSA-PKCS1-v1_5':['verify']
+                    'RSA-OAEP':['encrypt','wrapKey'],'RSA-PSS':['verify'],'RSASSA-PKCS1-v1_5':['verify'],
+                    'ML-DSA-44':['verify'],'ML-DSA-65':['verify'],'ML-DSA-87':['verify']
                 };
                 var privUsagesMap = {
                     'ECDH':['deriveKey','deriveBits'],'ECDSA':['sign'],'Ed25519':['sign'],'Ed448':['sign'],
                     'X25519':['deriveKey','deriveBits'],'X448':['deriveKey','deriveBits'],
                     'RSA-OAEP':['decrypt','unwrapKey'],'RSA-PSS':['sign'],'RSASSA-PKCS1-v1_5':['sign'],
-                    'ML-KEM-512':['decapsulateBits','decapsulateKey'],'ML-KEM-768':['decapsulateBits','decapsulateKey'],'ML-KEM-1024':['decapsulateBits','decapsulateKey']
+                    'ML-KEM-512':['decapsulateBits','decapsulateKey'],'ML-KEM-768':['decapsulateBits','decapsulateKey'],'ML-KEM-1024':['decapsulateBits','decapsulateKey'],
+                    'ML-DSA-44':['sign'],'ML-DSA-65':['sign'],'ML-DSA-87':['sign']
                 };
                 var validUsages = null;
                 if (isPubFormat && pubUsagesMap[name] !== undefined) validUsages = pubUsagesMap[name];
@@ -179,6 +181,13 @@
                     var priv = Array.from(derBytes.slice(16, 73));
                     return Promise.resolve(mkKey('private', {name:'Ed448'}, extractable, usages, {privateKeyBytes: priv}));
                 }
+                if (name === 'ML-DSA-44' || name === 'ML-DSA-65' || name === 'ML-DSA-87') {
+                    var imported = __braille_crypto_mldsa_pkcs8_import(name, Array.from(derBytes));
+                    if (imported.length === 0) {
+                        return Promise.reject(new DOMException('invalid ML-DSA PKCS8 key data', 'DataError'));
+                    }
+                    return Promise.resolve(mkKey('private', {name: name}, extractable, usages, {privateKeyBytes: imported[0], publicKeyBytes: imported[1]}));
+                }
                 return Promise.reject(new DOMException('importKey pkcs8 for ' + name + ' not supported', 'NotSupportedError'));
             }
 
@@ -240,6 +249,13 @@
                     }
                     var pub_bytes = Array.from(derBytes.slice(12, 69));
                     return Promise.resolve(mkKey('public', {name:'Ed448'}, extractable, usages, {publicKeyBytes: pub_bytes}));
+                }
+                if (name === 'ML-DSA-44' || name === 'ML-DSA-65' || name === 'ML-DSA-87') {
+                    var vkBytes = __braille_crypto_mldsa_spki_import(name, Array.from(derBytes));
+                    if (vkBytes.length === 0) {
+                        return Promise.reject(new DOMException('invalid ML-DSA SPKI key data', 'DataError'));
+                    }
+                    return Promise.resolve(mkKey('public', {name: name}, extractable, usages, {publicKeyBytes: vkBytes}));
                 }
                 return Promise.reject(new DOMException('importKey spki for ' + name + ' not supported', 'NotSupportedError'));
             }

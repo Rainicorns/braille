@@ -68,6 +68,13 @@
                 var result = __braille_crypto_rsa_pkcs1_sign(key._privateKeyBytes, h, Array.from(toBytes(data)));
                 return Promise.resolve(new Uint8Array(result).buffer);
             }
+            if (a.name === 'ML-DSA-44' || a.name === 'ML-DSA-65' || a.name === 'ML-DSA-87') {
+                if (key.type !== 'private') {
+                    return Promise.reject(new DOMException('key type must be private for sign', 'InvalidAccessError'));
+                }
+                var result = __braille_crypto_mldsa_sign(a.name, key._privateKeyBytes, Array.from(toBytes(data)));
+                return Promise.resolve(new Uint8Array(result).buffer);
+            }
             return Promise.reject(new DOMException('sign ' + a.name + ' not supported', 'NotSupportedError'));
         },
 
@@ -139,6 +146,13 @@
                     return Promise.reject(new DOMException('Unrecognized hash: ' + h, 'NotSupportedError'));
                 }
                 var ok = __braille_crypto_rsa_pkcs1_verify(key._publicKeyBytes, h, Array.from(toBytes(signature)), Array.from(toBytes(data)));
+                return Promise.resolve(ok);
+            }
+            if (a.name === 'ML-DSA-44' || a.name === 'ML-DSA-65' || a.name === 'ML-DSA-87') {
+                if (key.type !== 'public') {
+                    return Promise.reject(new DOMException('key type must be public for verify', 'InvalidAccessError'));
+                }
+                var ok = __braille_crypto_mldsa_verify(a.name, key._publicKeyBytes, Array.from(toBytes(signature)), Array.from(toBytes(data)));
                 return Promise.resolve(ok);
             }
             return Promise.reject(new DOMException('verify ' + a.name + ' not supported', 'NotSupportedError'));

@@ -5,6 +5,7 @@ mod ec;
 mod hmac;
 mod kdf;
 mod kmac;
+mod mldsa;
 mod mlkem;
 mod ocb3;
 mod random;
@@ -21,6 +22,7 @@ pub fn register(ctx: &Ctx<'_>) {
     kmac::register(ctx);
     kdf::register(ctx);
     ec::register(ctx);
+    mldsa::register(ctx);
     mlkem::register(ctx);
     chacha::register(ctx);
     rsa::register(ctx);

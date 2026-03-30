@@ -253,6 +253,7 @@ dependencies = [
  "html5ever",
  "libtest-mimic",
  "markup5ever",
+ "ml-dsa",
  "ml-kem",
  "p256",
  "p384",
@@ -1716,6 +1717,22 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ml-dsa"
+version = "0.1.0-rc.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5b2bb0ad6fa2b40396775bd56f51345171490fef993f46f91a876ecdbdaea55"
+dependencies = [
+ "const-oid 0.10.2",
+ "ctutils",
+ "hybrid-array",
+ "module-lattice",
+ "pkcs8 0.11.0-rc.11",
+ "rand_core 0.10.0",
+ "sha3 0.11.0-rc.9",
+ "signature 3.0.0-rc.10",
 ]
 
 [[package]]
