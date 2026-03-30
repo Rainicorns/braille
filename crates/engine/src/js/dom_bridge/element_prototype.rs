@@ -107,8 +107,13 @@ pub(crate) fn element_prototype_js() -> &'static str {
             var capture = (opts && typeof opts === 'object' && opts !== null) ? !!opts.capture : !!opts;
             var key = this.__nid + ':' + type;
             var store = capture ? _captureKeys : _bubbleKeys;
-            if (store[key]) {
-                store[key] = store[key].filter(function(f) { return f !== cb && f._origCb !== cb; });
+            var arr = store[key];
+            if (arr) {
+                for (var i = arr.length - 1; i >= 0; i--) {
+                    if (arr[i] === cb || arr[i]._origCb === cb) {
+                        arr.splice(i, 1);
+                    }
+                }
             }
         };
         EP.dispatchEvent = function(event) {
@@ -391,6 +396,17 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.getClientRects = function() { return [this.getBoundingClientRect()]; };
         // focus/blur defined later after defineProperties to track activeElement
         ElemProto.scrollIntoView = function() {};
+        ElemProto.setSelectionRange = function(start, end, direction) {
+            if (!this.__props) this.__props = {};
+            var len = (this.value || '').length;
+            this.__props._selStart = Math.max(0, Math.min(start|0, len));
+            this.__props._selEnd = Math.max(this.__props._selStart, Math.min(end|0, len));
+        };
+        ElemProto.select = function() {
+            if (this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') {
+                this.setSelectionRange(0, (this.value || '').length);
+            }
+        };
         ElemProto.matches = function(sel) { return __n_matchesSelector(this.__nid, sel); };
         ElemProto.closest = function(sel) {
             var id = __n_closest(this.__nid, sel);
@@ -686,7 +702,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
             },
             value: {
                 get: function() {
-                    if (this.__props && this.__props._value !== undefined) return this.__props._value;
+                    if (this.__props && this.__props._value !== undefined) {
+                        return this.__props._value;
+                    }
                     if (this.tagName === 'SELECT') {
                         var opts = this.querySelectorAll('option');
                         for (var i = 0; i < opts.length; i++) {
@@ -695,6 +713,10 @@ pub(crate) fn element_prototype_js() -> &'static str {
                             }
                         }
                         return opts.length > 0 ? (opts[0].getAttribute('value') || opts[0].textContent || '') : '';
+                    }
+                    if (this.tagName === 'TEXTAREA') {
+                        var tc = this.textContent;
+                        return tc || '';
                     }
                     return this.getAttribute('value') || '';
                 },
@@ -1076,8 +1098,60 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 configurable: true
             },
-            scrollTop: { get: function() { return 0; }, set: function(){}, configurable: true },
-            scrollLeft: { get: function() { return 0; }, set: function(){}, configurable: true },
+            selectionStart: {
+                get: function() {
+                    var t = this.tagName;
+                    if (t !== 'INPUT' && t !== 'TEXTAREA') return undefined;
+                    if (this.__props && this.__props._selStart !== undefined) return this.__props._selStart;
+                    return 0;
+                },
+                set: function(val) {
+                    if (!this.__props) this.__props = {};
+                    this.__props._selStart = Math.max(0, Math.min(val|0, (this.value||'').length));
+                },
+                configurable: true
+            },
+            selectionEnd: {
+                get: function() {
+                    var t = this.tagName;
+                    if (t !== 'INPUT' && t !== 'TEXTAREA') return undefined;
+                    if (this.__props && this.__props._selEnd !== undefined) return this.__props._selEnd;
+                    return 0;
+                },
+                set: function(val) {
+                    if (!this.__props) this.__props = {};
+                    this.__props._selEnd = Math.max(0, Math.min(val|0, (this.value||'').length));
+                },
+                configurable: true
+            },
+            scrollTop: {
+                get: function() {
+                    return (this.__props && this.__props._scrollTop) || 0;
+                },
+                set: function(val) {
+                    if (!this.__props) this.__props = {};
+                    var old = this.__props._scrollTop || 0;
+                    this.__props._scrollTop = val|0;
+                    if (old !== (val|0)) {
+                        this.dispatchEvent(new Event('scroll', {bubbles: false}));
+                    }
+                },
+                configurable: true
+            },
+            scrollLeft: {
+                get: function() {
+                    return (this.__props && this.__props._scrollLeft) || 0;
+                },
+                set: function(val) {
+                    if (!this.__props) this.__props = {};
+                    var old = this.__props._scrollLeft || 0;
+                    this.__props._scrollLeft = val|0;
+                    if (old !== (val|0)) {
+                        this.dispatchEvent(new Event('scroll', {bubbles: false}));
+                    }
+                },
+                configurable: true
+            },
             scrollWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
             scrollHeight: { get: function() { return this.getBoundingClientRect().height; }, configurable: true },
             offsetTop: { get: function() { return this.getBoundingClientRect().top; }, configurable: true },

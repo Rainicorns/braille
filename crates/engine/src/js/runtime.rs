@@ -413,11 +413,22 @@ impl JsRuntime {
     }
 
     /// Fire `window.onload` handler.
+    /// Per HTML spec, `onload` on `<body>` is a window-reflecting event handler —
+    /// it forwards to `window.onload`.
     pub fn fire_window_load(&mut self) {
         self.context.with(|ctx| {
             eval_or_log_ctx(
                 &ctx,
-                "if(typeof window !== 'undefined' && typeof window.onload === 'function') { window.onload(new Event('load')); }",
+                r#"if(typeof window !== 'undefined') {
+    var _bodyEl = document.body;
+    if (_bodyEl && _bodyEl.__nid !== undefined) {
+        var _bodyOnload = __n_getAttribute(_bodyEl.__nid, 'onload');
+        if (_bodyOnload && typeof window.onload !== 'function') {
+            window.onload = new Function('event', _bodyOnload);
+        }
+    }
+    if (typeof window.onload === 'function') { window.onload(new Event('load')); }
+}"#,
             );
         });
     }
@@ -515,6 +526,98 @@ impl JsRuntime {
         }
     }
 
+    /// Dispatch a keyboard event (keydown, keypress, keyup) on an element.
+    /// `key` is the KeyboardEvent.key value (e.g. "ArrowRight", "a", "Enter").
+    /// `code` is the KeyboardEvent.code value (e.g. "ArrowRight", "KeyA", "Enter").
+    pub fn fire_keyboard_event(
+        &mut self,
+        node_id: NodeId,
+        event_type: &str,
+        key: &str,
+        code: &str,
+    ) {
+        let js = format!(
+            r#"(function() {{
+                var el = __braille_get_element_wrapper({nid});
+                if (!el) return;
+                el.dispatchEvent(new KeyboardEvent('{etype}', {{
+                    key: '{key}', code: '{code}',
+                    bubbles: true, cancelable: true
+                }}));
+            }})()"#,
+            nid = node_id,
+            etype = event_type,
+            key = key,
+            code = code,
+        );
+        self.eval_or_log(&js);
+        self.flush_jobs();
+    }
+
+    /// Move the text cursor on an input/textarea and update scrollLeft if needed.
+    /// Returns true if scrollLeft changed (scroll event was fired).
+    pub fn move_input_cursor(
+        &mut self,
+        node_id: NodeId,
+        key: &str,
+    ) {
+        let js = format!(
+            r#"(function() {{
+                var el = __braille_get_element_wrapper({nid});
+                if (!el) return;
+                var t = el.tagName;
+                if (t !== 'INPUT' && t !== 'TEXTAREA') return;
+                var val = el.value || '';
+                var pos = el.selectionStart;
+                if ('{key}' === 'ArrowRight') {{
+                    if (pos < val.length) pos++;
+                }} else if ('{key}' === 'ArrowLeft') {{
+                    if (pos > 0) pos--;
+                }} else if ('{key}' === 'Home') {{
+                    pos = 0;
+                }} else if ('{key}' === 'End') {{
+                    pos = val.length;
+                }}
+                el.selectionStart = pos;
+                el.selectionEnd = pos;
+                // Compute scroll from cursor position
+                var CHAR_WIDTH = 8;
+                var elWidth = el.getBoundingClientRect().width || 50;
+                var cursorX = pos * CHAR_WIDTH;
+                var currentScroll = el.scrollLeft || 0;
+                if (cursorX > currentScroll + elWidth) {{
+                    el.scrollLeft = cursorX - elWidth;
+                }} else if (cursorX < currentScroll) {{
+                    el.scrollLeft = cursorX;
+                }}
+            }})()"#,
+            nid = node_id,
+            key = key,
+        );
+        self.eval_or_log(&js);
+        self.flush_jobs();
+    }
+
+    /// Dispatch mouse events on an element (mouseenter, mouseover, mousemove).
+    pub fn fire_mouse_events(&mut self, node_id: NodeId, event_types: &[&str]) {
+        for event_type in event_types {
+            let js = format!(
+                r#"(function() {{
+                    var el = __braille_get_element_wrapper({nid});
+                    if (!el) return;
+                    var bubbles = '{etype}' !== 'mouseenter' && '{etype}' !== 'mouseleave';
+                    el.dispatchEvent(new MouseEvent('{etype}', {{
+                        bubbles: bubbles, cancelable: true, view: window
+                    }}));
+                }})()"#,
+                nid = node_id,
+                etype = event_type,
+            );
+            self.eval_or_log(&js);
+        }
+        self.flush_jobs();
+    }
+
     /// Synthesize MutationObserver records for parser-inserted nodes.
     pub fn synthesize_parser_mutations(&mut self, _tree: &Rc<RefCell<DomTree>>, _watermark: usize) {
         // TODO: implement when MutationObserver is ported
@@ -523,7 +626,13 @@ impl JsRuntime {
     // -- Internal helpers --
 
     fn flush_jobs(&self) {
-        while self.runtime.is_job_pending() {
+        // Bounded loop: prevent infinite microtask chains (e.g. while(await) loops)
+        // from hanging the engine. 10_000 iterations is enough for deep promise chains
+        // but prevents truly unbounded loops.
+        for _ in 0..10_000 {
+            if !self.runtime.is_job_pending() {
+                break;
+            }
             if let Err(e) = self.runtime.execute_pending_job() {
                 log_eval_error_to_console(format!("{e:?}"));
             }
@@ -540,7 +649,10 @@ impl JsRuntime {
                 eval_or_log_ctx(&ctx, "if(typeof __braille_drain_rejections==='function')__braille_drain_rejections()");
             });
             // Flush any jobs that the rejection handlers may have queued
-            while self.runtime.is_job_pending() {
+            for _ in 0..1_000 {
+                if !self.runtime.is_job_pending() {
+                    break;
+                }
                 if let Err(e) = self.runtime.execute_pending_job() {
                     log_eval_error_to_console(format!("{e:?}"));
                 }

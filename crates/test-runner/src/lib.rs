@@ -538,7 +538,64 @@ pub fn resolve_script_src(
                         }
                         return Promise.resolve();
                     },
-                    send_keys: function(element, keys) { return Promise.resolve(); },
+                    send_keys: function(element, keys) {
+                        var keyMap = {
+                            '\uE003': {key:'Backspace',code:'Backspace'},
+                            '\uE004': {key:'Tab',code:'Tab'},
+                            '\uE006': {key:'Enter',code:'Enter'},
+                            '\uE007': {key:'Enter',code:'Enter'},
+                            '\uE008': {key:'Shift',code:'ShiftLeft'},
+                            '\uE009': {key:'Control',code:'ControlLeft'},
+                            '\uE00A': {key:'Alt',code:'AltLeft'},
+                            '\uE00D': {key:' ',code:'Space'},
+                            '\uE010': {key:'End',code:'End'},
+                            '\uE011': {key:'Home',code:'Home'},
+                            '\uE012': {key:'ArrowLeft',code:'ArrowLeft'},
+                            '\uE013': {key:'ArrowUp',code:'ArrowUp'},
+                            '\uE014': {key:'ArrowRight',code:'ArrowRight'},
+                            '\uE015': {key:'ArrowDown',code:'ArrowDown'},
+                            '\uE017': {key:'Delete',code:'Delete'},
+                            '\uE00C': {key:'Escape',code:'Escape'},
+                        };
+                        var CHAR_WIDTH = 8;
+                        if (element && element.dispatchEvent) {
+                            for (var i = 0; i < keys.length; i++) {
+                                var ch = keys[i];
+                                var mapped = keyMap[ch] || {key: ch, code: 'Key' + ch.toUpperCase()};
+                                var opts = {key: mapped.key, code: mapped.code, bubbles: true, cancelable: true};
+                                element.dispatchEvent(new KeyboardEvent('keydown', opts));
+                                element.dispatchEvent(new KeyboardEvent('keypress', opts));
+                                // Handle cursor movement for input/textarea
+                                var isInput = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
+                                if (isInput) {
+                                    var val = element.value || '';
+                                    var pos = element.selectionStart;
+                                    if (mapped.key === 'ArrowRight') {
+                                        if (pos < val.length) pos++;
+                                    } else if (mapped.key === 'ArrowLeft') {
+                                        if (pos > 0) pos--;
+                                    } else if (mapped.key === 'Home') {
+                                        pos = 0;
+                                    } else if (mapped.key === 'End') {
+                                        pos = val.length;
+                                    }
+                                    element.selectionStart = pos;
+                                    element.selectionEnd = pos;
+                                    // Compute scrollLeft based on cursor position vs visible width
+                                    var elWidth = element.getBoundingClientRect().width || 50;
+                                    var cursorX = pos * CHAR_WIDTH;
+                                    var currentScroll = element.scrollLeft || 0;
+                                    if (cursorX > currentScroll + elWidth) {
+                                        element.scrollLeft = cursorX - elWidth;
+                                    } else if (cursorX < currentScroll) {
+                                        element.scrollLeft = cursorX;
+                                    }
+                                }
+                                element.dispatchEvent(new KeyboardEvent('keyup', opts));
+                            }
+                        }
+                        return Promise.resolve();
+                    },
                     bless: function(intent, action) {
                         if (typeof action === 'function') return Promise.resolve(action());
                         return Promise.resolve();

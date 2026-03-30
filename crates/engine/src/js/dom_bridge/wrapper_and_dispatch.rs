@@ -207,6 +207,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 var snapshot = cbs.slice();
                 for (var j = 0; j < snapshot.length; j++) {
                     var cb = snapshot[j];
+                    // Per spec: skip if listener was removed during dispatch
+                    if (cbs.indexOf(cb) === -1) continue;
                     var wasPassive = event._inPassiveListener;
                     if (cb._passive) event._inPassiveListener = true;
                     try {

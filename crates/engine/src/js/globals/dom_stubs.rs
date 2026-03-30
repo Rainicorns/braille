@@ -1260,13 +1260,22 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         var _valDesc = {
             get: function() {
                 if (this.__props && this.__props._value !== undefined) return this.__props._value;
+                if (this.tagName === 'TEXTAREA') return this.textContent || '';
                 return (this.getAttribute && this.getAttribute('value')) || '';
             },
             set: function(v) {
                 if (!this.__props) this.__props = {};
-                this.__props._value = String(v);
-                // Also sync to attribute so Rust-side snapshot can read the current value
-                if (this.__nid !== undefined) __n_setAttribute(this.__nid, 'value', String(v));
+                var s = String(v);
+                if (this.getAttribute) {
+                    var ml = this.getAttribute('maxlength');
+                    if (ml !== null) { var n = parseInt(ml, 10); if (!isNaN(n) && n >= 0 && s.length > n) s = s.substring(0, n); }
+                }
+                this.__props._value = s;
+                if (this.tagName === 'TEXTAREA' && this.__nid !== undefined) {
+                    __n_setTextContent(this.__nid, s);
+                } else if (this.__nid !== undefined) {
+                    __n_setAttribute(this.__nid, 'value', s);
+                }
             },
             configurable: true,
         };
