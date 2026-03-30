@@ -1181,9 +1181,9 @@ PASS wpt:dom/events/scrolling/save-iframe-scroll-offset-when-display-none.sub.ht
 PASS wpt:dom/events/scrolling/scroll-cross-origin-iframes.html
 PASS wpt:dom/events/scrolling/scroll-cross-origin-iframes.sub.html
 PASS wpt:dom/events/scrolling/scroll-event-fired-to-element.html
-FAIL wpt:dom/events/scrolling/scroll-event-fired-to-iframe.html
-NOT_RUN wpt:dom/events/scrolling/scrollend-event-fired-after-sequence-of-scrolls.tentative.html
-NOT_RUN wpt:dom/events/scrolling/scrollend-event-fired-after-snap.html
+PASS wpt:dom/events/scrolling/scroll-event-fired-to-iframe.html
+PASS wpt:dom/events/scrolling/scrollend-event-fired-after-sequence-of-scrolls.tentative.html
+FAIL wpt:dom/events/scrolling/scrollend-event-fired-after-snap.html
 NOT_RUN wpt:dom/events/scrolling/scrollend-event-fired-for-mandatory-snap-point-after-load.html
 NOT_RUN wpt:dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html
 NOT_RUN wpt:dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html

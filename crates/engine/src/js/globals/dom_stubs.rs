@@ -353,10 +353,63 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         window.outerWidth = 1280;
         window.outerHeight = 900;
         window.devicePixelRatio = 1;
-        window.scrollX = 0;
-        window.scrollY = 0;
-        window.pageXOffset = 0;
-        window.pageYOffset = 0;
+        window.__scrollX = 0;
+        window.__scrollY = 0;
+        Object.defineProperty(window, 'scrollX', {
+            get: function() { return window.__scrollX; },
+            set: function(v) { window.__scrollX = v|0; },
+            configurable: true
+        });
+        Object.defineProperty(window, 'scrollY', {
+            get: function() { return window.__scrollY; },
+            set: function(v) { window.__scrollY = v|0; },
+            configurable: true
+        });
+        Object.defineProperty(window, 'pageXOffset', {
+            get: function() { return window.__scrollX; },
+            configurable: true
+        });
+        Object.defineProperty(window, 'pageYOffset', {
+            get: function() { return window.__scrollY; },
+            configurable: true
+        });
+        window.scrollTo = function(xOrOpts, y) {
+            var nx, ny;
+            if (typeof xOrOpts === 'object' && xOrOpts !== null) {
+                nx = ('left' in xOrOpts) ? xOrOpts.left|0 : window.__scrollX;
+                ny = ('top' in xOrOpts) ? xOrOpts.top|0 : window.__scrollY;
+            } else {
+                nx = (xOrOpts|0);
+                ny = (y|0);
+            }
+            if (nx < 0) nx = 0;
+            if (ny < 0) ny = 0;
+            var docEl = document.documentElement;
+            if (docEl) {
+                var maxX = docEl.scrollWidth - (window.innerWidth || 1280);
+                var maxY = docEl.scrollHeight - (window.innerHeight || 800);
+                if (maxX > 0 && nx > maxX) nx = maxX;
+                if (maxY > 0 && ny > maxY) ny = maxY;
+            }
+            var changed = (nx !== window.__scrollX || ny !== window.__scrollY);
+            window.__scrollX = nx;
+            window.__scrollY = ny;
+            if (changed) {
+                window.dispatchEvent(new Event('scroll', {bubbles: false}));
+            }
+        };
+        window.scroll = window.scrollTo;
+        window.scrollBy = function(xOrOpts, y) {
+            var dx, dy;
+            if (typeof xOrOpts === 'object' && xOrOpts !== null) {
+                dx = xOrOpts.left || 0;
+                dy = xOrOpts.top || 0;
+            } else {
+                dx = xOrOpts || 0;
+                dy = y || 0;
+            }
+            window.scrollTo(window.__scrollX + dx, window.__scrollY + dy);
+        };
         window.screen = { width: 1280, height: 800, availWidth: 1280, availHeight: 800, colorDepth: 24, pixelDepth: 24, orientation: { type: 'landscape-primary', angle: 0, addEventListener: function(){}, removeEventListener: function(){} } };
         window.visualViewport = { width: 1280, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1, addEventListener: function(){}, removeEventListener: function(){} };
 

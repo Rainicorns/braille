@@ -188,6 +188,65 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 iframeWindow.window = iframeWindow;
                 iframeDoc.defaultView = iframeWindow;
 
+                // Window scroll properties
+                iframeWindow.__scrollX = 0;
+                iframeWindow.__scrollY = 0;
+                Object.defineProperty(iframeWindow, 'scrollX', {
+                    get: function() { return iframeWindow.__scrollX; },
+                    configurable: true
+                });
+                Object.defineProperty(iframeWindow, 'scrollY', {
+                    get: function() { return iframeWindow.__scrollY; },
+                    configurable: true
+                });
+                Object.defineProperty(iframeWindow, 'pageXOffset', {
+                    get: function() { return iframeWindow.__scrollX; },
+                    configurable: true
+                });
+                Object.defineProperty(iframeWindow, 'pageYOffset', {
+                    get: function() { return iframeWindow.__scrollY; },
+                    configurable: true
+                });
+                iframeWindow.innerWidth = 200;
+                iframeWindow.innerHeight = 200;
+                iframeWindow.scrollTo = function(xOrOpts, y) {
+                    var nx, ny;
+                    if (typeof xOrOpts === 'object' && xOrOpts !== null) {
+                        nx = ('left' in xOrOpts) ? xOrOpts.left|0 : iframeWindow.__scrollX;
+                        ny = ('top' in xOrOpts) ? xOrOpts.top|0 : iframeWindow.__scrollY;
+                    } else {
+                        nx = (xOrOpts|0);
+                        ny = (y|0);
+                    }
+                    if (nx < 0) nx = 0;
+                    if (ny < 0) ny = 0;
+                    var docEl = iframeDoc.documentElement;
+                    if (docEl) {
+                        var maxX = (docEl.scrollWidth || 0) - (iframeWindow.innerWidth || 200);
+                        var maxY = (docEl.scrollHeight || 0) - (iframeWindow.innerHeight || 200);
+                        if (maxX > 0 && nx > maxX) nx = maxX;
+                        if (maxY > 0 && ny > maxY) ny = maxY;
+                    }
+                    var changed = (nx !== iframeWindow.__scrollX || ny !== iframeWindow.__scrollY);
+                    iframeWindow.__scrollX = nx;
+                    iframeWindow.__scrollY = ny;
+                    if (changed) {
+                        iframeWindow.dispatchEvent(new Event('scroll', {bubbles: false}));
+                    }
+                };
+                iframeWindow.scroll = iframeWindow.scrollTo;
+                iframeWindow.scrollBy = function(xOrOpts, y) {
+                    var dx, dy;
+                    if (typeof xOrOpts === 'object' && xOrOpts !== null) {
+                        dx = xOrOpts.left || 0;
+                        dy = xOrOpts.top || 0;
+                    } else {
+                        dx = xOrOpts || 0;
+                        dy = y || 0;
+                    }
+                    iframeWindow.scrollTo(iframeWindow.__scrollX + dx, iframeWindow.__scrollY + dy);
+                };
+
                 return { window: iframeWindow, parentProxy: parentProxy };
             }
 
