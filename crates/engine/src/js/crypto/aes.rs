@@ -336,4 +336,67 @@ pub fn register(ctx: &Ctx<'_>) {
         .unwrap(),
     )
     .unwrap();
+
+    // AES-KW wrap
+    g.set(
+        "__braille_crypto_aes_kw_wrap",
+        Function::new(
+            ctx.clone(),
+            |key: Vec<u8>, data: Vec<u8>| -> Vec<u8> {
+                use aes_kw::{KeyInit, KwAes128, KwAes192, KwAes256};
+                let mut buf = vec![0u8; data.len() + 8];
+                match key.len() {
+                    16 => {
+                        let kw = KwAes128::new_from_slice(&key).expect("invalid key");
+                        kw.wrap_key(&data, &mut buf).expect("AES-KW wrap failed");
+                    }
+                    24 => {
+                        let kw = KwAes192::new_from_slice(&key).expect("invalid key");
+                        kw.wrap_key(&data, &mut buf).expect("AES-KW wrap failed");
+                    }
+                    32 => {
+                        let kw = KwAes256::new_from_slice(&key).expect("invalid key");
+                        kw.wrap_key(&data, &mut buf).expect("AES-KW wrap failed");
+                    }
+                    _ => panic!("OperationError: unsupported AES-KW key size {}", key.len()),
+                }
+                buf
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // AES-KW unwrap
+    g.set(
+        "__braille_crypto_aes_kw_unwrap",
+        Function::new(
+            ctx.clone(),
+            |key: Vec<u8>, data: Vec<u8>| -> Vec<Vec<u8>> {
+                use aes_kw::{KeyInit, KwAes128, KwAes192, KwAes256};
+                let mut buf = vec![0u8; data.len().saturating_sub(8)];
+                let result = match key.len() {
+                    16 => {
+                        let kw = KwAes128::new_from_slice(&key).expect("invalid key");
+                        kw.unwrap_key(&data, &mut buf)
+                    }
+                    24 => {
+                        let kw = KwAes192::new_from_slice(&key).expect("invalid key");
+                        kw.unwrap_key(&data, &mut buf)
+                    }
+                    32 => {
+                        let kw = KwAes256::new_from_slice(&key).expect("invalid key");
+                        kw.unwrap_key(&data, &mut buf)
+                    }
+                    _ => panic!("OperationError: unsupported AES-KW key size {}", key.len()),
+                };
+                match result {
+                    Ok(unwrapped) => vec![vec![1], unwrapped.to_vec()],
+                    Err(_) => vec![vec![0]],
+                }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
 }

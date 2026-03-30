@@ -200,12 +200,28 @@
                     var enc = new TextEncoder();
                     keyData = enc.encode(jsonStr).buffer;
                 }
+                var wa = normalizeAlgo(wrapAlgorithm);
+                if (wa.name === 'AES-KW') {
+                    var result = __braille_crypto_aes_kw_wrap(wrappingKey._raw, Array.from(toBytes(keyData)));
+                    return Promise.resolve(new Uint8Array(result).buffer);
+                }
                 return subtle.encrypt(wrapAlgorithm, wrappingKey, keyData);
             });
         },
 
         unwrapKey: function(format, wrappedKey, unwrappingKey, unwrapAlgorithm, unwrappedKeyAlgorithm, extractable, keyUsages) {
-            return subtle.decrypt(unwrapAlgorithm, unwrappingKey, wrappedKey).then(function(keyData) {
+            var ua = normalizeAlgo(unwrapAlgorithm);
+            var decryptPromise;
+            if (ua.name === 'AES-KW') {
+                var result = __braille_crypto_aes_kw_unwrap(unwrappingKey._raw, Array.from(toBytes(wrappedKey)));
+                if (result[0][0] === 0) {
+                    return Promise.reject(new DOMException('AES-KW unwrap failed', 'OperationError'));
+                }
+                decryptPromise = Promise.resolve(new Uint8Array(result[1]).buffer);
+            } else {
+                decryptPromise = subtle.decrypt(unwrapAlgorithm, unwrappingKey, wrappedKey);
+            }
+            return decryptPromise.then(function(keyData) {
                 if (format === 'jwk') {
                     var dec = new TextDecoder();
                     keyData = JSON.parse(dec.decode(keyData));
