@@ -1038,11 +1038,11 @@ PASS wpt:dom/collections/HTMLCollection-live-mutations.window.js
 PASS wpt:dom/collections/HTMLCollection-own-props.html
 PASS wpt:dom/collections/HTMLCollection-supported-property-indices.html
 PASS wpt:dom/collections/HTMLCollection-supported-property-names.html
-FAIL wpt:dom/collections/domstringmap-supported-property-names.html
-NOT_RUN wpt:dom/collections/namednodemap-supported-property-names.html
-NOT_RUN wpt:dom/eventPathRemoved.html
-NOT_RUN wpt:dom/events/AddEventListenerOptions-once.any.js
-NOT_RUN wpt:dom/events/AddEventListenerOptions-passive.any.js
+PASS wpt:dom/collections/domstringmap-supported-property-names.html
+PASS wpt:dom/collections/namednodemap-supported-property-names.html
+PASS wpt:dom/eventPathRemoved.html
+PASS wpt:dom/events/AddEventListenerOptions-once.any.js
+FAIL wpt:dom/events/AddEventListenerOptions-passive.any.js
 NOT_RUN wpt:dom/events/AddEventListenerOptions-signal.any.js
 NOT_RUN wpt:dom/events/Body-FrameSet-Event-Handlers.html
 NOT_RUN wpt:dom/events/CustomEvent.html

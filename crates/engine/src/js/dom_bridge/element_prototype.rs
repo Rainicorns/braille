@@ -175,19 +175,63 @@ pub(crate) fn element_prototype_js() -> &'static str {
         Object.defineProperty(ElemProto, 'attributes', {
             get: function() {
                 if (this.__nid === undefined) return undefined;
-                var names = JSON.parse(__n_getAttributeNames(this.__nid));
-                var result = [];
-                for (var i = 0; i < names.length; i++) {
-                    var val = __n_getAttribute(this.__nid, names[i]);
-                    var attr = new Attr(names[i], val);
-                    attr.ownerElement = this;
-                    result.push(attr);
+                var el = this;
+                function getAttrs() {
+                    var names = JSON.parse(__n_getAttributeNames(el.__nid));
+                    var attrs = [];
+                    for (var i = 0; i < names.length; i++) {
+                        var val = __n_getAttribute(el.__nid, names[i]);
+                        var attr = new Attr(names[i], val);
+                        attr.ownerElement = el;
+                        attrs.push(attr);
+                    }
+                    return attrs;
                 }
-                result.getNamedItem = function(n) { for (var i = 0; i < this.length; i++) if (this[i].name === n) return this[i]; return null; };
-                result.setNamedItem = function(a) { if (a && a.ownerElement) a.ownerElement.setAttribute(a.name, a.value); };
-                result.removeNamedItem = function(n) { /* no-op for now */ };
-                result.item = function(i) { return this[i] || null; };
-                return result;
+                return new Proxy(Object.create(null), {
+                    get: function(t, p) {
+                        var attrs = getAttrs();
+                        if (p === 'length') return attrs.length;
+                        if (p === 'item') return function(i) { return attrs[i] || null; };
+                        if (p === 'getNamedItem') return function(n) {
+                            for (var i = 0; i < attrs.length; i++) if (attrs[i].name === n) return attrs[i];
+                            return null;
+                        };
+                        if (p === 'getNamedItemNS') return function(ns, n) {
+                            for (var i = 0; i < attrs.length; i++) if (attrs[i].localName === n) return attrs[i];
+                            return null;
+                        };
+                        if (p === 'setNamedItem') return function(a) { if (a && a.ownerElement) a.ownerElement.setAttribute(a.name, a.value); };
+                        if (p === 'removeNamedItem') return function(n) { el.removeAttribute(n); };
+                        if (p === Symbol.iterator) return function() { return attrs[Symbol.iterator](); };
+                        if (__isArrayIndex(p)) return attrs[p >>> 0];
+                        // Named access
+                        if (typeof p === 'string') {
+                            for (var i = 0; i < attrs.length; i++) if (attrs[i].name === p) return attrs[i];
+                        }
+                        return undefined;
+                    },
+                    ownKeys: function() {
+                        var attrs = getAttrs();
+                        var keys = [];
+                        for (var i = 0; i < attrs.length; i++) keys.push(String(i));
+                        for (var i = 0; i < attrs.length; i++) keys.push(attrs[i].name);
+                        return keys;
+                    },
+                    getOwnPropertyDescriptor: function(t, p) {
+                        var attrs = getAttrs();
+                        if (__isArrayIndex(p)) {
+                            var idx = p >>> 0;
+                            if (idx < attrs.length) return { value: attrs[idx], writable: false, enumerable: true, configurable: true };
+                            return undefined;
+                        }
+                        if (typeof p === 'string') {
+                            for (var i = 0; i < attrs.length; i++) {
+                                if (attrs[i].name === p) return { value: attrs[i], writable: false, enumerable: false, configurable: true };
+                            }
+                        }
+                        return undefined;
+                    }
+                });
             },
             enumerable: true, configurable: true
         });
@@ -865,6 +909,18 @@ pub(crate) fn element_prototype_js() -> &'static str {
             dataset: {
                 get: function() {
                     var el = this;
+                    function dataKeys() {
+                        var names = JSON.parse(__n_getAttributeNames(el.__nid));
+                        var keys = [];
+                        for (var i = 0; i < names.length; i++) {
+                            if (names[i].indexOf('data-') === 0) {
+                                var rest = names[i].substring(5);
+                                var camel = rest.replace(/-([a-z])/g, function(m, c) { return c.toUpperCase(); });
+                                keys.push(camel);
+                            }
+                        }
+                        return keys;
+                    }
                     return new Proxy({}, {
                         get: function(t, prop) {
                             if (typeof prop !== 'string') return undefined;
@@ -874,6 +930,16 @@ pub(crate) fn element_prototype_js() -> &'static str {
                             var name = 'data-' + prop.replace(/[A-Z]/g, function(c){return '-'+c.toLowerCase();});
                             __n_setAttribute(el.__nid, name, String(val));
                             return true;
+                        },
+                        ownKeys: function() {
+                            return dataKeys();
+                        },
+                        getOwnPropertyDescriptor: function(t, prop) {
+                            var val = __n_getDataAttr(el.__nid, prop);
+                            if (val !== '') return { value: val, writable: true, enumerable: true, configurable: true };
+                            var keys = dataKeys();
+                            if (keys.indexOf(prop) !== -1) return { value: val, writable: true, enumerable: true, configurable: true };
+                            return undefined;
                         }
                     });
                 },
