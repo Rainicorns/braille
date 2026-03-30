@@ -134,6 +134,39 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 __currentEvent = __prevEvent;
                 return !event.defaultPrevented;
             }
+            // relatedTarget retargeting per DOM spec §2.9
+            var origRelatedTarget = event.relatedTarget;
+            if (origRelatedTarget !== null && origRelatedTarget !== undefined) {
+                var rtNid = origRelatedTarget.__nid;
+                var targetNid = this.__nid;
+                var retargetedNid;
+                if (rtNid !== undefined) {
+                    retargetedNid = __jsRetarget(rtNid, targetNid);
+                } else {
+                    // relatedTarget is non-node (XHR, etc.) — can't retarget it
+                    // Proceed with dispatch normally
+                    retargetedNid = -1;
+                }
+                // Spec: skip dispatch if retargetedRT === target AND origRT is a node !== target
+                if (retargetedNid >= 0 && retargetedNid === targetNid && origRelatedTarget !== this) {
+                    event.target = null;
+                    event.relatedTarget = null;
+                    return !event.defaultPrevented;
+                }
+                // Set retargeted relatedTarget for dispatch
+                if (retargetedNid >= 0 && retargetedNid !== rtNid) {
+                    var retargetedObj = __w(retargetedNid);
+                    event.relatedTarget = retargetedObj;
+                }
+            }
+
+            // Mark event for target reset after dispatch (before activation behavior)
+            // Reset if target was in shadow tree or relatedTarget was retargeted
+            var _targetInShadow = __n_isShadowRoot(__n_rootOf(this.__nid));
+            if (_targetInShadow) {
+                event._resetTargetsAfterDispatch = true;
+            }
+
             // Find the owning document by walking up to the root element
             var ownerDoc = undefined;
             var rootNid = this.__nid;

@@ -386,6 +386,13 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
             if (!event._stopPropagation) runPhases();
 
+            // Reset relatedTarget-related targets after dispatch, before activation
+            if (event._resetTargetsAfterDispatch) {
+                event.target = null;
+                event.relatedTarget = null;
+                event._path = [];
+            }
+
             // Activation behavior post-step: revert if event was canceled, else fire input/change
             if (_activationRevert && event.defaultPrevented) {
                 _activationRevert();
@@ -1401,6 +1408,14 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             var self = (this == null || this === undefined) ? window : this;
             if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
             if (event._initialized === false) throw new DOMException("The event is not initialized.", "InvalidStateError");
+            // relatedTarget retargeting for non-DOM targets
+            var origRelatedTarget = event.relatedTarget;
+            if (origRelatedTarget !== null && origRelatedTarget !== undefined && origRelatedTarget.__nid !== undefined) {
+                var retargetedNid = __jsRetarget(origRelatedTarget.__nid, -1);
+                if (retargetedNid !== origRelatedTarget.__nid) {
+                    event.relatedTarget = __w(retargetedNid);
+                }
+            }
             var __prevEvent = __currentEvent;
             __currentEvent = event;
             event._dispatching = true;

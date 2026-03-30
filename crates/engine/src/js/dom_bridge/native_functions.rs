@@ -706,4 +706,20 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
             tree.get_node(node_id as NodeId).shadow_root.map(|id| id as i32).unwrap_or(-1)
         })
     }).unwrap()).unwrap();
+
+    // retarget(aNodeId, bNodeId) -> retargeted nodeId for a
+    // bNodeId of -1 means b is a non-node (window, XHR, etc.)
+    g.set("__n_retarget", Function::new(ctx.clone(), |a_id: u32, b_id: i32| -> u32 {
+        with_tree(|tree| {
+            let b = if b_id >= 0 { Some(b_id as NodeId) } else { None };
+            tree.retarget(a_id as NodeId, b) as u32
+        })
+    }).unwrap()).unwrap();
+
+    // rootOf(nodeId) -> root nodeId (walks parent chain to root, stops at shadow root)
+    g.set("__n_rootOf", Function::new(ctx.clone(), |node_id: u32| -> u32 {
+        with_tree(|tree| {
+            tree.root_of(node_id as NodeId) as u32
+        })
+    }).unwrap()).unwrap();
 }

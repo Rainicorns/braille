@@ -1386,6 +1386,31 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             return false;
         }
         globalThis.__isConnected = __isConnected;
+
+        // JS retarget: retarget nodeA relative to nodeB (or null for non-node B)
+        // Returns the nid that A should be retargeted to
+        function __jsRetarget(aNid, bNid) {
+            var a = aNid;
+            while (true) {
+                // Walk to root of a's tree
+                var root = a;
+                var p = __n_getParent(root);
+                while (p >= 0) { root = p; p = __n_getParent(root); }
+                // If root is not a shadow root, return a
+                if (!__n_isShadowRoot(root)) return a;
+                // If b is a node and b's root is the same shadow root, return a
+                if (bNid >= 0) {
+                    var bRoot = bNid;
+                    var bp = __n_getParent(bRoot);
+                    while (bp >= 0) { bRoot = bp; bp = __n_getParent(bRoot); }
+                    if (bRoot === root) return a;
+                }
+                // Jump through shadow boundary
+                a = __n_getShadowHost(root);
+            }
+        }
+        globalThis.__jsRetarget = __jsRetarget;
+
         globalThis.CSSStyleSheet = class CSSStyleSheet { insertRule(){return 0;} deleteRule(){} get cssRules(){return [];} };
         // ReadableStream (minimal — single-chunk body reader)
         globalThis.ReadableStream = class ReadableStream {
