@@ -23,9 +23,30 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         //   - Named item access (elements by id/name attribute)
         //   - namedItem() method
         //   - Proper iteration
+        // Array index check: non-negative integer < 2^32 - 1 (per ECMAScript spec)
+        function __isArrayIndex(p) {
+            if (typeof p !== 'string') return false;
+            var n = Number(p);
+            return n === (n >>> 0) && n !== 0xFFFFFFFF && String(n >>> 0) === p;
+        }
+
+        function __findNamed(live, name) {
+            var s = String(name);
+            if (!s) return null;
+            for (var i = 0; i < live.length; i++) {
+                var el = live[i];
+                if (!el.getAttribute) continue;
+                if (el.getAttribute('id') === s) return el;
+                // name attribute only applies to elements in HTML namespace
+                var ns = el.namespaceURI;
+                if ((!ns || ns === 'http://www.w3.org/1999/xhtml') && el.getAttribute('name') === s) return el;
+            }
+            return null;
+        }
+
         globalThis.__makeHTMLCollection = function(queryFn) {
             var proxy;
-            proxy = new Proxy([], {
+            proxy = new Proxy(Object.create(null), {
                 get: function(t, p, receiver) {
                     if (p === Symbol.toStringTag) return undefined;
                     if (p === Symbol.iterator) {
@@ -37,24 +58,117 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                         if (receiver !== proxy) throw new TypeError("Illegal invocation");
                         return live.length;
                     }
-                    if (p === 'item') return function(i) { return live[i] || null; };
-                    if (p === 'namedItem') return function(name) {
-                        for (var i = 0; i < live.length; i++) {
-                            var el = live[i];
-                            if (el.getAttribute && (el.getAttribute('id') === name || el.getAttribute('name') === name)) return el;
-                        }
-                        return null;
-                    };
-                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
-                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
-                    // Named item access: look for element by id or name
-                    if (typeof p === 'string' && p !== 'then' && p !== 'toJSON' && p !== 'constructor' && p !== '__proto__') {
-                        for (var i = 0; i < live.length; i++) {
-                            var el = live[i];
-                            if (el.getAttribute && (el.getAttribute('id') === p || el.getAttribute('name') === p)) return el;
+                    if (p === 'item') return function(i) { var idx = i >>> 0; return idx < live.length ? live[idx] : null; };
+                    if (p === 'namedItem') return function(name) { return __findNamed(live, name); };
+                    // Array index → indexed access
+                    if (__isArrayIndex(p)) return live[p >>> 0];
+                    // HTMLCollection does NOT have Array iterable methods
+                    if (p === 'forEach' || p === 'values' || p === 'entries' || p === 'keys' ||
+                        p === 'map' || p === 'filter' || p === 'reduce' || p === 'find' ||
+                        p === 'findIndex' || p === 'some' || p === 'every' || p === 'includes' ||
+                        p === 'indexOf' || p === 'flat' || p === 'flatMap' || p === 'fill' ||
+                        p === 'copyWithin' || p === 'at' || p === 'push' || p === 'pop' ||
+                        p === 'shift' || p === 'unshift' || p === 'splice' || p === 'slice' ||
+                        p === 'concat' || p === 'join' || p === 'reverse' || p === 'sort' ||
+                        p === 'toString' || p === 'toLocaleString' || p === 'toReversed' ||
+                        p === 'toSorted' || p === 'toSpliced' || p === 'with') return undefined;
+                    // Own properties on target shadow named item access
+                    if (typeof p === 'string' && Object.prototype.hasOwnProperty.call(t, p)) return t[p];
+                    // Named item access (skip empty string and JS internals)
+                    if (typeof p === 'string' && p !== '' && p !== 'then' && p !== 'toJSON' && p !== 'constructor' && p !== '__proto__') {
+                        var found = __findNamed(live, p);
+                        if (found) return found;
+                    }
+                    return undefined;
+                },
+                has: function(t, p) {
+                    if (p === Symbol.iterator || p === 'length' || p === 'item' || p === 'namedItem') return true;
+                    var live = queryFn();
+                    if (__isArrayIndex(p)) return (p >>> 0) < live.length;
+                    if (typeof p === 'string' && p !== '') {
+                        if (Object.prototype.hasOwnProperty.call(t, p)) return true;
+                        if (__findNamed(live, p)) return true;
+                    }
+                    return false;
+                },
+                ownKeys: function(t) {
+                    var live = queryFn();
+                    var keys = [];
+                    for (var i = 0; i < live.length; i++) keys.push(String(i));
+                    var seen = {};
+                    for (var i = 0; i < live.length; i++) {
+                        var el = live[i];
+                        if (!el.getAttribute) continue;
+                        var id = el.getAttribute('id');
+                        if (id && !seen[id]) { keys.push(id); seen[id] = true; }
+                        var ns = el.namespaceURI;
+                        if (!ns || ns === 'http://www.w3.org/1999/xhtml') {
+                            var nm = el.getAttribute('name');
+                            if (nm && !seen[nm]) { keys.push(nm); seen[nm] = true; }
                         }
                     }
-                    return live[p];
+                    // Include expando keys from target
+                    var tKeys = Object.keys(t);
+                    for (var i = 0; i < tKeys.length; i++) {
+                        if (seen[tKeys[i]] === undefined && keys.indexOf(tKeys[i]) === -1) keys.push(tKeys[i]);
+                    }
+                    return keys;
+                },
+                getOwnPropertyDescriptor: function(t, p) {
+                    var live = queryFn();
+                    if (__isArrayIndex(p)) {
+                        var idx = p >>> 0;
+                        if (idx < live.length) return { value: live[idx], writable: false, enumerable: true, configurable: true };
+                        return undefined;
+                    }
+                    if (typeof p === 'string' && p !== '') {
+                        // Check expando first
+                        if (Object.prototype.hasOwnProperty.call(t, p)) {
+                            return { value: t[p], writable: true, enumerable: true, configurable: true };
+                        }
+                        var found = __findNamed(live, p);
+                        if (found) return { value: found, writable: false, enumerable: false, configurable: true };
+                    }
+                    return undefined;
+                },
+                set: function(t, p, value) {
+                    // Array indices: always reject
+                    if (__isArrayIndex(p)) return false;
+                    // Named properties: reject if matching element exists
+                    if (typeof p === 'string') {
+                        var live = queryFn();
+                        if (__findNamed(live, p)) return false;
+                    }
+                    // No matching element: store on target
+                    t[p] = value;
+                    return true;
+                },
+                defineProperty: function(t, p, desc) {
+                    // Reject defining indexed properties
+                    if (__isArrayIndex(p)) return false;
+                    // Reject if it shadows a named element
+                    if (typeof p === 'string') {
+                        var live = queryFn();
+                        if (__findNamed(live, p)) return false;
+                    }
+                    Object.defineProperty(t, p, desc);
+                    return true;
+                },
+                deleteProperty: function(t, p) {
+                    var live = queryFn();
+                    // If there's an expando on target, delete it (even if named element exists)
+                    if (Object.prototype.hasOwnProperty.call(t, p)) {
+                        var desc = Object.getOwnPropertyDescriptor(t, p);
+                        if (desc && !desc.configurable) return false;
+                        delete t[p];
+                        return true;
+                    }
+                    // In-range array index: reject
+                    if (__isArrayIndex(p) && (p >>> 0) < live.length) return false;
+                    // Named element exists: reject
+                    if (typeof p === 'string' && __findNamed(live, p)) return false;
+                    // Out-of-range index or no matching element: allow
+                    return true;
                 }
             });
             return proxy;

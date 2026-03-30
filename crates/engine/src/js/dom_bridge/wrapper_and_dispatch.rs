@@ -503,6 +503,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.getElementsByTagName = function(tag) {
             return __makeHTMLCollection(function() { return doc.querySelectorAll(tag); });
         };
+        doc.getElementsByTagNameNS = function(ns, tag) {
+            return __makeHTMLCollection(function() { return doc.querySelectorAll(tag === '*' ? '*' : tag); });
+        };
         doc.getElementsByClassName = function(cls) {
             return __makeHTMLCollection(function() { return doc.querySelectorAll('.' + cls); });
         };

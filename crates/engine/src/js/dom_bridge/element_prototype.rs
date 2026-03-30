@@ -164,6 +164,10 @@ pub(crate) fn element_prototype_js() -> &'static str {
             var self = this;
             return __makeHTMLCollection(function() { return self.querySelectorAll(tag); });
         };
+        ElemProto.getElementsByTagNameNS = function(ns, tag) {
+            var self = this;
+            return __makeHTMLCollection(function() { return self.querySelectorAll(tag === '*' ? '*' : tag); });
+        };
         ElemProto.getElementsByClassName = function(cls) {
             var self = this;
             return __makeHTMLCollection(function() { return self.querySelectorAll('.' + cls); });
@@ -475,7 +479,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 configurable: true
             },
             children: {
-                get: function() { if (this.__nid === undefined) return []; return __n_getChildElementIds(this.__nid).map(__w); },
+                get: function() {
+                    if (this.__nid === undefined) return [];
+                    var self = this;
+                    return __makeHTMLCollection(function() { return __n_getChildElementIds(self.__nid).map(__w); });
+                },
                 configurable: true
             },
             childNodes: {
