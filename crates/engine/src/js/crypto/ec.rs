@@ -190,7 +190,6 @@ pub fn register(ctx: &Ctx<'_>) {
             ctx.clone(),
             |pub_bytes: Vec<u8>, signature: Vec<u8>, data: Vec<u8>| -> bool {
                 use ed25519_dalek::{Signature, VerifyingKey};
-                use ed25519_dalek::Verifier;
                 if pub_bytes.len() != 32 || signature.len() != 64 {
                     return false;
                 }
@@ -203,7 +202,7 @@ pub fn register(ctx: &Ctx<'_>) {
                 let mut sig_arr = [0u8; 64];
                 sig_arr.copy_from_slice(&signature);
                 let sig = Signature::from_bytes(&sig_arr);
-                verifying_key.verify(&data, &sig).is_ok()
+                verifying_key.verify_strict(&data, &sig).is_ok()
             },
         )
         .unwrap(),
