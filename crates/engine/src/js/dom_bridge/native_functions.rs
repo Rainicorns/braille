@@ -1,6 +1,6 @@
 use rquickjs::{Ctx, Function};
 
-use crate::dom::node::NodeData;
+use crate::dom::node::{NodeData, ShadowRootMode};
 use crate::dom::tree::DomTree;
 use crate::dom::NodeId;
 
@@ -83,7 +83,10 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
                 NodeData::Document => 9,
                 NodeData::DocumentFragment => 11,
                 NodeData::Doctype { .. } => 10,
-                _ => 1,
+                NodeData::ShadowRoot { .. } => 11,
+                NodeData::ProcessingInstruction { .. } => 7,
+                NodeData::CDATASection { .. } => 4,
+                NodeData::Attr { .. } => 2,
             }
         })
     }).unwrap()).unwrap();
@@ -649,6 +652,58 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
 
             collect_labels(tree, tree.document(), control_id as NodeId, &control_id_attr, &mut labels);
             labels
+        })
+    }).unwrap()).unwrap();
+
+    // createShadowRoot(hostId, modeStr) -> nodeId
+    g.set("__n_createShadowRoot", Function::new(ctx.clone(), |host_id: u32, mode_str: String| -> u32 {
+        let mode = if mode_str == "closed" { ShadowRootMode::Closed } else { ShadowRootMode::Open };
+        with_tree_mut(|tree| {
+            tree.create_shadow_root(mode, host_id as NodeId) as u32
+        })
+    }).unwrap()).unwrap();
+
+    // isShadowRoot(nodeId) -> bool
+    g.set("__n_isShadowRoot", Function::new(ctx.clone(), |node_id: u32| -> bool {
+        with_tree(|tree| {
+            matches!(tree.get_node(node_id as NodeId).data, NodeData::ShadowRoot { .. })
+        })
+    }).unwrap()).unwrap();
+
+    // getShadowHost(nodeId) -> host nodeId or -1
+    g.set("__n_getShadowHost", Function::new(ctx.clone(), |node_id: u32| -> i32 {
+        with_tree(|tree| {
+            match &tree.get_node(node_id as NodeId).data {
+                NodeData::ShadowRoot { host, .. } => *host as i32,
+                _ => -1,
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // getShadowRootMode(nodeId) -> "open" or "closed"
+    g.set("__n_getShadowRootMode", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            match &tree.get_node(node_id as NodeId).data {
+                NodeData::ShadowRoot { mode, .. } => match mode {
+                    ShadowRootMode::Open => "open".to_string(),
+                    ShadowRootMode::Closed => "closed".to_string(),
+                },
+                _ => "open".to_string(),
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // hasShadowRoot(nodeId) -> bool
+    g.set("__n_hasShadowRoot", Function::new(ctx.clone(), |node_id: u32| -> bool {
+        with_tree(|tree| {
+            tree.get_node(node_id as NodeId).shadow_root.is_some()
+        })
+    }).unwrap()).unwrap();
+
+    // getShadowRootId(nodeId) -> shadowRootNodeId or -1
+    g.set("__n_getShadowRootId", Function::new(ctx.clone(), |node_id: u32| -> i32 {
+        with_tree(|tree| {
+            tree.get_node(node_id as NodeId).shadow_root.map(|id| id as i32).unwrap_or(-1)
         })
     }).unwrap()).unwrap();
 }

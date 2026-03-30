@@ -16,12 +16,26 @@ pub(crate) fn element_prototype_js() -> &'static str {
             __n_setAttribute(this.__nid, name, String(value));
             if (name === 'id' && value && !globalThis[value]) globalThis[value] = this;
             if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
+            // CE attributeChangedCallback
+            if (this.__ce_upgraded && typeof this.attributeChangedCallback === 'function') {
+                var ce = customElements._registry.get(__n_getTagName(this.__nid).toLowerCase());
+                if (ce && ce.observedAttrs.indexOf(name) !== -1) {
+                    this.attributeChangedCallback(name, old, String(value));
+                }
+            }
         };
         ElemProto.removeAttribute = function(name) {
             name = String(name).toLowerCase();
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
             __n_removeAttribute(this.__nid, name);
             if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
+            // CE attributeChangedCallback
+            if (this.__ce_upgraded && typeof this.attributeChangedCallback === 'function') {
+                var ce = customElements._registry.get(__n_getTagName(this.__nid).toLowerCase());
+                if (ce && ce.observedAttrs.indexOf(name) !== -1) {
+                    this.attributeChangedCallback(name, old, null);
+                }
+            }
         };
         ElemProto.hasAttribute = function(name) { return __n_hasAttribute(this.__nid, String(name).toLowerCase()); };
         ElemProto.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
@@ -74,8 +88,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         EP.dispatchEvent = function(event) {
             if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
+            if (event._initialized === false) throw new DOMException("The event is not initialized.", "InvalidStateError");
             if (this.__nid === undefined) {
                 // Standalone node with no DomTree backing — fire EventTarget listeners only
+                var __prevEvent = __currentEvent;
+                __currentEvent = event;
                 event._dispatching = true;
                 event.target = this;
                 event.srcElement = this;
@@ -89,6 +106,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 event._dispatching = false;
                 event.currentTarget = null;
                 event.eventPhase = 0;
+                __currentEvent = __prevEvent;
                 return !event.defaultPrevented;
             }
             // Find the owning document by walking up to the root element
@@ -251,6 +269,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (newChild.__nid === oldChild.__nid) {
                     return oldChild;
                 }
+                // CE lifecycle: disconnect old child
+                var wasConnected = typeof __ceDisconnected === 'function' && __isConnected(this.__nid);
+                if (wasConnected) __ceDisconnected(oldChild);
                 if (newChild.nodeType === 11) {
                     // DocumentFragment: insert all fragment children before oldChild, then remove oldChild
                     var kids = __n_getAllChildIds(newChild.__nid);
@@ -261,6 +282,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 } else {
                     __n_replaceChild(this.__nid, newChild.__nid, oldChild.__nid);
                 }
+                // CE lifecycle: connect new child + upgrade
+                if (wasConnected && typeof __ceConnected === 'function') __ceConnected(newChild);
+                if (typeof __ceUpgradeTree === 'function') __ceUpgradeTree(newChild);
             }
             return oldChild;
         };
@@ -439,10 +463,25 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return anim;
         };
         ElemProto.attachShadow = function(opts) {
-            var frag = document.createDocumentFragment();
-            frag._shadowHost = this;
-            this.shadowRoot = (opts && opts.mode === 'open') ? frag : null;
-            return frag;
+            if (!opts || (opts.mode !== 'open' && opts.mode !== 'closed')) {
+                throw new TypeError("Failed to execute 'attachShadow' on 'Element': The provided value '" + (opts && opts.mode) + "' is not a valid enum value of type ShadowRootMode.");
+            }
+            if (__n_hasShadowRoot(this.__nid)) {
+                throw new DOMException("Failed to execute 'attachShadow' on 'Element': Shadow root cannot be created on a host which already hosts a shadow tree.", "NotSupportedError");
+            }
+            var tag = this.tagName;
+            // Valid shadow hosts: custom elements (hyphen in name) or specific built-in elements
+            var validHosts = ['ARTICLE','ASIDE','BLOCKQUOTE','BODY','DIV','FOOTER','H1','H2','H3','H4','H5','H6','HEADER','MAIN','NAV','P','SECTION','SPAN'];
+            if (tag.indexOf('-') === -1 && validHosts.indexOf(tag) === -1) {
+                throw new DOMException("Failed to execute 'attachShadow' on 'Element': This element does not support attachShadow", "NotSupportedError");
+            }
+            var shadowId = __n_createShadowRoot(this.__nid, opts.mode);
+            var shadow = __w(shadowId);
+            shadow._shadowHost = this;
+            if (opts.mode === 'open') {
+                this.shadowRoot = shadow;
+            }
+            return shadow;
         };
         ElemProto.getAttributeNode = function(name) {
             if (!this.hasAttribute(name)) return null;
@@ -511,6 +550,29 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 get: function() { if (this.__nid === undefined) return null; var id = __n_getLastChild(this.__nid); return id >= 0 ? __w(id) : null; },
                 configurable: true
             },
+            firstElementChild: {
+                get: function() {
+                    if (this.__nid === undefined) return null;
+                    var kids = __n_getChildElementIds(this.__nid);
+                    return kids.length > 0 ? __w(kids[0]) : null;
+                },
+                configurable: true
+            },
+            lastElementChild: {
+                get: function() {
+                    if (this.__nid === undefined) return null;
+                    var kids = __n_getChildElementIds(this.__nid);
+                    return kids.length > 0 ? __w(kids[kids.length - 1]) : null;
+                },
+                configurable: true
+            },
+            childElementCount: {
+                get: function() {
+                    if (this.__nid === undefined) return 0;
+                    return __n_getChildElementIds(this.__nid).length;
+                },
+                configurable: true
+            },
             nextSibling: {
                 get: function() { if (this.__nid === undefined) return null; var id = __n_getNextSibling(this.__nid); return id >= 0 ? __w(id) : null; },
                 configurable: true
@@ -537,12 +599,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             isConnected: {
                 get: function() {
                     if (this.__nid === undefined) return false;
-                    var cur = this.__nid;
-                    while (cur >= 0) {
-                        if (__n_getNodeType(cur) === 9) return true;
-                        cur = __n_getParent(cur);
-                    }
-                    return false;
+                    return __isConnected(this.__nid);
                 },
                 configurable: true
             },
@@ -779,7 +836,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
             },
             innerHTML: {
                 get: function() { return __n_getInnerHTML(this.__nid); },
-                set: function(v) { __n_setInnerHTML(this.__nid, String(v)); },
+                set: function(v) {
+                    __n_setInnerHTML(this.__nid, String(v));
+                    // Upgrade custom elements in new content
+                    if (typeof __ceUpgradeTree === 'function') __ceUpgradeTree(this);
+                },
                 configurable: true
             },
             style: {

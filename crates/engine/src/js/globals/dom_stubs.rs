@@ -1057,6 +1057,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             XMLHttpRequest.prototype.removeEventListener = function(type, cb) {
                 if (this._listeners[type]) this._listeners[type] = this._listeners[type].filter(function(f){return f!==cb;});
             };
+            // dispatchEvent will be wired up after EventTarget is defined (in dom_bridge IIFE)
             XMLHttpRequest.prototype._fireReadyStateChange = function() {
                 if (typeof this.onreadystatechange === 'function') {
                     this.onreadystatechange({type: 'readystatechange', target: this});
@@ -1098,7 +1099,24 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         };
         globalThis.Node = class Node {};
         globalThis.Element = class Element extends Node {};
-        globalThis.HTMLElement = class HTMLElement extends Element {};
+        // HTMLElement constructor supports Custom Elements:
+        // When called via `new MyElement()` where MyElement extends HTMLElement,
+        // new.target is the CE constructor. We look up the tag from the registry
+        // and create the backing DOM node.
+        globalThis.HTMLElement = class HTMLElement extends Element {
+            constructor() {
+                super();
+                if (typeof customElements !== 'undefined' && customElements._ctorToName) {
+                    var name = customElements._ctorToName.get(new.target);
+                    if (name) {
+                        var nid = __n_createElement(name);
+                        this.__nid = nid;
+                        this.__props = {};
+                        _cache[nid] = this;
+                    }
+                }
+            }
+        };
         globalThis.HTMLIFrameElement = class HTMLIFrameElement extends HTMLElement {};
         globalThis.HTMLInputElement = class HTMLInputElement extends HTMLElement {};
         globalThis.HTMLTextAreaElement = class HTMLTextAreaElement extends HTMLElement {};
@@ -1267,7 +1285,107 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             configurable: true,
         });
         globalThis.DocumentFragment = class DocumentFragment {};
-        globalThis.ShadowRoot = class ShadowRoot {};
+        globalThis.ShadowRoot = class ShadowRoot extends DocumentFragment {
+            get mode() { return this._mode || 'open'; }
+            get host() { return this._host || null; }
+            get innerHTML() {
+                if (this.__nid !== undefined) return __n_getInnerHTML(this.__nid);
+                return '';
+            }
+            set innerHTML(v) {
+                if (this.__nid !== undefined) {
+                    __n_setInnerHTML(this.__nid, String(v));
+                    // Upgrade custom elements in new content
+                    if (typeof customElements !== 'undefined' && customElements._registry) {
+                        __ceUpgradeTree(this);
+                    }
+                }
+            }
+        };
+
+        // Custom Elements Registry
+        globalThis.CustomElementRegistry = class CustomElementRegistry {
+            constructor() {
+                this._registry = new Map();      // name → {ctor, observedAttrs}
+                this._ctorToName = new Map();     // ctor → name
+                this._whenDefined = new Map();    // name → {promise, resolve}
+            }
+            define(name, ctor, options) {
+                name = String(name).toLowerCase();
+                if (!/^[a-z]/.test(name) || name.indexOf('-') === -1) {
+                    throw new DOMException("'" + name + "' is not a valid custom element name", "SyntaxError");
+                }
+                if (this._registry.has(name)) {
+                    throw new DOMException("The name '" + name + "' has already been used with this registry", "NotSupportedError");
+                }
+                if (this._ctorToName.has(ctor)) {
+                    throw new DOMException("This constructor has already been used with this registry", "NotSupportedError");
+                }
+                var observedAttrs = [];
+                if (ctor.observedAttributes && Array.isArray(ctor.observedAttributes)) {
+                    observedAttrs = ctor.observedAttributes.slice();
+                }
+                this._registry.set(name, {ctor: ctor, observedAttrs: observedAttrs});
+                this._ctorToName.set(ctor, name);
+                // Upgrade existing elements in the DOM
+                __ceUpgradeAll(name, ctor, observedAttrs);
+                // Resolve whenDefined promise
+                var wd = this._whenDefined.get(name);
+                if (wd) {
+                    wd.resolve(ctor);
+                    this._whenDefined.delete(name);
+                }
+            }
+            get(name) {
+                var entry = this._registry.get(String(name).toLowerCase());
+                return entry ? entry.ctor : undefined;
+            }
+            getName(ctor) {
+                var name = this._ctorToName.get(ctor);
+                return name !== undefined ? name : null;
+            }
+            whenDefined(name) {
+                name = String(name).toLowerCase();
+                if (!/^[a-z]/.test(name) || name.indexOf('-') === -1) {
+                    return Promise.reject(new DOMException("'" + name + "' is not a valid custom element name", "SyntaxError"));
+                }
+                var entry = this._registry.get(name);
+                if (entry) return Promise.resolve(entry.ctor);
+                var wd = this._whenDefined.get(name);
+                if (wd) return wd.promise;
+                var resolve;
+                var promise = new Promise(function(r) { resolve = r; });
+                this._whenDefined.set(name, {promise: promise, resolve: resolve});
+                return promise;
+            }
+        };
+        globalThis.customElements = new CustomElementRegistry();
+
+        // CE upgrade/lifecycle stubs — real implementations are installed by dom_bridge IIFE
+        // which has access to _cache. These get overwritten.
+        globalThis.__ceUpgradeAll = function() {};
+        globalThis.__ceUpgradeTree = function() {};
+        globalThis.__ceConnected = function() {};
+        globalThis.__ceDisconnected = function() {};
+
+        // Shared isConnected helper — walks parents and crosses shadow boundaries
+        function __isConnected(nid) {
+            var cur = nid;
+            while (cur >= 0) {
+                if (__n_getNodeType(cur) === 9) return true;
+                var parent = __n_getParent(cur);
+                if (parent < 0) {
+                    // Check if current node is a shadow root — jump to host
+                    if (typeof __n_isShadowRoot === 'function' && __n_isShadowRoot(cur)) {
+                        cur = __n_getShadowHost(cur);
+                        continue;
+                    }
+                }
+                cur = parent;
+            }
+            return false;
+        }
+        globalThis.__isConnected = __isConnected;
         globalThis.CSSStyleSheet = class CSSStyleSheet { insertRule(){return 0;} deleteRule(){} get cssRules(){return [];} };
         // ReadableStream (minimal — single-chunk body reader)
         globalThis.ReadableStream = class ReadableStream {

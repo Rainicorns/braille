@@ -43,6 +43,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (nt === 1) {
                 var tag = __n_getTagName(nodeId);
                 var ctor = _ctorMap[tag];
+                // Check custom elements registry for hyphenated tags
+                if (!ctor && typeof customElements !== 'undefined' && customElements._registry) {
+                    var ceEntry = customElements._registry.get(tag.toLowerCase());
+                    if (ceEntry) ctor = ceEntry.ctor;
+                }
                 if (ctor) {
                     // Set prototype chain: obj -> ctor.prototype -> __ElemProto
                     // so instanceof works while still inheriting DOM methods
@@ -54,6 +59,16 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     obj.constructor = ctor;
                 } else {
                     obj = Object.create(proto);
+                }
+            } else if (nt === 11 && __n_isShadowRoot(nodeId)) {
+                // ShadowRoot — use ShadowRoot.prototype
+                obj = Object.create(ShadowRoot.prototype);
+                obj._mode = __n_getShadowRootMode(nodeId);
+                var hostId = __n_getShadowHost(nodeId);
+                if (hostId >= 0) {
+                    var hostEl = __w(hostId);
+                    obj._host = hostEl;
+                    obj._shadowHost = hostEl;
                 }
             } else {
                 obj = Object.create(proto);
@@ -87,25 +102,52 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return JSON.stringify(result);
         };
 
+        // window.event legacy getter — tracks the currently dispatching event
+        var __currentEvent = undefined;
+        Object.defineProperty(window, 'event', {
+            get: function() { return __currentEvent; },
+            set: function(v) { __currentEvent = v; },
+            configurable: true,
+            enumerable: true
+        });
+
         // Event dispatch with capture + bubble phases
         // ownerDoc: optional non-global document that owns the target element
         function __dispatch(nodeId, event, ownerDoc) {
             // Build path: target -> parent -> ... -> root
             // For composed events, follow shadow host links across shadow boundaries
             var path = [];
+            var _shadowNodes = {};  // nodeIds that are inside a shadow tree
+            var _inShadow = false;
             var cur = nodeId;
             while (cur >= 0) {
                 path.push(cur);
+                if (_inShadow) _shadowNodes[cur] = true;
                 var parent = __n_getParent(cur);
                 if (parent < 0 && event.composed) {
-                    // Check if this is a shadow root with a host
-                    var wrapper = __w(cur);
-                    if (wrapper._shadowHost && wrapper._shadowHost.__nid !== undefined) {
-                        cur = wrapper._shadowHost.__nid;
-                        continue;
+                    // Check if this is a shadow root with a host — use native functions
+                    if (__n_isShadowRoot(cur)) {
+                        _shadowNodes[cur] = true;
+                        var hostId = __n_getShadowHost(cur);
+                        if (hostId >= 0) {
+                            _inShadow = false;
+                            cur = hostId;
+                            continue;
+                        }
                     }
                 }
                 cur = parent;
+            }
+            // Mark nodes from target up to (but not including) the first shadow root
+            // The target and its shadow-internal ancestors are in the shadow tree
+            _inShadow = false;
+            for (var si = 0; si < path.length; si++) {
+                if (__n_isShadowRoot(path[si])) {
+                    // Everything before this index (closer to target) is shadow-internal
+                    for (var sj = 0; sj < si; sj++) _shadowNodes[path[sj]] = true;
+                    _shadowNodes[path[si]] = true;
+                    break;
+                }
             }
 
             // Determine if we're dispatching in the global document tree or a standalone one
@@ -116,6 +158,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             event.target = __w(nodeId);
             event.srcElement = event.target;
             event.eventPhase = 0;
+
+            // window.event legacy: save previous for restore after dispatch
+            var __prevEvent = __currentEvent;
 
             // Build composedPath: wrapped elements + document (+ window for global)
             var composedPath = [];
@@ -204,6 +249,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 }
             }
 
+            // Helper: set window.event based on whether nodeId is shadow-internal
+            function __setWinEvent(nid) {
+                __currentEvent = (isGlobalDoc && !_shadowNodes[nid]) ? event : undefined;
+            }
+
             // Run dispatch phases, then always clean up
             function runPhases() {
                 // === CAPTURE PHASE (root → target) ===
@@ -211,6 +261,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
                 if (isGlobalDoc) {
                     // Window capture
+                    __currentEvent = event;
                     event.currentTarget = window;
                     fireCbs(window.__et_listeners[event.type + '_c'], window);
                     if (event._stopImmediate || event._stopPropagation) return;
@@ -230,6 +281,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 for (var i = path.length - 1; i > 0; i--) {
                     var nid = path[i];
                     var el = __w(nid);
+                    __setWinEvent(nid);
                     event.currentTarget = el;
                     fireCbs(_captureKeys[nid + ':' + event.type], el);
                     if (event._stopImmediate || event._stopPropagation) return;
@@ -241,6 +293,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 event.eventPhase = 2;
                 var targetNid = path[0];
                 var targetEl = __w(targetNid);
+                __setWinEvent(targetNid);
                 event.currentTarget = targetEl;
 
                 // Inline event handler (e.g. onclick="...")
@@ -275,6 +328,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     if (event._stopPropagation) break;
                     var nid = path[i];
                     var el = __w(nid);
+                    __setWinEvent(nid);
                     event.currentTarget = el;
                     var elBubbleCbs = _bubbleKeys[nid + ':' + event.type];
                     fireCbs(elBubbleCbs, el);
@@ -288,6 +342,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 if (isGlobalDoc) {
                     // Document bubble
                     if (!event._stopPropagation) {
+                        __currentEvent = event;
                         event.currentTarget = document;
                         fireCbs(doc.__listeners[event.type], document);
                         if (event._stopImmediate) return;
@@ -295,6 +350,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
                     // Window bubble
                     if (!event._stopPropagation) {
+                        __currentEvent = event;
                         event.currentTarget = window;
                         fireCbs(window.__et_listeners[event.type + '_b'], window);
                     }
@@ -333,22 +389,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             } else if (_activationRevert && !event.defaultPrevented) {
                 // Checkbox/radio was toggled — fire input and change events (only if connected)
                 var targetEl = __w(nodeId);
-                var connected = false;
-                var cur = nodeId;
-                while (cur >= 0) {
-                    if (__n_getNodeType(cur) === 9) { connected = true; break; }
-                    var parent = __n_getParent(cur);
-                    if (parent < 0) {
-                        // Check if this is a shadow root with a host
-                        var wrapper = __w(cur);
-                        if (wrapper._shadowHost && wrapper._shadowHost.__nid !== undefined) {
-                            cur = wrapper._shadowHost.__nid;
-                            continue;
-                        }
-                    }
-                    cur = parent;
-                }
-                if (connected) {
+                if (__isConnected(nodeId)) {
                     targetEl.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
                     targetEl.dispatchEvent(new Event('change', {bubbles: true}));
                 }
@@ -479,6 +520,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             event._stopImmediate = false;
             event.currentTarget = null;
             event.eventPhase = 0;
+            // Restore previous window.event
+            __currentEvent = __prevEvent;
         }
 
         // __braille_click(nodeId) — called from Rust
@@ -591,6 +634,14 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [child]});
                 }
             }
+            // CE lifecycle: connectedCallback for inserted nodes
+            if (typeof __ceConnected === 'function' && __isConnected(this.__nid)) {
+                __ceConnected(child);
+            }
+            // Upgrade custom elements in inserted subtree
+            if (typeof __ceUpgradeTree === 'function' && child && child.__nid !== undefined) {
+                __ceUpgradeTree(child);
+            }
             __braille_maybe_load_script(child);
             __braille_maybe_load_link(child);
             if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(child);
@@ -603,6 +654,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (child && child.__nid !== undefined && this.__nid !== undefined) {
                 if (__n_getParent(child.__nid) !== this.__nid) {
                     throw new DOMException("The node to be removed is not a child of this node.", "NotFoundError");
+                }
+                // CE lifecycle: disconnectedCallback before removal
+                if (typeof __ceDisconnected === 'function' && __isConnected(this.__nid)) {
+                    __ceDisconnected(child);
                 }
                 __n_removeChild(this.__nid, child.__nid);
                 if (typeof __mo_notify === 'function') __mo_notify('childList', this, {removedNodes: [child]});
@@ -642,6 +697,13 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     __n_insertBefore(this.__nid, newChild.__nid, refId);
                     if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [newChild]});
                 }
+            }
+            // CE lifecycle: connectedCallback for inserted nodes
+            if (typeof __ceConnected === 'function' && __isConnected(this.__nid)) {
+                __ceConnected(newChild);
+            }
+            if (typeof __ceUpgradeTree === 'function' && newChild && newChild.__nid !== undefined) {
+                __ceUpgradeTree(newChild);
             }
             __braille_maybe_load_script(newChild);
             __braille_maybe_load_link(newChild);
@@ -889,6 +951,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         doc.dispatchEvent = function(event) {
             if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
+            if (event._initialized === false) throw new DOMException("The event is not initialized.", "InvalidStateError");
+            var __prevEvent = __currentEvent;
+            __currentEvent = event;
             event._dispatching = true;
             event.target = document;
             event.srcElement = document;
@@ -921,6 +986,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             event._stopImmediate = false;
             event.currentTarget = null;
             event.eventPhase = 0;
+            __currentEvent = __prevEvent;
             return !event.defaultPrevented;
         };
         doc.elementFromPoint = function(x, y) { return doc.documentElement || null; };
@@ -1305,6 +1371,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
         EventTarget.prototype.dispatchEvent = function(event) {
             if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
+            if (event._initialized === false) throw new DOMException("The event is not initialized.", "InvalidStateError");
+            var __prevEvent = __currentEvent;
+            __currentEvent = event;
             event._dispatching = true;
             event.target = this;
             event.srcElement = this;
@@ -1338,6 +1407,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             event._stopImmediate = false;
             event.currentTarget = null;
             event.eventPhase = 0;
+            __currentEvent = __prevEvent;
             return !event.defaultPrevented;
         };
         globalThis.EventTarget = EventTarget;
@@ -1345,6 +1415,33 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Fix prototype chains: Node -> EventTarget, so Document/Element get addEventListener etc.
         if (typeof Node !== 'undefined') Object.setPrototypeOf(Node.prototype, EventTarget.prototype);
         if (typeof Window !== 'undefined') Object.setPrototypeOf(Window.prototype, EventTarget.prototype);
+
+        // Wire XMLHttpRequest.dispatchEvent with proper window.event support
+        if (typeof XMLHttpRequest !== 'undefined') {
+            var _origXhrAddListener = XMLHttpRequest.prototype.addEventListener;
+            var _origXhrRemoveListener = XMLHttpRequest.prototype.removeEventListener;
+            XMLHttpRequest.prototype.dispatchEvent = function(event) {
+                if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
+                if (event._initialized === false) throw new DOMException("The event is not initialized.", "InvalidStateError");
+                var __prevEvent = __currentEvent;
+                __currentEvent = event;
+                event._dispatching = true;
+                event.target = this;
+                event.currentTarget = this;
+                event._path = [this];
+                event.eventPhase = 2;
+                var cbs = this._listeners && this._listeners[event.type];
+                if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(this, event); }
+                // Fire on* handler (e.g. onload, onerror)
+                var handler = this['on' + event.type];
+                if (typeof handler === 'function') handler.call(this, event);
+                event._dispatching = false;
+                event.currentTarget = null;
+                event.eventPhase = 0;
+                __currentEvent = __prevEvent;
+                return !event.defaultPrevented;
+            };
+        }
 
         // CharacterData prototype — between Node.prototype and Text/Comment
         var CharacterData = function CharacterData() {};
@@ -1480,6 +1577,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         DocumentFragment.prototype.constructor = DocumentFragment;
         globalThis.DocumentFragment = DocumentFragment;
 
+        // Re-wire ShadowRoot prototype chain since DocumentFragment was replaced
+        Object.setPrototypeOf(ShadowRoot.prototype, DocumentFragment.prototype);
+        ShadowRoot.prototype.constructor = ShadowRoot;
+
         function ProcessingInstruction() {}
         ProcessingInstruction.prototype = Object.create(CharacterData.prototype);
         ProcessingInstruction.prototype.constructor = ProcessingInstruction;
@@ -1534,6 +1635,76 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         DocumentFragment.prototype.querySelectorAll = function(sel) {
             if (this.__nid === undefined) return [];
             return __n_querySelectorAll(this.__nid, sel).map(__w);
+        };
+
+        // CE upgrade/lifecycle helpers — these have access to _cache inside the IIFE
+        globalThis.__ceUpgradeAll = function(name, ctor, observedAttrs) {
+            var els = document.querySelectorAll(name);
+            for (var i = 0; i < els.length; i++) {
+                __ceUpgradeElement(els[i], ctor, observedAttrs);
+            }
+        };
+        function __ceUpgradeElement(el, ctor, observedAttrs) {
+            if (el.__ce_upgraded) return;
+            el.__ce_upgraded = true;
+            // Ensure ctor.prototype inherits from __ElemProto
+            if (!ctor.__protoLinked) {
+                Object.setPrototypeOf(ctor.prototype, __ElemProto);
+                ctor.__protoLinked = true;
+            }
+            // Re-wrap with correct prototype
+            delete _cache[el.__nid];
+            Object.setPrototypeOf(el, ctor.prototype);
+            el.constructor = ctor;
+            _cache[el.__nid] = el;
+            // Fire attributeChangedCallback for existing attributes
+            if (typeof el.attributeChangedCallback === 'function' && observedAttrs.length > 0) {
+                for (var j = 0; j < observedAttrs.length; j++) {
+                    var aname = observedAttrs[j];
+                    if (el.hasAttribute(aname)) {
+                        el.attributeChangedCallback(aname, null, el.getAttribute(aname));
+                    }
+                }
+            }
+            // Fire connectedCallback if connected
+            if (typeof el.connectedCallback === 'function' && __isConnected(el.__nid)) {
+                el.connectedCallback();
+            }
+        }
+        globalThis.__ceUpgradeTree = function(root) {
+            if (typeof customElements === 'undefined' || !customElements._registry || !customElements._registry.size) return;
+            customElements._registry.forEach(function(entry, name) {
+                if (root.querySelectorAll) {
+                    var els = root.querySelectorAll(name);
+                    for (var i = 0; i < els.length; i++) {
+                        __ceUpgradeElement(els[i], entry.ctor, entry.observedAttrs);
+                    }
+                }
+            });
+        };
+        globalThis.__ceConnected = function(el) {
+            if (el && el.__ce_upgraded && typeof el.connectedCallback === 'function') {
+                el.connectedCallback();
+            }
+            if (el && el.__nid !== undefined) {
+                var kids = __n_getAllChildIds(el.__nid);
+                for (var i = 0; i < kids.length; i++) {
+                    var child = _cache[kids[i]];
+                    if (child) __ceConnected(child);
+                }
+            }
+        };
+        globalThis.__ceDisconnected = function(el) {
+            if (el && el.__ce_upgraded && typeof el.disconnectedCallback === 'function') {
+                el.disconnectedCallback();
+            }
+            if (el && el.__nid !== undefined) {
+                var kids = __n_getAllChildIds(el.__nid);
+                for (var i = 0; i < kids.length; i++) {
+                    var child = _cache[kids[i]];
+                    if (child) __ceDisconnected(child);
+                }
+            }
         };
 
         // Wire window event methods to EventTarget.prototype (spec: Window extends EventTarget)
