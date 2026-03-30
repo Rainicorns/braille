@@ -1086,7 +1086,46 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.HTMLLabelElement = class HTMLLabelElement extends HTMLElement {};
         globalThis.SVGElement = class SVGElement extends Element {};
         globalThis.Window = class Window {};
-        globalThis.Document = class Document extends Node {};
+        globalThis.Document = class Document extends Node {
+            constructor() {
+                super();
+                this.nodeType = 9;
+                this.nodeName = '#document';
+                this.childNodes = [];
+                this.__listeners = {};
+                this.__captureListeners = {};
+                this.__et_listeners = {};
+            }
+            get documentElement() {
+                for (var i = 0; i < this.childNodes.length; i++) {
+                    if (this.childNodes[i].nodeType === 1) return this.childNodes[i];
+                }
+                return null;
+            }
+            get body() {
+                var de = this.documentElement;
+                if (!de) return null;
+                var kids = de.childNodes || de.children || [];
+                for (var i = 0; i < kids.length; i++) {
+                    if (kids[i].tagName === 'BODY' || kids[i].tagName === 'FRAMESET') return kids[i];
+                }
+                return null;
+            }
+            appendChild(child) {
+                this.childNodes.push(child);
+                if (child) child.parentNode = this;
+                return child;
+            }
+            removeChild(child) {
+                var idx = this.childNodes.indexOf(child);
+                if (idx >= 0) this.childNodes.splice(idx, 1);
+                if (child) child.parentNode = null;
+                return child;
+            }
+            createElement(tag) { return document.createElement(tag); }
+            createTextNode(t) { return document.createTextNode(t); }
+            createEvent(type) { return document.createEvent(type); }
+        };
 
         // Window-reflecting body/frameset event handlers (onblur, onerror, onfocus, onload, onscroll, onresize)
         // These forward to window when set on body or frameset elements.

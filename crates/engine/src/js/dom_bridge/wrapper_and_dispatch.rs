@@ -222,7 +222,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 }
             }
 
-            runPhases();
+            if (!event._stopPropagation) runPhases();
 
             // Per spec step 14: unset dispatching, stop propagation, and stop immediate flags
             event._dispatching = false;
@@ -916,8 +916,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 querySelector: function(sel) { return rootEl ? rootEl.querySelector(sel) : null; },
                 querySelectorAll: function(sel) { return rootEl ? rootEl.querySelectorAll(sel) : []; },
                 getElementById: function(id) { return rootEl ? rootEl.querySelector('#' + id) || null : null; },
-                getElementsByTagName: function(tag) { return rootEl ? rootEl.querySelectorAll(tag) : []; },
-                getElementsByClassName: function(cls) { return rootEl ? rootEl.querySelectorAll('.' + cls) : []; },
+                getElementsByTagName: function(tag) { return __makeHTMLCollection(function() { return rootEl ? rootEl.querySelectorAll(tag) : []; }); },
+                getElementsByClassName: function(cls) { return __makeHTMLCollection(function() { return rootEl ? rootEl.querySelectorAll('.' + cls) : []; }); },
                 createElement: function(tag) { return document.createElement(tag); },
                 createTextNode: function(text) { return document.createTextNode(text); },
                 createDocumentFragment: function() { return document.createDocumentFragment(); },
@@ -1059,6 +1059,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
         globalThis.EventTarget = EventTarget;
 
+        // Fix prototype chains: Node -> EventTarget, so Document/Element get addEventListener etc.
+        if (typeof Node !== 'undefined') Object.setPrototypeOf(Node.prototype, EventTarget.prototype);
+        if (typeof Window !== 'undefined') Object.setPrototypeOf(Window.prototype, EventTarget.prototype);
+
         // CharacterData prototype — between Node.prototype and Text/Comment
         var CharacterData = function CharacterData() {};
         CharacterData.prototype = Object.create(EP);
@@ -1169,11 +1173,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Attr.prototype.constructor = Attr;
         globalThis.Attr = Attr;
 
-        // Document constructor
-        function Document() {}
-        Document.prototype = Object.create(EP);
-        Document.prototype.constructor = Document;
-        globalThis.Document = Document;
+        // Document constructor is defined earlier (line ~898) as a factory function.
+        // Set Document.prototype to inherit from EP so wrapped document nodes get element methods.
+        var DocCtor = globalThis.Document;
+        DocCtor.prototype = Object.create(EP);
+        DocCtor.prototype.constructor = DocCtor;
 
         // DOMImplementation constructor (for instanceof checks)
         function DOMImplementation() {}
@@ -1214,11 +1218,29 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Document.prototype.createAttribute = function(n) { return document.createAttribute(n); };
         Document.prototype.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
         Document.prototype.createEvent = function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; };
-        Document.prototype.getElementById = function(id) { return null; };
-        Document.prototype.querySelector = function(sel) { return null; };
-        Document.prototype.querySelectorAll = function(sel) { return []; };
-        Document.prototype.getElementsByTagName = function(tag) { return []; };
-        Document.prototype.getElementsByClassName = function(cls) { return []; };
+        Document.prototype.getElementById = function(id) {
+            var de = this.documentElement;
+            if (!de || !de.querySelector) return null;
+            return de.querySelector('[id="' + id.replace(/"/g, '\\"') + '"]');
+        };
+        Document.prototype.querySelector = function(sel) {
+            var de = this.documentElement;
+            return de && de.querySelector ? de.querySelector(sel) : null;
+        };
+        Document.prototype.querySelectorAll = function(sel) {
+            var de = this.documentElement;
+            return de && de.querySelectorAll ? de.querySelectorAll(sel) : [];
+        };
+        Document.prototype.getElementsByTagName = function(tag) {
+            var de = this.documentElement;
+            if (!de || !de.querySelectorAll) return __makeHTMLCollection(function() { return []; });
+            return __makeHTMLCollection(function() { return de.querySelectorAll(tag); });
+        };
+        Document.prototype.getElementsByClassName = function(cls) {
+            var de = this.documentElement;
+            if (!de || !de.querySelectorAll) return __makeHTMLCollection(function() { return []; });
+            return __makeHTMLCollection(function() { return de.querySelectorAll('.' + cls); });
+        };
 
         // DocumentFragment also gets querySelector/querySelectorAll
         DocumentFragment.prototype.querySelector = function(sel) {
