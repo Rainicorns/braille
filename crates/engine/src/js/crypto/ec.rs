@@ -191,10 +191,15 @@ pub fn register(ctx: &Ctx<'_>) {
             |pub_bytes: Vec<u8>, signature: Vec<u8>, data: Vec<u8>| -> bool {
                 use ed25519_dalek::{Signature, VerifyingKey};
                 use ed25519_dalek::Verifier;
+                if pub_bytes.len() != 32 || signature.len() != 64 {
+                    return false;
+                }
                 let mut key_arr = [0u8; 32];
                 key_arr.copy_from_slice(&pub_bytes);
-                let verifying_key =
-                    VerifyingKey::from_bytes(&key_arr).expect("invalid Ed25519 public key");
+                let verifying_key = match VerifyingKey::from_bytes(&key_arr) {
+                    Ok(vk) => vk,
+                    Err(_) => return false,
+                };
                 let mut sig_arr = [0u8; 64];
                 sig_arr.copy_from_slice(&signature);
                 let sig = Signature::from_bytes(&sig_arr);
@@ -243,12 +248,19 @@ pub fn register(ctx: &Ctx<'_>) {
         Function::new(
             ctx.clone(),
             |pub_bytes: Vec<u8>, signature: Vec<u8>, data: Vec<u8>| -> bool {
+                if pub_bytes.len() != 57 {
+                    return false;
+                }
                 let mut pub_arr = [0u8; 57];
                 pub_arr.copy_from_slice(&pub_bytes);
-                let verifying_key = ed448_goldilocks::VerifyingKey::from_bytes(&pub_arr)
-                    .expect("invalid Ed448 verifying key");
-                let sig = ed448_goldilocks::Signature::try_from(signature.as_slice())
-                    .expect("invalid Ed448 signature");
+                let verifying_key = match ed448_goldilocks::VerifyingKey::from_bytes(&pub_arr) {
+                    Ok(vk) => vk,
+                    Err(_) => return false,
+                };
+                let sig = match ed448_goldilocks::Signature::try_from(signature.as_slice()) {
+                    Ok(s) => s,
+                    Err(_) => return false,
+                };
                 verifying_key.verify_raw(&sig, &data).is_ok()
             },
         )
@@ -362,6 +374,20 @@ pub fn register(ctx: &Ctx<'_>) {
                     "SHA-512" => Sha512::digest(&data).to_vec(),
                     other => panic!("NotSupportedError: hash '{other}' not supported"),
                 };
+                // Pad digest to field length if shorter (ECDSA spec allows any hash with any curve)
+                let field_len = match curve.as_str() {
+                    "P-256" => 32,
+                    "P-384" => 48,
+                    "P-521" => 66,
+                    _ => digest.len(),
+                };
+                let padded: Vec<u8> = if digest.len() < field_len {
+                    let mut p = vec![0u8; field_len];
+                    p[field_len - digest.len()..].copy_from_slice(&digest);
+                    p
+                } else {
+                    digest
+                };
                 macro_rules! ecdsa_sign {
                     ($mod:ident, $priv:expr, $digest:expr) => {{
                         let sk = $mod::ecdsa::SigningKey::from_bytes(
@@ -373,9 +399,9 @@ pub fn register(ctx: &Ctx<'_>) {
                     }};
                 }
                 match curve.as_str() {
-                    "P-256" => ecdsa_sign!(p256, &priv_bytes, &digest),
-                    "P-384" => ecdsa_sign!(p384, &priv_bytes, &digest),
-                    "P-521" => ecdsa_sign!(p521, &priv_bytes, &digest),
+                    "P-256" => ecdsa_sign!(p256, &priv_bytes, &padded),
+                    "P-384" => ecdsa_sign!(p384, &priv_bytes, &padded),
+                    "P-521" => ecdsa_sign!(p521, &priv_bytes, &padded),
                     other => panic!("NotSupportedError: ECDSA curve '{other}' not supported"),
                 }
             },
@@ -475,6 +501,19 @@ pub fn register(ctx: &Ctx<'_>) {
                     "SHA-512" => Sha512::digest(&data).to_vec(),
                     other => panic!("NotSupportedError: hash '{other}' not supported"),
                 };
+                let field_len = match curve.as_str() {
+                    "P-256" => 32,
+                    "P-384" => 48,
+                    "P-521" => 66,
+                    _ => digest.len(),
+                };
+                let padded: Vec<u8> = if digest.len() < field_len {
+                    let mut p = vec![0u8; field_len];
+                    p[field_len - digest.len()..].copy_from_slice(&digest);
+                    p
+                } else {
+                    digest
+                };
                 macro_rules! ecdsa_verify_prehash {
                     ($mod:ident, $pub_bytes:expr, $signature:expr, $digest:expr) => {{
                         use $mod::ecdsa::{Signature, VerifyingKey};
@@ -490,9 +529,9 @@ pub fn register(ctx: &Ctx<'_>) {
                     }};
                 }
                 match curve.as_str() {
-                    "P-256" => ecdsa_verify_prehash!(p256, &pub_bytes, &signature, &digest),
-                    "P-384" => ecdsa_verify_prehash!(p384, &pub_bytes, &signature, &digest),
-                    "P-521" => ecdsa_verify_prehash!(p521, &pub_bytes, &signature, &digest),
+                    "P-256" => ecdsa_verify_prehash!(p256, &pub_bytes, &signature, &padded),
+                    "P-384" => ecdsa_verify_prehash!(p384, &pub_bytes, &signature, &padded),
+                    "P-521" => ecdsa_verify_prehash!(p521, &pub_bytes, &signature, &padded),
                     other => panic!("NotSupportedError: ECDSA curve '{other}' not supported"),
                 }
             },

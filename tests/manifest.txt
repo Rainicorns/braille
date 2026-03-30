@@ -1008,10 +1008,10 @@ PASS wpt:WebCryptoAPI/import_export/symmetric_importKey.https.any.js
 PASS wpt:WebCryptoAPI/normalize-algorithm-name.https.any.js
 PASS wpt:WebCryptoAPI/randomUUID.https.any.js
 PASS wpt:WebCryptoAPI/secure_context/crypto-subtle-secure-context-available.https.sub.html
-FAIL wpt:WebCryptoAPI/sign_verify/ecdsa.https.any.js
-NOT_RUN wpt:WebCryptoAPI/sign_verify/eddsa_curve25519.https.any.js
-NOT_RUN wpt:WebCryptoAPI/sign_verify/eddsa_curve448.tentative.https.any.js
-NOT_RUN wpt:WebCryptoAPI/sign_verify/eddsa_small_order_points.https.any.js
+PASS wpt:WebCryptoAPI/sign_verify/ecdsa.https.any.js
+PASS wpt:WebCryptoAPI/sign_verify/eddsa_curve25519.https.any.js
+PASS wpt:WebCryptoAPI/sign_verify/eddsa_curve448.tentative.https.any.js
+FAIL wpt:WebCryptoAPI/sign_verify/eddsa_small_order_points.https.any.js
 NOT_RUN wpt:WebCryptoAPI/sign_verify/hmac.https.any.js
 NOT_RUN wpt:WebCryptoAPI/sign_verify/kmac.tentative.https.any.js
 NOT_RUN wpt:WebCryptoAPI/sign_verify/mldsa.tentative.https.any.js
