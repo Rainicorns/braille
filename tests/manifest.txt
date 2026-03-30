@@ -1042,9 +1042,9 @@ PASS wpt:dom/collections/domstringmap-supported-property-names.html
 PASS wpt:dom/collections/namednodemap-supported-property-names.html
 PASS wpt:dom/eventPathRemoved.html
 PASS wpt:dom/events/AddEventListenerOptions-once.any.js
-FAIL wpt:dom/events/AddEventListenerOptions-passive.any.js
-NOT_RUN wpt:dom/events/AddEventListenerOptions-signal.any.js
-NOT_RUN wpt:dom/events/Body-FrameSet-Event-Handlers.html
+PASS wpt:dom/events/AddEventListenerOptions-passive.any.js
+PASS wpt:dom/events/AddEventListenerOptions-signal.any.js
+FAIL wpt:dom/events/Body-FrameSet-Event-Handlers.html
 NOT_RUN wpt:dom/events/CustomEvent.html
 NOT_RUN wpt:dom/events/Event-cancelBubble.html
 NOT_RUN wpt:dom/events/Event-constants.html

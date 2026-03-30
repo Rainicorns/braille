@@ -183,7 +183,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this.cancelable = (opts && opts.cancelable) || false;
                 this.composed = (opts && opts.composed) || false;
                 this.defaultPrevented = false;
-                this.returnValue = true;
+                this._returnValue = true;
                 this.target = null;
                 this.currentTarget = null;
                 this.srcElement = null;
@@ -194,10 +194,20 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this._stopImmediate = false;
                 this._dispatching = false;
                 this._initialized = true;
+                this._inPassiveListener = false;
+            }
+            get returnValue() { return this._returnValue; }
+            set returnValue(v) {
+                if (!v && this.cancelable && !this._inPassiveListener) {
+                    this._returnValue = false;
+                    this.defaultPrevented = true;
+                } else if (v) {
+                    this._returnValue = true;
+                }
             }
             get cancelBubble() { return this._stopPropagation; }
             set cancelBubble(v) { if (v) this._stopPropagation = true; }
-            preventDefault() { if (this.cancelable) { this.defaultPrevented = true; this.returnValue = false; } }
+            preventDefault() { if (this.cancelable && !this._inPassiveListener) { this.defaultPrevented = true; this._returnValue = false; } }
             stopPropagation() { this._stopPropagation = true; }
             stopImmediatePropagation() { this._stopImmediate = true; this._stopPropagation = true; }
             composedPath() { if (!this._dispatching && this.eventPhase === 0) return []; return this._path || []; }
@@ -207,7 +217,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this._stopPropagation = false;
                 this._stopImmediate = false;
                 this.defaultPrevented = false;
-                this.returnValue = true;
+                this._returnValue = true;
                 this.isTrusted = false;
                 this.target = null;
                 this.srcElement = null;

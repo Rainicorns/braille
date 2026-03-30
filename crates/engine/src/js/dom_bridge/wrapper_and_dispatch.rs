@@ -940,21 +940,25 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             this.__et_listeners = {};
         }
         EventTarget.prototype.addEventListener = function(type, cb, opts) {
-            if (typeof cb !== 'function' && !(cb && typeof cb.handleEvent === 'function')) return;
             var self = (this == null) ? window : this;
             if (!self.__et_listeners) self.__et_listeners = {};
+            // Read all options first (spec requires this even if cb is null)
             var capture = !!(opts === true || (opts && opts.capture));
             var once = !!(opts && typeof opts === 'object' && opts.once);
+            var passive = !!(opts && typeof opts === 'object' && opts.passive);
             var signal = (opts && typeof opts === 'object') ? opts.signal : undefined;
+            // Validate signal before checking callback
             if (signal !== undefined) {
                 if (!signal || typeof signal !== 'object' || !('aborted' in signal)) throw new TypeError("Failed to execute 'addEventListener': member signal is not of type AbortSignal.");
                 if (signal.aborted) return;
             }
+            if (typeof cb !== 'function' && !(cb && typeof cb.handleEvent === 'function')) return;
             var key = type + (capture ? '_c' : '_b');
             if (!self.__et_listeners[key]) self.__et_listeners[key] = [];
             for (var i = 0; i < self.__et_listeners[key].length; i++) {
                 if (self.__et_listeners[key][i] === cb || self.__et_listeners[key][i]._origCb === cb) return;
             }
+            var entry;
             if (once) {
                 var wrapper = function(e) {
                     self.removeEventListener(type, cb, capture);
@@ -962,10 +966,20 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     else cb.handleEvent(e);
                 };
                 wrapper._origCb = cb;
-                self.__et_listeners[key].push(wrapper);
+                wrapper._passive = passive;
+                entry = wrapper;
+            } else if (passive) {
+                var wrapper = function(e) {
+                    if (typeof cb === 'function') cb.call(self, e);
+                    else cb.handleEvent(e);
+                };
+                wrapper._origCb = cb;
+                wrapper._passive = true;
+                entry = wrapper;
             } else {
-                self.__et_listeners[key].push(cb);
+                entry = cb;
             }
+            self.__et_listeners[key].push(entry);
             if (signal) {
                 signal.addEventListener('abort', function() {
                     self.removeEventListener(type, cb, capture);
@@ -987,16 +1001,27 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             event.currentTarget = this;
             event._path = [this];
             event.eventPhase = 2;
-            var key = event.type + '_b';
-            var cbs = this.__et_listeners ? this.__et_listeners[key] : undefined;
-            if (cbs) {
-                var snapshot = cbs.slice();
-                for (var i = 0; i < snapshot.length; i++) {
-                    var fn = snapshot[i];
-                    if (typeof fn === 'function') fn.call(this, event);
-                    else if (fn && typeof fn.handleEvent === 'function') fn.handleEvent(event);
-                    if (event._stopImmediate) break;
+            // At AT_TARGET, fire both capture and bubble listeners in registration order
+            var phases = [event.type + '_c', event.type + '_b'];
+            for (var ph = 0; ph < phases.length; ph++) {
+                var key = phases[ph];
+                var cbs = this.__et_listeners ? this.__et_listeners[key] : undefined;
+                if (cbs) {
+                    var snapshot = cbs.slice();
+                    for (var i = 0; i < snapshot.length; i++) {
+                        var fn = snapshot[i];
+                        // Check if listener was removed (e.g. by abort signal) during dispatch
+                        var live = this.__et_listeners[key];
+                        if (live.indexOf(fn) === -1) continue;
+                        var wasPassive = event._inPassiveListener;
+                        if (fn._passive) event._inPassiveListener = true;
+                        if (typeof fn === 'function') fn.call(this, event);
+                        else if (fn && typeof fn.handleEvent === 'function') fn.handleEvent(event);
+                        event._inPassiveListener = wasPassive;
+                        if (event._stopImmediate) break;
+                    }
                 }
+                if (event._stopImmediate || event._stopPropagation) break;
             }
             event._dispatching = false;
             event._stopPropagation = false;
