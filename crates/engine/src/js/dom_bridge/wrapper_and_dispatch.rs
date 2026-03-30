@@ -261,9 +261,22 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
             if (!event._stopPropagation) runPhases();
 
-            // Activation behavior post-step: revert if event was canceled
+            // Activation behavior post-step: revert if event was canceled, else fire input/change
             if (_activationRevert && event.defaultPrevented) {
                 _activationRevert();
+            } else if (_activationRevert && !event.defaultPrevented) {
+                // Checkbox/radio was toggled — fire input and change events (only if connected)
+                var targetEl = __w(nodeId);
+                var connected = false;
+                var cur = nodeId;
+                while (cur >= 0) {
+                    if (__n_getNodeType(cur) === 9) { connected = true; break; }
+                    cur = __n_getParent(cur);
+                }
+                if (connected) {
+                    targetEl.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+                    targetEl.dispatchEvent(new Event('change', {bubbles: true}));
+                }
             }
 
             // Per spec step 14: unset dispatching, stop propagation, and stop immediate flags
