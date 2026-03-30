@@ -8,7 +8,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             SELECT: HTMLSelectElement, FORM: HTMLFormElement,
             A: HTMLAnchorElement, IMG: HTMLImageElement,
             BUTTON: HTMLButtonElement, OPTION: HTMLOptionElement,
-            IFRAME: HTMLIFrameElement,
+            IFRAME: HTMLIFrameElement, BODY: HTMLBodyElement,
+            HEAD: HTMLHeadElement, HTML: HTMLHtmlElement,
+            FRAMESET: HTMLFrameSetElement,
+            DIV: HTMLDivElement, SPAN: HTMLSpanElement,
+            P: HTMLParagraphElement, SCRIPT: HTMLScriptElement,
+            STYLE: HTMLStyleElement, LINK: HTMLLinkElement,
+            META: HTMLMetaElement, TABLE: HTMLTableElement,
+            TR: HTMLTableRowElement, TD: HTMLTableCellElement,
+            TH: HTMLTableCellElement, UL: HTMLUListElement,
+            OL: HTMLOListElement, LI: HTMLLIElement,
+            PRE: HTMLPreElement, CANVAS: HTMLCanvasElement,
+            VIDEO: HTMLVideoElement, AUDIO: HTMLAudioElement,
+            SOURCE: HTMLSourceElement, LABEL: HTMLLabelElement,
         };
 
         // Wrapper factory
@@ -26,14 +38,27 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 case 11: proto = DocumentFragment.prototype; break;
                 default: proto = EP; break;
             }
-            var obj = Object.create(proto);
-            obj.__nid = nodeId;
-            obj.__props = {};
+            var obj;
             if (nt === 1) {
                 var tag = __n_getTagName(nodeId);
                 var ctor = _ctorMap[tag];
-                if (ctor) obj.constructor = ctor;
+                if (ctor) {
+                    // Set prototype chain: obj -> ctor.prototype -> __ElemProto
+                    // so instanceof works while still inheriting DOM methods
+                    if (!ctor.__protoLinked) {
+                        Object.setPrototypeOf(ctor.prototype, proto);
+                        ctor.__protoLinked = true;
+                    }
+                    obj = Object.create(ctor.prototype);
+                    obj.constructor = ctor;
+                } else {
+                    obj = Object.create(proto);
+                }
+            } else {
+                obj = Object.create(proto);
             }
+            obj.__nid = nodeId;
+            obj.__props = {};
             _cache[nodeId] = obj;
             return obj;
         }
@@ -623,7 +648,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             event.eventPhase = 0;
             return !event.defaultPrevented;
         };
-        doc.createEvent = function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; };
+        doc.createEvent = function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; };
         doc.createTreeWalker = function(root, whatToShow, filter) {
             // Minimal TreeWalker: pre-order traversal of element nodes
             var current = root;
@@ -895,7 +920,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 createElement: function(tag) { return document.createElement(tag); },
                 createTextNode: function(text) { return document.createTextNode(text); },
                 createDocumentFragment: function() { return document.createDocumentFragment(); },
-                createEvent: function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; },
+                createEvent: function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; },
                 appendChild: function(child) {
                     if (!rootEl && child && child.__nid !== undefined) {
                         rootEl = child;
@@ -1186,7 +1211,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Document.prototype.createProcessingInstruction = function(t, d) { return document.createProcessingInstruction(t, d); };
         Document.prototype.createAttribute = function(n) { return document.createAttribute(n); };
         Document.prototype.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
-        Document.prototype.createEvent = function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; };
+        Document.prototype.createEvent = function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; };
         Document.prototype.getElementById = function(id) { return null; };
         Document.prototype.querySelector = function(sel) { return null; };
         Document.prototype.querySelectorAll = function(sel) { return []; };

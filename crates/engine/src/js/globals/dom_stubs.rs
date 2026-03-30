@@ -236,7 +236,12 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         Event.prototype.AT_TARGET = 2;
         Event.prototype.BUBBLING_PHASE = 3;
         globalThis.CustomEvent = class CustomEvent extends Event {
-            constructor(type, opts) { super(type, opts); this.detail = (opts && opts.detail) || null; }
+            constructor(type, opts) { super(type, opts); this.detail = (opts && opts.detail !== undefined ? opts.detail : null); }
+            initCustomEvent(type) {
+                if (arguments.length < 1) throw new TypeError("Failed to execute 'initCustomEvent' on 'CustomEvent': 1 argument required, but only 0 present.");
+                this.initEvent(type, arguments[1], arguments[2]);
+                this.detail = arguments.length > 3 ? arguments[3] : null;
+            }
         };
         globalThis.MouseEvent = class MouseEvent extends Event {
             constructor(type, opts) {
@@ -1044,7 +1049,9 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 };
             }
         };
-        globalThis.HTMLElement = class HTMLElement {};
+        globalThis.Node = class Node {};
+        globalThis.Element = class Element extends Node {};
+        globalThis.HTMLElement = class HTMLElement extends Element {};
         globalThis.HTMLIFrameElement = class HTMLIFrameElement extends HTMLElement {};
         globalThis.HTMLInputElement = class HTMLInputElement extends HTMLElement {};
         globalThis.HTMLTextAreaElement = class HTMLTextAreaElement extends HTMLElement {};
@@ -1054,8 +1061,94 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.HTMLImageElement = class HTMLImageElement extends HTMLElement {};
         globalThis.HTMLButtonElement = class HTMLButtonElement extends HTMLElement {};
         globalThis.HTMLOptionElement = class HTMLOptionElement extends HTMLElement {};
-        globalThis.Element = class Element {};
-        globalThis.Node = class Node {};
+        globalThis.HTMLBodyElement = class HTMLBodyElement extends HTMLElement {};
+        globalThis.HTMLHeadElement = class HTMLHeadElement extends HTMLElement {};
+        globalThis.HTMLFrameSetElement = class HTMLFrameSetElement extends HTMLElement {};
+        globalThis.HTMLHtmlElement = class HTMLHtmlElement extends HTMLElement {};
+        globalThis.HTMLDivElement = class HTMLDivElement extends HTMLElement {};
+        globalThis.HTMLSpanElement = class HTMLSpanElement extends HTMLElement {};
+        globalThis.HTMLParagraphElement = class HTMLParagraphElement extends HTMLElement {};
+        globalThis.HTMLScriptElement = class HTMLScriptElement extends HTMLElement {};
+        globalThis.HTMLStyleElement = class HTMLStyleElement extends HTMLElement {};
+        globalThis.HTMLLinkElement = class HTMLLinkElement extends HTMLElement {};
+        globalThis.HTMLMetaElement = class HTMLMetaElement extends HTMLElement {};
+        globalThis.HTMLTableElement = class HTMLTableElement extends HTMLElement {};
+        globalThis.HTMLTableRowElement = class HTMLTableRowElement extends HTMLElement {};
+        globalThis.HTMLTableCellElement = class HTMLTableCellElement extends HTMLElement {};
+        globalThis.HTMLUListElement = class HTMLUListElement extends HTMLElement {};
+        globalThis.HTMLOListElement = class HTMLOListElement extends HTMLElement {};
+        globalThis.HTMLLIElement = class HTMLLIElement extends HTMLElement {};
+        globalThis.HTMLPreElement = class HTMLPreElement extends HTMLElement {};
+        globalThis.HTMLCanvasElement = class HTMLCanvasElement extends HTMLElement {};
+        globalThis.HTMLVideoElement = class HTMLVideoElement extends HTMLElement {};
+        globalThis.HTMLAudioElement = class HTMLAudioElement extends HTMLElement {};
+        globalThis.HTMLSourceElement = class HTMLSourceElement extends HTMLElement {};
+        globalThis.HTMLLabelElement = class HTMLLabelElement extends HTMLElement {};
+        globalThis.SVGElement = class SVGElement extends Element {};
+        globalThis.Window = class Window {};
+        globalThis.Document = class Document extends Node {};
+
+        // Window-reflecting body/frameset event handlers (onblur, onerror, onfocus, onload, onscroll, onresize)
+        // These forward to window when set on body or frameset elements.
+        var _windowEventHandlers = ['onblur', 'onerror', 'onfocus', 'onload', 'onscroll', 'onresize',
+            'onbeforeunload', 'onhashchange', 'onlanguagechange', 'onmessage', 'onmessageerror',
+            'onoffline', 'ononline', 'onpagehide', 'onpageshow', 'onpopstate',
+            'onrejectionhandled', 'onstorage', 'onunhandledrejection', 'onunload'];
+        var _wehSet = new Set(_windowEventHandlers);
+        [HTMLBodyElement, HTMLFrameSetElement].forEach(function(Ctor) {
+            _windowEventHandlers.forEach(function(attr) {
+                Object.defineProperty(Ctor.prototype, attr, {
+                    get: function() {
+                        return window['_weh_' + attr] || null;
+                    },
+                    set: function(v) {
+                        window['_weh_' + attr] = typeof v === 'function' ? v : null;
+                    },
+                    enumerable: true,
+                    configurable: true
+                });
+            });
+            // Hook setAttribute to compile event handler content attributes
+            var origSetAttr = Ctor.prototype.setAttribute;
+            Ctor.prototype.setAttribute = function(name, value) {
+                if (origSetAttr) origSetAttr.call(this, name, value);
+                else if (this.__nid !== undefined) __n_setAttribute(this.__nid, name, String(value));
+                if (_wehSet.has(name)) {
+                    window['_weh_' + name] = new Function('event', String(value));
+                }
+            };
+        });
+        // Window on* getters/setters forwarding to stored handlers
+        _windowEventHandlers.forEach(function(attr) {
+            Object.defineProperty(window, attr, {
+                get: function() { return window['_weh_' + attr] || null; },
+                set: function(v) { window['_weh_' + attr] = typeof v === 'function' ? v : null; },
+                enumerable: true,
+                configurable: true
+            });
+        });
+
+        // Standard event handler properties on HTMLElement.prototype
+        var _elementEventHandlers = ['onclick', 'ondblclick', 'onmousedown', 'onmouseup',
+            'onmouseover', 'onmouseout', 'onmousemove', 'onkeydown', 'onkeyup', 'onkeypress',
+            'onchange', 'oninput', 'onsubmit', 'onreset', 'onselect',
+            'ondrag', 'ondragstart', 'ondragend', 'ondragover', 'ondragenter', 'ondragleave', 'ondrop',
+            'ontouchstart', 'ontouchmove', 'ontouchend', 'ontouchcancel',
+            'onpointerdown', 'onpointerup', 'onpointermove', 'onpointerover', 'onpointerout',
+            'onpointerenter', 'onpointerleave', 'onpointercancel', 'ongotpointercapture', 'onlostpointercapture',
+            'oncontextmenu', 'onwheel', 'onanimationstart', 'onanimationend', 'onanimationiteration',
+            'ontransitionend', 'ontransitionrun', 'ontransitionstart', 'ontransitioncancel'];
+        _elementEventHandlers.forEach(function(attr) {
+            if (!(attr in HTMLElement.prototype)) {
+                Object.defineProperty(HTMLElement.prototype, attr, {
+                    get: function() { return this['_eh_' + attr] || null; },
+                    set: function(v) { this['_eh_' + attr] = typeof v === 'function' ? v : null; },
+                    enumerable: true,
+                    configurable: true
+                });
+            }
+        });
+
         // Value descriptors on HTML*Element prototypes for React's inputValueTracking.
         // React uses node.constructor.prototype to find native get/set for 'value'
         // and 'checked'. These must exist so React can set up change detection.
