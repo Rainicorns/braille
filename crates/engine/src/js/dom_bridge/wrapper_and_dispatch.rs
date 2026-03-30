@@ -21,6 +21,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             PRE: HTMLPreElement, CANVAS: HTMLCanvasElement,
             VIDEO: HTMLVideoElement, AUDIO: HTMLAudioElement,
             SOURCE: HTMLSourceElement, LABEL: HTMLLabelElement,
+            TEMPLATE: HTMLTemplateElement,
         };
 
         // Wrapper factory
@@ -295,6 +296,125 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 if (connected) {
                     targetEl.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
                     targetEl.dispatchEvent(new Event('change', {bubbles: true}));
+                }
+            }
+
+            // Post-dispatch activation for elements in the event path.
+            // Per spec, activation behavior runs on the first element in the path that has one.
+            // Only one activation behavior fires per dispatch.
+            // If checkbox/radio already activated (pre-dispatch), skip — that was the activation.
+            if (event.type === 'click' && !event.defaultPrevented && !_activationRevert) {
+                // Build full path: target + ancestors
+                var activPath = [nodeId];
+                var ap = __n_getParent(nodeId);
+                while (ap >= 0) { activPath.push(ap); ap = __n_getParent(ap); }
+
+                for (var ai = 0; ai < activPath.length; ai++) {
+                    var ael = __w(activPath[ai]);
+                    var atag = ael.tagName;
+
+                    // <a> / <area> activation: navigate to href (fragment-only for now)
+                    if (atag === 'A' || atag === 'AREA') {
+                        var href = ael.getAttribute('href');
+                        if (href !== null) {
+                            if (href.charAt(0) === '#') {
+                                var oldURL = location.href;
+                                location.hash = href;
+                                location._href = location.origin + location.pathname + location.search + href;
+                                var newURL = location.href;
+                                if (typeof window.onhashchange === 'function') {
+                                    window.onhashchange({type:'hashchange', newURL: newURL, oldURL: oldURL});
+                                }
+                                var hevt = new Event('hashchange', {bubbles: false});
+                                hevt.newURL = newURL;
+                                hevt.oldURL = oldURL;
+                                if (window.__et_listeners && window.__et_listeners['hashchange_b']) {
+                                    var hcbs = window.__et_listeners['hashchange_b'];
+                                    for (var hi = 0; hi < hcbs.length; hi++) hcbs[hi].cb.call(window, hevt);
+                                }
+                            }
+                        }
+                        break;
+                    }
+
+                    // <summary> activation: toggle parent <details>
+                    if (atag === 'SUMMARY') {
+                        var details = ael.parentNode;
+                        if (details && details.tagName === 'DETAILS') {
+                            if (details.hasAttribute('open')) details.removeAttribute('open');
+                            else details.setAttribute('open', '');
+                            details.dispatchEvent(new Event('toggle', {bubbles: false}));
+                        }
+                        break;
+                    }
+
+                    // <input type=submit/image> / <button type=submit> activation: form submit
+                    if (atag === 'INPUT' || atag === 'BUTTON') {
+                        var btype = (ael.getAttribute('type') || '').toLowerCase();
+                        if ((atag === 'BUTTON' && (btype === 'submit' || btype === '')) ||
+                            (atag === 'INPUT' && (btype === 'submit' || btype === 'image'))) {
+                            var form = ael.form;
+                            if (form && form.__nid !== undefined) {
+                                var formConnected = false;
+                                var cur = form.__nid;
+                                while (cur >= 0) {
+                                    if (__n_getNodeType(cur) === 9) { formConnected = true; break; }
+                                    cur = __n_getParent(cur);
+                                }
+                                if (formConnected) {
+                                    var submitEvt = new Event('submit', {bubbles: true, cancelable: true});
+                                    submitEvt.submitter = ael;
+                                    if (typeof form.onsubmit === 'function') {
+                                        var ret = form.onsubmit(submitEvt);
+                                        if (ret === false) submitEvt.preventDefault();
+                                    }
+                                    form.dispatchEvent(submitEvt);
+                                }
+                            }
+                            break;
+                        }
+                        // <input type=reset> / <button type=reset> activation: form reset
+                        if (btype === 'reset') {
+                            var form = ael.form;
+                            if (form && form.__nid !== undefined) {
+                                var formConnected = false;
+                                var cur = form.__nid;
+                                while (cur >= 0) {
+                                    if (__n_getNodeType(cur) === 9) { formConnected = true; break; }
+                                    cur = __n_getParent(cur);
+                                }
+                                if (formConnected) {
+                                    var resetEvt = new Event('reset', {bubbles: true, cancelable: true});
+                                    if (typeof form.onreset === 'function') form.onreset(resetEvt);
+                                    form.dispatchEvent(resetEvt);
+                                }
+                            }
+                            break;
+                        }
+                    }
+
+                    // <label> activation: forward click to associated control
+                    if (atag === 'LABEL') {
+                        var controlId = __n_findLabelControl(ael.__nid);
+                        if (controlId >= 0) {
+                            var ctrl = __w(controlId);
+                            // Don't forward if the click target is already the control
+                            // or is interactive content inside the label
+                            if (ctrl && ctrl.__nid !== undefined && ctrl.__nid !== nodeId) {
+                                var isDescendant = false;
+                                var chk = nodeId;
+                                while (chk >= 0) {
+                                    if (chk === ctrl.__nid) { isDescendant = true; break; }
+                                    chk = __n_getParent(chk);
+                                }
+                                if (!isDescendant) {
+                                    if (typeof ctrl.focus === 'function') ctrl.focus();
+                                    ctrl.click();
+                                }
+                            }
+                        }
+                        break;
+                    }
                 }
             }
 

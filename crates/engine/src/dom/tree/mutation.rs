@@ -223,9 +223,22 @@ impl DomTree {
                 let child_data = self.nodes[src_id].data.clone();
                 let cloned_id = self.alloc_node(child_data);
                 self.append_child(dst_parent, cloned_id);
+
+                // Clone template_contents if present
+                if let Some(tc_id) = self.nodes[src_id].template_contents {
+                    let cloned_tc = self.clone_node(tc_id, true);
+                    self.nodes[cloned_id].template_contents = Some(cloned_tc);
+                }
+
                 for &grandchild in self.nodes[src_id].children.iter().rev() {
                     stack.push((grandchild, cloned_id));
                 }
+            }
+
+            // Also clone template_contents on the root node itself
+            if let Some(tc_id) = self.nodes[node_id].template_contents {
+                let cloned_tc = self.clone_node(tc_id, true);
+                self.nodes[new_id].template_contents = Some(cloned_tc);
             }
         }
 

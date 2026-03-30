@@ -110,56 +110,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 return;
             }
             __dispatch(this.__nid, event);
-
-            // <details>/<summary> toggle
-            if (this.tagName === 'SUMMARY') {
-                var details = this.parentNode;
-                if (details && details.tagName === 'DETAILS') {
-                    if (details.hasAttribute('open')) details.removeAttribute('open');
-                    else details.setAttribute('open', '');
-                    details.dispatchEvent(new Event('toggle', {bubbles: false}));
-                }
-            }
-
-            // Implicit form submission: <button type="submit"> or <input type="submit"> inside a <form>
-            if (!event.defaultPrevented) {
-                var tag = this.tagName;
-                var btype = (this.getAttribute('type') || '').toLowerCase();
-                if ((tag === 'BUTTON' && (btype === 'submit' || btype === '')) || (tag === 'INPUT' && btype === 'submit')) {
-                    var form = this.form;
-                    // Only submit if form is connected to the document
-                    var formConnected = false;
-                    if (form && form.__nid !== undefined) {
-                        var cur = form.__nid;
-                        while (cur >= 0) {
-                            if (__n_getNodeType(cur) === 9) { formConnected = true; break; }
-                            cur = __n_getParent(cur);
-                        }
-                    }
-                    if (form && formConnected) {
-                        var submitEvt = new Event('submit', {bubbles: true, cancelable: true});
-                        submitEvt.submitter = this;
-                        // Fire onsubmit IDL handler
-                        if (typeof form.onsubmit === 'function') {
-                            var ret = form.onsubmit(submitEvt);
-                            if (ret === false) submitEvt.preventDefault();
-                        }
-                        form.dispatchEvent(submitEvt);
-                    }
-                }
-            }
-
-            // Label activation: clicking a label focuses/clicks its associated control
-            if (!event.defaultPrevented && this.tagName === 'LABEL') {
-                var controlId = __n_findLabelControl(this.__nid);
-                if (controlId >= 0) {
-                    var ctrl = __w(controlId);
-                    if (ctrl && ctrl.__nid !== this.__nid) {
-                        if (typeof ctrl.focus === 'function') ctrl.focus();
-                        ctrl.click();
-                    }
-                }
-            }
+            // All activation behaviors (summary toggle, form submit/reset, label, anchor)
+            // are handled in __dispatch post-step.
         };
         // <dialog> element APIs
         ElemProto.showModal = function() {
@@ -793,7 +745,19 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 configurable: true
             },
             href: {
-                get: function() { return this.getAttribute('href') || ''; },
+                get: function() {
+                    var raw = this.getAttribute('href');
+                    if (raw === null) return '';
+                    // <a> and <area> resolve href to absolute URL per spec
+                    if (this.tagName === 'A' || this.tagName === 'AREA') {
+                        if (/^https?:\/\//.test(raw)) return raw;
+                        if (raw.charAt(0) === '#') return location.origin + location.pathname + location.search + raw;
+                        if (raw.charAt(0) === '?') return location.origin + location.pathname + raw;
+                        if (raw.charAt(0) === '/') return location.origin + raw;
+                        return location.origin + location.pathname.replace(/[^\/]*$/, '') + raw;
+                    }
+                    return raw;
+                },
                 set: function(v) { this.setAttribute('href', String(v)); },
                 configurable: true
             },
@@ -987,6 +951,12 @@ pub(crate) fn element_prototype_js() -> &'static str {
             clientTop: { get: function() { return 0; }, configurable: true },
             clientLeft: { get: function() { return 0; }, configurable: true },
             offsetParent: { get: function() { return this.parentNode; }, configurable: true },
+            content: { get: function() {
+                if (this.tagName !== 'TEMPLATE') return undefined;
+                var cid = __n_getTemplateContent(this.__nid);
+                if (cid < 0) return undefined;
+                return __w(cid);
+            }, configurable: true },
             innerText: {
                 get: function() {
                     function walk(nid) {

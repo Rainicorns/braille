@@ -1084,6 +1084,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.HTMLAudioElement = class HTMLAudioElement extends HTMLElement {};
         globalThis.HTMLSourceElement = class HTMLSourceElement extends HTMLElement {};
         globalThis.HTMLLabelElement = class HTMLLabelElement extends HTMLElement {};
+        globalThis.HTMLTemplateElement = class HTMLTemplateElement extends HTMLElement {};
         globalThis.SVGElement = class SVGElement extends Element {};
         globalThis.Window = class Window {};
         globalThis.Document = class Document extends Node {

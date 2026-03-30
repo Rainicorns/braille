@@ -569,6 +569,16 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // __n_getTemplateContent(nodeId) -> nodeId of template content fragment, or -1
+    g.set("__n_getTemplateContent", Function::new(ctx.clone(), |node_id: u32| -> i32 {
+        with_tree(|tree| {
+            tree.get_node(node_id as NodeId)
+                .template_contents
+                .map(|nid| nid as i32)
+                .unwrap_or(-1)
+        })
+    }).unwrap()).unwrap();
+
     // __n_getLayout(nodeId) -> JSON {"x":...,"y":...,"width":...,"height":...} or empty
     g.set("__n_getLayout", Function::new(ctx.clone(), |node_id: u32| -> String {
         with_tree_mut(|tree| {
