@@ -124,12 +124,47 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (isGlobalDoc) composedPath.push(window);
             event._path = composedPath;
 
-            // Helper to fire a list of callbacks
+            // Report an uncaught exception per WHATWG "report the exception" algorithm.
+            // Calls window.onerror(message, filename, lineno, colno, error) and also
+            // dispatches an ErrorEvent on window for addEventListener('error') listeners.
+            function __reportListenerError(err) {
+                var message = (err && err.message) ? String(err.message) : String(err);
+                var filename = (err && err.fileName) ? String(err.fileName) : '';
+                var lineno = (err && err.lineNumber) ? err.lineNumber : 0;
+                var colno = (err && err.columnNumber) ? err.columnNumber : 0;
+
+                // 1. Fire window.onerror IDL handler (gets string args per spec)
+                if (typeof window.onerror === 'function') {
+                    window.onerror(message, filename, lineno, colno, err);
+                }
+
+                // 2. Dispatch ErrorEvent on window for addEventListener('error') listeners
+                var errEvt = new Event('error', {bubbles: false, cancelable: true});
+                errEvt.message = message;
+                errEvt.filename = filename;
+                errEvt.lineno = lineno;
+                errEvt.colno = colno;
+                errEvt.error = err;
+                if (window.__et_listeners && window.__et_listeners['error_b']) {
+                    var eCbs = window.__et_listeners['error_b'].slice();
+                    for (var ei = 0; ei < eCbs.length; ei++) {
+                        eCbs[ei].call(window, errEvt);
+                    }
+                }
+            }
+
+            // Helper to fire a list of callbacks.
+            // Per WHATWG DOM spec "inner invoke": if a listener throws, report the
+            // exception and continue to the next listener.
             function fireCbs(cbs, thisObj) {
                 if (!cbs || !cbs.length) return;
                 var snapshot = cbs.slice();
                 for (var j = 0; j < snapshot.length; j++) {
-                    snapshot[j].call(thisObj, event);
+                    try {
+                        snapshot[j].call(thisObj, event);
+                    } catch (ex) {
+                        __reportListenerError(ex);
+                    }
                     if (event._stopImmediate) return;
                 }
             }
@@ -143,8 +178,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                         if (bubbleCbs[k] === handler || bubbleCbs[k]._origCb === handler) return;
                     }
                 }
-                var ret = handler.call(el, event);
-                if (ret === false && event.cancelable) event.preventDefault();
+                try {
+                    var ret = handler.call(el, event);
+                    if (ret === false && event.cancelable) event.preventDefault();
+                } catch (ex) {
+                    __reportListenerError(ex);
+                }
             }
             // Fire __et_listeners on an element (for listeners added via EventTarget.prototype)
             function fireEt(obj, suffix) {
@@ -195,7 +234,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 // Inline event handler (e.g. onclick="...")
                 var attrHandler = __n_getAttribute(targetNid, 'on' + event.type);
                 if (attrHandler) {
-                    (new Function('event', attrHandler)).call(targetEl, event);
+                    try {
+                        (new Function('event', attrHandler)).call(targetEl, event);
+                    } catch (ex) {
+                        __reportListenerError(ex);
+                    }
                     if (event._stopImmediate) return;
                 }
 
@@ -330,7 +373,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                                 hevt.oldURL = oldURL;
                                 if (window.__et_listeners && window.__et_listeners['hashchange_b']) {
                                     var hcbs = window.__et_listeners['hashchange_b'];
-                                    for (var hi = 0; hi < hcbs.length; hi++) hcbs[hi].cb.call(window, hevt);
+                                    for (var hi = 0; hi < hcbs.length; hi++) hcbs[hi].call(window, hevt);
                                 }
                             }
                         }

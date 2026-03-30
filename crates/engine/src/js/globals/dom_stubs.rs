@@ -174,6 +174,9 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             return proxy;
         };
 
+        // Shared getter for Event.isTrusted (unforgeable, same function on all instances per spec)
+        var __isTrustedGetter = function() { return this._isTrusted; };
+
         // Event classes
         globalThis.Event = globalThis.Event || class Event {
             constructor(type, opts) {
@@ -188,7 +191,8 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this.currentTarget = null;
                 this.srcElement = null;
                 this.eventPhase = 0;
-                this.isTrusted = false;
+                this._isTrusted = false;
+                Object.defineProperty(this, 'isTrusted', {get: __isTrustedGetter, configurable: false});
                 this.timeStamp = Date.now();
                 this._stopPropagation = false;
                 this._stopImmediate = false;
@@ -201,8 +205,6 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 if (!v && this.cancelable && !this._inPassiveListener) {
                     this._returnValue = false;
                     this.defaultPrevented = true;
-                } else if (v) {
-                    this._returnValue = true;
                 }
             }
             get cancelBubble() { return this._stopPropagation; }
@@ -218,7 +220,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this._stopImmediate = false;
                 this.defaultPrevented = false;
                 this._returnValue = true;
-                this.isTrusted = false;
+                this._isTrusted = false;
                 this.target = null;
                 this.srcElement = null;
                 this.type = String(type);
@@ -836,7 +838,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             AbortSignal.prototype._fire = function() {
                 var ev = new Event('abort', {bubbles: false, cancelable: false});
                 Object.defineProperty(ev, 'target', {value: this, writable: false});
-                Object.defineProperty(ev, 'isTrusted', {value: true, writable: false, configurable: false});
+                ev._isTrusted = true;
                 if (this.onabort) this.onabort(ev);
                 if (this._listeners) for (var i = 0; i < this._listeners.length; i++) this._listeners[i](ev);
             };
