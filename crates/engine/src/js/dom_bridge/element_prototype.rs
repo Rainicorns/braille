@@ -498,7 +498,12 @@ pub(crate) fn element_prototype_js() -> &'static str {
             anim.finish = function() { if (typeof anim.onfinish === 'function') anim.onfinish(); };
             return anim;
         };
-        ElemProto.attachShadow = function() { return document.createDocumentFragment(); };
+        ElemProto.attachShadow = function(opts) {
+            var frag = document.createDocumentFragment();
+            frag._shadowHost = this;
+            this.shadowRoot = (opts && opts.mode === 'open') ? frag : null;
+            return frag;
+        };
         ElemProto.getAttributeNode = function(name) {
             if (!this.hasAttribute(name)) return null;
             return { name: name, value: this.getAttribute(name), specified: true };

@@ -271,7 +271,16 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 var cur = nodeId;
                 while (cur >= 0) {
                     if (__n_getNodeType(cur) === 9) { connected = true; break; }
-                    cur = __n_getParent(cur);
+                    var parent = __n_getParent(cur);
+                    if (parent < 0) {
+                        // Check if this is a shadow root with a host
+                        var wrapper = __w(cur);
+                        if (wrapper._shadowHost && wrapper._shadowHost.__nid !== undefined) {
+                            cur = wrapper._shadowHost.__nid;
+                            continue;
+                        }
+                    }
+                    cur = parent;
                 }
                 if (connected) {
                     targetEl.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
