@@ -31,6 +31,8 @@ fn crypto_js() -> &'static str {
         "\n",
         include_str!("crypto_js/random.js"),
         "\n",
+        include_str!("crypto_js/supports.js"),
+        "\n",
         "})();\n"
     )
 }
