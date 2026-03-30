@@ -1164,10 +1164,10 @@ PASS wpt:dom/events/non-cancelable-when-passive/passive-wheel-event-listener-on-
 PASS wpt:dom/events/non-cancelable-when-passive/passive-wheel-event-listener-on-root.html
 PASS wpt:dom/events/non-cancelable-when-passive/passive-wheel-event-listener-on-window.html
 PASS wpt:dom/events/non-cancelable-when-passive/synthetic-events-cancelable.html
-FAIL wpt:dom/events/passive-by-default.html
-NOT_RUN wpt:dom/events/pointer-event-document-move.html
-NOT_RUN wpt:dom/events/preventDefault-during-activation-behavior.html
-NOT_RUN wpt:dom/events/relatedTarget.window.js
+PASS wpt:dom/events/passive-by-default.html
+PASS wpt:dom/events/pointer-event-document-move.html
+PASS wpt:dom/events/preventDefault-during-activation-behavior.html
+FAIL wpt:dom/events/relatedTarget.window.js
 NOT_RUN wpt:dom/events/remove-all-listeners.html
 NOT_RUN wpt:dom/events/replace-event-listener-null-browsing-context-crash.html
 NOT_RUN wpt:dom/events/resources/empty-document.html

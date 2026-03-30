@@ -207,6 +207,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 var snapshot = cbs.slice();
                 for (var j = 0; j < snapshot.length; j++) {
                     var cb = snapshot[j];
+                    var wasPassive = event._inPassiveListener;
+                    if (cb._passive) event._inPassiveListener = true;
                     try {
                         if (typeof cb === 'function') {
                             cb.call(thisObj, event);
@@ -222,6 +224,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     } catch (ex) {
                         __reportListenerError(ex);
                     }
+                    event._inPassiveListener = wasPassive;
                     if (event._stopImmediate) return;
                 }
             }
@@ -847,17 +850,23 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return __makeHTMLCollection(function() { return doc.querySelectorAll('.' + cls); });
         };
         doc.addEventListener = function(type, cb, opts) {
-            var capture, once;
+            var capture, once, passive, passiveExplicit;
             if (opts && typeof opts === 'object' && opts !== null) {
                 capture = !!opts.capture;
                 once = !!opts.once;
-                if (opts.passive) {
-                    if (!document.__passiveTypes) document.__passiveTypes = {};
-                    document.__passiveTypes[type] = true;
-                }
+                passiveExplicit = ('passive' in opts) && opts.passive !== undefined;
+                passive = passiveExplicit ? !!opts.passive : false;
             } else {
                 capture = !!opts;
                 once = false;
+                passiveExplicit = false;
+                passive = false;
+            }
+            // Passive-by-default for touch/wheel on document
+            if (!passiveExplicit && __passiveDefaultTypes[type]) passive = true;
+            if (passive) {
+                if (!document.__passiveTypes) document.__passiveTypes = {};
+                document.__passiveTypes[type] = true;
             }
             if (typeof cb !== 'function' && !(cb && typeof cb === 'object')) return;
             var store = capture ? _docCapture : doc.__listeners;
@@ -865,8 +874,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (once) {
                 var wrapper = function(e) { doc.removeEventListener(type, wrapper, capture); cb.call(document, e); };
                 wrapper._origCb = cb;
+                if (passive) wrapper._passive = true;
                 store[type].push(wrapper);
             } else {
+                if (passive && typeof cb === 'function') cb._passive = true;
                 store[type].push(cb);
             }
         };
@@ -968,7 +979,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (cbs) {
                 var snapshot = cbs.slice();
                 for (var i = 0; i < snapshot.length; i++) {
+                    var wasPassive = event._inPassiveListener;
+                    if (snapshot[i]._passive) event._inPassiveListener = true;
                     snapshot[i].call(document, event);
+                    event._inPassiveListener = wasPassive;
                     if (event._stopImmediate) break;
                 }
             }
@@ -1315,17 +1329,23 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             var self = (this == null) ? window : this;
             if (!self.__et_listeners) self.__et_listeners = {};
             // Read all options first (spec requires Get even if cb is null)
-            var capture, once, passive, signal;
+            var capture, once, passive, passiveExplicit, signal;
             if (opts && typeof opts === 'object' && opts !== null) {
                 capture = !!opts.capture;
                 once = !!opts.once;
-                passive = !!opts.passive;
+                passiveExplicit = ('passive' in opts) && opts.passive !== undefined;
+                passive = passiveExplicit ? !!opts.passive : false;
                 signal = opts.signal;
             } else {
                 capture = !!opts;
                 once = false;
+                passiveExplicit = false;
                 passive = false;
                 signal = undefined;
+            }
+            // Passive-by-default for touch/wheel on window
+            if (!passiveExplicit && __passiveDefaultTypes[type] && (self === window)) {
+                passive = true;
             }
             if (passive) {
                 if (!self.__passiveTypes) self.__passiveTypes = {};

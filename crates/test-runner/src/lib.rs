@@ -528,7 +528,14 @@ pub fn resolve_script_src(
             if (typeof test_driver === 'undefined') {
                 var test_driver = {
                     click: function(element) {
-                        if (element && typeof element.click === 'function') element.click();
+                        if (element) {
+                            // Simulate full pointer sequence: pointerdown → pointerup → click
+                            if (element.dispatchEvent) {
+                                element.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,cancelable:true}));
+                                element.dispatchEvent(new PointerEvent('pointerup', {bubbles:true,cancelable:true}));
+                            }
+                            if (typeof element.click === 'function') element.click();
+                        }
                         return Promise.resolve();
                     },
                     send_keys: function(element, keys) { return Promise.resolve(); },

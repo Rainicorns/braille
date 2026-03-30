@@ -40,18 +40,34 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.hasAttribute = function(name) { return __n_hasAttribute(this.__nid, String(name).toLowerCase()); };
         ElemProto.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
 
+        // Event types that are passive by default on scroll-blocking targets
+        var __passiveDefaultTypes = {touchstart:1,touchmove:1,wheel:1,mousewheel:1};
+        function __isScrollBlockingTarget(el) {
+            if (el === window || el === document) return true;
+            if (el.__nid === undefined) return false;
+            var tag = __n_getTagName(el.__nid);
+            return tag === 'HTML' || tag === 'BODY';
+        }
+
         EP.addEventListener = function(type, cb, opts) {
-            var capture, once, signal, passive;
+            var capture, once, signal, passive, passiveExplicit;
             if (opts && typeof opts === 'object' && opts !== null) {
                 capture = !!opts.capture;
                 once = !!opts.once;
                 signal = opts.signal;
-                passive = !!opts.passive;
+                // passive is explicitly set only if the key exists AND the value is not undefined
+                passiveExplicit = ('passive' in opts) && opts.passive !== undefined;
+                passive = passiveExplicit ? !!opts.passive : false;
             } else {
                 capture = !!opts;
                 once = false;
                 signal = undefined;
+                passiveExplicit = false;
                 passive = false;
+            }
+            // Passive-by-default: touch/wheel on window/document/html/body
+            if (!passiveExplicit && __passiveDefaultTypes[type] && __isScrollBlockingTarget(this)) {
+                passive = true;
             }
             // Track passive listeners for synthetic event cancelability
             if (passive) {
@@ -74,8 +90,10 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     else if (cb && typeof cb.handleEvent === 'function') cb.handleEvent(e);
                 };
                 wrapper._origCb = cb;
+                if (passive) wrapper._passive = true;
                 store[key].push(wrapper);
             } else {
+                if (passive && typeof cb === 'function') cb._passive = true;
                 store[key].push(cb);
             }
             if (signal) {
