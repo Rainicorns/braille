@@ -742,6 +742,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             event.eventPhase = 0;
             return !event.defaultPrevented;
         };
+        doc.elementFromPoint = function(x, y) { return doc.documentElement || null; };
+        doc.elementsFromPoint = function(x, y) { var de = doc.documentElement; return de ? [de] : []; };
         doc.createEvent = function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; };
         doc.createTreeWalker = function(root, whatToShow, filter) {
             // Minimal TreeWalker: pre-order traversal of element nodes

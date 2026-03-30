@@ -38,6 +38,9 @@ impl DomTree {
         } else {
             panic!("set_attribute: node {} is not an Element", node_id);
         }
+        if name == "style" || name == "class" {
+            self.layout_cache.mark_dirty();
+        }
     }
 
     /// Removes the first attribute matching the given name. Returns true if it was removed.

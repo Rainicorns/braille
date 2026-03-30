@@ -357,6 +357,9 @@ pub fn compute_all_styles(tree: &mut DomTree) {
         let map = computed_style_to_map(style);
         tree.get_node_mut(*node_id).computed_style = Some(map);
     }
+
+    // Layout depends on computed styles — mark dirty so next layout query recomputes.
+    tree.layout_cache.mark_dirty();
 }
 
 /// Walk up the tree from `node_id` to find the nearest ancestor Element

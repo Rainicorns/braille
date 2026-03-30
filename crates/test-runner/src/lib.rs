@@ -437,6 +437,32 @@ pub fn resolve_script_src(
     if src == "/common/subset-tests.js" {
         return Some("function subsetTest(testFunc) { var args = Array.prototype.slice.call(arguments, 1); testFunc.apply(this, args); }".to_string());
     }
+    if src.contains("testdriver") {
+        return Some(r#"
+            var test_driver = {
+                click: function(element) {
+                    element.click();
+                    return Promise.resolve();
+                },
+                send_keys: function(element, keys) {
+                    return Promise.resolve();
+                },
+                bless: function(intent, action) {
+                    if (typeof action === 'function') return Promise.resolve(action());
+                    return Promise.resolve();
+                },
+                set_permission: function() { return Promise.resolve(); },
+                Actions: function() {
+                    this.pointerMove = function() { return this; };
+                    this.pointerDown = function() { return this; };
+                    this.pointerUp = function() { return this; };
+                    this.pause = function() { return this; };
+                    this.send = function() { return Promise.resolve(); };
+                },
+            };
+            var test_driver_internal = {};
+        "#.to_string());
+    }
 
     let resolved_path = if src.starts_with('/') {
         wpt_root().join(src.trim_start_matches('/'))

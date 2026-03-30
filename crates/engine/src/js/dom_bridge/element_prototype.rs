@@ -328,35 +328,12 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
 
         ElemProto.getBoundingClientRect = function() {
-            // Return plausible non-zero defaults instead of all zeros
-            var s = __n_getAttribute(this.__nid, 'style') || '';
-            // display:none → all zeros
-            if (/display\s*:\s*none/i.test(s)) return {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
-            // Also check computed style for display:none
-            var compDisplay = __n_getComputedStyle(this.__nid, 'display');
-            if (compDisplay === 'none') return {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
-            var w = 0, h = 0, found = false;
-            // Try inline style first
-            var wm = s.match(/(?:^|;)\s*width\s*:\s*(\d+)/);
-            var hm = s.match(/(?:^|;)\s*height\s*:\s*(\d+)/);
-            if (wm) { w = parseInt(wm[1]); found = true; }
-            if (hm) { h = parseInt(hm[1]); found = true; }
-            // Fall back to computed style if inline didn't have dimensions
-            if (!wm) {
-                var cw = __n_getComputedStyle(this.__nid, 'width');
-                if (cw) { var pw = parseInt(cw); if (!isNaN(pw)) { w = pw; found = true; } }
-            }
-            if (!hm) {
-                var ch = __n_getComputedStyle(this.__nid, 'height');
-                if (ch) { var ph = parseInt(ch); if (!isNaN(ph)) { h = ph; found = true; } }
-            }
-            // If no explicit dimensions, use content-based defaults for visible elements
-            if (!found) {
-                var tag = this.tagName;
-                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'IMG') { w = 100; h = 20; }
-                else if (__n_getTextContent(this.__nid).trim()) { w = 100; h = 20; }
-            }
-            return {top:0,left:0,width:w,height:h,right:w,bottom:h,x:0,y:0};
+            if (this.__nid === undefined) return {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
+            var json = __n_getLayout(this.__nid);
+            if (!json) return {top:0,left:0,width:0,height:0,right:0,bottom:0,x:0,y:0};
+            var l = JSON.parse(json);
+            return {x:l.x, y:l.y, width:l.width, height:l.height,
+                    top:l.y, left:l.x, right:l.x+l.width, bottom:l.y+l.height};
         };
         ElemProto.getClientRects = function() { return [this.getBoundingClientRect()]; };
         // focus/blur defined later after defineProperties to track activeElement
@@ -1001,8 +978,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
             scrollLeft: { get: function() { return 0; }, set: function(){}, configurable: true },
             scrollWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
             scrollHeight: { get: function() { return this.getBoundingClientRect().height; }, configurable: true },
-            offsetTop: { get: function() { return 0; }, configurable: true },
-            offsetLeft: { get: function() { return 0; }, configurable: true },
+            offsetTop: { get: function() { return this.getBoundingClientRect().top; }, configurable: true },
+            offsetLeft: { get: function() { return this.getBoundingClientRect().left; }, configurable: true },
             offsetWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
             offsetHeight: { get: function() { return this.getBoundingClientRect().height; }, configurable: true },
             clientWidth: { get: function() { if (this.tagName === 'HTML') return 1280; return this.getBoundingClientRect().width; }, configurable: true },

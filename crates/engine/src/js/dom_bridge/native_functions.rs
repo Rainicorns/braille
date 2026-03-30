@@ -569,6 +569,16 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // __n_getLayout(nodeId) -> JSON {"x":...,"y":...,"width":...,"height":...} or empty
+    g.set("__n_getLayout", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree_mut(|tree| {
+            match tree.get_layout_rect(node_id as NodeId) {
+                Some(r) => format!("{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}", r.x, r.y, r.width, r.height),
+                None => String::new(),
+            }
+        })
+    }).unwrap()).unwrap();
+
     // __n_findLabelsForControl(controlNodeId) -> array of label nodeIds
     g.set("__n_findLabelsForControl", Function::new(ctx.clone(), |control_id: u32| -> Vec<u32> {
         with_tree(|tree| {

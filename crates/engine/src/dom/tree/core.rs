@@ -1,10 +1,12 @@
 use crate::dom::node::{Node, NodeData, NodeId};
+use crate::layout::{LayoutCache, LayoutRect};
 
 #[derive(Debug)]
 pub struct DomTree {
     pub(crate) nodes: Vec<Node>,
     is_html_document: bool,
     pub url_fragment: Option<String>,
+    pub(crate) layout_cache: LayoutCache,
 }
 
 impl Default for DomTree {
@@ -21,6 +23,7 @@ impl DomTree {
             nodes: Vec::new(),
             is_html_document: true,
             url_fragment: None,
+            layout_cache: LayoutCache::default(),
         };
         tree.alloc_node(NodeData::Document);
         tree
@@ -32,6 +35,7 @@ impl DomTree {
             nodes: Vec::new(),
             is_html_document: false,
             url_fragment: None,
+            layout_cache: LayoutCache::default(),
         };
         tree.alloc_node(NodeData::Document);
         tree
@@ -104,5 +108,16 @@ impl DomTree {
     /// Returns the total number of nodes in the tree.
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Ensure layout has been computed (lazy — only recomputes when dirty).
+    pub fn ensure_layout(&mut self) {
+        crate::layout::ensure_computed(&mut self.layout_cache, &self.nodes);
+    }
+
+    /// Get the layout rect for a node, computing layout if needed.
+    pub fn get_layout_rect(&mut self, node_id: NodeId) -> Option<LayoutRect> {
+        self.ensure_layout();
+        self.layout_cache.get_rect(node_id).copied()
     }
 }

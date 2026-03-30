@@ -40,6 +40,7 @@ sha1 = { version = "0.10", features = ["oid"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 ml-dsa = "0.1.0-rc.8"
 aes-kw = "0.3.0-rc.2"
+taffy = "0.7"
 
 [lints]
 workspace = true

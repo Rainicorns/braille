@@ -6,6 +6,7 @@ pub mod dom;
 mod fetch;
 pub mod html;
 pub mod js;
+pub mod layout;
 mod loading;
 mod meta_refresh;
 pub mod navigation;

@@ -28,12 +28,14 @@ impl DomTree {
         }
         self.nodes[child].parent = Some(parent);
         self.nodes[parent].children.push(child);
+        self.layout_cache.mark_dirty();
     }
 
     /// Removes `child` from `parent`'s children list and clears the child's parent.
     pub fn remove_child(&mut self, parent: NodeId, child: NodeId) {
         self.nodes[parent].children.retain(|&c| c != child);
         self.nodes[child].parent = None;
+        self.layout_cache.mark_dirty();
     }
 
     /// Allocates a new Comment node (unattached) and returns its NodeId.
@@ -133,6 +135,7 @@ impl DomTree {
             .expect("insert_before: sibling not found in parent's children");
         self.nodes[parent].children.insert(pos, child);
         self.nodes[child].parent = Some(parent);
+        self.layout_cache.mark_dirty();
     }
 
     /// Removes a node from its parent (if it has one).
