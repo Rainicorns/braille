@@ -111,7 +111,12 @@ impl DomTree {
     }
 
     /// Ensure layout has been computed (lazy — only recomputes when dirty).
+    /// Recomputes CSS styles first so dynamically created elements get their
+    /// computed styles from inline `style` attributes before taffy runs.
     pub fn ensure_layout(&mut self) {
+        if self.layout_cache.is_dirty() {
+            crate::css::style_tree::compute_all_styles(self);
+        }
         crate::layout::ensure_computed(&mut self.layout_cache, &self.nodes);
     }
 

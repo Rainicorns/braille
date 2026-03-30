@@ -351,4 +351,34 @@ mod tests {
         assert_eq!(start, "0");
         assert_eq!(end, "5");
     }
+
+    #[test]
+    fn scroll_top_clamps_to_max() {
+        let html = r#"<html><body>
+            <div id="container" style="overflow:scroll; height:100px; width:100px">
+                <div style="height:200px; width:200px"></div>
+            </div>
+        </body></html>"#;
+
+        let mut engine = Engine::new();
+        engine.load_html(html);
+        engine.snapshot(SnapMode::Accessibility);
+
+        let sh = engine.eval_js("document.getElementById('container').scrollHeight").unwrap();
+        eprintln!("scrollHeight = {}", sh);
+        let ch = engine.eval_js("document.getElementById('container').clientHeight").unwrap();
+        eprintln!("clientHeight = {}", ch);
+        let sw = engine.eval_js("document.getElementById('container').scrollWidth").unwrap();
+        eprintln!("scrollWidth = {}", sw);
+        let cw = engine.eval_js("document.getElementById('container').clientWidth").unwrap();
+        eprintln!("clientWidth = {}", cw);
+
+        engine.eval_js("document.getElementById('container').scrollTop = 1000").unwrap();
+        let st = engine.eval_js("document.getElementById('container').scrollTop").unwrap();
+        eprintln!("scrollTop after set 1000 = {}", st);
+
+        // scrollHeight=200, clientHeight=100, max=100
+        // so scrollTop should clamp to 100
+        assert_eq!(st, "100");
+    }
 }

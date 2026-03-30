@@ -101,7 +101,7 @@ pub fn testharness_preamble() -> String {
                 return function() { throw new Error(msg || "unreached"); };
             },
             add_cleanup: function() {},
-            step_timeout: function(fn, timeout) { fn(); },
+            step_timeout: function(fn, timeout) { return setTimeout(fn, timeout || 0); },
             _done: false
         };
         var result = { name: t.name, status: 0, message: "" };
@@ -139,7 +139,7 @@ pub fn testharness_preamble() -> String {
                     return function() { throw new Error(msg || "unreached"); };
                 },
                 add_cleanup: function(f) { cleanups.push(f); },
-                step_timeout: function(fn, timeout) { fn(); },
+                step_timeout: function(fn, timeout) { return setTimeout(fn, timeout || 0); },
                 step_wait: function(cond, description, timeout, interval) {
                     return new Promise(function(resolve, reject) {
                         if (cond()) { resolve(); return; }
@@ -203,7 +203,7 @@ pub fn testharness_preamble() -> String {
     };
 
     self.step_timeout = function(fn, timeout) {
-        fn();
+        return setTimeout(fn, timeout || 0);
     };
 
     self.generate_tests = function(fn, tests, props) {

@@ -1039,6 +1039,12 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     }
                     return this._s;
                 },
+                set: function(v) {
+                    var s = String(v);
+                    if (s) __n_setAttribute(this.__nid, 'style', s);
+                    else __n_removeAttribute(this.__nid, 'style');
+                    this._s = undefined;
+                },
                 configurable: true
             },
             classList: {
@@ -1130,9 +1136,13 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 set: function(val) {
                     if (!this.__props) this.__props = {};
+                    var v = val|0;
+                    if (v < 0) v = 0;
+                    var maxScroll = this.scrollHeight - this.clientHeight;
+                    if (maxScroll > 0 && v > maxScroll) v = maxScroll;
                     var old = this.__props._scrollTop || 0;
-                    this.__props._scrollTop = val|0;
-                    if (old !== (val|0)) {
+                    this.__props._scrollTop = v;
+                    if (old !== v) {
                         this.dispatchEvent(new Event('scroll', {bubbles: false}));
                     }
                 },
@@ -1144,16 +1154,46 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 set: function(val) {
                     if (!this.__props) this.__props = {};
+                    var v = val|0;
+                    if (v < 0) v = 0;
+                    var maxScroll = this.scrollWidth - this.clientWidth;
+                    if (maxScroll > 0 && v > maxScroll) v = maxScroll;
                     var old = this.__props._scrollLeft || 0;
-                    this.__props._scrollLeft = val|0;
-                    if (old !== (val|0)) {
+                    this.__props._scrollLeft = v;
+                    if (old !== v) {
                         this.dispatchEvent(new Event('scroll', {bubbles: false}));
                     }
                 },
                 configurable: true
             },
-            scrollWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
-            scrollHeight: { get: function() { return this.getBoundingClientRect().height; }, configurable: true },
+            scrollWidth: {
+                get: function() {
+                    var w = this.getBoundingClientRect().width;
+                    var children = this.children;
+                    if (children) {
+                        for (var i = 0; i < children.length; i++) {
+                            var cr = children[i].getBoundingClientRect();
+                            if (cr.width > w) w = cr.width;
+                        }
+                    }
+                    return w;
+                },
+                configurable: true
+            },
+            scrollHeight: {
+                get: function() {
+                    var h = this.getBoundingClientRect().height;
+                    var children = this.children;
+                    if (children) {
+                        for (var i = 0; i < children.length; i++) {
+                            var cr = children[i].getBoundingClientRect();
+                            if (cr.height > h) h = cr.height;
+                        }
+                    }
+                    return h;
+                },
+                configurable: true
+            },
             offsetTop: { get: function() { return this.getBoundingClientRect().top; }, configurable: true },
             offsetLeft: { get: function() { return this.getBoundingClientRect().left; }, configurable: true },
             offsetWidth: { get: function() { return this.getBoundingClientRect().width; }, configurable: true },
