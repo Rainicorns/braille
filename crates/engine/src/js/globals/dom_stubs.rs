@@ -18,6 +18,48 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.isSecureContext = true;
         globalThis.document = { nodeType: 9, nodeName: '#document', readyState: 'complete', cookie: '', title: '', defaultView: globalThis };
 
+        // Shared HTMLCollection factory — returns a live Proxy with:
+        //   - Brand check on .length (TypeError if receiver !== the proxy)
+        //   - Named item access (elements by id/name attribute)
+        //   - namedItem() method
+        //   - Proper iteration
+        globalThis.__makeHTMLCollection = function(queryFn) {
+            var proxy;
+            proxy = new Proxy([], {
+                get: function(t, p, receiver) {
+                    if (p === Symbol.toStringTag) return undefined;
+                    if (p === Symbol.iterator) {
+                        var items = queryFn();
+                        return function() { return items[Symbol.iterator](); };
+                    }
+                    var live = queryFn();
+                    if (p === 'length') {
+                        if (receiver !== proxy) throw new TypeError("Illegal invocation");
+                        return live.length;
+                    }
+                    if (p === 'item') return function(i) { return live[i] || null; };
+                    if (p === 'namedItem') return function(name) {
+                        for (var i = 0; i < live.length; i++) {
+                            var el = live[i];
+                            if (el.getAttribute && (el.getAttribute('id') === name || el.getAttribute('name') === name)) return el;
+                        }
+                        return null;
+                    };
+                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
+                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                    // Named item access: look for element by id or name
+                    if (typeof p === 'string' && p !== 'then' && p !== 'toJSON' && p !== 'constructor' && p !== '__proto__') {
+                        for (var i = 0; i < live.length; i++) {
+                            var el = live[i];
+                            if (el.getAttribute && (el.getAttribute('id') === p || el.getAttribute('name') === p)) return el;
+                        }
+                    }
+                    return live[p];
+                }
+            });
+            return proxy;
+        };
+
         // Event classes
         globalThis.Event = globalThis.Event || class Event {
             constructor(type, opts) {

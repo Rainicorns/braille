@@ -133,6 +133,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     TextDecoder: (typeof TextDecoder !== 'undefined') ? TextDecoder : undefined,
                     AbortSignal: (typeof AbortSignal !== 'undefined') ? AbortSignal : undefined,
                     AbortController: (typeof AbortController !== 'undefined') ? AbortController : undefined,
+                    DOMException: (typeof DOMException !== 'undefined') ? DOMException : undefined,
                     Uint8Array: Uint8Array,
                     ArrayBuffer: ArrayBuffer,
                     DataView: DataView,

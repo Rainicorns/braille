@@ -162,37 +162,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         ElemProto.getElementsByTagName = function(tag) {
             var self = this;
-            return new Proxy([], {
-                get: function(t, p) {
-                    var live = self.querySelectorAll(tag);
-                    if (p === 'length') return live.length;
-                    if (p === 'item') return function(i) { return live[i] || null; };
-                    if (p === 'namedItem') return function(name) {
-                        for (var i = 0; i < live.length; i++) {
-                            if (live[i].getAttribute('name') === name || live[i].getAttribute('id') === name) return live[i];
-                        }
-                        return null;
-                    };
-                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
-                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
-                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
-                    return live[p];
-                }
-            });
+            return __makeHTMLCollection(function() { return self.querySelectorAll(tag); });
         };
         ElemProto.getElementsByClassName = function(cls) {
             var self = this;
-            return new Proxy([], {
-                get: function(t, p) {
-                    var live = self.querySelectorAll('.' + cls);
-                    if (p === 'length') return live.length;
-                    if (p === 'item') return function(i) { return live[i] || null; };
-                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
-                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
-                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
-                    return live[p];
-                }
-            });
+            return __makeHTMLCollection(function() { return self.querySelectorAll('.' + cls); });
         };
         Object.defineProperty(ElemProto, 'attributes', {
             get: function() {

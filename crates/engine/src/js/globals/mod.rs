@@ -6,6 +6,7 @@ mod fetch;
 mod iframe;
 mod intl_js;
 mod messaging;
+mod shadowrealm;
 mod timers;
 mod worker;
 
@@ -48,6 +49,7 @@ pub fn register_all(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell
     css::register_css_object(ctx);
     messaging::register_messaging(ctx);
     iframe::register_iframe(ctx);
+    shadowrealm::register_shadowrealm(ctx);
     super::intl::register_intl(ctx);
     intl_js::register_intl_js(ctx);
 }

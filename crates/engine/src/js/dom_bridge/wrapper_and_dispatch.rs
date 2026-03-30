@@ -501,36 +501,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return __w(nid);
         };
         doc.getElementsByTagName = function(tag) {
-            return new Proxy([], {
-                get: function(t, p) {
-                    var live = doc.querySelectorAll(tag);
-                    if (p === 'length') return live.length;
-                    if (p === 'item') return function(i) { return live[i] || null; };
-                    if (p === 'namedItem') return function(name) {
-                        for (var i = 0; i < live.length; i++) {
-                            if (live[i].getAttribute('name') === name || live[i].getAttribute('id') === name) return live[i];
-                        }
-                        return null;
-                    };
-                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
-                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
-                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
-                    return live[p];
-                }
-            });
+            return __makeHTMLCollection(function() { return doc.querySelectorAll(tag); });
         };
         doc.getElementsByClassName = function(cls) {
-            return new Proxy([], {
-                get: function(t, p) {
-                    var live = doc.querySelectorAll('.' + cls);
-                    if (p === 'length') return live.length;
-                    if (p === 'item') return function(i) { return live[i] || null; };
-                    if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
-                    if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
-                    if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
-                    return live[p];
-                }
-            });
+            return __makeHTMLCollection(function() { return doc.querySelectorAll('.' + cls); });
         };
         doc.addEventListener = function(type, cb, opts) {
             if (typeof cb !== 'function') return;

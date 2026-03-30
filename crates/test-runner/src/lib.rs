@@ -260,6 +260,9 @@ pub fn testharness_preamble() -> String {
     self.assert_own_property = function(obj, prop, msg) {
         if (!obj.hasOwnProperty(prop)) throw new AssertionError(msg || "assert_own_property: missing " + prop);
     };
+    self.assert_not_own_property = function(obj, prop, msg) {
+        if (obj.hasOwnProperty(prop)) throw new AssertionError(msg || "assert_not_own_property: unexpected " + prop);
+    };
     self.assert_class_string = function(obj, expected, msg) {
         var actual = Object.prototype.toString.call(obj);
         var cls = actual.slice(8, -1);
@@ -573,6 +576,11 @@ pub fn wrap_js_in_html(js_path: &Path) -> String {
     let js_content = std::fs::read_to_string(js_path).unwrap();
     let title = js_path.file_stem().unwrap().to_str().unwrap();
 
+    // Detect META: global=shadowrealm
+    let is_shadowrealm = js_content.lines().any(|l| {
+        l.starts_with("// META: global=") && l.contains("shadowrealm")
+    });
+
     let mut meta_scripts = String::new();
     for line in js_content.lines() {
         if let Some(rest) = line.strip_prefix("// META: script=") {
@@ -588,6 +596,32 @@ pub fn wrap_js_in_html(js_path: &Path) -> String {
         }
     }
 
+    if is_shadowrealm {
+        wrap_shadowrealm_html(title, &js_content, &meta_scripts)
+    } else {
+        format!(
+            r#"<!DOCTYPE html>
+<meta charset=utf-8>
+<title>{title}</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+{meta_scripts}<script>
+{js_content}
+</script>
+"#
+        )
+    }
+}
+
+fn wrap_shadowrealm_html(title: &str, js_content: &str, meta_scripts: &str) -> String {
+    // ShadowRealm tests run inside a simulated ShadowRealm environment.
+    // The preamble loads normally (outer scope), then we:
+    // 1. Save and delete web-only globals
+    // 2. Strip non-[Exposed=*] members from [Exposed=*] APIs
+    // 3. Run meta scripts + test code
+    // 4. Restore everything
+    let escaped_js = js_content.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
+
     format!(
         r#"<!DOCTYPE html>
 <meta charset=utf-8>
@@ -595,7 +629,59 @@ pub fn wrap_js_in_html(js_path: &Path) -> String {
 <script src="/resources/testharness.js"></script>
 <script src="/resources/testharnessreport.js"></script>
 {meta_scripts}<script>
-{js_content}
+(function() {{
+    // Web-only globals that should not exist in ShadowRealm
+    var webOnly = [
+        'window', 'self', 'document', 'navigator', 'location', 'history',
+        'screen', 'performance', 'localStorage', 'sessionStorage',
+        'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+        'fetch', 'Request', 'Response', 'Headers',
+        'XMLHttpRequest', 'Worker', 'MessageChannel', 'MessagePort',
+        'Blob', 'FormData', 'CSS',
+        'MutationObserver', 'IntersectionObserver', 'ResizeObserver',
+        'HTMLElement', 'HTMLInputElement', 'HTMLFormElement', 'HTMLIFrameElement',
+        'Node', 'Element', 'Document',
+        'crypto', 'SubtleCrypto', 'CryptoKey',
+        'isSecureContext'
+    ];
+
+    // Save and delete web-only globals
+    var saved = {{}};
+    for (var i = 0; i < webOnly.length; i++) {{
+        var name = webOnly[i];
+        if (name in globalThis) {{
+            saved[name] = Object.getOwnPropertyDescriptor(globalThis, name);
+            delete globalThis[name];
+        }}
+    }}
+
+    // Strip non-[Exposed=*] members from [Exposed=*] APIs
+    var savedMembers = {{}};
+    if (typeof AbortSignal !== 'undefined') {{
+        if ('timeout' in AbortSignal) {{
+            savedMembers['AbortSignal.timeout'] = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+            delete AbortSignal.timeout;
+        }}
+    }}
+
+    // Run the test code
+    try {{
+        (new Function(`{escaped_js}`))();
+    }} catch(e) {{
+        // Let the test harness handle it
+        throw e;
+    }} finally {{
+        // Restore web-only globals
+        for (var name in saved) {{
+            Object.defineProperty(globalThis, name, saved[name]);
+        }}
+        // Restore stripped members
+        for (var key in savedMembers) {{
+            var parts = key.split('.');
+            Object.defineProperty(globalThis[parts[0]], parts[1], savedMembers[key]);
+        }}
+    }}
+}})();
 </script>
 "#
     )
