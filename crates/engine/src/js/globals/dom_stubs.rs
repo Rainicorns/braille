@@ -656,29 +656,66 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         // Misc stubs
         // AbortController / AbortSignal with real event dispatch
         globalThis.AbortSignal = (function() {
-            function makeSignal() {
-                return { aborted: false, reason: undefined, onabort: null, _listeners: [],
-                    addEventListener: function(type, cb) { if (type === 'abort') this._listeners.push(cb); },
-                    removeEventListener: function(type, cb) { if (type === 'abort') this._listeners = this._listeners.filter(function(f){return f!==cb;}); },
-                    _fire: function() {
-                        var ev = {type: 'abort', target: this};
-                        if (this.onabort) this.onabort(ev);
-                        for (var i = 0; i < this._listeners.length; i++) this._listeners[i](ev);
-                    },
-                    throwIfAborted: function() { if (this.aborted) throw this.reason || new Error('AbortError'); },
-                };
-            }
-            var AS = {
-                abort: function(reason) { var s = makeSignal(); s.aborted = true; s.reason = reason !== undefined ? reason : new Error('AbortError'); return s; },
-                timeout: function(ms) { var s = makeSignal(); setTimeout(function() { s.aborted = true; s.reason = new Error('TimeoutError'); s._fire(); }, ms); return s; },
-                any: function(signals) { var s = makeSignal(); function onAbort() { if (!s.aborted) { s.aborted = true; s.reason = this.reason; s._fire(); } } for (var i = 0; i < signals.length; i++) { if (signals[i].aborted) { s.aborted = true; s.reason = signals[i].reason; return s; } signals[i].addEventListener('abort', onAbort.bind(signals[i])); } return s; },
+            function AbortSignal() {}
+            AbortSignal.prototype.aborted = false;
+            AbortSignal.prototype.reason = undefined;
+            AbortSignal.prototype.onabort = null;
+            AbortSignal.prototype.addEventListener = function(type, cb) { if (type === 'abort') { if (!this._listeners) this._listeners = []; this._listeners.push(cb); } };
+            AbortSignal.prototype.removeEventListener = function(type, cb) { if (type === 'abort' && this._listeners) this._listeners = this._listeners.filter(function(f){return f!==cb;}); };
+            AbortSignal.prototype._fire = function() {
+                var ev = {type: 'abort', target: this};
+                if (this.onabort) this.onabort(ev);
+                if (this._listeners) for (var i = 0; i < this._listeners.length; i++) this._listeners[i](ev);
             };
-            AS._makeSignal = makeSignal;
-            return AS;
+            AbortSignal.prototype.throwIfAborted = function() { if (this.aborted) throw this.reason || new DOMException('The operation was aborted.', 'AbortError'); };
+            function makeSignal() {
+                var s = Object.create(AbortSignal.prototype);
+                s.aborted = false;
+                s.reason = undefined;
+                s.onabort = null;
+                s._listeners = [];
+                s._dependents = [];
+                return s;
+            }
+            // Two-phase abort: mark all dependents aborted first, then fire events
+            function signalAbort(signal, reason) {
+                if (signal.aborted) return;
+                signal.aborted = true;
+                signal.reason = reason;
+                // Phase 1: mark all dependents (breadth-first)
+                var toMark = signal._dependents.slice();
+                var allSignals = [signal];
+                while (toMark.length > 0) {
+                    var dep = toMark.shift();
+                    if (!dep.aborted) {
+                        dep.aborted = true;
+                        dep.reason = reason;
+                        allSignals.push(dep);
+                        if (dep._dependents) {
+                            for (var i = 0; i < dep._dependents.length; i++) toMark.push(dep._dependents[i]);
+                        }
+                    }
+                }
+                // Phase 2: fire events in creation/registration order
+                for (var i = 0; i < allSignals.length; i++) allSignals[i]._fire();
+            }
+            AbortSignal.abort = function(reason) { var s = makeSignal(); s.aborted = true; s.reason = reason !== undefined ? reason : new DOMException('The operation was aborted.', 'AbortError'); return s; };
+            AbortSignal.timeout = function(ms) { var s = makeSignal(); setTimeout(function() { signalAbort(s, new DOMException('The operation timed out.', 'TimeoutError')); }, ms); return s; };
+            AbortSignal.any = function(signals) {
+                var s = makeSignal();
+                for (var i = 0; i < signals.length; i++) {
+                    if (signals[i].aborted) { s.aborted = true; s.reason = signals[i].reason; return s; }
+                    if (signals[i]._dependents) signals[i]._dependents.push(s);
+                }
+                return s;
+            };
+            AbortSignal._makeSignal = makeSignal;
+            AbortSignal._signalAbort = signalAbort;
+            return AbortSignal;
         })();
         globalThis.AbortController = class AbortController {
             constructor() { this.signal = AbortSignal._makeSignal(); }
-            abort(reason) { if (!this.signal.aborted) { this.signal.aborted = true; this.signal.reason = reason !== undefined ? reason : new Error('AbortError'); this.signal._fire(); } }
+            abort(reason) { AbortSignal._signalAbort(this.signal, reason !== undefined ? reason : new DOMException('The operation was aborted.', 'AbortError')); }
         };
         // Worker class is registered by worker.rs with real delegation to the host.
 
