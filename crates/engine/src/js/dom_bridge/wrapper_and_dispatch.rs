@@ -122,6 +122,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     if (event._stopImmediate) return;
                 }
             }
+            // Fire IDL on<type> handler on an element if not already in listener list
+            function fireOnHandler(el, bubbleCbs) {
+                var handler = el['on' + event.type];
+                if (typeof handler !== 'function') return;
+                // Don't double-fire if handler is already in the bubble listener list
+                if (bubbleCbs) {
+                    for (var k = 0; k < bubbleCbs.length; k++) {
+                        if (bubbleCbs[k] === handler || bubbleCbs[k]._origCb === handler) return;
+                    }
+                }
+                var ret = handler.call(el, event);
+                if (ret === false && event.cancelable) event.preventDefault();
+            }
             // Fire __et_listeners on an element (for listeners added via EventTarget.prototype)
             function fireEt(obj, suffix) {
                 if (obj && obj.__et_listeners) {
@@ -180,9 +193,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 if (event._stopImmediate) return;
                 fireEt(targetEl, '_c');
                 if (event._stopImmediate) return;
-                fireCbs(_bubbleKeys[targetNid + ':' + event.type], targetEl);
+                var targetBubbleCbs = _bubbleKeys[targetNid + ':' + event.type];
+                fireCbs(targetBubbleCbs, targetEl);
                 if (event._stopImmediate) return;
                 fireEt(targetEl, '_b');
+                if (event._stopImmediate) return;
+                fireOnHandler(targetEl, targetBubbleCbs);
                 if (event._stopImmediate) return;
 
                 if (!event.bubbles) return;
@@ -194,9 +210,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     var nid = path[i];
                     var el = __w(nid);
                     event.currentTarget = el;
-                    fireCbs(_bubbleKeys[nid + ':' + event.type], el);
+                    var elBubbleCbs = _bubbleKeys[nid + ':' + event.type];
+                    fireCbs(elBubbleCbs, el);
                     if (event._stopImmediate) return;
                     fireEt(el, '_b');
+                    if (event._stopImmediate) return;
+                    fireOnHandler(el, elBubbleCbs);
                     if (event._stopImmediate) return;
                 }
 
