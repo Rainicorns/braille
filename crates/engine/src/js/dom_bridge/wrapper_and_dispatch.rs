@@ -710,11 +710,30 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
             event._dispatching = true;
             event.target = document;
+            event.srcElement = document;
+            event._path = [document, window];
+            event.eventPhase = 2;
             event.currentTarget = document;
             var cbs = doc.__listeners[event.type];
             if (cbs) {
                 var snapshot = cbs.slice();
-                for (var i = 0; i < snapshot.length; i++) snapshot[i].call(document, event);
+                for (var i = 0; i < snapshot.length; i++) {
+                    snapshot[i].call(document, event);
+                    if (event._stopImmediate) break;
+                }
+            }
+            // Bubble to window
+            if (event.bubbles && !event._stopPropagation && !event._stopImmediate) {
+                event.eventPhase = 3;
+                event.currentTarget = window;
+                var winCbs = window.__et_listeners && window.__et_listeners[event.type + '_b'];
+                if (winCbs) {
+                    var ws = winCbs.slice();
+                    for (var i = 0; i < ws.length; i++) {
+                        ws[i].call(window, event);
+                        if (event._stopImmediate) break;
+                    }
+                }
             }
             event._dispatching = false;
             event._stopPropagation = false;
