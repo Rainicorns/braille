@@ -1031,7 +1031,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             function walk(el) {
                 if (!el || el.nodeType !== 1) return;
                 var r = el.getBoundingClientRect();
-                if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+                var display = __n_getComputedStyle(el.__nid, 'display');
+                if (display === 'none') return;
+                if (display !== 'contents' && r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
                     best = el;
                 }
                 // Don't descend into iframe children (they're in a separate document)

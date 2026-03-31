@@ -669,6 +669,15 @@ pub fn resolve_script_src(
                                                     clientX: ax, clientY: ay, view: window
                                                 });
                                                 target.dispatchEvent(wev);
+                                                // Retarget if transaction target became non-hittable
+                                                if (transactionTarget) {
+                                                    var tRect = transactionTarget.getBoundingClientRect();
+                                                    var tStyle = window.getComputedStyle ? window.getComputedStyle(transactionTarget) : null;
+                                                    var tDisplay = tStyle ? tStyle.display : '';
+                                                    if (!tRect || (tRect.width === 0 && tRect.height === 0) || tDisplay === 'none' || tDisplay === 'contents') {
+                                                        transactionTarget = null;
+                                                    }
+                                                }
                                                 // Default action: scroll if not prevented
                                                 if (!wev.defaultPrevented) {
                                                     var scrollerY = (action.deltaY || 0) !== 0 ? __findScrollableAncestor(target, 'y') : null;

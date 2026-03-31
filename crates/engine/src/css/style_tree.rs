@@ -126,6 +126,7 @@ fn format_display(d: Display) -> &'static str {
         Display::TableRow => "table-row",
         Display::TableCell => "table-cell",
         Display::ListItem => "list-item",
+        Display::Contents => "contents",
     }
 }
 

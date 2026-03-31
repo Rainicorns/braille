@@ -26,7 +26,15 @@ pub fn ensure_computed(cache: &mut LayoutCache, nodes: &[Node]) {
 
         match &node.data {
             NodeData::Element { .. } => {
-                // Skip display:none subtrees — handled by taffy when style is Display::None
+                // display:contents — element generates no box; children promoted to parent
+                let is_contents = node.computed_style.as_ref()
+                    .and_then(|cs| cs.get("display"))
+                    .map(|v| v == "contents")
+                    .unwrap_or(false);
+                if is_contents {
+                    // No taffy node — children will be reparented in Phase 2
+                    continue;
+                }
                 let style = to_taffy_style(node);
                 let taffy_node = taffy.new_leaf(style).unwrap();
                 taffy.set_node_context(taffy_node, Some(nid)).unwrap();
@@ -81,17 +89,33 @@ pub fn ensure_computed(cache: &mut LayoutCache, nodes: &[Node]) {
     }
 
     // Phase 2: Wire up parent-child relationships.
+    // For display:contents elements (no taffy node), promote their children
+    // to the nearest ancestor that has a taffy node.
+    fn collect_taffy_children(
+        nodes: &[Node],
+        nid: NodeId,
+        dom_to_taffy: &HashMap<NodeId, taffy::NodeId>,
+    ) -> Vec<taffy::NodeId> {
+        let node = &nodes[nid];
+        let mut result = Vec::new();
+        for &child_nid in &node.children {
+            if let Some(&taffy_id) = dom_to_taffy.get(&child_nid) {
+                result.push(taffy_id);
+            } else {
+                // Child has no taffy node (display:contents) — promote its children
+                result.extend(collect_taffy_children(nodes, child_nid, dom_to_taffy));
+            }
+        }
+        result
+    }
+
     for node in nodes {
         let nid = node.id;
         let Some(&taffy_parent) = dom_to_taffy.get(&nid) else {
             continue;
         };
 
-        let child_taffy_ids: Vec<taffy::NodeId> = node
-            .children
-            .iter()
-            .filter_map(|&child_nid| dom_to_taffy.get(&child_nid).copied())
-            .collect();
+        let child_taffy_ids = collect_taffy_children(nodes, nid, &dom_to_taffy);
 
         if !child_taffy_ids.is_empty() {
             taffy.set_children(taffy_parent, &child_taffy_ids).unwrap();

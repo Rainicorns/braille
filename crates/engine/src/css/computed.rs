@@ -50,6 +50,7 @@ pub enum Display {
     TableRow,
     TableCell,
     ListItem,
+    Contents,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -242,6 +243,7 @@ fn parse_display(val: &str) -> Display {
         "table-row" => Display::TableRow,
         "table-cell" => Display::TableCell,
         "list-item" => Display::ListItem,
+        "contents" => Display::Contents,
         _ => Display::Inline, // fallback to initial
     }
 }
