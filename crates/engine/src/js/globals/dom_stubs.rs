@@ -1334,10 +1334,24 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             'onpointerdown', 'onpointerup', 'onpointermove', 'onpointerover', 'onpointerout',
             'onpointerenter', 'onpointerleave', 'onpointercancel', 'ongotpointercapture', 'onlostpointercapture',
             'oncontextmenu', 'onwheel', 'onanimationstart', 'onanimationend', 'onanimationiteration',
-            'ontransitionend', 'ontransitionrun', 'ontransitionstart', 'ontransitioncancel'];
+            'ontransitionend', 'ontransitionrun', 'ontransitionstart', 'ontransitioncancel',
+            'onwebkitanimationstart', 'onwebkitanimationend', 'onwebkitanimationiteration',
+            'onwebkittransitionend'];
         _elementEventHandlers.forEach(function(attr) {
             if (!(attr in HTMLElement.prototype)) {
                 Object.defineProperty(HTMLElement.prototype, attr, {
+                    get: function() { return this['_eh_' + attr] || null; },
+                    set: function(v) { this['_eh_' + attr] = typeof v === 'function' ? v : null; },
+                    enumerable: true,
+                    configurable: true
+                });
+            }
+        });
+
+        // Also define element event handlers on window (animation events bubble to window)
+        _elementEventHandlers.forEach(function(attr) {
+            if (!(attr in window)) {
+                Object.defineProperty(window, attr, {
                     get: function() { return this['_eh_' + attr] || null; },
                     set: function(v) { this['_eh_' + attr] = typeof v === 'function' ? v : null; },
                     enumerable: true,
@@ -1512,7 +1526,27 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         }
         globalThis.__jsRetarget = __jsRetarget;
 
-        globalThis.CSSStyleSheet = class CSSStyleSheet { insertRule(){return 0;} deleteRule(){} get cssRules(){return [];} };
+        globalThis.CSSStyleSheet = class CSSStyleSheet {
+            constructor() { this._rules = []; }
+            insertRule(rule, index) {
+                if (index === undefined) index = 0;
+                this._rules.splice(index, 0, { cssText: rule });
+                if (this.__ownerNode) this._syncToOwner();
+                return index;
+            }
+            deleteRule(index) {
+                this._rules.splice(index, 1);
+                if (this.__ownerNode) this._syncToOwner();
+            }
+            get cssRules() { return this._rules; }
+            _syncToOwner() {
+                var text = '';
+                for (var i = 0; i < this._rules.length; i++) {
+                    text += this._rules[i].cssText + '\n';
+                }
+                this.__ownerNode.textContent = text;
+            }
+        };
         // ReadableStream (minimal — single-chunk body reader)
         globalThis.ReadableStream = class ReadableStream {
             constructor(src) { this._src = src; this.locked = false; }

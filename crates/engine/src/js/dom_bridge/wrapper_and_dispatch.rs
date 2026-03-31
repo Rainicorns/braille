@@ -232,7 +232,13 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
             // Fire IDL on<type> handler on an element if not already in listener list
             function fireOnHandler(el, bubbleCbs) {
-                var handler = el['on' + event.type];
+                var handlerName = 'on' + event.type;
+                var handler = el[handlerName];
+                // Per HTML spec, webkit-prefixed event handler IDL attributes are lowercase
+                // (e.g. onwebkitanimationend) but the event type is camelCase (webkitAnimationEnd)
+                if (typeof handler !== 'function' && handlerName !== handlerName.toLowerCase()) {
+                    handler = el[handlerName.toLowerCase()];
+                }
                 if (typeof handler !== 'function') return;
                 // Don't double-fire if handler is already in the bubble listener list
                 if (bubbleCbs) {
@@ -1123,6 +1129,14 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             documentElement: { get: function() { return doc.querySelector('html'); }, configurable: true },
             scrollingElement: { get: function() { return doc.documentElement; }, configurable: true },
             activeElement: { get: function() { return __focusedElement || doc.querySelector('body'); }, configurable: true },
+            styleSheets: { get: function() {
+                var sheets = [];
+                var styles = doc.querySelectorAll('style');
+                for (var i = 0; i < styles.length; i++) sheets.push(styles[i].sheet);
+                var links = doc.querySelectorAll('link[rel="stylesheet"]');
+                for (var i = 0; i < links.length; i++) sheets.push(links[i].sheet);
+                return sheets;
+            }, configurable: true },
             cookie: {
                 get: function() {
                     var now = Date.now();
@@ -1724,6 +1738,42 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (!de || !de.querySelectorAll) return __makeHTMLCollection(function() { return []; });
             return __makeHTMLCollection(function() { return de.querySelectorAll('.' + cls); });
         };
+
+        // HTMLStyleElement.sheet → lazily creates a CSSStyleSheet
+        Object.defineProperty(HTMLStyleElement.prototype, 'sheet', {
+            get: function() {
+                if (!this.__sheet) {
+                    this.__sheet = new CSSStyleSheet();
+                    this.__sheet.__ownerNode = this;
+                }
+                return this.__sheet;
+            },
+            configurable: true
+        });
+
+        // HTMLLinkElement.sheet → empty CSSStyleSheet (many sites check link.sheet)
+        Object.defineProperty(HTMLLinkElement.prototype, 'sheet', {
+            get: function() {
+                if (!this.__sheet) {
+                    this.__sheet = new CSSStyleSheet();
+                    this.__sheet.__ownerNode = this;
+                }
+                return this.__sheet;
+            },
+            configurable: true
+        });
+
+        // Mirror event handler properties from HTMLElement.prototype onto __ElemProto
+        // (the actual prototype chain for wrapper objects is obj → ctor.prototype → __ElemProto → EP,
+        // which skips HTMLElement.prototype, so we need to copy the descriptors)
+        var _ehNames = Object.getOwnPropertyNames(HTMLElement.prototype);
+        for (var i = 0; i < _ehNames.length; i++) {
+            var name = _ehNames[i];
+            if (name.substring(0, 2) === 'on' && !(name in __ElemProto)) {
+                var desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name);
+                if (desc) Object.defineProperty(__ElemProto, name, desc);
+            }
+        }
 
         // DocumentFragment also gets querySelector/querySelectorAll
         DocumentFragment.prototype.querySelector = function(sel) {
