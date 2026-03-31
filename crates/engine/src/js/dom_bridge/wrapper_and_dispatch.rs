@@ -1444,67 +1444,18 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         // Document constructor — creates a standalone XML document (initially empty)
         globalThis.Document = function Document() {
-            var rootEl = null;
-            var newDoc = {
-                nodeType: 9, nodeName: '#document', readyState: 'complete',
-                __listeners: {}, __captureListeners: {},
-                get documentElement() { return rootEl; },
-                get body() {
-                    if (!rootEl) return null;
-                    var kids = rootEl.childNodes;
-                    for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'BODY') return kids[i];
-                    return null;
-                },
-                get head() {
-                    if (!rootEl) return null;
-                    var kids = rootEl.childNodes;
-                    for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'HEAD') return kids[i];
-                    return null;
-                },
-                querySelector: function(sel) { return rootEl ? rootEl.querySelector(sel) : null; },
-                querySelectorAll: function(sel) { return rootEl ? rootEl.querySelectorAll(sel) : []; },
-                getElementById: function(id) { return rootEl ? rootEl.querySelector('#' + id) || null : null; },
-                getElementsByTagName: function(tag) { return __makeHTMLCollection(function() { return rootEl ? rootEl.querySelectorAll(tag) : []; }); },
-                getElementsByClassName: function(cls) { return __makeHTMLCollection(function() { return rootEl ? rootEl.querySelectorAll('.' + cls) : []; }); },
-                createElement: function(tag) { return document.createElement(tag); },
-                createTextNode: function(text) { return document.createTextNode(text); },
-                createDocumentFragment: function() { return document.createDocumentFragment(); },
-                createEvent: function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; },
-                appendChild: function(child) {
-                    if (!rootEl && child && child.__nid !== undefined) {
-                        rootEl = child;
-                        rootEl.__ownerDoc = newDoc;
-                    } else if (rootEl) {
-                        rootEl.appendChild(child);
-                    }
-                    return child;
-                },
-                addEventListener: function(type, cb, opts) {
-                    if (typeof cb !== 'function') return;
-                    var capture = !!(opts === true || (opts && opts.capture));
-                    var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
-                    if (!store[type]) store[type] = [];
-                    store[type].push(cb);
-                },
-                removeEventListener: function(type, cb, opts) {
-                    var capture = !!(opts === true || (opts && opts.capture));
-                    var store = capture ? newDoc.__captureListeners : newDoc.__listeners;
-                    if (store[type]) store[type] = store[type].filter(function(f){return f!==cb;});
-                },
-                dispatchEvent: function(event) {
-                    if (event._dispatching) throw new DOMException("The event is already being dispatched.", "InvalidStateError");
-                    event._dispatching = true;
-                    event.target = newDoc;
-                    event.currentTarget = newDoc;
-                    var cbs = newDoc.__listeners[event.type];
-                    if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(newDoc, event); }
-                    event._dispatching = false;
-                    event._stopPropagation = false;
-                    event._stopImmediate = false;
-                    event.currentTarget = null;
-                    event.eventPhase = 0;
-                    return !event.defaultPrevented;
-                },
+            var newDoc = __makeDocumentLike(null);
+            // XML document: createElement preserves case and returns Element (not HTMLElement)
+            newDoc.createElement = function(tag) {
+                var nid = __n_createElement(String(tag));
+                var el = Object.create(__ElemProto);
+                el.__nid = nid;
+                el.__props = {};
+                el.__localName = String(tag);
+                el.__ownerDoc = newDoc;
+                el.constructor = Element;
+                _cache[nid] = el;
+                return el;
             };
             return newDoc;
         };
