@@ -84,6 +84,10 @@ pub enum PropertyId {
     AlignItems,
     FlexGrow,
     FlexShrink,
+
+    // Scroll Snap
+    ScrollSnapType,
+    ScrollSnapAlign,
 }
 
 impl PropertyId {
@@ -174,6 +178,10 @@ impl PropertyId {
             "flex-grow" => Some(PropertyId::FlexGrow),
             "flex-shrink" => Some(PropertyId::FlexShrink),
 
+            // Scroll Snap
+            "scroll-snap-type" => Some(PropertyId::ScrollSnapType),
+            "scroll-snap-align" => Some(PropertyId::ScrollSnapAlign),
+
             _ => None,
         }
     }
@@ -262,6 +270,10 @@ impl PropertyId {
             PropertyId::AlignItems => "align-items",
             PropertyId::FlexGrow => "flex-grow",
             PropertyId::FlexShrink => "flex-shrink",
+
+            // Scroll Snap
+            PropertyId::ScrollSnapType => "scroll-snap-type",
+            PropertyId::ScrollSnapAlign => "scroll-snap-align",
         }
     }
 
@@ -381,6 +393,10 @@ impl PropertyId {
             PropertyId::AlignItems => CssValue::Keyword("stretch".to_string()),
             PropertyId::FlexGrow => CssValue::Number(0.0),
             PropertyId::FlexShrink => CssValue::Number(1.0),
+
+            // Scroll Snap
+            PropertyId::ScrollSnapType => CssValue::None,
+            PropertyId::ScrollSnapAlign => CssValue::None,
         }
     }
 }

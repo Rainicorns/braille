@@ -249,6 +249,8 @@ fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
     map.insert("position".to_string(), format_position(style.position).to_string());
     map.insert("opacity".to_string(), format!("{}", style.opacity));
     map.insert("overflow".to_string(), format_overflow(style.overflow).to_string());
+    map.insert("scroll-snap-type".to_string(), style.scroll_snap_type.clone());
+    map.insert("scroll-snap-align".to_string(), style.scroll_snap_align.clone());
 
     map
 }

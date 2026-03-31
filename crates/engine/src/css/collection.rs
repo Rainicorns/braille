@@ -78,7 +78,7 @@ pub fn ua_stylesheet() -> Vec<CollectedRule> {
     // Block-level elements
     rules.push(CollectedRule {
         origin: StyleOrigin::UserAgent,
-        selector_text: "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, form, table".to_string(),
+        selector_text: "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, form, table, iframe".to_string(),
         declarations: vec![("display".to_string(), "block".to_string(), false)],
         source_order,
     });

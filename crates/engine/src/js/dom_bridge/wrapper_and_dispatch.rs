@@ -805,6 +805,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 event.eventPhase = 0;
                 return !event.defaultPrevented;
             };
+            Object.defineProperty(newDoc, 'scrollingElement', { get: function() { return rootEl; }, configurable: true });
+            newDoc.elementFromPoint = function(x, y) { return rootEl || null; };
+            newDoc.elementsFromPoint = function(x, y) { return rootEl ? [rootEl] : []; };
             // Tag the root element so EP.dispatchEvent can find the owning document
             if (rootEl) rootEl.__ownerDoc = newDoc;
             return newDoc;
@@ -995,6 +998,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     if (event._stopImmediate) break;
                 }
             }
+            // Call document IDL on-handler (e.g. document.onscrollend)
+            if (!event._stopImmediate) {
+                var docHandler = document['on' + event.type];
+                if (typeof docHandler === 'function') docHandler.call(document, event);
+            }
             // Bubble to window
             if (event.bubbles && !event._stopPropagation && !event._stopImmediate) {
                 event.eventPhase = 3;
@@ -1016,8 +1024,25 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             __currentEvent = __prevEvent;
             return !event.defaultPrevented;
         };
-        doc.elementFromPoint = function(x, y) { return doc.documentElement || null; };
-        doc.elementsFromPoint = function(x, y) { var de = doc.documentElement; return de ? [de] : []; };
+        doc.elementFromPoint = function(x, y) {
+            // Walk all elements depth-first, find deepest one containing (x,y)
+            // Stop at IFRAME boundaries — iframe content is accessed separately
+            var best = doc.documentElement || null;
+            function walk(el) {
+                if (!el || el.nodeType !== 1) return;
+                var r = el.getBoundingClientRect();
+                if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+                    best = el;
+                }
+                // Don't descend into iframe children (they're in a separate document)
+                if (el.tagName === 'IFRAME') return;
+                var ch = el.children;
+                if (ch) { for (var i = 0; i < ch.length; i++) walk(ch[i]); }
+            }
+            if (best) walk(best);
+            return best;
+        };
+        doc.elementsFromPoint = function(x, y) { var el = doc.elementFromPoint(x, y); return el ? [el] : []; };
         doc.createEvent = function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; };
         doc.createTreeWalker = function(root, whatToShow, filter) {
             // Minimal TreeWalker: pre-order traversal of element nodes
@@ -1077,6 +1102,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             body: { get: function() { return doc.querySelector('body'); }, configurable: true },
             head: { get: function() { return doc.querySelector('head'); }, configurable: true },
             documentElement: { get: function() { return doc.querySelector('html'); }, configurable: true },
+            scrollingElement: { get: function() { return doc.documentElement; }, configurable: true },
             activeElement: { get: function() { return __focusedElement || doc.querySelector('body'); }, configurable: true },
             cookie: {
                 get: function() {

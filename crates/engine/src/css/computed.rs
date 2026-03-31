@@ -165,6 +165,8 @@ pub struct ComputedStyle {
     pub position: Position,
     pub opacity: f32,
     pub overflow: Overflow,
+    pub scroll_snap_type: String,
+    pub scroll_snap_align: String,
 }
 
 /// Root default font size used for `rem` units.
@@ -199,6 +201,8 @@ impl ComputedStyle {
             position: Position::Static,
             opacity: 1.0,
             overflow: Overflow::Visible,
+            scroll_snap_type: "none".to_string(),
+            scroll_snap_align: "none".to_string(),
         }
     }
 }
@@ -664,6 +668,8 @@ fn apply_parsed_value(style: &mut ComputedStyle, property: &str, val: &str, pare
         "position" => style.position = parse_position(val),
         "opacity" => style.opacity = parse_opacity(val),
         "overflow" => style.overflow = parse_overflow(val),
+        "scroll-snap-type" => style.scroll_snap_type = val.trim().to_ascii_lowercase(),
+        "scroll-snap-align" => style.scroll_snap_align = val.trim().to_ascii_lowercase(),
         _ => {
             // Unknown properties are silently ignored.
         }
@@ -696,6 +702,8 @@ fn apply_inherited_value(style: &mut ComputedStyle, property: &str, parent: &Com
         "position" => style.position = parent.position,
         "opacity" => style.opacity = parent.opacity,
         "overflow" => style.overflow = parent.overflow,
+        "scroll-snap-type" => style.scroll_snap_type = parent.scroll_snap_type.clone(),
+        "scroll-snap-align" => style.scroll_snap_align = parent.scroll_snap_align.clone(),
         _ => {}
     }
 }

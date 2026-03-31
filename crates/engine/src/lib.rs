@@ -14,7 +14,7 @@ mod scripts;
 pub mod transcript;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 // Engine-level code should not reference QuickJS types directly.
@@ -99,6 +99,9 @@ pub struct Engine {
     pub(crate) cookies_pending_js_sync: bool,
     /// Controls whether JS runtime is reused across page loads.
     pub runtime_mode: RuntimeMode,
+    /// Tracks elements that have already fired their initial scroll-snap scrollend.
+    /// Reset when an element goes back to display:none so it fires again on re-show.
+    snap_fired: HashSet<NodeId>,
 }
 
 impl Default for Engine {
@@ -118,6 +121,7 @@ impl Engine {
             http_cookie_jar: Vec::new(),
             cookies_pending_js_sync: false,
             runtime_mode: RuntimeMode::default(),
+            snap_fired: HashSet::new(),
         }
     }
 
@@ -137,11 +141,19 @@ impl Engine {
     }
 
     fn settle_inner(&mut self, time_budget_ms: u64) {
-        if let Some(runtime) = self.runtime.as_mut() {
-            let starting_time = runtime.current_time_ms();
-            let wall_start = std::time::Instant::now();
+        let starting_time = match self.runtime.as_mut() {
+            Some(r) => r.current_time_ms(),
+            None => {
+                crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+                return;
+            }
+        };
+        let wall_start = std::time::Instant::now();
 
-            for _ in 0..100 {
+        for _ in 0..100 {
+            {
+                let runtime = self.runtime.as_mut().unwrap();
+
                 // 1. Flush microtask queue (Promises from event handlers)
                 runtime.run_jobs();
 
@@ -160,47 +172,100 @@ impl Engine {
                     continue;
                 }
 
-                // 4. No MO and no ready timers at current time — try advancing clock
-                if !had_mo && !fired_timers {
-                    if time_budget_ms > 0 && runtime.has_pending_timers() && !runtime.has_pending_fetches() {
-                        if let Some(next) = runtime.next_timer_deadline() {
-                            if next <= starting_time + time_budget_ms {
-                                // Virtual clock tracks wall clock: it cannot outrun
-                                // reality (servers validate real elapsed time), and
-                                // it must not fall behind (slow machines shouldn't
-                                // artificially delay timer resolution).
-                                let virtual_target = next - starting_time;
-                                let wall_elapsed = wall_start.elapsed().as_millis() as u64;
+                if had_mo {
+                    continue;
+                }
+            }
+            // runtime borrow is released here — safe to access self.tree, self.snap_fired
 
-                                if wall_elapsed < virtual_target {
-                                    // Virtual clock is ahead of wall clock — sleep
-                                    // until reality catches up.
-                                    std::thread::sleep(std::time::Duration::from_millis(
-                                        virtual_target - wall_elapsed,
-                                    ));
-                                } else if wall_elapsed > virtual_target {
-                                    // Wall clock is ahead of virtual clock — snap
-                                    // virtual time forward so timers that should
-                                    // have fired by now become ready.
-                                    let wall_based_time = starting_time + wall_elapsed;
-                                    let capped = wall_based_time.min(starting_time + time_budget_ms);
-                                    runtime.set_timer_current_time(capped);
-                                }
+            // 4. No MO and no ready timers — before advancing the clock, recompute
+            //    styles and fire scroll-snap events. This ensures snap scrollend fires
+            //    before timeout-based promise rejections.
+            crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+            if self.fire_scroll_snap_events() {
+                // Snap events fired — loop again to process microtasks/timers
+                continue;
+            }
 
-                                if runtime.advance_timers_to_next_deadline() {
-                                    continue;
-                                }
+            // 5. Try advancing clock
+            {
+                let runtime = self.runtime.as_mut().unwrap();
+                if time_budget_ms > 0 && runtime.has_pending_timers() && !runtime.has_pending_fetches() {
+                    if let Some(next) = runtime.next_timer_deadline() {
+                        if next <= starting_time + time_budget_ms {
+                            let virtual_target = next - starting_time;
+                            let wall_elapsed = wall_start.elapsed().as_millis() as u64;
+
+                            if wall_elapsed < virtual_target {
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    virtual_target - wall_elapsed,
+                                ));
+                            } else if wall_elapsed > virtual_target {
+                                let wall_based_time = starting_time + wall_elapsed;
+                                let capped = wall_based_time.min(starting_time + time_budget_ms);
+                                runtime.set_timer_current_time(capped);
+                            }
+
+                            if runtime.advance_timers_to_next_deadline() {
+                                continue;
                             }
                         }
                     }
-                    // Truly quiescent (or waiting on fetches, or next timer is beyond budget)
-                    break;
+                }
+            }
+
+            // Truly quiescent (or waiting on fetches, or next timer is beyond budget)
+            break;
+        }
+
+        // Final style recomputation after all JS has settled
+        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+    }
+
+    /// Check for mandatory scroll-snap containers that are newly visible and
+    /// fire `scrollend` on them. Returns true if any events were fired.
+    fn fire_scroll_snap_events(&mut self) -> bool {
+        let tree = self.tree.borrow();
+        let mut targets = Vec::new();
+
+        for nid in 0..tree.node_count() {
+            let node = tree.get_node(nid);
+            if let Some(cs) = &node.computed_style {
+                let snap_type = cs.get("scroll-snap-type").map(|s| s.as_str()).unwrap_or("none");
+                let display = cs.get("display").map(|s| s.as_str()).unwrap_or("inline");
+
+                if snap_type.contains("mandatory") && display != "none" {
+                    if !self.snap_fired.contains(&nid) {
+                        targets.push(nid);
+                    }
+                } else if display == "none" {
+                    // Element is hidden — reset so scrollend fires again when re-shown
+                    self.snap_fired.remove(&nid);
                 }
             }
         }
+        drop(tree);
 
-        // Recompute CSS styles after all JS has settled
-        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+        if targets.is_empty() {
+            return false;
+        }
+
+        for &nid in &targets {
+            self.snap_fired.insert(nid);
+        }
+
+        if let Some(runtime) = self.runtime.as_mut() {
+            for nid in targets {
+                let code = format!(
+                    "(function(){{ var el = __braille_get_element_wrapper({}); if(el) el.dispatchEvent(new Event('scrollend', {{bubbles: false}})); }})()",
+                    nid
+                );
+                let _ = runtime.eval(&code);
+                runtime.run_jobs();
+            }
+        }
+
+        true
     }
 
     pub fn snapshot(&mut self, mode: SnapMode) -> String {

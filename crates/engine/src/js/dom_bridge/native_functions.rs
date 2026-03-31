@@ -9,6 +9,7 @@ use super::{import_node_recursive, with_tree, with_tree_mut};
 pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     let g = ctx.globals();
 
+
     // getAttribute(nodeId, name) -> string | null (empty string = null)
     g.set("__n_getAttribute", Function::new(ctx.clone(), |node_id: u32, name: String| -> String {
         with_tree(|tree| {

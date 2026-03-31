@@ -81,7 +81,7 @@ pub fn to_taffy_style(node: &Node) -> Style {
 /// Measure text for a leaf text node. Monospace approximation:
 /// char_width = font_size * 0.6, height = lines * line_height.
 pub fn measure_text(text: &str, font_size: f32, line_height: f32, available_width: f32) -> (f32, f32) {
-    if text.is_empty() {
+    if text.is_empty() || text.trim().is_empty() {
         return (0.0, 0.0);
     }
     let char_width = font_size * 0.6;

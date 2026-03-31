@@ -413,7 +413,43 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             window.scrollTo(window.__scrollX + dx, window.__scrollY + dy);
         };
         window.screen = { width: 1280, height: 800, availWidth: 1280, availHeight: 800, colorDepth: 24, pixelDepth: 24, orientation: { type: 'landscape-primary', angle: 0, addEventListener: function(){}, removeEventListener: function(){} } };
-        window.visualViewport = { width: 1280, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1, addEventListener: function(){}, removeEventListener: function(){} };
+        window.visualViewport = (function() {
+            var vv = { width: 1280, height: 800, offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0, scale: 1, __listeners: {} };
+            vv.addEventListener = function(type, cb, opts) {
+                if (!vv.__listeners[type]) vv.__listeners[type] = [];
+                var wrapped = cb;
+                if (opts && (opts.once || opts === true)) {
+                    wrapped = function __once(e) { vv.removeEventListener(type, wrapped); cb.call(vv, e); };
+                    wrapped._orig = cb;
+                }
+                // Prevent duplicates
+                for (var k = 0; k < vv.__listeners[type].length; k++) {
+                    var ex = vv.__listeners[type][k];
+                    if (ex === cb || ex._orig === cb) return;
+                }
+                vv.__listeners[type].push(wrapped);
+            };
+            vv.removeEventListener = function(type, cb) {
+                var arr = vv.__listeners[type];
+                if (arr) {
+                    for (var k = arr.length - 1; k >= 0; k--) {
+                        if (arr[k] === cb || arr[k]._orig === cb) { arr.splice(k, 1); break; }
+                    }
+                }
+            };
+            vv.dispatchEvent = function(event) {
+                event.target = vv;
+                event.currentTarget = vv;
+                var cbs = vv.__listeners[event.type];
+                if (cbs) { var snap = cbs.slice(); for (var i = 0; i < snap.length; i++) snap[i].call(vv, event); }
+                var handler = vv['on' + event.type];
+                if (typeof handler === 'function') handler.call(vv, event);
+                return !event.defaultPrevented;
+            };
+            // IDL event handler properties
+            vv.onresize = null; vv.onscroll = null; vv.onscrollend = null;
+            return vv;
+        })();
 
         // Navigator
         globalThis.navigator = {
@@ -1293,6 +1329,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             'onmouseover', 'onmouseout', 'onmousemove', 'onkeydown', 'onkeyup', 'onkeypress',
             'onchange', 'oninput', 'onsubmit', 'onreset', 'onselect',
             'ondrag', 'ondragstart', 'ondragend', 'ondragover', 'ondragenter', 'ondragleave', 'ondrop',
+            'onscroll', 'onscrollend',
             'ontouchstart', 'ontouchmove', 'ontouchend', 'ontouchcancel',
             'onpointerdown', 'onpointerup', 'onpointermove', 'onpointerover', 'onpointerout',
             'onpointerenter', 'onpointerleave', 'onpointercancel', 'ongotpointercapture', 'onlostpointercapture',

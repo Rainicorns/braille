@@ -38,6 +38,7 @@ pub fn testharness_preamble() -> String {
     var setup_fn = null;
     var setup_ran = false;
     var single_test_mode = false;
+    var promise_chain = Promise.resolve();
 
     function _progress(status) {
         if (typeof __braille_test_progress === 'function') {
@@ -121,23 +122,15 @@ pub fn testharness_preamble() -> String {
     self.promise_test = function(fn, name) {
         var result = { name: name || "(unnamed)", status: 0, message: "" };
         results.push(result);
-        var cleanups = [];
-        try {
+        promise_chain = promise_chain.then(function() {
+            var cleanups = [];
             var t = {
                 name: name || "(unnamed)",
-                step_func: function(f) {
-                    return function() { return f.apply(t, arguments); };
-                },
-                step_func_done: function(f) {
-                    return function() {
-                        f.apply(t, arguments);
-                        t._done = true;
-                    };
-                },
+                step: function(f) { return function() { return f.apply(t, arguments); }; },
+                step_func: function(f) { return function() { return f.apply(t, arguments); }; },
+                step_func_done: function(f) { return function() { f.apply(t, arguments); t._done = true; }; },
                 done: function() { t._done = true; },
-                unreached_func: function(msg) {
-                    return function() { throw new Error(msg || "unreached"); };
-                },
+                unreached_func: function(msg) { return function() { throw new Error(msg || "unreached"); }; },
                 add_cleanup: function(f) { cleanups.push(f); },
                 step_timeout: function(fn, timeout) { return setTimeout(fn, timeout || 0); },
                 step_wait: function(cond, description, timeout, interval) {
@@ -155,26 +148,31 @@ pub fn testharness_preamble() -> String {
                 },
                 _done: false
             };
-            var p = fn(t);
+            var p;
+            try {
+                p = fn(t);
+            } catch(e) {
+                result.status = 1;
+                result.message = e.message || String(e);
+                for (var i = 0; i < cleanups.length; i++) { try { cleanups[i](); } catch(ce) {} }
+                _progress(result.status);
+                return;
+            }
             if (p && typeof p.then === 'function') {
-                p.then(function() {
+                return p.then(function() {
                     _progress(result.status);
                 }, function(e) {
                     result.status = 1;
                     result.message = e.message || String(e);
                     _progress(result.status);
+                }).then(function() {
+                    for (var i = 0; i < cleanups.length; i++) { try { cleanups[i](); } catch(ce) {} }
                 });
             } else {
+                for (var i = 0; i < cleanups.length; i++) { try { cleanups[i](); } catch(ce) {} }
                 _progress(result.status);
             }
-        } catch(e) {
-            result.status = 1;
-            result.message = e.message || String(e);
-            _progress(result.status);
-        }
-        for (var i = 0; i < cleanups.length; i++) {
-            try { cleanups[i](); } catch(ce) {}
-        }
+        });
     };
 
     self.setup = function(fn_or_props) {
@@ -251,6 +249,16 @@ pub fn testharness_preamble() -> String {
     };
     self.assert_less_than_equal = function(a, b, msg) {
         if (!(a <= b)) throw new AssertionError(msg || "assert_less_than_equal: " + a + " > " + b);
+    };
+    self.assert_approx_equals = function(actual, expected, epsilon, msg) {
+        if (typeof epsilon !== 'number') epsilon = 0;
+        if (Math.abs(actual - expected) > epsilon) throw new AssertionError(msg || "assert_approx_equals: " + actual + " not within " + epsilon + " of " + expected);
+    };
+    self.assert_array_approx_equals = function(actual, expected, epsilon, msg) {
+        if (actual.length !== expected.length) throw new AssertionError(msg || "assert_array_approx_equals: length mismatch");
+        for (var i = 0; i < actual.length; i++) {
+            if (Math.abs(actual[i] - expected[i]) > epsilon) throw new AssertionError(msg || "assert_array_approx_equals: index " + i + ": " + actual[i] + " not within " + epsilon + " of " + expected[i]);
+        }
     };
     self.assert_array_equals = function(a, b, msg) {
         var aLen = a ? a.length : undefined;
@@ -465,57 +473,298 @@ pub fn resolve_script_src(
                 if (window.__passiveTypes && window.__passiveTypes[eventType]) return true;
                 return false;
             }
+            // Helper: resolve element through iframes — if element is an iframe, find element inside it
+            function __resolveIframeTarget(el, x, y) {
+                if (el && el.tagName === 'IFRAME' && el.contentDocument) {
+                    var iframeRect = el.getBoundingClientRect();
+                    var innerX = x - iframeRect.left;
+                    var innerY = y - iframeRect.top;
+                    // Walk iframe document's elements depth-first
+                    var root = el.contentDocument.documentElement;
+                    if (!root) return el;
+                    var best = root;
+                    function walk(node) {
+                        if (!node || node.nodeType !== 1) return;
+                        var r = node.getBoundingClientRect();
+                        if (r && innerX >= r.left && innerX <= r.right && innerY >= r.top && innerY <= r.bottom) best = node;
+                        var ch = node.children;
+                        if (ch) { for (var i = 0; i < ch.length; i++) walk(ch[i]); }
+                    }
+                    walk(root);
+                    return best;
+                }
+                return el;
+            }
+            // Helper: find nearest scrollable ancestor (scrollHeight > clientHeight or scrollWidth > clientWidth)
+            // Stops at IFRAME boundaries — never crosses into the outer document
+            function __findScrollableAncestor(el, axis) {
+                var cur = el;
+                var hitIframeBoundary = false;
+                while (cur && cur.nodeType === 1) {
+                    if (axis === 'y' && cur.scrollHeight > cur.clientHeight) return cur;
+                    if (axis === 'x' && cur.scrollWidth > cur.clientWidth) return cur;
+                    if (axis === 'both' && (cur.scrollHeight > cur.clientHeight || cur.scrollWidth > cur.clientWidth)) return cur;
+                    var parent = cur.parentNode;
+                    // Stop at iframe boundary — don't walk into the outer document
+                    if (parent && parent.tagName === 'IFRAME') { hitIframeBoundary = true; break; }
+                    cur = parent;
+                }
+                // Fall back to document.scrollingElement only if NOT inside an iframe
+                if (!hitIframeBoundary) {
+                    var se = document.scrollingElement;
+                    if (se) return se;
+                }
+                return null;
+            }
+            // Helper: apply scroll delta to nearest scrollable ancestor.
+            // Bypasses the scrollTop/scrollLeft setters (which fire scroll+scrollend)
+            // to only fire 'scroll'. Caller fires 'scrollend' once at gesture end.
+            function __applyScrollDelta(target, dx, dy) {
+                if (dy !== 0) {
+                    var scrollerY = __findScrollableAncestor(target, 'y');
+                    if (scrollerY) {
+                        if (!scrollerY.__props) scrollerY.__props = {};
+                        var old = scrollerY.__props._scrollTop || 0;
+                        var v = Math.round(old + dy);
+                        if (v < 0) v = 0;
+                        var maxT = scrollerY.scrollHeight - scrollerY.clientHeight;
+                        if (maxT > 0 && v > maxT) v = maxT;
+                        if (v !== old) {
+                            scrollerY.__props._scrollTop = v;
+                            var st = __resolveScrollTarget(scrollerY);
+                            st.target.dispatchEvent(new Event('scroll', {bubbles: st.isRoot}));
+                        }
+                    }
+                }
+                if (dx !== 0) {
+                    var scrollerX = __findScrollableAncestor(target, 'x');
+                    if (scrollerX) {
+                        if (!scrollerX.__props) scrollerX.__props = {};
+                        var old = scrollerX.__props._scrollLeft || 0;
+                        var v = Math.round(old + dx);
+                        if (v < 0) v = 0;
+                        var maxL = scrollerX.scrollWidth - scrollerX.clientWidth;
+                        if (maxL > 0 && v > maxL) v = maxL;
+                        if (v !== old) {
+                            scrollerX.__props._scrollLeft = v;
+                            var st = __resolveScrollTarget(scrollerX);
+                            st.target.dispatchEvent(new Event('scroll', {bubbles: st.isRoot}));
+                        }
+                    }
+                }
+            }
+            // Helper: check if element is an iframe document's root scrollable element
+            // (either the scrollingElement or the body). Returns the iframe document if so.
+            function __getOwningIframeDoc(el) {
+                if (!el || el.__nid === undefined) return null;
+                var cur = el.__nid;
+                var parent = __n_getParent(cur);
+                while (parent >= 0) {
+                    if (__n_getTagName(parent) === 'IFRAME') {
+                        var realm = __braille_get_iframe_realm(parent);
+                        if (realm && realm.document) {
+                            var se = realm.document.scrollingElement;
+                            // Match if el is the scrollingElement, its body, or direct child of document root
+                            if (se === el) return realm.document;
+                            var tag = el.tagName;
+                            if (tag === 'BODY' || tag === 'HTML') return realm.document;
+                        }
+                        return null;
+                    }
+                    parent = __n_getParent(parent);
+                }
+                return null;
+            }
+            // Helper: resolve scroll event target — if element is an iframe document's
+            // scrollingElement, dispatch on the iframe document instead
+            function __resolveScrollTarget(scroller) {
+                // Check outer document first
+                if (scroller === document.scrollingElement) {
+                    return { target: document, isRoot: true };
+                }
+                // Check if scroller is an iframe document's scrollingElement
+                var iframeDoc = __getOwningIframeDoc(scroller);
+                if (iframeDoc) {
+                    return { target: iframeDoc, isRoot: true };
+                }
+                return { target: scroller, isRoot: false };
+            }
+            // Helper: fire scrollend on the given target
+            function __fireScrollend(evTarget, bubbles) {
+                evTarget.dispatchEvent(new Event('scrollend', {bubbles: !!bubbles}));
+            }
             if (typeof test_driver_internal === 'undefined') {
                 var test_driver_internal = {
                     action_sequence: function(actions, context) {
                         return new Promise(function(resolve) {
+                            // Detect multi-pointer (pinch) gesture
+                            var touchPointers = [];
+                            for (var i = 0; i < actions.length; i++) {
+                                if (actions[i].type === "pointer" && actions[i].parameters && actions[i].parameters.pointerType === "touch") {
+                                    touchPointers.push(actions[i]);
+                                }
+                            }
+                            // Pinch zoom: two touch pointers = zoom gesture
+                            if (touchPointers.length >= 2) {
+                                // Calculate pinch: if pointers converge, zoom in
+                                var vv = window.visualViewport;
+                                if (vv) {
+                                    vv.scale = 2;
+                                    vv.width = 1280 / vv.scale;
+                                    vv.height = 800 / vv.scale;
+                                    // Center the viewport after zoom — offset = (full - visible) / 2
+                                    vv.offsetLeft = (1280 - vv.width) / 2;
+                                    vv.offsetTop = (800 - vv.height) / 2;
+                                    vv.pageLeft = vv.offsetLeft;
+                                    vv.pageTop = vv.offsetTop;
+                                    vv.dispatchEvent(new Event('resize'));
+                                }
+                                resolve();
+                                return;
+                            }
                             for (var i = 0; i < actions.length; i++) {
                                 var source = actions[i];
                                 if (source.type === "wheel") {
+                                    // Wheel transaction: first scroll determines the target element
+                                    var transactionTarget = null;
+                                    var wheelScrolled = false;
+                                    var wheelScrollTarget = null;
                                     for (var j = 0; j < source.actions.length; j++) {
                                         var action = source.actions[j];
                                         if (action.type === "scroll") {
-                                            var target = (typeof document !== 'undefined' && document.elementFromPoint)
-                                                ? document.elementFromPoint(action.x || 0, action.y || 0)
-                                                : null;
-                                            if (!target) target = (typeof document !== 'undefined' && document.body) || null;
+                                            // Resolve origin: if action has _originElement, use its position
+                                            var ax = action.x || 0;
+                                            var ay = action.y || 0;
+                                            if (action._originElement && action._originElement.getBoundingClientRect) {
+                                                var or = action._originElement.getBoundingClientRect();
+                                                ax += or.left + or.width / 2;
+                                                ay += or.top + or.height / 2;
+                                            }
+                                            if (!transactionTarget) {
+                                                transactionTarget = (typeof document !== 'undefined' && document.elementFromPoint)
+                                                    ? document.elementFromPoint(ax, ay)
+                                                    : null;
+                                                if (!transactionTarget) transactionTarget = (typeof document !== 'undefined' && document.body) || null;
+                                                // Resolve through iframes
+                                                transactionTarget = __resolveIframeTarget(transactionTarget, ax, ay);
+                                            }
+                                            var target = transactionTarget;
                                             if (target) {
                                                 var cancelable = !__hasPassiveListener(target, "wheel");
-                                                target.dispatchEvent(new WheelEvent("wheel", {
+                                                var wev = new WheelEvent("wheel", {
                                                     bubbles: true, cancelable: cancelable,
                                                     deltaX: action.deltaX || 0, deltaY: action.deltaY || 0,
-                                                    clientX: action.x || 0, clientY: action.y || 0, view: window
-                                                }));
-                                                cancelable = !__hasPassiveListener(target, "mousewheel");
-                                                target.dispatchEvent(new WheelEvent("mousewheel", {
-                                                    bubbles: true, cancelable: cancelable,
-                                                    deltaX: action.deltaX || 0, deltaY: action.deltaY || 0,
-                                                    clientX: action.x || 0, clientY: action.y || 0, view: window
-                                                }));
+                                                    clientX: ax, clientY: ay, view: window
+                                                });
+                                                target.dispatchEvent(wev);
+                                                // Default action: scroll if not prevented
+                                                if (!wev.defaultPrevented) {
+                                                    var scrollerY = (action.deltaY || 0) !== 0 ? __findScrollableAncestor(target, 'y') : null;
+                                                    var scrollerX = (action.deltaX || 0) !== 0 ? __findScrollableAncestor(target, 'x') : null;
+                                                    var scroller = scrollerY || scrollerX;
+                                                    if (scroller) { wheelScrollTarget = scroller; wheelScrolled = true; }
+                                                    __applyScrollDelta(target, action.deltaX || 0, action.deltaY || 0);
+                                                }
                                             }
                                         }
                                     }
+                                    // Fire scrollend once for the whole wheel transaction
+                                    if (wheelScrolled && wheelScrollTarget) {
+                                        var st = __resolveScrollTarget(wheelScrollTarget);
+                                        __fireScrollend(st.target, st.isRoot);
+                                    }
                                 } else if (source.type === "pointer" && source.parameters && source.parameters.pointerType === "touch") {
+                                    // Touch pointer: track positions for touch-to-scroll
+                                    var touchTarget = null;
+                                    var isDown = false;
+                                    var lastX = 0, lastY = 0;
+                                    var curX = 0, curY = 0;
+                                    var originEl = null;
+                                    var totalDx = 0, totalDy = 0;
+                                    var touchScrolledElement = null;
                                     for (var j = 0; j < source.actions.length; j++) {
                                         var action = source.actions[j];
-                                        var target = (typeof document !== 'undefined' && document.body) || null;
-                                        if (target) {
-                                            if (action.type === "pointerDown") {
-                                                var cancelable = !__hasPassiveListener(target, "touchstart");
-                                                var te = new Event("touchstart", {bubbles: true, cancelable: cancelable});
-                                                te.touches = []; te.changedTouches = []; te.targetTouches = [];
-                                                target.dispatchEvent(te);
-                                            } else if (action.type === "pointerMove") {
-                                                var cancelable = !__hasPassiveListener(target, "touchmove");
-                                                var te = new Event("touchmove", {bubbles: true, cancelable: cancelable});
-                                                te.touches = []; te.changedTouches = []; te.targetTouches = [];
-                                                target.dispatchEvent(te);
-                                            } else if (action.type === "pointerUp") {
-                                                var cancelable = !__hasPassiveListener(target, "touchend");
-                                                var te = new Event("touchend", {bubbles: true, cancelable: cancelable});
-                                                te.touches = []; te.changedTouches = []; te.targetTouches = [];
-                                                target.dispatchEvent(te);
+                                        if (action.type === "pointerMove") {
+                                            var mx = action.x || 0;
+                                            var my = action.y || 0;
+                                            // Resolve origin element
+                                            if (action._originElement) {
+                                                originEl = action._originElement;
+                                                var or = originEl.getBoundingClientRect();
+                                                mx += or.left + or.width / 2;
+                                                my += or.top + or.height / 2;
                                             }
+                                            if (!isDown) {
+                                                curX = mx; curY = my;
+                                            } else {
+                                                var dx = curX - mx;
+                                                var dy = curY - my;
+                                                totalDx += dx;
+                                                totalDy += dy;
+                                                curX = mx; curY = my;
+                                                // Fire touchmove
+                                                if (touchTarget) {
+                                                    var cancelable = !__hasPassiveListener(touchTarget, "touchmove");
+                                                    var te = new Event("touchmove", {bubbles: true, cancelable: cancelable});
+                                                    te.touches = [{clientX: mx, clientY: my}];
+                                                    te.changedTouches = [{clientX: mx, clientY: my}];
+                                                    te.targetTouches = [{clientX: mx, clientY: my}];
+                                                    touchTarget.dispatchEvent(te);
+                                                    // Apply scroll delta (touch drag: opposite of pointer movement)
+                                                    if (!te.defaultPrevented) {
+                                                        var vv = window.visualViewport;
+                                                        if (vv && vv.scale > 1) {
+                                                            // When zoomed in, touch-pan adjusts visual viewport offset
+                                                            vv.offsetTop = Math.max(0, (vv.offsetTop || 0) + dy);
+                                                            vv.offsetLeft = Math.max(0, (vv.offsetLeft || 0) + dx);
+                                                            vv.pageTop = vv.offsetTop;
+                                                            vv.pageLeft = vv.offsetLeft;
+                                                            vv.dispatchEvent(new Event('scroll'));
+                                                        } else {
+                                                            var scr = __findScrollableAncestor(touchTarget, 'both');
+                                                            if (scr) touchScrolledElement = scr;
+                                                            __applyScrollDelta(touchTarget, dx, dy);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else if (action.type === "pointerDown") {
+                                            isDown = true;
+                                            lastX = curX; lastY = curY;
+                                            touchTarget = document.elementFromPoint ? document.elementFromPoint(curX, curY) : document.body;
+                                            if (!touchTarget) touchTarget = document.body || null;
+                                            // Resolve through iframes
+                                            touchTarget = __resolveIframeTarget(touchTarget, curX, curY);
+                                            if (touchTarget) {
+                                                var cancelable = !__hasPassiveListener(touchTarget, "touchstart");
+                                                var te = new Event("touchstart", {bubbles: true, cancelable: cancelable});
+                                                te.touches = [{clientX: curX, clientY: curY}];
+                                                te.changedTouches = [{clientX: curX, clientY: curY}];
+                                                te.targetTouches = [{clientX: curX, clientY: curY}];
+                                                touchTarget.dispatchEvent(te);
+                                            }
+                                        } else if (action.type === "pointerUp") {
+                                            if (touchTarget) {
+                                                var cancelable = !__hasPassiveListener(touchTarget, "touchend");
+                                                var te = new Event("touchend", {bubbles: true, cancelable: cancelable});
+                                                te.touches = []; te.changedTouches = [{clientX: curX, clientY: curY}]; te.targetTouches = [];
+                                                touchTarget.dispatchEvent(te);
+                                                // Fire scrollend once for the whole touch gesture (async)
+                                                if (totalDy !== 0 || totalDx !== 0) {
+                                                    var vv = window.visualViewport;
+                                                    if (vv && vv.scale > 1) {
+                                                        vv.dispatchEvent(new Event('scrollend'));
+                                                    }
+                                                    if (touchScrolledElement) {
+                                                        var st = __resolveScrollTarget(touchScrolledElement);
+                                                        __fireScrollend(st.target, st.isRoot);
+                                                    }
+                                                }
+                                            }
+                                            isDown = false;
+                                            touchTarget = null;
+                                            totalDx = 0; totalDy = 0;
+                                            touchScrolledElement = null;
                                         }
                                     }
                                 }
@@ -558,12 +807,14 @@ pub fn resolve_script_src(
                             '\uE00C': {key:'Escape',code:'Escape'},
                         };
                         var CHAR_WIDTH = 8;
+                        var SCROLL_STEP = 40;
                         if (element && element.dispatchEvent) {
                             for (var i = 0; i < keys.length; i++) {
                                 var ch = keys[i];
                                 var mapped = keyMap[ch] || {key: ch, code: 'Key' + ch.toUpperCase()};
                                 var opts = {key: mapped.key, code: mapped.code, bubbles: true, cancelable: true};
-                                element.dispatchEvent(new KeyboardEvent('keydown', opts));
+                                var kdev = new KeyboardEvent('keydown', opts);
+                                element.dispatchEvent(kdev);
                                 element.dispatchEvent(new KeyboardEvent('keypress', opts));
                                 // Handle cursor movement for input/textarea
                                 var isInput = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
@@ -590,6 +841,22 @@ pub fn resolve_script_src(
                                     } else if (cursorX < currentScroll) {
                                         element.scrollLeft = cursorX;
                                     }
+                                } else if (!kdev.defaultPrevented) {
+                                    // Keyboard scroll for non-input elements (buttons, divs, etc.)
+                                    var scrollDx = 0, scrollDy = 0;
+                                    if (mapped.key === 'ArrowDown') scrollDy = SCROLL_STEP;
+                                    else if (mapped.key === 'ArrowUp') scrollDy = -SCROLL_STEP;
+                                    else if (mapped.key === 'ArrowRight') scrollDx = SCROLL_STEP;
+                                    else if (mapped.key === 'ArrowLeft') scrollDx = -SCROLL_STEP;
+                                    if (scrollDx !== 0 || scrollDy !== 0) {
+                                        var scroller = __findScrollableAncestor(element, 'both');
+                                        __applyScrollDelta(element, scrollDx, scrollDy);
+                                        // Fire scrollend once
+                                        if (scroller) {
+                                            var st = __resolveScrollTarget(scroller);
+                                            __fireScrollend(st.target, st.isRoot);
+                                        }
+                                    }
                                 }
                                 element.dispatchEvent(new KeyboardEvent('keyup', opts));
                             }
@@ -609,8 +876,11 @@ pub fn resolve_script_src(
                         self._actions = [];
                         self._pointerType = "mouse";
                         self.addPointer = function(name, pointerType) { self._pointerType = pointerType || "mouse"; return self; };
+                        self.addWheel = function(name) { return self; };
                         self.pointerMove = function(x, y, opts) {
-                            self._actions.push({source:"pointer",type:"pointerMove",x:x||0,y:y||0});
+                            var a = {source:"pointer",type:"pointerMove",x:x||0,y:y||0};
+                            if (opts && opts.origin && typeof opts.origin === 'object') a._originElement = opts.origin;
+                            self._actions.push(a);
                             return self;
                         };
                         self.pointerDown = function(opts) { self._actions.push({source:"pointer",type:"pointerDown"}); return self; };
@@ -618,22 +888,35 @@ pub fn resolve_script_src(
                         self.pause = function(duration) { return self; };
                         self.addTick = function() { return self; };
                         self.scroll = function(x, y, deltaX, deltaY, opts) {
-                            self._actions.push({source:"wheel",type:"scroll",x:x,y:y,deltaX:deltaX,deltaY:deltaY});
+                            var a = {source:"wheel",type:"scroll",x:x,y:y,deltaX:deltaX,deltaY:deltaY};
+                            if (opts && opts.origin && typeof opts.origin === 'object') a._originElement = opts.origin;
+                            self._actions.push(a);
                             return self;
                         };
-                        self.keyDown = function(key) { return self; };
-                        self.keyUp = function(key) { return self; };
+                        self.keyDown = function(key) { self._actions.push({source:"key",type:"keyDown",key:key}); return self; };
+                        self.keyUp = function(key) { self._actions.push({source:"key",type:"keyUp",key:key}); return self; };
                         self.send = function() {
                             var serialized = [];
                             var wheelActions = [];
                             var pointerActions = [];
+                            var keyActions = [];
                             for (var i = 0; i < self._actions.length; i++) {
                                 var a = self._actions[i];
                                 if (a.source === "wheel") wheelActions.push(a);
                                 else if (a.source === "pointer") pointerActions.push(a);
+                                else if (a.source === "key") keyActions.push(a);
                             }
                             if (wheelActions.length) serialized.push({type:"wheel",actions:wheelActions});
                             if (pointerActions.length) serialized.push({type:"pointer",parameters:{pointerType:self._pointerType},actions:pointerActions});
+                            // Execute key actions via send_keys
+                            if (keyActions.length) {
+                                var el = document.activeElement || document.body;
+                                for (var k = 0; k < keyActions.length; k++) {
+                                    if (keyActions[k].type === "keyDown") {
+                                        test_driver.send_keys(el, keyActions[k].key);
+                                    }
+                                }
+                            }
                             return test_driver.action_sequence(serialized);
                         };
                     },
@@ -977,16 +1260,100 @@ pub fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> WptT
         }
     };
 
-    let srcs = extract_script_srcs(&html);
+    // Extract variant meta tags: <meta name="variant" content="?include=foo"/>
+    let variants = extract_variants(&html);
+
+    if variants.len() > 1 {
+        // Run each variant in a separate engine instance for test isolation
+        let mut total_passed = 0;
+        let mut total_failed = 0;
+        let mut all_details = Vec::new();
+
+        for variant in &variants {
+            let result = run_wpt_test_with_search(html_path, &html, preamble, report_shim, variant);
+            total_passed += result.passed;
+            total_failed += result.failed;
+            if result.is_crash_test {
+                return WptTestResult {
+                    passed: 1,
+                    failed: 0,
+                    details: vec![],
+                    is_crash_test: true,
+                };
+            }
+            all_details.extend(result.details);
+        }
+
+        return WptTestResult {
+            passed: total_passed,
+            failed: total_failed,
+            details: all_details,
+            is_crash_test: false,
+        };
+    }
+
+    // No variants (or single variant) — run once
+    let search = variants.first().map(|s| s.as_str()).unwrap_or("");
+    run_wpt_test_with_search(html_path, &html, preamble, report_shim, search)
+}
+
+/// Extract variant query strings from `<meta name="variant" content="?include=...">` tags.
+fn extract_variants(html: &str) -> Vec<String> {
+    let mut variants = Vec::new();
+    for line in html.lines() {
+        let trimmed = line.trim();
+        if !trimmed.contains("variant") {
+            continue;
+        }
+        // Match <meta name="variant" content="?include=foo"/>
+        if let Some(pos) = trimmed.find("name=\"variant\"").or_else(|| trimmed.find("name='variant'")) {
+            // Ensure it starts with <meta
+            let before = &trimmed[..pos];
+            if !before.contains("<meta") {
+                continue;
+            }
+            // Extract content attribute value
+            if let Some(cpos) = trimmed.find("content=\"") {
+                let start = cpos + 9;
+                if let Some(end) = trimmed[start..].find('"') {
+                    variants.push(trimmed[start..start + end].to_string());
+                }
+            } else if let Some(cpos) = trimmed.find("content='") {
+                let start = cpos + 9;
+                if let Some(end) = trimmed[start..].find('\'') {
+                    variants.push(trimmed[start..start + end].to_string());
+                }
+            }
+        }
+    }
+    variants
+}
+
+fn run_wpt_test_with_search(
+    html_path: &Path,
+    html: &str,
+    preamble: &str,
+    report_shim: &str,
+    search: &str,
+) -> WptTestResult {
+    // Prepend location.search to preamble so it's set before subset-tests-by-key.js runs
+    let variant_preamble = if !search.is_empty() {
+        let escaped = search.replace('\\', "\\\\").replace('\'', "\\'");
+        format!("location.search = '{}';\n{}", escaped, preamble)
+    } else {
+        preamble.to_string()
+    };
+
+    let srcs = extract_script_srcs(html);
     let mut fetched_scripts = HashMap::new();
     for src in &srcs {
-        if let Some(content) = resolve_script_src(html_path, src, preamble, report_shim) {
+        if let Some(content) = resolve_script_src(html_path, src, &variant_preamble, report_shim) {
             fetched_scripts.insert(src.clone(), content);
         }
     }
 
-    let mut iframe_srcs = extract_iframe_srcs(&html);
-    iframe_srcs.extend(extract_js_iframe_srcs(&html));
+    let mut iframe_srcs = extract_iframe_srcs(html);
+    iframe_srcs.extend(extract_js_iframe_srcs(html));
     let mut fetched_iframes = HashMap::new();
     for src in &iframe_srcs {
         let src_no_fragment = src.split('#').next().unwrap_or(src);
@@ -1005,9 +1372,9 @@ pub fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> WptT
     let file_stem = html_path.file_stem().unwrap().to_str().unwrap();
     let use_incremental = INCREMENTAL_TESTS.iter().any(|t| file_stem.contains(t));
     let js_errors = if use_incremental {
-        engine.load_html_incremental_with_resources_lossy(&html, &resources)
+        engine.load_html_incremental_with_resources_lossy(html, &resources)
     } else {
-        engine.load_html_with_resources_lossy(&html, &resources)
+        engine.load_html_with_resources_lossy(html, &resources)
     };
 
     // Crash tests don't include testharness.js — if we got here, it passed

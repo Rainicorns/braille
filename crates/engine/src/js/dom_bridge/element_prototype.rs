@@ -400,16 +400,89 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return { finished: Promise.resolve(), cancel: function(){}, play: function(){}, pause: function(){} };
         };
         ElemProto.scrollTo = function(xOrOpts, y) {
-            var nx, ny;
+            var nx, ny, behavior;
             if (typeof xOrOpts === 'object' && xOrOpts !== null) {
-                nx = ('left' in xOrOpts) ? xOrOpts.left|0 : this.scrollLeft;
-                ny = ('top' in xOrOpts) ? xOrOpts.top|0 : this.scrollTop;
+                nx = ('left' in xOrOpts) ? Number(xOrOpts.left) : this.scrollLeft;
+                ny = ('top' in xOrOpts) ? Number(xOrOpts.top) : this.scrollTop;
+                behavior = xOrOpts.behavior || 'auto';
             } else {
-                nx = (xOrOpts|0);
-                ny = (y|0);
+                nx = Number(xOrOpts) || 0;
+                ny = Number(y) || 0;
+                behavior = 'auto';
             }
-            this.scrollLeft = nx;
-            this.scrollTop = ny;
+            if (behavior === 'smooth') {
+                // Smooth scroll: animate toward target, cancel if element removed
+                var el = this;
+                var startLeft = el.scrollLeft;
+                var startTop = el.scrollTop;
+                var targetLeft = nx;
+                var targetTop = ny;
+                // Cancel any in-flight smooth scroll
+                if (el.__smoothScrollRaf) { cancelAnimationFrame(el.__smoothScrollRaf); el.__smoothScrollRaf = null; }
+                var startTime = performance.now();
+                var duration = 100; // short duration for test environments
+                function step() {
+                    if (!el.parentNode && el !== document.documentElement && el !== document.scrollingElement) {
+                        // Element removed from DOM — cancel, no scrollend
+                        el.__smoothScrollRaf = null;
+                        return;
+                    }
+                    var elapsed = performance.now() - startTime;
+                    var t = Math.min(elapsed / duration, 1);
+                    // ease-out
+                    var ease = 1 - (1 - t) * (1 - t);
+                    var curLeft = startLeft + (targetLeft - startLeft) * ease;
+                    var curTop = startTop + (targetTop - startTop) * ease;
+                    // Set without re-triggering smooth scroll; use direct prop set
+                    if (!el.__props) el.__props = {};
+                    var oldLeft = el.__props._scrollLeft || 0;
+                    var oldTop = el.__props._scrollTop || 0;
+                    // Clamp
+                    var cl = Math.max(0, curLeft|0);
+                    var ct = Math.max(0, curTop|0);
+                    var maxL = el.scrollWidth - el.clientWidth;
+                    if (maxL > 0 && cl > maxL) cl = maxL;
+                    var maxT = el.scrollHeight - el.clientHeight;
+                    if (maxT > 0 && ct > maxT) ct = maxT;
+                    el.__props._scrollLeft = cl;
+                    el.__props._scrollTop = ct;
+                    if (oldLeft !== cl || oldTop !== ct) {
+                        var isRoot = (el === document.scrollingElement);
+                        var evTarget = isRoot ? document : el;
+                        evTarget.dispatchEvent(new Event('scroll', {bubbles: isRoot}));
+                    }
+                    if (t < 1) {
+                        el.__smoothScrollRaf = requestAnimationFrame(step);
+                    } else {
+                        el.__smoothScrollRaf = null;
+                        var isRoot = (el === document.scrollingElement);
+                        var evTarget = isRoot ? document : el;
+                        evTarget.dispatchEvent(new Event('scrollend', {bubbles: isRoot}));
+                    }
+                }
+                el.__smoothScrollRaf = requestAnimationFrame(step);
+            } else {
+                // Auto scroll: bypass setters to avoid per-axis scrollend
+                if (!this.__props) this.__props = {};
+                var oldL = this.__props._scrollLeft || 0;
+                var oldT = this.__props._scrollTop || 0;
+                var newL = Math.round(Number(nx) || 0);
+                var newT = Math.round(Number(ny) || 0);
+                if (newL < 0) newL = 0;
+                if (newT < 0) newT = 0;
+                var maxL = this.scrollWidth - this.clientWidth;
+                var maxT = this.scrollHeight - this.clientHeight;
+                if (maxL > 0 && newL > maxL) newL = maxL;
+                if (maxT > 0 && newT > maxT) newT = maxT;
+                this.__props._scrollLeft = newL;
+                this.__props._scrollTop = newT;
+                if (newL !== oldL || newT !== oldT) {
+                    var isRoot = (this === document.scrollingElement);
+                    var evTarget = isRoot ? document : this;
+                    evTarget.dispatchEvent(new Event('scroll', {bubbles: isRoot}));
+                    evTarget.dispatchEvent(new Event('scrollend', {bubbles: isRoot}));
+                }
+            }
         };
         ElemProto.scroll = ElemProto.scrollTo;
         ElemProto.scrollBy = function(xOrOpts, y) {
@@ -1163,15 +1236,20 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 set: function(val) {
                     if (!this.__props) this.__props = {};
-                    var v = val|0;
+                    var v = Math.round(Number(val) || 0);
                     if (v < 0) v = 0;
                     var maxScroll = this.scrollHeight - this.clientHeight;
                     if (maxScroll > 0 && v > maxScroll) v = maxScroll;
                     var old = this.__props._scrollTop || 0;
                     this.__props._scrollTop = v;
                     if (old !== v) {
-                        this.dispatchEvent(new Event('scroll', {bubbles: false}));
-                        this.dispatchEvent(new Event('scrollend', {bubbles: false}));
+                        var isRoot = (this === document.scrollingElement);
+                        var target = isRoot ? document : this;
+                        target.dispatchEvent(new Event('scroll', {bubbles: isRoot}));
+                        // Fire scrollend asynchronously (matches browser behavior)
+                        setTimeout(function() {
+                            target.dispatchEvent(new Event('scrollend', {bubbles: isRoot}));
+                        }, 0);
                     }
                 },
                 configurable: true
@@ -1182,15 +1260,20 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 set: function(val) {
                     if (!this.__props) this.__props = {};
-                    var v = val|0;
+                    var v = Math.round(Number(val) || 0);
                     if (v < 0) v = 0;
                     var maxScroll = this.scrollWidth - this.clientWidth;
                     if (maxScroll > 0 && v > maxScroll) v = maxScroll;
                     var old = this.__props._scrollLeft || 0;
                     this.__props._scrollLeft = v;
                     if (old !== v) {
-                        this.dispatchEvent(new Event('scroll', {bubbles: false}));
-                        this.dispatchEvent(new Event('scrollend', {bubbles: false}));
+                        var isRoot = (this === document.scrollingElement);
+                        var target = isRoot ? document : this;
+                        target.dispatchEvent(new Event('scroll', {bubbles: isRoot}));
+                        // Fire scrollend asynchronously (matches browser behavior)
+                        setTimeout(function() {
+                            target.dispatchEvent(new Event('scrollend', {bubbles: isRoot}));
+                        }, 0);
                     }
                 },
                 configurable: true
@@ -1198,6 +1281,12 @@ pub(crate) fn element_prototype_js() -> &'static str {
             scrollWidth: {
                 get: function() {
                     var w = this.getBoundingClientRect().width;
+                    // For input/textarea, text content may be wider than element
+                    var tag = this.tagName;
+                    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+                        var textWidth = ((this.value || '').length) * 8;
+                        if (textWidth > w) w = textWidth;
+                    }
                     var children = this.children;
                     if (children) {
                         for (var i = 0; i < children.length; i++) {
