@@ -1209,8 +1209,8 @@ PASS wpt:dom/events/scrolling/wheel-event-transactions-target-elements.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-move.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-removal.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-resize.html
-FAIL wpt:dom/events/shadow-relatedTarget.html
-NOT_RUN wpt:dom/events/webkit-animation-end-event.html
+PASS wpt:dom/events/shadow-relatedTarget.html
+FAIL wpt:dom/events/webkit-animation-end-event.html
 NOT_RUN wpt:dom/events/webkit-animation-iteration-event.html
 NOT_RUN wpt:dom/events/webkit-animation-start-event.html
 NOT_RUN wpt:dom/events/webkit-transition-end-event.html

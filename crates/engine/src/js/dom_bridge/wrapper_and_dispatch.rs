@@ -1095,8 +1095,25 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         // Track focused element for document.activeElement
         var __focusedElement = null;
-        EP.focus = function() { __focusedElement = this; };
-        EP.blur = function() { if (__focusedElement === this) __focusedElement = null; };
+        EP.focus = function() {
+            var prev = __focusedElement;
+            if (prev === this) return;
+            __focusedElement = this;
+            if (prev) {
+                prev.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: this }));
+            }
+            this.dispatchEvent(new FocusEvent('focusin', { bubbles: true, relatedTarget: prev }));
+            if (prev) {
+                prev.dispatchEvent(new FocusEvent('blur', { bubbles: false, relatedTarget: this }));
+            }
+            this.dispatchEvent(new FocusEvent('focus', { bubbles: false, relatedTarget: prev }));
+        };
+        EP.blur = function() {
+            if (__focusedElement !== this) return;
+            __focusedElement = null;
+            this.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+            this.dispatchEvent(new FocusEvent('blur', { bubbles: false, relatedTarget: null }));
+        };
 
         // document.cookie implementation (JS-side cookie jar)
         var _cookieJar = {};
@@ -1717,6 +1734,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         DocumentFragment.prototype.querySelectorAll = function(sel) {
             if (this.__nid === undefined) return [];
             return __n_querySelectorAll(this.__nid, sel).map(__w);
+        };
+        DocumentFragment.prototype.getElementById = function(id) {
+            if (this.__nid === undefined || !id) return null;
+            var nid = __n_querySelector(this.__nid, '[id="' + id.replace(/"/g, '\\"') + '"]');
+            return nid >= 0 ? __w(nid) : null;
         };
 
         // CE upgrade/lifecycle helpers — these have access to _cache inside the IIFE
