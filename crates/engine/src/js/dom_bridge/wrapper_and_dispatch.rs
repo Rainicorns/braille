@@ -1053,29 +1053,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.elementsFromPoint = function(x, y) { var el = doc.elementFromPoint(x, y); return el ? [el] : []; };
         doc.createEvent = function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; };
         doc.createTreeWalker = function(root, whatToShow, filter) {
-            // Minimal TreeWalker: pre-order traversal of element nodes
-            var current = root;
-            return {
-                currentNode: root,
-                nextNode: function() {
-                    // depth-first walk
-                    if (current.firstChild) { current = current.firstChild; this.currentNode = current; return current; }
-                    while (current) {
-                        if (current.nextSibling) { current = current.nextSibling; this.currentNode = current; return current; }
-                        current = current.parentNode;
-                        if (current === root) { current = null; this.currentNode = null; return null; }
-                    }
-                    return null;
-                },
-                previousNode: function() { return null; },
-                firstChild: function() { var c = current.firstChild; if (c) { current = c; this.currentNode = c; } return c; },
-                lastChild: function() { var c = current.lastChild; if (c) { current = c; this.currentNode = c; } return c; },
-                nextSibling: function() { var s = current.nextSibling; if (s) { current = s; this.currentNode = s; } return s; },
-                previousSibling: function() { var s = current.previousSibling; if (s) { current = s; this.currentNode = s; } return s; },
-                parentNode: function() { var p = current.parentNode; if (p && p !== root) { current = p; this.currentNode = p; return p; } return null; },
-            };
+            return new TreeWalker(root, whatToShow, filter);
         };
-        doc.createNodeIterator = function(root) { return doc.createTreeWalker(root); };
+        doc.createNodeIterator = function(root, whatToShow, filter) {
+            return new NodeIterator(root, whatToShow, filter);
+        };
         doc.importNode = function(node, deep) {
             if (!node) return node;
             if (node.__nid !== undefined) return node.cloneNode(!!deep);
@@ -1515,7 +1497,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             __currentEvent = __prevEvent;
             return !event.defaultPrevented;
         };
-        globalThis.EventTarget = EventTarget;
+        Object.defineProperty(globalThis, 'EventTarget', {
+            value: EventTarget, writable: true, configurable: true, enumerable: false
+        });
 
         // Fix prototype chains: Node -> EventTarget, so Document/Element get addEventListener etc.
         if (typeof Node !== 'undefined') Object.setPrototypeOf(Node.prototype, EventTarget.prototype);
@@ -1572,25 +1556,40 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             },
         });
         CharacterData.prototype.substringData = function(offset, count) {
+            if (arguments.length < 2) throw new TypeError("Failed to execute 'substringData' on 'CharacterData': 2 arguments required, but only " + arguments.length + " present.");
+            offset = offset >>> 0; count = count >>> 0;
             var d = this.data;
-            if (offset < 0 || offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
+            if (offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
             return d.substring(offset, offset + count);
         };
-        CharacterData.prototype.appendData = function(data) { this.data = this.data + String(data); };
+        CharacterData.prototype.appendData = function(data) {
+            if (arguments.length < 1) throw new TypeError("Failed to execute 'appendData' on 'CharacterData': 1 argument required, but only 0 present.");
+            this.data = this.data + String(data);
+        };
         CharacterData.prototype.insertData = function(offset, data) {
+            if (arguments.length < 2) throw new TypeError("Failed to execute 'insertData' on 'CharacterData': 2 arguments required, but only " + arguments.length + " present.");
+            offset = offset >>> 0;
             var d = this.data;
-            if (offset < 0 || offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
+            if (offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
             this.data = d.substring(0, offset) + String(data) + d.substring(offset);
         };
         CharacterData.prototype.deleteData = function(offset, count) {
+            if (arguments.length < 2) throw new TypeError("Failed to execute 'deleteData' on 'CharacterData': 2 arguments required, but only " + arguments.length + " present.");
+            offset = offset >>> 0; count = count >>> 0;
             var d = this.data;
-            if (offset < 0 || offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
-            this.data = d.substring(0, offset) + d.substring(offset + count);
+            if (offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
+            var end = offset + count;
+            if (end > d.length) end = d.length;
+            this.data = d.substring(0, offset) + d.substring(end);
         };
         CharacterData.prototype.replaceData = function(offset, count, data) {
+            if (arguments.length < 3) throw new TypeError("Failed to execute 'replaceData' on 'CharacterData': 3 arguments required, but only " + arguments.length + " present.");
+            offset = offset >>> 0; count = count >>> 0;
             var d = this.data;
-            if (offset < 0 || offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
-            this.data = d.substring(0, offset) + String(data) + d.substring(offset + count);
+            if (offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
+            var end = offset + count;
+            if (end > d.length) end = d.length;
+            this.data = d.substring(0, offset) + String(data) + d.substring(end);
         };
         globalThis.CharacterData = CharacterData;
 

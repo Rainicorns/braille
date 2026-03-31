@@ -1217,18 +1217,29 @@ pub(crate) fn element_prototype_js() -> &'static str {
             classList: {
                 get: function() {
                     var el = this;
-                    return {
-                        add: function() { var c=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean); for(var i=0;i<arguments.length;i++) if(c.indexOf(arguments[i])<0) c.push(arguments[i]); el.setAttribute('class',c.join(' ')); },
-                        remove: function() { var c=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean); for(var i=0;i<arguments.length;i++){var idx=c.indexOf(arguments[i]);if(idx>=0)c.splice(idx,1);} el.setAttribute('class',c.join(' ')); },
-                        contains: function(cls) { return (el.getAttribute('class')||'').split(/\s+/).indexOf(cls)>=0; },
-                        toggle: function(cls,force) { if(force!==undefined){if(force)this.add(cls);else this.remove(cls);return force;} if(this.contains(cls)){this.remove(cls);return false;} this.add(cls);return true; },
-                        forEach: function(cb) { var c=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean); for(var i=0;i<c.length;i++) cb(c[i],i,c); },
-                        get length() { return (el.getAttribute('class')||'').split(/\s+/).filter(Boolean).length; },
-                        item: function(i) { var c=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean); return i<c.length?c[i]:null; },
-                        toString: function() { return el.getAttribute('class')||''; },
-                        get value() { return el.getAttribute('class')||''; },
-                        set value(v) { el.setAttribute('class', v); },
-                    };
+                    function _tokens() { var raw=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean),seen={},out=[]; for(var i=0;i<raw.length;i++){if(!seen[raw[i]]){seen[raw[i]]=true;out.push(raw[i]);}} return out; }
+                    if (!this.__classList) {
+                        var obj = Object.create(DOMTokenList.prototype);
+                        obj.add = function() { var c=_tokens(); for(var i=0;i<arguments.length;i++) if(c.indexOf(arguments[i])<0) c.push(arguments[i]); el.setAttribute('class',c.join(' ')); obj._sync(); };
+                        obj.remove = function() { var c=_tokens(); for(var i=0;i<arguments.length;i++){var idx=c.indexOf(arguments[i]);if(idx>=0)c.splice(idx,1);} el.setAttribute('class',c.join(' ')); obj._sync(); };
+                        obj.contains = function(cls) { return _tokens().indexOf(cls)>=0; };
+                        obj.toggle = function(cls,force) { if(force!==undefined){if(force)obj.add(cls);else obj.remove(cls);return force;} if(obj.contains(cls)){obj.remove(cls);return false;} obj.add(cls);return true; };
+                        obj.item = function(i) { var c=_tokens(); return i<c.length?c[i]:null; };
+                        obj.toString = function() { return el.getAttribute('class')||''; };
+                        Object.defineProperty(obj, 'value', { get: function() { return el.getAttribute('class')||''; }, set: function(v) { el.setAttribute('class', v); obj._sync(); }, configurable: true });
+                        obj._sync = function() {
+                            var c = _tokens();
+                            // Remove old indexed properties beyond new length
+                            for (var i = c.length; i < (obj.length || 0); i++) delete obj[i];
+                            obj.length = c.length;
+                            for (var i = 0; i < c.length; i++) obj[i] = c[i];
+                        };
+                        obj._sync();
+                        this.__classList = obj;
+                    } else {
+                        this.__classList._sync();
+                    }
+                    return this.__classList;
                 },
                 configurable: true
             },
