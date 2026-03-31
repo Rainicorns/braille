@@ -256,8 +256,17 @@ impl Engine {
 
         if let Some(runtime) = self.runtime.as_mut() {
             for nid in targets {
+                // Only fire scrollend if the current scroll position is NOT already
+                // at a snap point. If already snapped, no adjustment needed.
                 let code = format!(
-                    "(function(){{ var el = __braille_get_element_wrapper({}); if(el) el.dispatchEvent(new Event('scrollend', {{bubbles: false}})); }})()",
+                    r#"(function(){{
+                        var el = __braille_get_element_wrapper({});
+                        if (!el) return;
+                        var snapped = __computeSnapOffset(el, el.scrollLeft, el.scrollTop);
+                        if (snapped.x !== el.scrollLeft || snapped.y !== el.scrollTop) {{
+                            el.scrollTo({{ left: snapped.x, top: snapped.y }});
+                        }}
+                    }})()"#,
                     nid
                 );
                 let _ = runtime.eval(&code);

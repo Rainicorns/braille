@@ -399,6 +399,70 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.animate = function(keyframes, options) {
             return { finished: Promise.resolve(), cancel: function(){}, play: function(){}, pause: function(){} };
         };
+        function __computeSnapNearest(arr, target) {
+            var best = arr[0], bestDist = Math.abs(arr[0] - target);
+            for (var i = 1; i < arr.length; i++) {
+                var d = Math.abs(arr[i] - target);
+                if (d < bestDist) { best = arr[i]; bestDist = d; }
+            }
+            return best;
+        }
+        function __computeSnapOffset(scroller, targetX, targetY) {
+            var snapType = __n_getComputedStyle(scroller.__nid, 'scroll-snap-type');
+            if (!snapType || snapType === 'none') return { x: targetX, y: targetY };
+
+            var parts = snapType.split(/\s+/);
+            var axis = parts[0];
+            var strictness = parts[1] || 'proximity';
+            var snapX = (axis === 'x' || axis === 'both' || axis === 'inline');
+            var snapY = (axis === 'y' || axis === 'both' || axis === 'block');
+
+            var scrollerRect = scroller.getBoundingClientRect();
+            var snapPointsX = [], snapPointsY = [];
+            var children = scroller.children;
+            for (var i = 0; i < children.length; i++) {
+                var child = children[i];
+                var align = __n_getComputedStyle(child.__nid, 'scroll-snap-align');
+                if (!align || align === 'none') continue;
+
+                var childRect = child.getBoundingClientRect();
+                // Our layout engine reports content-space positions (not
+                // viewport-adjusted for scroll), so no scroll offset needed.
+                var relLeft = childRect.left - scrollerRect.left;
+                var relTop = childRect.top - scrollerRect.top;
+
+                var alignParts = align.split(/\s+/);
+                var alignX = alignParts.length > 1 ? alignParts[1] : alignParts[0];
+                var alignY = alignParts[0];
+
+                if (snapX) {
+                    if (alignX === 'start') snapPointsX.push(relLeft);
+                    else if (alignX === 'center') snapPointsX.push(relLeft + childRect.width/2 - scrollerRect.width/2);
+                    else if (alignX === 'end') snapPointsX.push(relLeft + childRect.width - scrollerRect.width);
+                }
+                if (snapY) {
+                    if (alignY === 'start') snapPointsY.push(relTop);
+                    else if (alignY === 'center') snapPointsY.push(relTop + childRect.height/2 - scrollerRect.height/2);
+                    else if (alignY === 'end') snapPointsY.push(relTop + childRect.height - scrollerRect.height);
+                }
+            }
+
+            var resultX = targetX, resultY = targetY;
+            if (snapX && snapPointsX.length > 0) {
+                resultX = __computeSnapNearest(snapPointsX, targetX);
+                if (strictness === 'proximity') {
+                    if (Math.abs(resultX - targetX) > scrollerRect.width / 2) resultX = targetX;
+                }
+            }
+            if (snapY && snapPointsY.length > 0) {
+                resultY = __computeSnapNearest(snapPointsY, targetY);
+                if (strictness === 'proximity') {
+                    if (Math.abs(resultY - targetY) > scrollerRect.height / 2) resultY = targetY;
+                }
+            }
+            return { x: resultX, y: resultY };
+        }
+
         ElemProto.scrollTo = function(xOrOpts, y) {
             var nx, ny, behavior;
             if (typeof xOrOpts === 'object' && xOrOpts !== null) {
@@ -410,6 +474,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 ny = Number(y) || 0;
                 behavior = 'auto';
             }
+            var snapped = __computeSnapOffset(this, nx, ny);
+            nx = snapped.x;
+            ny = snapped.y;
             if (behavior === 'smooth') {
                 // Smooth scroll: animate toward target, cancel if element removed
                 var el = this;
@@ -438,8 +505,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     var oldLeft = el.__props._scrollLeft || 0;
                     var oldTop = el.__props._scrollTop || 0;
                     // Clamp
-                    var cl = Math.max(0, curLeft|0);
-                    var ct = Math.max(0, curTop|0);
+                    var cl = Math.max(0, curLeft);
+                    var ct = Math.max(0, curTop);
                     var maxL = el.scrollWidth - el.clientWidth;
                     if (maxL > 0 && cl > maxL) cl = maxL;
                     var maxT = el.scrollHeight - el.clientHeight;
@@ -466,8 +533,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (!this.__props) this.__props = {};
                 var oldL = this.__props._scrollLeft || 0;
                 var oldT = this.__props._scrollTop || 0;
-                var newL = Math.round(Number(nx) || 0);
-                var newT = Math.round(Number(ny) || 0);
+                var newL = Number(nx) || 0;
+                var newT = Number(ny) || 0;
                 if (newL < 0) newL = 0;
                 if (newT < 0) newT = 0;
                 var maxL = this.scrollWidth - this.clientWidth;
@@ -1236,7 +1303,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 set: function(val) {
                     if (!this.__props) this.__props = {};
-                    var v = Math.round(Number(val) || 0);
+                    var v = Number(val) || 0;
                     if (v < 0) v = 0;
                     var maxScroll = this.scrollHeight - this.clientHeight;
                     if (maxScroll > 0 && v > maxScroll) v = maxScroll;
@@ -1260,7 +1327,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 set: function(val) {
                     if (!this.__props) this.__props = {};
-                    var v = Math.round(Number(val) || 0);
+                    var v = Number(val) || 0;
                     if (v < 0) v = 0;
                     var maxScroll = this.scrollWidth - this.clientWidth;
                     if (maxScroll > 0 && v > maxScroll) v = maxScroll;
@@ -1280,7 +1347,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
             },
             scrollWidth: {
                 get: function() {
-                    var w = this.getBoundingClientRect().width;
+                    var myRect = this.getBoundingClientRect();
+                    var w = myRect.width;
                     // For input/textarea, text content may be wider than element
                     var tag = this.tagName;
                     if (tag === 'INPUT' || tag === 'TEXTAREA') {
@@ -1291,7 +1359,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     if (children) {
                         for (var i = 0; i < children.length; i++) {
                             var cr = children[i].getBoundingClientRect();
-                            if (cr.width > w) w = cr.width;
+                            var right = cr.left - myRect.left + cr.width;
+                            if (right > w) w = right;
                         }
                     }
                     return w;
@@ -1300,12 +1369,14 @@ pub(crate) fn element_prototype_js() -> &'static str {
             },
             scrollHeight: {
                 get: function() {
-                    var h = this.getBoundingClientRect().height;
+                    var myRect = this.getBoundingClientRect();
+                    var h = myRect.height;
                     var children = this.children;
                     if (children) {
                         for (var i = 0; i < children.length; i++) {
                             var cr = children[i].getBoundingClientRect();
-                            if (cr.height > h) h = cr.height;
+                            var bottom = cr.top - myRect.top + cr.height;
+                            if (bottom > h) h = bottom;
                         }
                     }
                     return h;

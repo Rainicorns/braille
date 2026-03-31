@@ -93,3 +93,94 @@ Promise.all([cleanupPromise, nextSubtestScrollendPromise]).then(function() {
     eprintln!("Final scrollLeft: {}", final_sl);
     assert_eq!(final_sl, "10");
 }
+
+#[test]
+fn debug_scroll_snap_values() {
+    let mut engine = Engine::new();
+    let html = r#"<!DOCTYPE html>
+<html><body>
+<style>
+.scroller {
+    scroll-snap-type: x mandatory;
+    overflow-x: auto;
+    overflow-y: hidden;
+    position: relative;
+    height: 500px;
+    width: 500px;
+}
+.box {
+    scroll-snap-align: start;
+    width: 400px;
+    position: absolute;
+    top: 200px;
+}
+#box1 { background-color: red; height: 500px; }
+#box2 { background-color: yellow; height: 300px; left: 700.5px; }
+#box3 { background-color: blue; height: 100px; left: 1400px; }
+</style>
+<div id="scroller" class="scroller">
+    <div class="box" id="box1">1</div>
+    <div class="box" id="box2">2</div>
+    <div class="box" id="box3">3</div>
+</div>
+<script>
+window.__d = [];
+var sc = document.getElementById('scroller');
+var b1 = document.getElementById('box1');
+var b2 = document.getElementById('box2');
+var b3 = document.getElementById('box3');
+__d.push('scroller rect: ' + JSON.stringify(sc.getBoundingClientRect()));
+__d.push('box1 rect: ' + JSON.stringify(b1.getBoundingClientRect()));
+__d.push('box2 rect: ' + JSON.stringify(b2.getBoundingClientRect()));
+__d.push('box3 rect: ' + JSON.stringify(b3.getBoundingClientRect()));
+__d.push('box2.offsetLeft: ' + b2.offsetLeft);
+__d.push('scrollWidth: ' + sc.scrollWidth);
+__d.push('clientWidth: ' + sc.clientWidth);
+__d.push('maxScroll: ' + (sc.scrollWidth - sc.clientWidth));
+
+var scrollendCount = 0;
+sc.addEventListener('scrollend', function() { scrollendCount++; __d.push('scrollend#' + scrollendCount + ' scrollLeft=' + sc.scrollLeft); });
+
+__d.push('box2 computed left: ' + getComputedStyle(b2).left);
+__d.push('box2 computed top: ' + getComputedStyle(b2).top);
+__d.push('box2 computed position: ' + getComputedStyle(b2).position);
+__d.push('scroller computed snap-type: ' + getComputedStyle(sc).getPropertyValue('scroll-snap-type'));
+__d.push('box2 computed snap-align: ' + getComputedStyle(b2).getPropertyValue('scroll-snap-align'));
+
+// Replicate the WPT test flow
+var expected_scroll_left = b2.offsetLeft;
+var target_offset = b2.offsetLeft + b2.clientWidth / 2;
+__d.push('expected_scroll_left: ' + expected_scroll_left);
+__d.push('target_offset: ' + target_offset);
+
+// promise_test style: async/await
+var scrollendReceived = false;
+var scrollendPromise = new Promise(function(resolve, reject) {
+    var timeout = setTimeout(function() {
+        reject('No scrollend received in 500ms');
+    }, 500);
+    sc.addEventListener('scrollend', function(evt) {
+        clearTimeout(timeout);
+        scrollendReceived = true;
+        __d.push('scrollend received! scrollLeft=' + sc.scrollLeft);
+        resolve(evt);
+    }, { once: true });
+});
+
+sc.scrollTo({ left: target_offset });
+__d.push('after scrollTo(' + target_offset + ') scrollLeft: ' + sc.scrollLeft);
+__d.push('scrollendReceived sync: ' + scrollendReceived);
+
+scrollendPromise.then(function() {
+    __d.push('promise resolved, scrollLeft=' + sc.scrollLeft);
+}).catch(function(e) {
+    __d.push('promise rejected: ' + e);
+});
+</script>
+</body></html>"#;
+    engine.load_html(html);
+    engine.settle();
+
+    let debug = engine.eval_js("__d.join('\\n')").unwrap();
+    eprintln!("=== SNAP DEBUG ===\n{}", debug);
+}

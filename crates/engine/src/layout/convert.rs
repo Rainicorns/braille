@@ -43,6 +43,14 @@ pub fn to_taffy_style(node: &Node) -> Style {
         ..Style::default()
     };
 
+    // Inset properties for positioned elements (left, right, top, bottom)
+    style.inset = Rect {
+        left: parse_length_auto(cs.get("left")),
+        right: parse_length_auto(cs.get("right")),
+        top: parse_length_auto(cs.get("top")),
+        bottom: parse_length_auto(cs.get("bottom")),
+    };
+
     // Flex/grid properties from the raw computed style map
     if display == taffy::Display::Flex {
         style.flex_direction = match cs.get("flex-direction").map(|s| s.as_str()) {

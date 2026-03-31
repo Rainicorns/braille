@@ -247,6 +247,22 @@ fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
     };
 
     map.insert("position".to_string(), format_position(style.position).to_string());
+    match style.top {
+        Some(v) => map.insert("top".to_string(), format_length_clean(v)),
+        None => map.insert("top".to_string(), "auto".to_string()),
+    };
+    match style.right {
+        Some(v) => map.insert("right".to_string(), format_length_clean(v)),
+        None => map.insert("right".to_string(), "auto".to_string()),
+    };
+    match style.bottom {
+        Some(v) => map.insert("bottom".to_string(), format_length_clean(v)),
+        None => map.insert("bottom".to_string(), "auto".to_string()),
+    };
+    match style.left {
+        Some(v) => map.insert("left".to_string(), format_length_clean(v)),
+        None => map.insert("left".to_string(), "auto".to_string()),
+    };
     map.insert("opacity".to_string(), format!("{}", style.opacity));
     map.insert("overflow".to_string(), format_overflow(style.overflow).to_string());
     map.insert("scroll-snap-type".to_string(), style.scroll_snap_type.clone());
