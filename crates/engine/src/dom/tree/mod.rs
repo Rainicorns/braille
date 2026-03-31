@@ -11,5 +11,5 @@ mod tests;
 pub use self::core::DomTree;
 pub use validation::{
     is_valid_attribute_name, is_valid_doctype_name, is_valid_dom_name, is_valid_element_name,
-    is_valid_xml_name,
+    is_valid_xml_name, validate_and_extract,
 };

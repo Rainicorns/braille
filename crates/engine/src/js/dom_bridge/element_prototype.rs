@@ -844,7 +844,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 configurable: true
             },
-            ownerDocument: { get: function() { return document; }, configurable: true },
+            ownerDocument: { get: function() { return this.__ownerDoc || document; }, configurable: true },
             isConnected: {
                 get: function() {
                     if (this.__nid === undefined) return false;
@@ -856,7 +856,29 @@ pub(crate) fn element_prototype_js() -> &'static str {
 
         // === Element-specific properties (on ElemProto) ===
         Object.defineProperties(ElemProto, {
-            tagName: { get: function() { return __n_getTagName(this.__nid); }, configurable: true },
+            tagName: { get: function() {
+                var prefix = this.prefix;
+                var ln = this.localName;
+                if (ln === undefined || ln === null) return __n_getTagName(this.__nid);
+                var tn = prefix ? prefix + ':' + ln : ln;
+                // HTML elements in HTML documents get uppercased tagName
+                if (this.namespaceURI === 'http://www.w3.org/1999/xhtml' || (!this.namespaceURI && !prefix)) return tn.toUpperCase();
+                return tn;
+            }, configurable: true },
+            localName: { get: function() {
+                if (this.__localName !== undefined) return this.__localName;
+                if (this.__nid !== undefined) {
+                    var tn = __n_getTagName(this.__nid);
+                    if (tn) return tn.toLowerCase();
+                }
+                return null;
+            }, set: function(v) { this.__localName = v; }, configurable: true },
+            prefix: { get: function() {
+                return (this.__prefix !== undefined) ? this.__prefix : null;
+            }, set: function(v) { this.__prefix = v; }, configurable: true },
+            namespaceURI: { get: function() {
+                return (this.__namespaceURI !== undefined) ? this.__namespaceURI : null;
+            }, set: function(v) { this.__namespaceURI = v; }, configurable: true },
             id: {
                 get: function() { return this.getAttribute('id') || ''; },
                 set: function(v) { this.setAttribute('id', v); },
@@ -1073,11 +1095,23 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     if (raw === null) return '';
                     // <a> and <area> resolve href to absolute URL per spec
                     if (this.tagName === 'A' || this.tagName === 'AREA') {
-                        if (/^https?:\/\//.test(raw)) return raw;
-                        if (raw.charAt(0) === '#') return location.origin + location.pathname + location.search + raw;
-                        if (raw.charAt(0) === '?') return location.origin + location.pathname + raw;
-                        if (raw.charAt(0) === '/') return location.origin + raw;
-                        return location.origin + location.pathname.replace(/[^\/]*$/, '') + raw;
+                        var resolved;
+                        if (/^https?:\/\//.test(raw)) resolved = raw;
+                        else if (raw.charAt(0) === '#') resolved = location.origin + location.pathname + location.search + raw;
+                        else if (raw.charAt(0) === '?') resolved = location.origin + location.pathname + raw;
+                        else if (raw.charAt(0) === '/') resolved = location.origin + raw;
+                        else resolved = location.origin + location.pathname.replace(/[^\/]*$/, '') + raw;
+                        // Percent-encode non-ASCII characters (UTF-8)
+                        return resolved.replace(/[\u0080-\uFFFF]/g, function(ch) {
+                            var code = ch.charCodeAt(0);
+                            var bytes = [];
+                            if (code < 0x800) {
+                                bytes.push(0xC0 | (code >> 6), 0x80 | (code & 0x3F));
+                            } else {
+                                bytes.push(0xE0 | (code >> 12), 0x80 | ((code >> 6) & 0x3F), 0x80 | (code & 0x3F));
+                            }
+                            return bytes.map(function(b) { return '%' + b.toString(16).toUpperCase(); }).join('');
+                        });
                     }
                     return raw;
                 },

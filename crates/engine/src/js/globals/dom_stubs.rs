@@ -1221,6 +1221,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.HTMLHeadElement = class HTMLHeadElement extends HTMLElement {};
         globalThis.HTMLFrameSetElement = class HTMLFrameSetElement extends HTMLElement {};
         globalThis.HTMLHtmlElement = class HTMLHtmlElement extends HTMLElement {};
+        globalThis.HTMLTitleElement = class HTMLTitleElement extends HTMLElement {};
         globalThis.HTMLDivElement = class HTMLDivElement extends HTMLElement {};
         globalThis.HTMLSpanElement = class HTMLSpanElement extends HTMLElement {};
         globalThis.HTMLParagraphElement = class HTMLParagraphElement extends HTMLElement {};
@@ -1955,12 +1956,12 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
          'ClipboardEvent', 'DragEvent', 'PopStateEvent', 'HashChangeEvent',
          'PromiseRejectionEvent', 'StorageEvent', 'MessageChannel',
          'EventTarget', 'Node', 'Document', 'DocumentFragment', 'ShadowRoot',
-         'DOMImplementation', 'ProcessingInstruction', 'DocumentType',
+         'DOMImplementation', 'XMLDocument', 'ProcessingInstruction', 'DocumentType',
          'Element', 'Attr', 'CharacterData', 'Text', 'Comment',
          'HTMLElement', 'HTMLIFrameElement', 'HTMLInputElement', 'HTMLTextAreaElement',
          'HTMLSelectElement', 'HTMLFormElement', 'HTMLAnchorElement', 'HTMLImageElement',
          'HTMLButtonElement', 'HTMLOptionElement', 'HTMLBodyElement', 'HTMLHeadElement',
-         'HTMLFrameSetElement', 'HTMLHtmlElement', 'HTMLDivElement', 'HTMLSpanElement',
+         'HTMLFrameSetElement', 'HTMLHtmlElement', 'HTMLTitleElement', 'HTMLDivElement', 'HTMLSpanElement',
          'HTMLParagraphElement', 'HTMLScriptElement', 'HTMLStyleElement', 'HTMLLinkElement',
          'HTMLMetaElement', 'HTMLTableElement', 'HTMLTableRowElement', 'HTMLTableCellElement',
          'HTMLUListElement', 'HTMLOListElement', 'HTMLLIElement', 'HTMLPreElement',

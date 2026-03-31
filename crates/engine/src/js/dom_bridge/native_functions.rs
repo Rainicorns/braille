@@ -734,4 +734,42 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
             tree.root_of(node_id as NodeId) as u32
         })
     }).unwrap()).unwrap();
+
+    // getElementsByTagName(rootNodeId, tagName) -> array of nodeIds
+    // Unlike querySelectorAll, this handles any tag name including those with special CSS chars
+    g.set("__n_getElementsByTagName", Function::new(ctx.clone(), |root_id: u32, tag: String| -> Vec<u32> {
+        with_tree(|tree| {
+            let mut result = Vec::new();
+            let tag_lower = tag.to_ascii_lowercase();
+            let is_wildcard = tag == "*";
+            fn collect(tree: &DomTree, node_id: NodeId, tag: &str, is_wildcard: bool, result: &mut Vec<u32>) {
+                let node = tree.get_node(node_id);
+                if let NodeData::Element { tag_name, .. } = &node.data {
+                    if is_wildcard || tag_name.eq_ignore_ascii_case(tag) {
+                        result.push(node_id as u32);
+                    }
+                }
+                for &child_id in &node.children {
+                    collect(tree, child_id, tag, is_wildcard, result);
+                }
+            }
+            collect(tree, root_id as NodeId, &tag_lower, is_wildcard, &mut result);
+            result
+        })
+    }).unwrap()).unwrap();
+
+    // validateAndExtract(namespace, qualifiedName) -> JSON result
+    // Returns {"ok":{"prefix":"...","localName":"..."}} or {"err":"ErrorName"}
+    g.set("__n_validateAndExtract", Function::new(ctx.clone(), |namespace: String, qualified_name: String| -> String {
+        let ns = if namespace.is_empty() || namespace == "null" { None } else { Some(namespace.as_str()) };
+        match crate::dom::tree::validate_and_extract(ns, &qualified_name) {
+            Ok((prefix, local_name)) => {
+                let p = prefix.as_deref().unwrap_or("");
+                format!("{{\"ok\":{{\"prefix\":\"{}\",\"localName\":\"{}\"}}}}", p, local_name)
+            }
+            Err(err_name) => {
+                format!("{{\"err\":\"{}\"}}", err_name)
+            }
+        }
+    }).unwrap()).unwrap();
 }

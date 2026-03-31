@@ -9,7 +9,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             A: HTMLAnchorElement, IMG: HTMLImageElement,
             BUTTON: HTMLButtonElement, OPTION: HTMLOptionElement,
             IFRAME: HTMLIFrameElement, BODY: HTMLBodyElement,
-            HEAD: HTMLHeadElement, HTML: HTMLHtmlElement,
+            HEAD: HTMLHeadElement, HTML: HTMLHtmlElement, TITLE: HTMLTitleElement,
             FRAMESET: HTMLFrameSetElement,
             DIV: HTMLDivElement, SPAN: HTMLSpanElement,
             P: HTMLParagraphElement, SCRIPT: HTMLScriptElement,
@@ -747,6 +747,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 firstChild: rootEl || null, lastChild: rootEl || null,
                 previousSibling: null, nextSibling: null,
                 ownerDocument: null, isConnected: false,
+                location: null,
                 title: '', contentType: 'application/xml',
                 URL: 'about:blank', documentURI: 'about:blank',
                 compatMode: 'CSS1Compat', characterSet: 'UTF-8',
@@ -768,7 +769,18 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'HEAD') return kids[i];
                 return null;
             }, configurable: true });
-            Object.defineProperty(newDoc, 'implementation', { get: function() { return document.implementation; }, configurable: true });
+            // Each doc gets its own implementation that knows its owning document
+            var impl = Object.create(DOMImplementation.prototype);
+            impl.__ownerDocument = newDoc;
+            impl.createHTMLDocument = function(title) { return document.implementation.createHTMLDocument(title); };
+            impl.createDocument = function(ns, qn, dt) { return document.implementation.createDocument(ns, qn, dt); };
+            impl.createDocumentType = function(qn, pub_, sys_) {
+                var dt = document.implementation.createDocumentType(qn, pub_, sys_);
+                dt.ownerDocument = this.__ownerDocument;
+                return dt;
+            };
+            impl.hasFeature = function() { return true; };
+            Object.defineProperty(newDoc, 'implementation', { value: impl, writable: true, configurable: true });
             Object.defineProperty(newDoc, 'doctype', { get: function() { return null; }, configurable: true });
             newDoc.querySelector = function(sel) { return rootEl ? rootEl.querySelector(sel) : null; };
             newDoc.querySelectorAll = function(sel) { return rootEl ? rootEl.querySelectorAll(sel) : []; };
@@ -843,9 +855,20 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return __w(nid);
         };
         doc.createElementNS = function(ns, tag) {
-            var nid = __n_createElement(tag);
+            if (arguments.length < 2) throw new TypeError("Failed to execute 'createElementNS' on 'Document': 2 arguments required.");
+            var qn = String(tag);
+            var nsStr = (ns === null || ns === undefined) ? '' : String(ns);
+            var result = JSON.parse(__n_validateAndExtract(nsStr, qn));
+            if (result.err) {
+                var eName = result.err;
+                throw new DOMException("Failed to execute 'createElementNS' on 'Document': The qualified name provided ('" + qn + "') " + (eName === 'InvalidCharacterError' ? 'contains the invalid character' : 'has a namespace error') + ".", eName);
+            }
+            var localName = result.ok.localName;
+            var nid = __n_createElement(localName);
             var el = __w(nid);
-            el.namespaceURI = ns;
+            el.namespaceURI = (ns === null || ns === undefined) ? null : String(ns);
+            el.__localName = localName;
+            el.prefix = result.ok.prefix || null;
             return el;
         };
         doc.createTextNode = function(text) {
@@ -859,7 +882,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return __w(nid);
         };
         doc.getElementsByTagName = function(tag) {
-            return __makeHTMLCollection(function() { return doc.querySelectorAll(tag); });
+            return __makeHTMLCollection(function() { return __n_getElementsByTagName(0, tag).map(__w); });
         };
         doc.getElementsByTagNameNS = function(ns, tag) {
             return __makeHTMLCollection(function() { return doc.querySelectorAll(tag === '*' ? '*' : tag); });
@@ -1063,7 +1086,33 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (node.__nid !== undefined) return node.cloneNode(!!deep);
             return node;
         };
-        doc.adoptNode = function(node) { return node; };
+        doc.adoptNode = function(node) {
+            if (!node || typeof node !== 'object') throw new TypeError("Failed to execute 'adoptNode' on 'Document': parameter 1 is not of type 'Node'.");
+            if (node.nodeType === 9) throw new DOMException("Failed to execute 'adoptNode' on 'Document': A Document node cannot be adopted.", "NotSupportedError");
+            if (node.nodeType === 2) throw new DOMException("Cannot adopt an Attr node", "NotSupportedError");
+            // Remove from old parent
+            if (node.parentNode) {
+                if (node.nodeType === 10) {
+                    // DocumentType: just detach by clearing parentNode
+                    // (doctype nodes may not be real DOM nodes with __nid)
+                    node.parentNode = null;
+                } else {
+                    node.parentNode.removeChild(node);
+                }
+            }
+            // Recursively set ownerDocument
+            function setOwnerDoc(n, doc) {
+                n.__ownerDoc = doc;
+                // Also set own ownerDocument property if it exists (e.g. DocumentType nodes)
+                if (n.hasOwnProperty && n.hasOwnProperty('ownerDocument')) {
+                    n.ownerDocument = doc;
+                }
+                var kids = n.childNodes;
+                if (kids) { for (var i = 0; i < kids.length; i++) setOwnerDoc(kids[i], doc); }
+            }
+            setOwnerDoc(node, this);
+            return node;
+        };
         doc.cloneNode = function(deep) {
             var docEl = doc.documentElement;
             if (!docEl) return __makeDocumentLike(document.createElement('html'));
@@ -1169,10 +1218,23 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             currentScript: { value: null, writable: true, configurable: true },
             doctype: {
                 get: function() {
+                    if (doc.__cachedDoctype) return doc.__cachedDoctype;
                     var json = __n_getDoctypeInfo();
                     if (!json) return null;
                     var info = JSON.parse(json);
-                    return { name: info.name, publicId: info.publicId, systemId: info.systemId, nodeType: 10, nodeName: info.name };
+                    var dt = Object.create(DocumentType.prototype);
+                    var props = {
+                        nodeType: 10, nodeName: info.name, name: info.name,
+                        publicId: info.publicId, systemId: info.systemId,
+                        parentNode: doc, parentElement: null,
+                        childNodes: [], firstChild: null, lastChild: null,
+                        previousSibling: null, nextSibling: null,
+                        ownerDocument: doc
+                    };
+                    for (var k in props) Object.defineProperty(dt, k, { value: props[k], writable: true, enumerable: true, configurable: true });
+                    dt.removeChild = function() { return null; };
+                    doc.__cachedDoctype = dt;
+                    return dt;
                 },
                 configurable: true
             },
@@ -1228,31 +1290,107 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                         headEl.appendChild(titleEl);
                     }
                     var newDoc = __makeDocumentLike(htmlEl);
+                    newDoc.contentType = 'text/html';
                     newDoc.title = title !== undefined ? String(title) : '';
+                    // Set ownerDocument on child elements
+                    headEl.__ownerDoc = newDoc;
+                    bodyEl.__ownerDoc = newDoc;
+                    if (title !== undefined) titleEl.__ownerDoc = newDoc;
+                    // Create DOCTYPE node as first child
+                    var dt = Object.create(DocumentType.prototype);
+                    var dtProps = {
+                        nodeType: 10, nodeName: 'html', name: 'html',
+                        publicId: '', systemId: '',
+                        parentNode: newDoc, parentElement: null,
+                        childNodes: [], firstChild: null, lastChild: null,
+                        previousSibling: null, nextSibling: null,
+                        ownerDocument: newDoc
+                    };
+                    for (var k in dtProps) Object.defineProperty(dt, k, { value: dtProps[k], writable: true, enumerable: true, configurable: true });
+                    newDoc.childNodes = [dt, htmlEl];
+                    newDoc.firstChild = dt;
+                    Object.defineProperty(newDoc, 'doctype', { get: function() { return dt; }, configurable: true });
                     return newDoc;
                 },
                 createDocument: function(ns, qualifiedName, doctype) {
-                    var rootEl = null;
-                    if (qualifiedName) {
-                        rootEl = document.createElementNS(ns, qualifiedName);
+                    if (arguments.length < 2) throw new TypeError("Failed to execute 'createDocument' on 'DOMImplementation': 2 arguments required.");
+                    // Type-check doctype: must be null, undefined, or a DocumentType node
+                    if (doctype !== null && doctype !== undefined && (!doctype || doctype.nodeType !== 10)) {
+                        throw new TypeError("Failed to execute 'createDocument' on 'DOMImplementation': parameter 3 is not of type 'DocumentType'.");
                     }
-                    var newDoc = rootEl ? __makeDocumentLike(rootEl) : __makeDocumentLike(null);
-                    newDoc.contentType = ns === 'http://www.w3.org/1999/xhtml' ? 'application/xhtml+xml' : 'application/xml';
+                    var nsVal = (ns === undefined) ? null : ns;
+                    var qnVal = (qualifiedName === null) ? '' : String(qualifiedName);
+                    // Validate qualifiedName if non-empty
+                    if (qnVal !== '') {
+                        var nsStr = (nsVal === null || nsVal === undefined) ? '' : String(nsVal);
+                        var result = JSON.parse(__n_validateAndExtract(nsStr, qnVal));
+                        if (result.err) {
+                            var eName = result.err;
+                            throw new DOMException("Failed to execute 'createDocument' on 'DOMImplementation': The qualified name provided ('" + qnVal + "') " + (eName === 'InvalidCharacterError' ? 'is not a valid name' : 'has a namespace error') + ".", eName);
+                        }
+                    } else if (nsVal === null || nsVal === undefined || nsVal === '') {
+                        // Empty qname with null namespace is fine (creates doc with no element)
+                    } else {
+                        // Non-null namespace with empty qname → NamespaceError per spec? No, spec allows it.
+                    }
+                    var rootEl = null;
+                    if (qnVal !== '') {
+                        rootEl = document.createElementNS(nsVal, qnVal);
+                    }
+                    var newDoc = __makeDocumentLike(rootEl);
+                    // Set contentType based on namespace
+                    if (nsVal === 'http://www.w3.org/1999/xhtml') {
+                        newDoc.contentType = 'application/xhtml+xml';
+                    } else if (nsVal === 'http://www.w3.org/2000/svg') {
+                        newDoc.contentType = 'image/svg+xml';
+                    } else {
+                        newDoc.contentType = 'application/xml';
+                    }
+                    // Set prototype to XMLDocument
+                    Object.setPrototypeOf(newDoc, XMLDocument.prototype);
+                    // Handle doctype parameter
+                    if (doctype) {
+                        doctype.ownerDocument = newDoc;
+                        doctype.parentNode = newDoc;
+                        if (rootEl) {
+                            newDoc.childNodes = [doctype, rootEl];
+                            newDoc.firstChild = doctype;
+                        } else {
+                            newDoc.childNodes = [doctype];
+                            newDoc.firstChild = doctype;
+                            newDoc.lastChild = doctype;
+                        }
+                        Object.defineProperty(newDoc, 'doctype', { get: function() { return doctype; }, configurable: true });
+                    }
+                    // Set ownerDocument on root element
+                    if (rootEl) rootEl.__ownerDoc = newDoc;
+                    // XML documents preserve case in createElement
+                    newDoc.createElement = function(tag) {
+                        var nid = __n_createElement(tag);
+                        var el = __w(nid);
+                        el.__localName = String(tag);
+                        el.__ownerDoc = newDoc;
+                        return el;
+                    };
                     return newDoc;
                 },
                 createDocumentType: function(qualifiedName, publicId, systemId) {
-                    // DocumentType is defined later in this IIFE but is available
-                    // via closure by the time any user code calls this function.
+                    if (arguments.length < 3) throw new TypeError("Failed to execute 'createDocumentType' on 'DOMImplementation': 3 arguments required.");
+                    var qn = String(qualifiedName);
+                    // DOCTYPE names only reject > and whitespace
+                    if (/[>\s]/.test(qn)) {
+                        throw new DOMException("Failed to execute 'createDocumentType' on 'DOMImplementation': The qualified name provided is not a valid name.", "InvalidCharacterError");
+                    }
                     var dt = Object.create(DocumentType.prototype);
                     var props = {
-                        nodeType: 10, nodeName: String(qualifiedName),
-                        name: String(qualifiedName),
-                        publicId: String(publicId || ''),
-                        systemId: String(systemId || ''),
+                        nodeType: 10, nodeName: qn,
+                        name: qn,
+                        publicId: String(publicId),
+                        systemId: String(systemId),
                         parentNode: null, parentElement: null,
                         childNodes: [], firstChild: null, lastChild: null,
                         previousSibling: null, nextSibling: null,
-                        ownerDocument: null
+                        ownerDocument: document
                     };
                     for (var k in props) Object.defineProperty(dt, k, { value: props[k], writable: true, enumerable: true, configurable: true });
                     return dt;
@@ -1697,6 +1835,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         DocumentType.prototype.constructor = DocumentType;
         globalThis.DocumentType = DocumentType;
 
+        // XMLDocument constructor (type marker per spec — no additional methods)
+        function XMLDocument() {}
+        XMLDocument.prototype = Object.create(Document.prototype);
+        XMLDocument.prototype.constructor = XMLDocument;
+        globalThis.XMLDocument = XMLDocument;
+
         function DocumentFragment() {}
         DocumentFragment.prototype = Object.create(EP);
         DocumentFragment.prototype.constructor = DocumentFragment;
@@ -1749,6 +1893,15 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             var de = this.documentElement;
             if (!de || !de.querySelectorAll) return __makeHTMLCollection(function() { return []; });
             return __makeHTMLCollection(function() { return de.querySelectorAll('.' + cls); });
+        };
+
+        Document.prototype.adoptNode = function(node) { return doc.adoptNode.call(this, node); };
+        Document.prototype.importNode = function(node, deep) { return doc.importNode(node, deep); };
+        Document.prototype.cloneNode = function(deep) {
+            var de = this.documentElement;
+            if (!de) return __makeDocumentLike(null);
+            var cloned = de.cloneNode(!!deep);
+            return __makeDocumentLike(cloned);
         };
 
         // HTMLStyleElement.sheet → lazily creates a CSSStyleSheet

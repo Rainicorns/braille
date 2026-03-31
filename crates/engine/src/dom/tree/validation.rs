@@ -87,6 +87,93 @@ pub fn is_valid_doctype_name(name: &str) -> bool {
     !name.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '>'])
 }
 
+/// Validate-and-extract algorithm for namespace/qualifiedName pairs.
+/// Returns Ok((prefix, localName)) or Err(error_name) where error_name is
+/// "InvalidCharacterError" or "NamespaceError".
+/// Matches browser-lenient behavior from WPT tests.
+pub fn validate_and_extract(
+    namespace: Option<&str>,
+    qualified_name: &str,
+) -> Result<(Option<String>, String), &'static str> {
+    // Empty QName is INVALID_CHARACTER_ERR
+    if qualified_name.is_empty() {
+        return Err("InvalidCharacterError");
+    }
+
+    // Whitespace or '>' anywhere → INVALID_CHARACTER_ERR
+    if qualified_name.contains(char::is_whitespace) || qualified_name.contains('>') {
+        return Err("InvalidCharacterError");
+    }
+
+    let (prefix, local_name) = if let Some(colon_pos) = qualified_name.find(':') {
+        let prefix_str = &qualified_name[..colon_pos];
+        let local_str = &qualified_name[colon_pos + 1..];
+
+        // Empty prefix (starts with ':') → INVALID_CHARACTER_ERR
+        if prefix_str.is_empty() {
+            return Err("InvalidCharacterError");
+        }
+        // Empty localName (ends with ':') → INVALID_CHARACTER_ERR
+        if local_str.is_empty() {
+            return Err("InvalidCharacterError");
+        }
+        // LocalName first char must be a valid name start char
+        // (but prefix first char is NOT checked — browsers accept e.g. "0:a")
+        if !local_str
+            .chars()
+            .next()
+            .is_some_and(is_lenient_name_start_char)
+        {
+            return Err("InvalidCharacterError");
+        }
+
+        (Some(prefix_str.to_string()), local_str.to_string())
+    } else {
+        // No colon — check first char
+        if !qualified_name
+            .chars()
+            .next()
+            .is_some_and(is_lenient_name_start_char)
+        {
+            return Err("InvalidCharacterError");
+        }
+        (None, qualified_name.to_string())
+    };
+
+    // Normalize namespace: treat empty string as None
+    let ns = namespace.filter(|s| !s.is_empty());
+
+    // NAMESPACE_ERR checks
+    // If namespace is null and QName contains ':' → NAMESPACE_ERR
+    if ns.is_none() && prefix.is_some() {
+        return Err("NamespaceError");
+    }
+
+    // If prefix is "xml" and namespace ≠ XML namespace → NAMESPACE_ERR
+    if prefix.as_deref() == Some("xml")
+        && ns != Some("http://www.w3.org/XML/1998/namespace")
+    {
+        return Err("NamespaceError");
+    }
+
+    // If QName is "xmlns" or prefix is "xmlns" and namespace ≠ XMLNS namespace → NAMESPACE_ERR
+    if (qualified_name == "xmlns" || prefix.as_deref() == Some("xmlns"))
+        && ns != Some("http://www.w3.org/2000/xmlns/")
+    {
+        return Err("NamespaceError");
+    }
+
+    // If namespace is XMLNS namespace and QName ≠ "xmlns" and prefix ≠ "xmlns" → NAMESPACE_ERR
+    if ns == Some("http://www.w3.org/2000/xmlns/")
+        && qualified_name != "xmlns"
+        && prefix.as_deref() != Some("xmlns")
+    {
+        return Err("NamespaceError");
+    }
+
+    Ok((prefix, local_name))
+}
+
 /// Validates whether a string is a valid XML Name per the XML spec.
 /// Used by createProcessingInstruction and other DOM APIs that require valid XML names.
 pub fn is_valid_xml_name(name: &str) -> bool {
