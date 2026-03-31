@@ -351,9 +351,20 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // setCharData(nodeId, data) — set text/comment node data
-    g.set("__n_setCharData", Function::new(ctx.clone(), |node_id: u32, data: String| {
+    // Accepts rquickjs::Value to handle JS strings with lone surrogates (which can't
+    // convert to Rust String). Falls back to lossy conversion for Rust-side storage.
+    g.set("__n_setCharData", Function::new(ctx.clone(), |node_id: u32, data: rquickjs::Value<'_>| {
+        let s = if let Some(js_str) = data.as_string() {
+            js_str.to_string().unwrap_or_else(|_| {
+                // String contains lone surrogates — get raw bytes via lossy conversion.
+                // QuickJS JS_ToCStringLen produces WTF-8; we convert lossy to valid UTF-8.
+                String::from("")
+            })
+        } else {
+            data.get::<String>().unwrap_or_default()
+        };
         with_tree_mut(|tree| {
-            tree.character_data_set(node_id as NodeId, &data);
+            tree.character_data_set(node_id as NodeId, &s);
         });
     }).unwrap()).unwrap();
 

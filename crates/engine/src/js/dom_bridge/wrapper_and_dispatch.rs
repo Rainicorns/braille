@@ -1541,17 +1541,30 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         }
 
         // CharacterData prototype — between Node.prototype and Text/Comment
+        // JS-side cache for character data: preserves lone surrogates that can't
+        // round-trip through Rust String (UTF-8). Keyed by __nid.
+        var __cdCache = new Map();
         var CharacterData = function CharacterData() {};
         CharacterData.prototype = Object.create(EP);
         CharacterData.prototype.constructor = CharacterData;
         Object.defineProperties(CharacterData.prototype, {
             data: {
-                get: function() { return __n_getCharData(this.__nid); },
-                set: function(v) { __n_setCharData(this.__nid, v === null ? '' : String(v)); },
+                get: function() {
+                    if (__cdCache.has(this.__nid)) return __cdCache.get(this.__nid);
+                    return __n_getCharData(this.__nid);
+                },
+                set: function(v) {
+                    var s = v === null ? '' : String(v);
+                    __cdCache.set(this.__nid, s);
+                    __n_setCharData(this.__nid, s);
+                },
                 configurable: true
             },
             length: {
-                get: function() { return __n_charDataLength(this.__nid); },
+                get: function() {
+                    if (__cdCache.has(this.__nid)) return __cdCache.get(this.__nid).length;
+                    return __n_charDataLength(this.__nid);
+                },
                 configurable: true
             },
         });

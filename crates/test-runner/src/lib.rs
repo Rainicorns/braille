@@ -1318,6 +1318,54 @@ pub fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> WptT
     run_wpt_test_with_search(html_path, &html, preamble, report_shim, search)
 }
 
+/// Replace lone surrogate escapes (\uD800-\uDFFF) in JSON with \uFFFD.
+/// A surrogate is "lone" if it's a high surrogate not followed by a low, or a low not preceded by a high.
+fn sanitize_json_surrogates(json: &str) -> String {
+    use std::fmt::Write;
+    let bytes = json.as_bytes();
+    let len = bytes.len();
+    let mut out = String::with_capacity(len);
+    let mut i = 0;
+    while i < len {
+        if i + 5 < len && bytes[i] == b'\\' && bytes[i + 1] == b'u' {
+            // Parse the 4 hex digits
+            if let Ok(hex_str) = std::str::from_utf8(&bytes[i + 2..i + 6]) {
+                if let Ok(code) = u16::from_str_radix(hex_str, 16) {
+                    if (0xD800..=0xDBFF).contains(&code) {
+                        // High surrogate — check if followed by a low surrogate
+                        let has_low = i + 11 < len
+                            && bytes[i + 6] == b'\\'
+                            && bytes[i + 7] == b'u'
+                            && std::str::from_utf8(&bytes[i + 8..i + 12])
+                                .ok()
+                                .and_then(|s| u16::from_str_radix(s, 16).ok())
+                                .map_or(false, |low| (0xDC00..=0xDFFF).contains(&low));
+                        if has_low {
+                            // Valid pair — copy both escapes through as-is
+                            out.push_str(&json[i..i + 12]);
+                            i += 12;
+                            continue;
+                        } else {
+                            let _ = write!(out, "\\uFFFD");
+                            i += 6;
+                            continue;
+                        }
+                    } else if (0xDC00..=0xDFFF).contains(&code) {
+                        // Low surrogate — check if preceded by a high surrogate
+                        // (if it were part of a valid pair, we'd have skipped past it)
+                        let _ = write!(out, "\\uFFFD");
+                        i += 6;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
 /// Extract variant query strings from `<meta name="variant" content="?include=...">` tags.
 fn extract_variants(html: &str) -> Vec<String> {
     let mut variants = Vec::new();
@@ -1458,6 +1506,11 @@ fn run_wpt_test_with_search(
             is_crash_test: false,
         };
     }
+
+    // JSON.stringify can produce \uD800-\uDFFF lone surrogate escapes which are
+    // valid JSON per RFC 8259 but rejected by serde_json (not valid Unicode scalars).
+    // Replace lone surrogates with \uFFFD (replacement character) before parsing.
+    let results_json = sanitize_json_surrogates(&results_json);
 
     let results: Vec<WptSubResult> = match serde_json::from_str(&results_json) {
         Ok(r) => r,
