@@ -938,7 +938,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
 
         doc.createComment = function(text) {
-            var nid = __n_createComment(text || '');
+            var nid = __n_createComment(String(text));
             return __w(nid);
         };
 
