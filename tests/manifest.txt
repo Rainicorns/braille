@@ -1197,10 +1197,10 @@ PASS wpt:dom/events/scrolling/scrollend-event-fires-to-iframe-inner-frame.html
 PASS wpt:dom/events/scrolling/scrollend-event-fires-to-iframe-window.html
 PASS wpt:dom/events/scrolling/scrollend-event-for-user-scroll.html
 PASS wpt:dom/events/scrolling/scrollend-event-handler-content-attributes.html
-FAIL wpt:dom/events/scrolling/scrollend-event-not-fired-after-removing-scroller.tentative.html
-NOT_RUN wpt:dom/events/scrolling/scrollend-event-not-fired-on-no-scroll.html
-NOT_RUN wpt:dom/events/scrolling/scrollend-fires-to-text-input.html
-NOT_RUN wpt:dom/events/scrolling/scrollend-with-snap-on-fractional-offset.html
+PASS wpt:dom/events/scrolling/scrollend-event-not-fired-after-removing-scroller.tentative.html
+PASS wpt:dom/events/scrolling/scrollend-event-not-fired-on-no-scroll.html
+PASS wpt:dom/events/scrolling/scrollend-fires-to-text-input.html
+FAIL wpt:dom/events/scrolling/scrollend-with-snap-on-fractional-offset.html
 NOT_RUN wpt:dom/events/scrolling/wheel-event-no-scroll-after-prevent-default.html
 NOT_RUN wpt:dom/events/scrolling/wheel-event-transactions-basic.html
 NOT_RUN wpt:dom/events/scrolling/wheel-event-transactions-multiple-action-chains.html

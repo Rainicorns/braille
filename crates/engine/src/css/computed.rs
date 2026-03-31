@@ -172,6 +172,11 @@ pub struct ComputedStyle {
 /// Root default font size used for `rem` units.
 const ROOT_FONT_SIZE: f32 = 16.0;
 
+/// Viewport dimensions used for `vh` and `vw` units.
+/// Must match window.innerWidth / innerHeight in dom_stubs.rs.
+const VIEWPORT_WIDTH: f32 = 1280.0;
+const VIEWPORT_HEIGHT: f32 = 800.0;
+
 impl ComputedStyle {
     /// Returns the spec-defined initial computed style (used for the root element
     /// or when no cascade/inheritance applies).
@@ -407,6 +412,16 @@ fn parse_length(val: &str, parent_font_size: f32) -> f32 {
     if let Some(num) = trimmed.strip_suffix("pt") {
         let pt = num.trim().parse::<f32>().unwrap_or(0.0);
         return pt * (4.0 / 3.0); // 1pt ≈ 1.333px
+    }
+
+    if let Some(num) = trimmed.strip_suffix("vh") {
+        let factor = num.trim().parse::<f32>().unwrap_or(0.0);
+        return factor / 100.0 * VIEWPORT_HEIGHT;
+    }
+
+    if let Some(num) = trimmed.strip_suffix("vw") {
+        let factor = num.trim().parse::<f32>().unwrap_or(0.0);
+        return factor / 100.0 * VIEWPORT_WIDTH;
     }
 
     if let Some(num) = trimmed.strip_suffix('%') {

@@ -422,7 +422,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 var startTime = performance.now();
                 var duration = 100; // short duration for test environments
                 function step() {
-                    if (!el.parentNode && el !== document.documentElement && el !== document.scrollingElement) {
+                    if (!el.isConnected && el !== document.documentElement && el !== document.scrollingElement) {
                         // Element removed from DOM — cancel, no scrollend
                         el.__smoothScrollRaf = null;
                         return;

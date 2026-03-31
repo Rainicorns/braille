@@ -166,11 +166,19 @@ pub fn testharness_preamble() -> String {
                     result.message = e.message || String(e);
                     _progress(result.status);
                 }).then(function() {
-                    for (var i = 0; i < cleanups.length; i++) { try { cleanups[i](); } catch(ce) {} }
+                    var chain = Promise.resolve();
+                    for (var i = 0; i < cleanups.length; i++) {
+                        chain = chain.then(cleanups[i]);
+                    }
+                    return chain;
                 });
             } else {
-                for (var i = 0; i < cleanups.length; i++) { try { cleanups[i](); } catch(ce) {} }
+                var chain = Promise.resolve();
+                for (var i = 0; i < cleanups.length; i++) {
+                    chain = chain.then(cleanups[i]);
+                }
                 _progress(result.status);
+                return chain;
             }
         });
     };
@@ -520,6 +528,7 @@ pub fn resolve_script_src(
             // Bypasses the scrollTop/scrollLeft setters (which fire scroll+scrollend)
             // to only fire 'scroll'. Caller fires 'scrollend' once at gesture end.
             function __applyScrollDelta(target, dx, dy) {
+                var didScroll = false;
                 if (dy !== 0) {
                     var scrollerY = __findScrollableAncestor(target, 'y');
                     if (scrollerY) {
@@ -533,6 +542,7 @@ pub fn resolve_script_src(
                             scrollerY.__props._scrollTop = v;
                             var st = __resolveScrollTarget(scrollerY);
                             st.target.dispatchEvent(new Event('scroll', {bubbles: st.isRoot}));
+                            didScroll = true;
                         }
                     }
                 }
@@ -549,9 +559,11 @@ pub fn resolve_script_src(
                             scrollerX.__props._scrollLeft = v;
                             var st = __resolveScrollTarget(scrollerX);
                             st.target.dispatchEvent(new Event('scroll', {bubbles: st.isRoot}));
+                            didScroll = true;
                         }
                     }
                 }
+                return didScroll;
             }
             // Helper: check if element is an iframe document's root scrollable element
             // (either the scrollingElement or the body). Returns the iframe document if so.
@@ -662,8 +674,8 @@ pub fn resolve_script_src(
                                                     var scrollerY = (action.deltaY || 0) !== 0 ? __findScrollableAncestor(target, 'y') : null;
                                                     var scrollerX = (action.deltaX || 0) !== 0 ? __findScrollableAncestor(target, 'x') : null;
                                                     var scroller = scrollerY || scrollerX;
-                                                    if (scroller) { wheelScrollTarget = scroller; wheelScrolled = true; }
-                                                    __applyScrollDelta(target, action.deltaX || 0, action.deltaY || 0);
+                                                    var moved = __applyScrollDelta(target, action.deltaX || 0, action.deltaY || 0);
+                                                    if (scroller && moved) { wheelScrollTarget = scroller; wheelScrolled = true; }
                                                 }
                                             }
                                         }
@@ -850,9 +862,9 @@ pub fn resolve_script_src(
                                     else if (mapped.key === 'ArrowLeft') scrollDx = -SCROLL_STEP;
                                     if (scrollDx !== 0 || scrollDy !== 0) {
                                         var scroller = __findScrollableAncestor(element, 'both');
-                                        __applyScrollDelta(element, scrollDx, scrollDy);
-                                        // Fire scrollend once
-                                        if (scroller) {
+                                        var moved = __applyScrollDelta(element, scrollDx, scrollDy);
+                                        // Fire scrollend only if scroll position actually changed
+                                        if (scroller && moved) {
                                             var st = __resolveScrollTarget(scroller);
                                             __fireScrollend(st.target, st.isRoot);
                                         }
