@@ -115,6 +115,10 @@ fn parse_px_value(s: &str) -> f32 {
 fn parse_length_auto(val: Option<&String>) -> LengthPercentageAuto {
     match val.map(|s| s.as_str()) {
         Some("auto") | None => LengthPercentageAuto::Auto,
+        Some(s) if s.ends_with('%') => {
+            let pct = s.trim_end_matches('%').trim().parse::<f32>().unwrap_or(0.0);
+            LengthPercentageAuto::Percent(pct / 100.0)
+        }
         Some(s) => LengthPercentageAuto::Length(parse_px_value(s)),
     }
 }
@@ -122,6 +126,10 @@ fn parse_length_auto(val: Option<&String>) -> LengthPercentageAuto {
 fn parse_length_dimension(val: Option<&String>) -> LengthPercentage {
     match val {
         None => LengthPercentage::Length(0.0),
+        Some(s) if s.ends_with('%') => {
+            let pct = s.trim_end_matches('%').trim().parse::<f32>().unwrap_or(0.0);
+            LengthPercentage::Percent(pct / 100.0)
+        }
         Some(s) => LengthPercentage::Length(parse_px_value(s)),
     }
 }
@@ -129,6 +137,10 @@ fn parse_length_dimension(val: Option<&String>) -> LengthPercentage {
 fn parse_dimension(val: Option<&String>) -> Dimension {
     match val.map(|s| s.as_str()) {
         Some("auto") | None => Dimension::Auto,
+        Some(s) if s.ends_with('%') => {
+            let pct = s.trim_end_matches('%').trim().parse::<f32>().unwrap_or(0.0);
+            Dimension::Percent(pct / 100.0)
+        }
         Some(s) => {
             let v = parse_px_value(s);
             if v == 0.0 && !s.starts_with('0') {

@@ -99,6 +99,12 @@ pub enum Overflow {
     Auto,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ComputedLength {
+    Px(f32),
+    Percent(f32), // 0.0–1.0 (50% stored as 0.5)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComputedColor {
     pub r: u8,
@@ -152,21 +158,21 @@ pub struct ComputedStyle {
     pub line_height: f32,
     pub text_align: TextAlign,
     pub text_decoration: TextDecoration,
-    pub margin_top: f32,
-    pub margin_right: f32,
-    pub margin_bottom: f32,
-    pub margin_left: f32,
-    pub padding_top: f32,
-    pub padding_right: f32,
-    pub padding_bottom: f32,
-    pub padding_left: f32,
-    pub width: Option<f32>,
-    pub height: Option<f32>,
+    pub margin_top: ComputedLength,
+    pub margin_right: ComputedLength,
+    pub margin_bottom: ComputedLength,
+    pub margin_left: ComputedLength,
+    pub padding_top: ComputedLength,
+    pub padding_right: ComputedLength,
+    pub padding_bottom: ComputedLength,
+    pub padding_left: ComputedLength,
+    pub width: Option<ComputedLength>,
+    pub height: Option<ComputedLength>,
     pub position: Position,
-    pub top: Option<f32>,
-    pub right: Option<f32>,
-    pub bottom: Option<f32>,
-    pub left: Option<f32>,
+    pub top: Option<ComputedLength>,
+    pub right: Option<ComputedLength>,
+    pub bottom: Option<ComputedLength>,
+    pub left: Option<ComputedLength>,
     pub opacity: f32,
     pub overflow: Overflow,
     pub scroll_snap_type: String,
@@ -197,14 +203,14 @@ impl ComputedStyle {
             line_height: 19.2, // 1.2 * 16
             text_align: TextAlign::Left,
             text_decoration: TextDecoration::None,
-            margin_top: 0.0,
-            margin_right: 0.0,
-            margin_bottom: 0.0,
-            margin_left: 0.0,
-            padding_top: 0.0,
-            padding_right: 0.0,
-            padding_bottom: 0.0,
-            padding_left: 0.0,
+            margin_top: ComputedLength::Px(0.0),
+            margin_right: ComputedLength::Px(0.0),
+            margin_bottom: ComputedLength::Px(0.0),
+            margin_left: ComputedLength::Px(0.0),
+            padding_top: ComputedLength::Px(0.0),
+            padding_right: ComputedLength::Px(0.0),
+            padding_bottom: ComputedLength::Px(0.0),
+            padding_left: ComputedLength::Px(0.0),
             width: None,
             height: None,
             position: Position::Static,
@@ -492,13 +498,26 @@ fn parse_line_height(val: &str, font_size: f32, parent_font_size: f32) -> f32 {
     }
 }
 
-/// Parse an optional length (returns None for "auto").
-fn parse_optional_length(val: &str, parent_font_size: f32) -> Option<f32> {
+/// Parse a CSS length that may be a percentage of the containing block.
+/// For layout properties (width, height, margin, padding, inset), `%` means
+/// "percentage of containing block" and must be resolved by the layout engine,
+/// NOT during CSS computation.
+fn parse_length_or_percent(val: &str, font_size: f32) -> ComputedLength {
+    let trimmed = val.trim().to_ascii_lowercase();
+    if let Some(num) = trimmed.strip_suffix('%') {
+        let pct = num.trim().parse::<f32>().unwrap_or(0.0);
+        ComputedLength::Percent(pct / 100.0)
+    } else {
+        ComputedLength::Px(parse_length(val, font_size))
+    }
+}
+
+fn parse_optional_length_or_percent(val: &str, font_size: f32) -> Option<ComputedLength> {
     let trimmed = val.trim().to_ascii_lowercase();
     if trimmed == "auto" {
         None
     } else {
-        Some(parse_length(val, parent_font_size))
+        Some(parse_length_or_percent(val, font_size))
     }
 }
 
@@ -678,21 +697,21 @@ fn apply_parsed_value(style: &mut ComputedStyle, property: &str, val: &str, pare
         "line-height" => style.line_height = parse_line_height(val, own_font_size, parent_font_size),
         "text-align" => style.text_align = parse_text_align(val),
         "text-decoration" => style.text_decoration = parse_text_decoration(val),
-        "margin-top" => style.margin_top = parse_length(val, own_font_size),
-        "margin-right" => style.margin_right = parse_length(val, own_font_size),
-        "margin-bottom" => style.margin_bottom = parse_length(val, own_font_size),
-        "margin-left" => style.margin_left = parse_length(val, own_font_size),
-        "padding-top" => style.padding_top = parse_length(val, own_font_size),
-        "padding-right" => style.padding_right = parse_length(val, own_font_size),
-        "padding-bottom" => style.padding_bottom = parse_length(val, own_font_size),
-        "padding-left" => style.padding_left = parse_length(val, own_font_size),
-        "width" => style.width = parse_optional_length(val, own_font_size),
-        "height" => style.height = parse_optional_length(val, own_font_size),
+        "margin-top" => style.margin_top = parse_length_or_percent(val, own_font_size),
+        "margin-right" => style.margin_right = parse_length_or_percent(val, own_font_size),
+        "margin-bottom" => style.margin_bottom = parse_length_or_percent(val, own_font_size),
+        "margin-left" => style.margin_left = parse_length_or_percent(val, own_font_size),
+        "padding-top" => style.padding_top = parse_length_or_percent(val, own_font_size),
+        "padding-right" => style.padding_right = parse_length_or_percent(val, own_font_size),
+        "padding-bottom" => style.padding_bottom = parse_length_or_percent(val, own_font_size),
+        "padding-left" => style.padding_left = parse_length_or_percent(val, own_font_size),
+        "width" => style.width = parse_optional_length_or_percent(val, own_font_size),
+        "height" => style.height = parse_optional_length_or_percent(val, own_font_size),
         "position" => style.position = parse_position(val),
-        "top" => style.top = parse_optional_length(val, own_font_size),
-        "right" => style.right = parse_optional_length(val, own_font_size),
-        "bottom" => style.bottom = parse_optional_length(val, own_font_size),
-        "left" => style.left = parse_optional_length(val, own_font_size),
+        "top" => style.top = parse_optional_length_or_percent(val, own_font_size),
+        "right" => style.right = parse_optional_length_or_percent(val, own_font_size),
+        "bottom" => style.bottom = parse_optional_length_or_percent(val, own_font_size),
+        "left" => style.left = parse_optional_length_or_percent(val, own_font_size),
         "opacity" => style.opacity = parse_opacity(val),
         "overflow" => style.overflow = parse_overflow(val),
         "scroll-snap-type" => style.scroll_snap_type = val.trim().to_ascii_lowercase(),
@@ -787,14 +806,14 @@ mod tests {
         assert!((style.line_height - 19.2).abs() < 0.01);
         assert_eq!(style.text_align, TextAlign::Left);
         assert_eq!(style.text_decoration, TextDecoration::None);
-        assert_eq!(style.margin_top, 0.0);
-        assert_eq!(style.margin_right, 0.0);
-        assert_eq!(style.margin_bottom, 0.0);
-        assert_eq!(style.margin_left, 0.0);
-        assert_eq!(style.padding_top, 0.0);
-        assert_eq!(style.padding_right, 0.0);
-        assert_eq!(style.padding_bottom, 0.0);
-        assert_eq!(style.padding_left, 0.0);
+        assert_eq!(style.margin_top, ComputedLength::Px(0.0));
+        assert_eq!(style.margin_right, ComputedLength::Px(0.0));
+        assert_eq!(style.margin_bottom, ComputedLength::Px(0.0));
+        assert_eq!(style.margin_left, ComputedLength::Px(0.0));
+        assert_eq!(style.padding_top, ComputedLength::Px(0.0));
+        assert_eq!(style.padding_right, ComputedLength::Px(0.0));
+        assert_eq!(style.padding_bottom, ComputedLength::Px(0.0));
+        assert_eq!(style.padding_left, ComputedLength::Px(0.0));
         assert_eq!(style.width, None);
         assert_eq!(style.height, None);
         assert_eq!(style.position, Position::Static);
@@ -821,13 +840,13 @@ mod tests {
     #[test]
     fn test_non_inherited_margin_uses_initial() {
         let mut parent = ComputedStyle::initial();
-        parent.margin_top = 20.0;
+        parent.margin_top = ComputedLength::Px(20.0);
 
         let cascaded = empty_cascaded();
         let style = resolve_style(&cascaded, Some(&parent));
 
         // margin-top is NOT inherited, so child should keep initial (0.0)
-        assert_eq!(style.margin_top, 0.0);
+        assert_eq!(style.margin_top, ComputedLength::Px(0.0));
     }
 
     // --- 4. `inherit` keyword forces inheritance ---
@@ -835,13 +854,13 @@ mod tests {
     #[test]
     fn test_inherit_keyword_forces_inheritance() {
         let mut parent = ComputedStyle::initial();
-        parent.margin_top = 42.0;
+        parent.margin_top = ComputedLength::Px(42.0);
 
         // margin-top is non-inherited; using `inherit` should force it
         let cascaded = cascaded_with(&[("margin-top", "inherit")]);
         let style = resolve_style(&cascaded, Some(&parent));
 
-        assert_eq!(style.margin_top, 42.0);
+        assert_eq!(style.margin_top, ComputedLength::Px(42.0));
     }
 
     // --- 5. `initial` keyword forces initial value ---
@@ -917,13 +936,13 @@ mod tests {
     #[test]
     fn test_unset_on_non_inherited_property() {
         let mut parent = ComputedStyle::initial();
-        parent.margin_top = 50.0;
+        parent.margin_top = ComputedLength::Px(50.0);
 
         let cascaded = cascaded_with(&[("margin-top", "unset")]);
         let style = resolve_style(&cascaded, Some(&parent));
 
         // margin-top is NOT inherited, so `unset` behaves like `initial`
-        assert_eq!(style.margin_top, 0.0);
+        assert_eq!(style.margin_top, ComputedLength::Px(0.0));
     }
 
     // --- 11. display: none ---
@@ -1042,7 +1061,7 @@ mod tests {
         let style = resolve_style(&cascaded, None);
 
         // own font-size is 20px, so 2em = 40px
-        assert!((style.padding_top - 40.0).abs() < 0.01);
+        assert_eq!(style.padding_top, ComputedLength::Px(40.0));
     }
 
     #[test]
@@ -1056,7 +1075,7 @@ mod tests {
     fn test_width_px() {
         let cascaded = cascaded_with(&[("width", "200px")]);
         let style = resolve_style(&cascaded, None);
-        assert_eq!(style.width, Some(200.0));
+        assert_eq!(style.width, Some(ComputedLength::Px(200.0)));
     }
 
     #[test]
@@ -1087,8 +1106,8 @@ mod tests {
         assert_eq!(style.display, Display::Block);
         assert_eq!(style.color, ComputedColor::new(0, 0, 255, 1.0));
         assert_eq!(style.font_size, 20.0);
-        assert_eq!(style.margin_top, 10.0);
-        assert_eq!(style.padding_left, 5.0);
+        assert_eq!(style.margin_top, ComputedLength::Px(10.0));
+        assert_eq!(style.padding_left, ComputedLength::Px(5.0));
     }
 
     #[test]

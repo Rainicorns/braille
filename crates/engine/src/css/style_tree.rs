@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use crate::css::cascade::{cascade_element, stylesheet_to_rules, CascadeDeclaration, CascadeRule, CascadedValues};
 use crate::css::collection::{collect_inline_styles, ua_stylesheet};
 use crate::css::computed::{
-    ComputedColor, ComputedStyle, Display, FontStyle, Overflow, Position, TextAlign, TextDecoration, Visibility,
+    ComputedColor, ComputedLength, ComputedStyle, Display, FontStyle, Overflow, Position, TextAlign, TextDecoration,
+    Visibility,
 };
 use crate::css::parser::parse_stylesheet;
 use crate::css::selector_impl::BrailleSelectorParser;
@@ -200,6 +201,27 @@ fn format_length_clean(v: f32) -> String {
     }
 }
 
+fn format_computed_length(v: ComputedLength) -> String {
+    match v {
+        ComputedLength::Px(px) => format_length_clean(px),
+        ComputedLength::Percent(pct) => {
+            let val = pct * 100.0;
+            if val == val.round() {
+                format!("{}%", val as i32)
+            } else {
+                format!("{}%", val)
+            }
+        }
+    }
+}
+
+fn format_optional_computed_length(v: Option<ComputedLength>) -> String {
+    match v {
+        None => "auto".to_string(),
+        Some(cl) => format_computed_length(cl),
+    }
+}
+
 /// Convert a `ComputedStyle` into a `HashMap<String, String>` suitable for
 /// storing on `Node::computed_style`.
 fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
@@ -228,41 +250,23 @@ fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
         "text-decoration".to_string(),
         format_text_decoration(style.text_decoration).to_string(),
     );
-    map.insert("margin-top".to_string(), format_length_clean(style.margin_top));
-    map.insert("margin-right".to_string(), format_length_clean(style.margin_right));
-    map.insert("margin-bottom".to_string(), format_length_clean(style.margin_bottom));
-    map.insert("margin-left".to_string(), format_length_clean(style.margin_left));
-    map.insert("padding-top".to_string(), format_length_clean(style.padding_top));
-    map.insert("padding-right".to_string(), format_length_clean(style.padding_right));
-    map.insert("padding-bottom".to_string(), format_length_clean(style.padding_bottom));
-    map.insert("padding-left".to_string(), format_length_clean(style.padding_left));
+    map.insert("margin-top".to_string(), format_computed_length(style.margin_top));
+    map.insert("margin-right".to_string(), format_computed_length(style.margin_right));
+    map.insert("margin-bottom".to_string(), format_computed_length(style.margin_bottom));
+    map.insert("margin-left".to_string(), format_computed_length(style.margin_left));
+    map.insert("padding-top".to_string(), format_computed_length(style.padding_top));
+    map.insert("padding-right".to_string(), format_computed_length(style.padding_right));
+    map.insert("padding-bottom".to_string(), format_computed_length(style.padding_bottom));
+    map.insert("padding-left".to_string(), format_computed_length(style.padding_left));
 
-    match style.width {
-        Some(w) => map.insert("width".to_string(), format_length_clean(w)),
-        None => map.insert("width".to_string(), "auto".to_string()),
-    };
-    match style.height {
-        Some(h) => map.insert("height".to_string(), format_length_clean(h)),
-        None => map.insert("height".to_string(), "auto".to_string()),
-    };
+    map.insert("width".to_string(), format_optional_computed_length(style.width));
+    map.insert("height".to_string(), format_optional_computed_length(style.height));
 
     map.insert("position".to_string(), format_position(style.position).to_string());
-    match style.top {
-        Some(v) => map.insert("top".to_string(), format_length_clean(v)),
-        None => map.insert("top".to_string(), "auto".to_string()),
-    };
-    match style.right {
-        Some(v) => map.insert("right".to_string(), format_length_clean(v)),
-        None => map.insert("right".to_string(), "auto".to_string()),
-    };
-    match style.bottom {
-        Some(v) => map.insert("bottom".to_string(), format_length_clean(v)),
-        None => map.insert("bottom".to_string(), "auto".to_string()),
-    };
-    match style.left {
-        Some(v) => map.insert("left".to_string(), format_length_clean(v)),
-        None => map.insert("left".to_string(), "auto".to_string()),
-    };
+    map.insert("top".to_string(), format_optional_computed_length(style.top));
+    map.insert("right".to_string(), format_optional_computed_length(style.right));
+    map.insert("bottom".to_string(), format_optional_computed_length(style.bottom));
+    map.insert("left".to_string(), format_optional_computed_length(style.left));
     map.insert("opacity".to_string(), format!("{}", style.opacity));
     map.insert("overflow".to_string(), format_overflow(style.overflow).to_string());
     map.insert("scroll-snap-type".to_string(), style.scroll_snap_type.clone());
