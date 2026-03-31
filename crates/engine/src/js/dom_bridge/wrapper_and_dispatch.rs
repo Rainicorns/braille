@@ -736,6 +736,15 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Helper: create a standalone document-like wrapper around a root element.
         // Used by createHTMLDocument(), createDocument(), and document.cloneNode().
         // Returns a proper Document node (inherits from Document.prototype → EP → Node constants).
+        function __isInvalidAttrName(name) {
+            if (name.length === 0) return true;
+            for (var i = 0; i < name.length; i++) {
+                var c = name.charCodeAt(i);
+                if (c === 0 || c === 9 || c === 10 || c === 12 || c === 13 || c === 32 || c === 47 || c === 62 || c === 61) return true;
+            }
+            return false;
+        }
+
         function __makeDocumentLike(rootEl) {
             // Document.prototype is defined later via function hoisting
             var newDoc = Object.create(Document.prototype);
@@ -935,8 +944,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         doc.createAttribute = function(localName) {
             if (arguments.length === 0) throw new TypeError("Failed to execute 'createAttribute' on 'Document': 1 argument required, but only 0 present.");
-            var name = String(localName).toLowerCase();
-            return new Attr(name);
+            var name = String(localName);
+            if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'createAttribute' on 'Document': The string contains invalid characters.", "InvalidCharacterError");
+            return new Attr(name.toLowerCase());
         };
 
         doc.createAttributeNS = function(ns, qualifiedName) {
@@ -1372,6 +1382,13 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                         el.__ownerDoc = newDoc;
                         return el;
                     };
+                    // XML documents preserve case in createAttribute
+                    newDoc.createAttribute = function(localName) {
+                        if (arguments.length === 0) throw new TypeError("Failed to execute 'createAttribute' on 'Document': 1 argument required, but only 0 present.");
+                        var name = String(localName);
+                        if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'createAttribute' on 'Document': The string contains invalid characters.", "InvalidCharacterError");
+                        return new Attr(name);
+                    };
                     return newDoc;
                 },
                 createDocumentType: function(qualifiedName, publicId, systemId) {
@@ -1456,6 +1473,13 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 el.constructor = Element;
                 _cache[nid] = el;
                 return el;
+            };
+            // XML document: createAttribute preserves case
+            newDoc.createAttribute = function(localName) {
+                if (arguments.length === 0) throw new TypeError("Failed to execute 'createAttribute' on 'Document': 1 argument required, but only 0 present.");
+                var name = String(localName);
+                if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'createAttribute' on 'Document': The string contains invalid characters.", "InvalidCharacterError");
+                return new Attr(name);
             };
             return newDoc;
         };

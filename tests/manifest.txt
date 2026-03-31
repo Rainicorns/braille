@@ -1265,9 +1265,9 @@ PASS wpt:dom/nodes/Document-contentType/contentType/contenttype_xml.html
 PASS wpt:dom/nodes/Document-contentType/contentType/createDocument.html
 PASS wpt:dom/nodes/Document-contentType/contentType/createHTMLDocument.html
 PASS wpt:dom/nodes/Document-contentType/contentType/xhr_responseType_document.html
-FAIL wpt:dom/nodes/Document-createAttribute.html
-NOT_RUN wpt:dom/nodes/Document-createCDATASection.html
-NOT_RUN wpt:dom/nodes/Document-createComment.html
+PASS wpt:dom/nodes/Document-createAttribute.html
+PASS wpt:dom/nodes/Document-createCDATASection.html
+FAIL wpt:dom/nodes/Document-createComment.html
 NOT_RUN wpt:dom/nodes/Document-createElement-namespace-tests/bare_mathml.html
 NOT_RUN wpt:dom/nodes/Document-createElement-namespace-tests/bare_svg.html
 NOT_RUN wpt:dom/nodes/Document-createElement-namespace-tests/bare_xhtml.html
