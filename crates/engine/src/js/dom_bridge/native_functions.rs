@@ -855,6 +855,32 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // getElementsByTagNameNS(rootNodeId, namespace, localName) -> array of nodeIds
+    // Per DOM spec §4.4.4: matches localName (not qualified name), always case-sensitive.
+    // namespace/localName "*" = wildcard. null namespace mapped to "" by JS caller.
+    g.set("__n_getElementsByTagNameNS", Function::new(ctx.clone(), |root_id: u32, namespace: String, local_name: String| -> Vec<u32> {
+        with_tree(|tree| {
+            let mut result = Vec::new();
+            let ns_wildcard = namespace == "*";
+            let ln_wildcard = local_name == "*";
+            fn collect(tree: &DomTree, node_id: NodeId, ns: &str, ln: &str, ns_wildcard: bool, ln_wildcard: bool, result: &mut Vec<u32>) {
+                let node = tree.get_node(node_id);
+                if let NodeData::Element { tag_name, namespace: elem_ns, .. } = &node.data {
+                    let ns_match = ns_wildcard || elem_ns == ns;
+                    let ln_match = ln_wildcard || tag_name == ln;
+                    if ns_match && ln_match {
+                        result.push(node_id as u32);
+                    }
+                }
+                for &child_id in &node.children {
+                    collect(tree, child_id, ns, ln, ns_wildcard, ln_wildcard, result);
+                }
+            }
+            collect(tree, root_id as NodeId, &namespace, &local_name, ns_wildcard, ln_wildcard, &mut result);
+            result
+        })
+    }).unwrap()).unwrap();
+
     // validateAndExtract(namespace, qualifiedName) -> JSON result
     // Returns {"ok":{"prefix":"...","localName":"..."}} or {"err":"ErrorName"}
     g.set("__n_validateAndExtract", Function::new(ctx.clone(), |namespace: String, qualified_name: String| -> String {

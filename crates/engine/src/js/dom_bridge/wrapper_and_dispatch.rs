@@ -900,8 +900,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.getElementsByTagName = function(tag) {
             return __makeHTMLCollection(function() { return __n_getElementsByTagName(0, tag).map(__w); });
         };
-        doc.getElementsByTagNameNS = function(ns, tag) {
-            return __makeHTMLCollection(function() { return doc.querySelectorAll(tag === '*' ? '*' : tag); });
+        doc.getElementsByTagNameNS = function(ns, localName) {
+            var nsStr = (ns === null || ns === undefined) ? '' : String(ns);
+            var lnStr = String(localName);
+            return __makeHTMLCollection(function() { return __n_getElementsByTagNameNS(0, nsStr, lnStr).map(__w); });
         };
         doc.getElementsByClassName = function(cls) {
             return __makeHTMLCollection(function() { return doc.querySelectorAll('.' + cls); });

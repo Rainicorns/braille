@@ -240,9 +240,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
             var self = this;
             return __makeHTMLCollection(function() { return self.querySelectorAll(tag); });
         };
-        ElemProto.getElementsByTagNameNS = function(ns, tag) {
-            var self = this;
-            return __makeHTMLCollection(function() { return self.querySelectorAll(tag === '*' ? '*' : tag); });
+        ElemProto.getElementsByTagNameNS = function(ns, localName) {
+            var nid = this.__nid;
+            var nsStr = (ns === null || ns === undefined) ? '' : String(ns);
+            var lnStr = String(localName);
+            return __makeHTMLCollection(function() { return __n_getElementsByTagNameNS(nid, nsStr, lnStr).map(__w); });
         };
         ElemProto.getElementsByClassName = function(cls) {
             var self = this;
