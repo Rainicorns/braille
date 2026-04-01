@@ -1280,8 +1280,8 @@ PASS wpt:dom/nodes/Document-createElement-namespace-tests/xhtml_ns_changed.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/xhtml_ns_removed.html
 PASS wpt:dom/nodes/Document-createElement-namespace.html
 PASS wpt:dom/nodes/Document-createElement.html
-FAIL wpt:dom/nodes/Document-createElementNS.html
-NOT_RUN wpt:dom/nodes/Document-createEvent-touchevent.window.js
+PASS wpt:dom/nodes/Document-createElementNS.html
+FAIL wpt:dom/nodes/Document-createEvent-touchevent.window.js
 NOT_RUN wpt:dom/nodes/Document-createEvent.https.html
 NOT_RUN wpt:dom/nodes/Document-createProcessingInstruction.html
 NOT_RUN wpt:dom/nodes/Document-createTextNode.html

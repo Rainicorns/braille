@@ -862,7 +862,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (ln === undefined || ln === null) return __n_getTagName(this.__nid);
                 var tn = prefix ? prefix + ':' + ln : ln;
                 // HTML elements in HTML documents get uppercased tagName
-                if (this.namespaceURI === 'http://www.w3.org/1999/xhtml' || (!this.namespaceURI && !prefix)) return tn.toUpperCase();
+                if (this.namespaceURI === 'http://www.w3.org/1999/xhtml' || (this.__namespaceURI === undefined && !prefix)) return tn.toUpperCase();
                 return tn;
             }, configurable: true },
             localName: { get: function() {

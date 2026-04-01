@@ -49,16 +49,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     if (ceEntry) ctor = ceEntry.ctor;
                 }
                 if (ctor) {
-                    // Set prototype chain: obj -> ctor.prototype -> __ElemProto
-                    // so instanceof works while still inheriting DOM methods
-                    if (!ctor.__protoLinked) {
-                        Object.setPrototypeOf(ctor.prototype, proto);
-                        ctor.__protoLinked = true;
-                    }
                     obj = Object.create(ctor.prototype);
                     obj.constructor = ctor;
                 } else {
-                    obj = Object.create(proto);
+                    obj = Object.create(Element.prototype);
                 }
             } else if (nt === 11 && __n_isShadowRoot(nodeId)) {
                 // ShadowRoot — use ShadowRoot.prototype
@@ -877,9 +871,18 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             var localName = result.ok.localName;
             var nid = __n_createElement(localName);
             var el = __w(nid);
-            el.namespaceURI = (ns === null || ns === undefined) ? null : String(ns);
+            var nsNorm = (ns === null || ns === undefined || ns === '') ? null : String(ns);
+            el.namespaceURI = nsNorm;
             el.__localName = localName;
             el.prefix = result.ok.prefix || null;
+            // Fix prototype based on namespace
+            if (nsNorm !== 'http://www.w3.org/1999/xhtml') {
+                // Non-HTML namespace → plain Element
+                Object.setPrototypeOf(el, Element.prototype);
+            } else if (localName !== localName.toLowerCase() || !_ctorMap[localName.toUpperCase()]) {
+                // HTML namespace but uppercase or unknown tag → HTMLUnknownElement
+                Object.setPrototypeOf(el, HTMLUnknownElement.prototype);
+            }
             return el;
         };
         doc.createTextNode = function(text) {
@@ -1909,17 +1912,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             configurable: true
         });
 
-        // Mirror event handler properties from HTMLElement.prototype onto __ElemProto
-        // (the actual prototype chain for wrapper objects is obj → ctor.prototype → __ElemProto → EP,
-        // which skips HTMLElement.prototype, so we need to copy the descriptors)
-        var _ehNames = Object.getOwnPropertyNames(HTMLElement.prototype);
-        for (var i = 0; i < _ehNames.length; i++) {
-            var name = _ehNames[i];
-            if (name.substring(0, 2) === 'on' && !(name in __ElemProto)) {
-                var desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name);
-                if (desc) Object.defineProperty(__ElemProto, name, desc);
-            }
-        }
+        // === Unify DOM prototype chains ===
+        // Copy Node methods (EP) onto the real Node.prototype from dom_stubs
+        Object.defineProperties(globalThis.Node.prototype, Object.getOwnPropertyDescriptors(EP));
+        // Wire: Element.prototype → __ElemProto → Node.prototype
+        Object.setPrototypeOf(__ElemProto, globalThis.Node.prototype);
+        Object.setPrototypeOf(globalThis.Element.prototype, __ElemProto);
 
         // DocumentFragment also gets querySelector/querySelectorAll
         DocumentFragment.prototype.querySelector = function(sel) {
@@ -1947,11 +1945,6 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         function __ceUpgradeElement(el, ctor, observedAttrs) {
             if (el.__ce_upgraded) return;
             el.__ce_upgraded = true;
-            // Ensure ctor.prototype inherits from __ElemProto
-            if (!ctor.__protoLinked) {
-                Object.setPrototypeOf(ctor.prototype, __ElemProto);
-                ctor.__protoLinked = true;
-            }
             // Re-wrap with correct prototype
             delete _cache[el.__nid];
             Object.setPrototypeOf(el, ctor.prototype);
