@@ -1168,11 +1168,14 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             parseFromString(str, type) {
                 var div = document.createElement('div');
                 div.innerHTML = str;
+                var ct = type;
+                var useXhtml = (ct === 'text/html' || ct === 'application/xhtml+xml');
                 return {
                     documentElement: div,
                     body: div,
                     head: null,
                     title: '',
+                    contentType: ct,
                     readyState: 'complete',
                     querySelector: function(sel) { return div.querySelector(sel); },
                     querySelectorAll: function(sel) { return div.querySelectorAll(sel); },
@@ -1183,7 +1186,11 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                     getElementsByTagName: function(tag) { return div.getElementsByTagName(tag); },
                     getElementsByClassName: function(cls) { return div.getElementsByClassName(cls); },
                     createDocumentFragment: function() { return document.createDocumentFragment(); },
-                    createElement: function(tag) { return document.createElement(tag); },
+                    createElement: function(tag) {
+                        var el = document.createElement(tag);
+                        if (!useXhtml) el.namespaceURI = null;
+                        return el;
+                    },
                     createTextNode: function(text) { return document.createTextNode(text); },
                 };
             }

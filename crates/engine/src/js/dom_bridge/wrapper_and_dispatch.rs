@@ -861,7 +861,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
         doc.createElement = function(tag) {
             var nid = __n_createElement(tag);
-            return __w(nid);
+            var el = __w(nid);
+            el.namespaceURI = 'http://www.w3.org/1999/xhtml';
+            return el;
         };
         doc.createElementNS = function(ns, tag) {
             if (arguments.length < 2) throw new TypeError("Failed to execute 'createElementNS' on 'Document': 2 arguments required.");
@@ -1380,6 +1382,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                         var el = __w(nid);
                         el.__localName = String(tag);
                         el.__ownerDoc = newDoc;
+                        var ct = newDoc.contentType;
+                        if (ct === 'text/html' || ct === 'application/xhtml+xml') {
+                            el.namespaceURI = 'http://www.w3.org/1999/xhtml';
+                        }
                         return el;
                     };
                     // XML documents preserve case in createAttribute
