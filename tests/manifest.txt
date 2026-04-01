@@ -1305,11 +1305,11 @@ PASS wpt:dom/nodes/Element-childElementCount-nochild.html
 PASS wpt:dom/nodes/Element-childElementCount.html
 PASS wpt:dom/nodes/Element-children.html
 PASS wpt:dom/nodes/Element-classlist.html
-FAIL wpt:dom/nodes/Element-closest.html
-NOT_RUN wpt:dom/nodes/Element-firstElementChild-namespace.html
-NOT_RUN wpt:dom/nodes/Element-firstElementChild.html
-NOT_RUN wpt:dom/nodes/Element-getElementsByClassName.html
-NOT_RUN wpt:dom/nodes/Element-getElementsByTagName-change-document-HTMLNess.html
+PASS wpt:dom/nodes/Element-closest.html
+PASS wpt:dom/nodes/Element-firstElementChild-namespace.html
+PASS wpt:dom/nodes/Element-firstElementChild.html
+PASS wpt:dom/nodes/Element-getElementsByClassName.html
+FAIL wpt:dom/nodes/Element-getElementsByTagName-change-document-HTMLNess.html
 NOT_RUN wpt:dom/nodes/Element-getElementsByTagName.html
 NOT_RUN wpt:dom/nodes/Element-getElementsByTagNameNS.html
 NOT_RUN wpt:dom/nodes/Element-hasAttribute.html

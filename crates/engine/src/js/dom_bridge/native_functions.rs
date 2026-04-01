@@ -263,7 +263,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
             let mut current = Some(node_id as NodeId);
             while let Some(id) = current {
                 if matches!(tree.get_node(id).data, NodeData::Element { .. })
-                    && crate::css::matching::matches_selector_str(tree, id, &selector, None)
+                    && crate::css::matching::matches_selector_str(tree, id, &selector, Some(node_id as NodeId))
                 {
                     return id as i32;
                 }
