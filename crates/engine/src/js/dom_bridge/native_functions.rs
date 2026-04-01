@@ -499,6 +499,49 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // getDoctypeNodeId() -> nid of the doctype child, or -1
+    g.set("__n_getDoctypeNodeId", Function::new(ctx.clone(), || -> i32 {
+        with_tree(|tree| {
+            let doc = tree.document();
+            for &child_id in &tree.get_node(doc).children {
+                if matches!(&tree.get_node(child_id).data, NodeData::Doctype { .. }) {
+                    return child_id as i32;
+                }
+            }
+            -1
+        })
+    }).unwrap()).unwrap();
+
+    // getDoctypeName(nodeId) -> name string
+    g.set("__n_getDoctypeName", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            match &tree.nodes[node_id as NodeId].data {
+                NodeData::Doctype { name, .. } => name.clone(),
+                _ => String::new(),
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // getDoctypePublicId(nodeId) -> publicId string
+    g.set("__n_getDoctypePublicId", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            match &tree.nodes[node_id as NodeId].data {
+                NodeData::Doctype { public_id, .. } => public_id.clone(),
+                _ => String::new(),
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // getDoctypeSystemId(nodeId) -> systemId string
+    g.set("__n_getDoctypeSystemId", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            match &tree.nodes[node_id as NodeId].data {
+                NodeData::Doctype { system_id, .. } => system_id.clone(),
+                _ => String::new(),
+            }
+        })
+    }).unwrap()).unwrap();
+
     // getInnerHTML(nodeId) -> string
     g.set("__n_getInnerHTML", Function::new(ctx.clone(), |node_id: u32| -> String {
         with_tree(|tree| {

@@ -169,7 +169,8 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                     if (typeof p === 'string' && __findNamed(live, p)) return false;
                     // Out-of-range index or no matching element: allow
                     return true;
-                }
+                },
+                getPrototypeOf: function() { return HTMLCollection.prototype; }
             });
             return proxy;
         };

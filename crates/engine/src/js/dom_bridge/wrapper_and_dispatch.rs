@@ -886,7 +886,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return el;
         };
         doc.createTextNode = function(text) {
-            var nid = __n_createTextNode(text);
+            var nid = __n_createTextNode(String(text));
             var node = __w(nid);
             return node;
         };
@@ -1127,6 +1127,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return e;
         };
         doc.createTreeWalker = function(root, whatToShow, filter) {
+            if (arguments.length === 0) throw new TypeError("Failed to execute 'createTreeWalker' on 'Document': 1 argument required, but only 0 present.");
             return new TreeWalker(root, whatToShow, filter);
         };
         doc.createNodeIterator = function(root, whatToShow, filter) {
@@ -1272,23 +1273,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             currentScript: { value: null, writable: true, configurable: true },
             doctype: {
                 get: function() {
-                    if (doc.__cachedDoctype) return doc.__cachedDoctype;
-                    var json = __n_getDoctypeInfo();
-                    if (!json) return null;
-                    var info = JSON.parse(json);
-                    var dt = Object.create(DocumentType.prototype);
-                    var props = {
-                        nodeType: 10, nodeName: info.name, name: info.name,
-                        publicId: info.publicId, systemId: info.systemId,
-                        parentNode: doc, parentElement: null,
-                        childNodes: [], firstChild: null, lastChild: null,
-                        previousSibling: null, nextSibling: null,
-                        ownerDocument: doc
-                    };
-                    for (var k in props) Object.defineProperty(dt, k, { value: props[k], writable: true, enumerable: true, configurable: true });
-                    dt.removeChild = function() { return null; };
-                    doc.__cachedDoctype = dt;
-                    return dt;
+                    var nid = __n_getDoctypeNodeId();
+                    if (nid === -1) return null;
+                    return __w(nid);
                 },
                 configurable: true
             },
@@ -1856,6 +1843,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         function DocumentType() {}
         DocumentType.prototype = Object.create(EP);
         DocumentType.prototype.constructor = DocumentType;
+        Object.defineProperties(DocumentType.prototype, {
+            name: { get: function() { return __n_getDoctypeName(this.__nid); }, configurable: true },
+            publicId: { get: function() { return __n_getDoctypePublicId(this.__nid); }, configurable: true },
+            systemId: { get: function() { return __n_getDoctypeSystemId(this.__nid); }, configurable: true },
+            nodeName: { get: function() { return __n_getDoctypeName(this.__nid); }, configurable: true }
+        });
         globalThis.DocumentType = DocumentType;
 
         // XMLDocument constructor (type marker per spec — no additional methods)
