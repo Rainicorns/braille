@@ -1175,7 +1175,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         doc.createProcessingInstruction = function(target, data) {
             if (arguments.length < 2) throw new TypeError("Failed to execute 'createProcessingInstruction' on 'Document': 2 arguments required.");
-            var nid = __n_createPI(String(target), String(data));
+            var t = String(target), d = String(data);
+            if (!__n_isValidXmlName(t)) throw new DOMException("The target provided ('" + t + "') is not a valid XML name.", "InvalidCharacterError");
+            if (d.indexOf('?>') !== -1) throw new DOMException("The data provided ('..?>..') contains '?>'.", "InvalidCharacterError");
+            var nid = __n_createPI(t, d);
             return __w(nid);
         };
 
@@ -1873,6 +1876,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         function ProcessingInstruction() {}
         ProcessingInstruction.prototype = Object.create(CharacterData.prototype);
         ProcessingInstruction.prototype.constructor = ProcessingInstruction;
+        Object.defineProperty(ProcessingInstruction.prototype, 'target', {
+            get: function() { return __n_getPITarget(this.__nid); },
+            configurable: true
+        });
         globalThis.ProcessingInstruction = ProcessingInstruction;
 
         // Wire global document to Document.prototype

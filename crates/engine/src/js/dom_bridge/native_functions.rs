@@ -1,7 +1,7 @@
 use rquickjs::{Ctx, Function};
 
 use crate::dom::node::{NodeData, ShadowRootMode};
-use crate::dom::tree::DomTree;
+use crate::dom::tree::{is_valid_xml_name, DomTree};
 use crate::dom::NodeId;
 
 use super::{import_node_recursive, with_tree, with_tree_mut};
@@ -288,6 +288,21 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         with_tree_mut(|tree| {
             tree.create_processing_instruction(&target, &data) as u32
         })
+    }).unwrap()).unwrap();
+
+    // getPITarget(nodeId) -> target string for ProcessingInstruction nodes
+    g.set("__n_getPITarget", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            match &tree.nodes[node_id as NodeId].data {
+                NodeData::ProcessingInstruction { target, .. } => target.clone(),
+                _ => String::new(),
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // isValidXmlName(name) -> bool
+    g.set("__n_isValidXmlName", Function::new(ctx.clone(), |name: String| -> bool {
+        is_valid_xml_name(&name)
     }).unwrap()).unwrap();
 
     // getAllChildIds(nodeId) -> array of ALL child nodeIds (elements, text, comments)
