@@ -1089,7 +1089,43 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return best;
         };
         doc.elementsFromPoint = function(x, y) { var el = doc.elementFromPoint(x, y); return el ? [el] : []; };
-        doc.createEvent = function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; };
+        var _createEventAliases = {
+            'beforeunloadevent': 'BeforeUnloadEvent',
+            'compositionevent': 'CompositionEvent',
+            'customevent': 'CustomEvent',
+            'devicemotionevent': 'DeviceMotionEvent',
+            'deviceorientationevent': 'DeviceOrientationEvent',
+            'dragevent': 'DragEvent',
+            'event': 'Event',
+            'events': 'Event',
+            'focusevent': 'FocusEvent',
+            'hashchangeevent': 'HashChangeEvent',
+            'htmlevents': 'Event',
+            'keyboardevent': 'KeyboardEvent',
+            'messageevent': 'MessageEvent',
+            'mouseevent': 'MouseEvent',
+            'mouseevents': 'MouseEvent',
+            'storageevent': 'StorageEvent',
+            'svgevents': 'Event',
+            'textevent': 'TextEvent',
+            'uievent': 'UIEvent',
+            'uievents': 'UIEvent',
+        };
+        doc.createEvent = function(type) {
+            var key = String(type).toLowerCase();
+            if (key === 'touchevent' && !('ontouchstart' in document)) {
+                throw new DOMException("Failed to execute 'createEvent' on 'Document': The provided event type ('" + type + "') is invalid.", 'NotSupportedError');
+            }
+            var ctorName = _createEventAliases[key];
+            if (!ctorName) {
+                throw new DOMException("Failed to execute 'createEvent' on 'Document': The provided event type ('" + type + "') is invalid.", 'NotSupportedError');
+            }
+            var Ctor = globalThis[ctorName];
+            var e = new Ctor('');
+            e._initialized = false;
+            e.type = '';
+            return e;
+        };
         doc.createTreeWalker = function(root, whatToShow, filter) {
             return new TreeWalker(root, whatToShow, filter);
         };
@@ -1854,7 +1890,21 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Document.prototype.createProcessingInstruction = function(t, d) { return document.createProcessingInstruction(t, d); };
         Document.prototype.createAttribute = function(n) { return document.createAttribute(n); };
         Document.prototype.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
-        Document.prototype.createEvent = function(type) { var Ctor = (type === 'CustomEvent' || type === 'customevent') ? CustomEvent : Event; var e = new Ctor(''); e._initialized = false; e.type = ''; return e; };
+        Document.prototype.createEvent = function(type) {
+            var key = String(type).toLowerCase();
+            if (key === 'touchevent' && !('ontouchstart' in document)) {
+                throw new DOMException("Failed to execute 'createEvent' on 'Document': The provided event type ('" + type + "') is invalid.", 'NotSupportedError');
+            }
+            var ctorName = _createEventAliases[key];
+            if (!ctorName) {
+                throw new DOMException("Failed to execute 'createEvent' on 'Document': The provided event type ('" + type + "') is invalid.", 'NotSupportedError');
+            }
+            var Ctor = globalThis[ctorName];
+            var e = new Ctor('');
+            e._initialized = false;
+            e.type = '';
+            return e;
+        };
         Document.prototype.getElementById = function(id) {
             var de = this.documentElement;
             if (!de || !de.querySelector) return null;

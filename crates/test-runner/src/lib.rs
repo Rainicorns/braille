@@ -42,7 +42,7 @@ pub fn testharness_preamble() -> String {
 
     function _progress(status) {
         if (typeof __braille_test_progress === 'function') {
-            __braille_test_progress(status === 0);
+            __braille_test_progress(status === 0 || status === 3);
         }
     }
 
@@ -68,7 +68,11 @@ pub fn testharness_preamble() -> String {
         try {
             fn.call(t, t);
         } catch(e) {
-            result.status = 1;
+            if (e instanceof OptionalFeatureUnsupportedError) {
+                result.status = 3;
+            } else {
+                result.status = 1;
+            }
             result.message = e.message || String(e);
         }
         for (var i = 0; i < cleanups.length; i++) {
@@ -110,7 +114,11 @@ pub fn testharness_preamble() -> String {
             try {
                 fn.call(t, t);
             } catch(e) {
-                result.status = 1;
+                if (e instanceof OptionalFeatureUnsupportedError) {
+                    result.status = 3;
+                } else {
+                    result.status = 1;
+                }
                 result.message = e.message || String(e);
             }
         }
@@ -152,7 +160,11 @@ pub fn testharness_preamble() -> String {
             try {
                 p = fn(t);
             } catch(e) {
-                result.status = 1;
+                if (e instanceof OptionalFeatureUnsupportedError) {
+                    result.status = 3;
+                } else {
+                    result.status = 1;
+                }
                 result.message = e.message || String(e);
                 for (var i = 0; i < cleanups.length; i++) { try { cleanups[i](); } catch(ce) {} }
                 _progress(result.status);
@@ -162,7 +174,11 @@ pub fn testharness_preamble() -> String {
                 return p.then(function() {
                     _progress(result.status);
                 }, function(e) {
-                    result.status = 1;
+                    if (e instanceof OptionalFeatureUnsupportedError) {
+                        result.status = 3;
+                    } else {
+                        result.status = 1;
+                    }
                     result.message = e.message || String(e);
                     _progress(result.status);
                 }).then(function() {
@@ -229,6 +245,16 @@ pub fn testharness_preamble() -> String {
     AssertionError.prototype.constructor = AssertionError;
     AssertionError.prototype.name = 'AssertionError';
     self.AssertionError = AssertionError;
+
+    // OptionalFeatureUnsupportedError — thrown by assert_implements_optional
+    function OptionalFeatureUnsupportedError(message) {
+        this.message = message || '';
+        this.stack = (new Error()).stack;
+    }
+    OptionalFeatureUnsupportedError.prototype = Object.create(Error.prototype);
+    OptionalFeatureUnsupportedError.prototype.constructor = OptionalFeatureUnsupportedError;
+    OptionalFeatureUnsupportedError.prototype.name = 'OptionalFeatureUnsupportedError';
+    self.OptionalFeatureUnsupportedError = OptionalFeatureUnsupportedError;
 
     // Assertions
     self.assert_true = function(val, msg) {
@@ -381,7 +407,7 @@ pub fn testharness_preamble() -> String {
         if (!val) throw new AssertionError(msg || "assert_implements: not implemented");
     };
     self.assert_implements_optional = function(val, msg) {
-        if (!val) throw new AssertionError(msg || "assert_implements_optional: not implemented");
+        if (!val) throw new OptionalFeatureUnsupportedError(msg || "assert_implements_optional: not implemented");
     };
     self.subsetTest = function(testFunc) {
         var args = Array.prototype.slice.call(arguments, 1);
@@ -1537,7 +1563,7 @@ fn run_wpt_test_with_search(
         }
     }
 
-    let pass_count = results.iter().filter(|r| r.status == 0).count();
+    let pass_count = results.iter().filter(|r| r.status == 0 || r.status == 3).count();
     let fail_count = results.len() - pass_count;
 
     WptTestResult {

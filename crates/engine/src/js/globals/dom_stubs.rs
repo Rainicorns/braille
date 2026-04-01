@@ -346,6 +346,11 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.StorageEvent = class StorageEvent extends Event {
             constructor(t,o){super(t,o);this.key=(o&&o.key)||null;this.oldValue=(o&&o.oldValue)||null;this.newValue=(o&&o.newValue)||null;this.url=(o&&o.url)||'';this.storageArea=(o&&o.storageArea)||null;}
         };
+        globalThis.BeforeUnloadEvent = class BeforeUnloadEvent extends Event {};
+        globalThis.DeviceMotionEvent = class DeviceMotionEvent extends Event {};
+        globalThis.DeviceOrientationEvent = class DeviceOrientationEvent extends Event {};
+
+        globalThis.TextEvent = class TextEvent extends UIEvent {};
 
         // Window dimensions
         window.innerWidth = 1280;
