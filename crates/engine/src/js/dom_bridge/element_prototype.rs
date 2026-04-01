@@ -736,12 +736,28 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         ElemProto.getAttributeNode = function(name) {
             if (!this.hasAttribute(name)) return null;
-            return { name: name, value: this.getAttribute(name), specified: true };
+            var val = this.getAttribute(name);
+            var attr = new Attr(name, val);
+            attr.ownerElement = this;
+            return attr;
+        };
+        ElemProto.getAttributeNodeNS = function(ns, localName) {
+            ns = (ns === null || ns === undefined) ? '' : String(ns);
+            var json = __n_getAttributeNodeNS(this.__nid, ns, String(localName));
+            if (!json) return null;
+            var info = JSON.parse(json);
+            var qualName = info.prefix ? (info.prefix + ':' + info.localName) : info.localName;
+            var attr = new Attr(qualName, info.value, info.namespace || null, info.prefix || null);
+            attr.localName = info.localName;
+            attr.ownerElement = this;
+            return attr;
         };
         EP.remove = function() {
             if (this.__nid !== undefined) {
                 var pid = __n_getParent(this.__nid);
                 if (pid >= 0) __n_removeChild(pid, this.__nid);
+            } else if (this.parentNode && this.parentNode.removeChild) {
+                this.parentNode.removeChild(this);
             }
         };
         EP.getRootNode = function() { return document; };
@@ -879,7 +895,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 return (this.__prefix !== undefined) ? this.__prefix : null;
             }, set: function(v) { this.__prefix = v; }, configurable: true },
             namespaceURI: { get: function() {
-                return (this.__namespaceURI !== undefined) ? this.__namespaceURI : null;
+                return (this.__namespaceURI !== undefined) ? this.__namespaceURI : 'http://www.w3.org/1999/xhtml';
             }, set: function(v) { this.__namespaceURI = v; }, configurable: true },
             id: {
                 get: function() { return this.getAttribute('id') || ''; },
@@ -1256,10 +1272,12 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     function _tokens() { var raw=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean),seen={},out=[]; for(var i=0;i<raw.length;i++){if(!seen[raw[i]]){seen[raw[i]]=true;out.push(raw[i]);}} return out; }
                     if (!this.__classList) {
                         var obj = Object.create(DOMTokenList.prototype);
-                        obj.add = function() { var c=_tokens(); for(var i=0;i<arguments.length;i++) if(c.indexOf(arguments[i])<0) c.push(arguments[i]); el.setAttribute('class',c.join(' ')); obj._sync(); };
-                        obj.remove = function() { var c=_tokens(); for(var i=0;i<arguments.length;i++){var idx=c.indexOf(arguments[i]);if(idx>=0)c.splice(idx,1);} el.setAttribute('class',c.join(' ')); obj._sync(); };
-                        obj.contains = function(cls) { return _tokens().indexOf(cls)>=0; };
-                        obj.toggle = function(cls,force) { if(force!==undefined){if(force)obj.add(cls);else obj.remove(cls);return force;} if(obj.contains(cls)){obj.remove(cls);return false;} obj.add(cls);return true; };
+                        obj.add = function() { for(var i=0;i<arguments.length;i++) _validateToken(String(arguments[i])); var c=_tokens(); var changed=false; for(var i=0;i<arguments.length;i++){var s=String(arguments[i]);if(c.indexOf(s)<0){c.push(s);changed=true;}} if(changed){el.setAttribute('class',c.join(' ')); obj._sync();} };
+                        obj.remove = function() { for(var i=0;i<arguments.length;i++) _validateToken(String(arguments[i])); var c=_tokens(); var changed=false; for(var i=arguments.length-1;i>=0;i--){var s=String(arguments[i]);var idx=c.indexOf(s);if(idx>=0){c.splice(idx,1);changed=true;}} if(changed){el.setAttribute('class',c.join(' ')); obj._sync();} };
+                        obj.contains = function(cls) { _validateToken(String(cls)); return _tokens().indexOf(String(cls))>=0; };
+                        obj.toggle = function(cls,force) { _validateToken(String(cls)); if(force!==undefined){if(force)obj.add(cls);else obj.remove(cls);return !!force;} if(obj.contains(cls)){obj.remove(cls);return false;} obj.add(cls);return true; };
+                        function _validateToken(t) { if(t==='') throw new DOMException("The token provided must not be empty.","SyntaxError"); if(/\s/.test(t)) throw new DOMException("The token provided ('"+t+"') contains HTML space characters, which are not valid in tokens.","InvalidCharacterError"); }
+                        obj.replace = function(oldToken, newToken) { var o=String(oldToken),n=String(newToken); _validateToken(o); _validateToken(n); var c=_tokens(); var idx=c.indexOf(o); if(idx<0) return false; if(o!==n&&c.indexOf(n)>=0){c.splice(idx,1);}else{c[idx]=n;} el.setAttribute('class',c.join(' ')); obj._sync(); return true; };
                         obj.item = function(i) { var c=_tokens(); return i<c.length?c[i]:null; };
                         obj.toString = function() { return el.getAttribute('class')||''; };
                         Object.defineProperty(obj, 'value', { get: function() { return el.getAttribute('class')||''; }, set: function(v) { el.setAttribute('class', v); obj._sync(); }, configurable: true });

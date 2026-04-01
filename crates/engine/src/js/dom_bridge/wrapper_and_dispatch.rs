@@ -790,16 +790,34 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             newDoc.getElementById = function(id) { return rootEl ? (rootEl.querySelector('#' + id) || null) : null; };
             newDoc.getElementsByTagName = function(tag) { return rootEl ? rootEl.querySelectorAll(tag) : []; };
             newDoc.getElementsByClassName = function(cls) { return rootEl ? rootEl.querySelectorAll('.' + cls) : []; };
-            newDoc.createElement = function(tag) { return document.createElement(tag); };
-            newDoc.createElementNS = function(ns, tag) { return document.createElementNS(ns, tag); };
-            newDoc.createTextNode = function(text) { return document.createTextNode(text); };
-            newDoc.createComment = function(text) { return document.createComment(text); };
-            newDoc.createDocumentFragment = function() { return document.createDocumentFragment(); };
-            newDoc.createProcessingInstruction = function(t, d) { return document.createProcessingInstruction(t, d); };
+            newDoc.createElement = function(tag) { var el = document.createElement(tag); el.__ownerDoc = newDoc; return el; };
+            newDoc.createElementNS = function(ns, tag) { var el = document.createElementNS(ns, tag); el.__ownerDoc = newDoc; return el; };
+            newDoc.createTextNode = function(text) { var n = document.createTextNode(text); n.__ownerDoc = newDoc; return n; };
+            newDoc.createComment = function(text) { var n = document.createComment(text); n.__ownerDoc = newDoc; return n; };
+            newDoc.createDocumentFragment = function() { var n = document.createDocumentFragment(); n.__ownerDoc = newDoc; return n; };
+            newDoc.createProcessingInstruction = function(t, d) { var n = document.createProcessingInstruction(t, d); n.__ownerDoc = newDoc; return n; };
             newDoc.createAttribute = function(n) { return document.createAttribute(n); };
             newDoc.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
             newDoc.createEvent = function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; };
-            newDoc.appendChild = function(child) { if (rootEl) return rootEl.appendChild(child); return child; };
+            newDoc.appendChild = function(child) {
+                if (child.__nid !== undefined && rootEl) return rootEl.appendChild(child);
+                if (child.__nid === undefined) child.parentNode = newDoc;
+                var kids = newDoc.childNodes;
+                kids.push(child);
+                newDoc.firstChild = kids[0];
+                newDoc.lastChild = kids[kids.length - 1];
+                return child;
+            };
+            newDoc.removeChild = function(child) {
+                var kids = newDoc.childNodes;
+                var idx = kids.indexOf(child);
+                if (idx < 0) throw new DOMException("The node to be removed is not a child of this node.", "NotFoundError");
+                kids.splice(idx, 1);
+                if (child.__nid === undefined) child.parentNode = null;
+                newDoc.firstChild = kids.length > 0 ? kids[0] : null;
+                newDoc.lastChild = kids.length > 0 ? kids[kids.length - 1] : null;
+                return child;
+            };
             newDoc.addEventListener = function(type, cb, opts) {
                 if (typeof cb !== 'function') return;
                 var capture = !!(opts === true || (opts && opts.capture));
@@ -1139,6 +1157,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
         doc.importNode = function(node, deep) {
             if (!node) return node;
+            if (node.nodeType === 2) {
+                var attr = new Attr(node.name, node.value, node.namespaceURI, node.prefix);
+                attr.localName = node.localName;
+                return attr;
+            }
             if (node.__nid !== undefined) return node.cloneNode(!!deep);
             return node;
         };
@@ -1874,7 +1897,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         XMLDocument.prototype.constructor = XMLDocument;
         globalThis.XMLDocument = XMLDocument;
 
-        function DocumentFragment() {}
+        function DocumentFragment() {
+            var nid = __n_createDocFragment();
+            var w = __w(nid);
+            Object.setPrototypeOf(w, DocumentFragment.prototype);
+            return w;
+        }
         DocumentFragment.prototype = Object.create(EP);
         DocumentFragment.prototype.constructor = DocumentFragment;
         globalThis.DocumentFragment = DocumentFragment;

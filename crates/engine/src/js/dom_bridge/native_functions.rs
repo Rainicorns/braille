@@ -47,6 +47,25 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         with_tree(|tree| tree.get_attribute_ns(node_id as NodeId, &namespace, &local_name).unwrap_or_default())
     }).unwrap()).unwrap();
 
+    // getAttributeNodeNS(nodeId, namespace, localName) -> JSON string with full attr info, or empty
+    g.set("__n_getAttributeNodeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| -> String {
+        with_tree(|tree| {
+            let node = tree.get_node(node_id as NodeId);
+            if let NodeData::Element { ref attributes, .. } = node.data {
+                if let Some(attr) = attributes.iter().find(|a| a.matches_ns(&namespace, &local_name)) {
+                    return format!(
+                        "{{\"localName\":\"{}\",\"prefix\":\"{}\",\"namespace\":\"{}\",\"value\":\"{}\"}}",
+                        attr.local_name,
+                        attr.prefix,
+                        attr.namespace,
+                        attr.value.replace('\\', "\\\\").replace('"', "\\\"")
+                    );
+                }
+            }
+            String::new()
+        })
+    }).unwrap()).unwrap();
+
     // hasAttributeNS(nodeId, namespace, localName) -> bool
     g.set("__n_hasAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| -> bool {
         with_tree(|tree| tree.has_attribute_ns(node_id as NodeId, &namespace, &local_name))
