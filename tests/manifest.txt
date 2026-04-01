@@ -1304,8 +1304,8 @@ PASS wpt:dom/nodes/Element-childElementCount-dynamic-remove.html
 PASS wpt:dom/nodes/Element-childElementCount-nochild.html
 PASS wpt:dom/nodes/Element-childElementCount.html
 PASS wpt:dom/nodes/Element-children.html
-FAIL wpt:dom/nodes/Element-classlist.html
-NOT_RUN wpt:dom/nodes/Element-closest.html
+PASS wpt:dom/nodes/Element-classlist.html
+FAIL wpt:dom/nodes/Element-closest.html
 NOT_RUN wpt:dom/nodes/Element-firstElementChild-namespace.html
 NOT_RUN wpt:dom/nodes/Element-firstElementChild.html
 NOT_RUN wpt:dom/nodes/Element-getElementsByClassName.html

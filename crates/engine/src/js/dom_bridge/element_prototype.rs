@@ -1272,13 +1272,14 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     function _tokens() { var raw=(el.getAttribute('class')||'').split(/\s+/).filter(Boolean),seen={},out=[]; for(var i=0;i<raw.length;i++){if(!seen[raw[i]]){seen[raw[i]]=true;out.push(raw[i]);}} return out; }
                     if (!this.__classList) {
                         var obj = Object.create(DOMTokenList.prototype);
-                        obj.add = function() { for(var i=0;i<arguments.length;i++) _validateToken(String(arguments[i])); var c=_tokens(); var changed=false; for(var i=0;i<arguments.length;i++){var s=String(arguments[i]);if(c.indexOf(s)<0){c.push(s);changed=true;}} if(changed){el.setAttribute('class',c.join(' ')); obj._sync();} };
-                        obj.remove = function() { for(var i=0;i<arguments.length;i++) _validateToken(String(arguments[i])); var c=_tokens(); var changed=false; for(var i=arguments.length-1;i>=0;i--){var s=String(arguments[i]);var idx=c.indexOf(s);if(idx>=0){c.splice(idx,1);changed=true;}} if(changed){el.setAttribute('class',c.join(' ')); obj._sync();} };
-                        obj.contains = function(cls) { _validateToken(String(cls)); return _tokens().indexOf(String(cls))>=0; };
-                        obj.toggle = function(cls,force) { _validateToken(String(cls)); if(force!==undefined){if(force)obj.add(cls);else obj.remove(cls);return !!force;} if(obj.contains(cls)){obj.remove(cls);return false;} obj.add(cls);return true; };
+                        function _update(c) { if(el.hasAttribute('class')||c.length>0) el.setAttribute('class',c.join(' ')); obj._sync(); }
+                        obj.add = function() { for(var i=0;i<arguments.length;i++) _validateToken(String(arguments[i])); var c=_tokens(); for(var i=0;i<arguments.length;i++){var s=String(arguments[i]);if(c.indexOf(s)<0) c.push(s);} _update(c); };
+                        obj.remove = function() { for(var i=0;i<arguments.length;i++) _validateToken(String(arguments[i])); var c=_tokens(); for(var i=0;i<arguments.length;i++){var s=String(arguments[i]);var idx=c.indexOf(s);if(idx>=0)c.splice(idx,1);} _update(c); };
+                        obj.contains = function(cls) { return _tokens().indexOf(String(cls))>=0; };
+                        obj.toggle = function(cls,force) { _validateToken(String(cls)); if(force!==undefined){if(force){var c=_tokens();if(c.indexOf(String(cls))<0){c.push(String(cls));_update(c);}return true;}else{var c=_tokens();var idx=c.indexOf(String(cls));if(idx>=0){c.splice(idx,1);_update(c);}return false;}} var c=_tokens();var idx=c.indexOf(String(cls));if(idx>=0){c.splice(idx,1);_update(c);return false;}c.push(String(cls));_update(c);return true; };
                         function _validateToken(t) { if(t==='') throw new DOMException("The token provided must not be empty.","SyntaxError"); if(/\s/.test(t)) throw new DOMException("The token provided ('"+t+"') contains HTML space characters, which are not valid in tokens.","InvalidCharacterError"); }
-                        obj.replace = function(oldToken, newToken) { var o=String(oldToken),n=String(newToken); _validateToken(o); _validateToken(n); var c=_tokens(); var idx=c.indexOf(o); if(idx<0) return false; if(o!==n&&c.indexOf(n)>=0){c.splice(idx,1);}else{c[idx]=n;} el.setAttribute('class',c.join(' ')); obj._sync(); return true; };
-                        obj.item = function(i) { var c=_tokens(); return i<c.length?c[i]:null; };
+                        obj.replace = function(oldToken, newToken) { var o=String(oldToken),n=String(newToken); _validateToken(o); _validateToken(n); var c=_tokens(); if(c.indexOf(o)<0) return false; var first=-1; for(var i=0;i<c.length;i++){if(c[i]===o||c[i]===n){first=i;break;}} c[first]=n; for(var i=c.length-1;i>=0;i--){if(i!==first&&(c[i]===o||c[i]===n))c.splice(i,1);} _update(c); return true; };
+                        obj.item = function(i) { var c=_tokens(); return (i>=0&&i<c.length)?c[i]:null; };
                         obj.toString = function() { return el.getAttribute('class')||''; };
                         Object.defineProperty(obj, 'value', { get: function() { return el.getAttribute('class')||''; }, set: function(v) { el.setAttribute('class', v); obj._sync(); }, configurable: true });
                         obj._sync = function() {
@@ -1294,6 +1295,10 @@ pub(crate) fn element_prototype_js() -> &'static str {
                         this.__classList._sync();
                     }
                     return this.__classList;
+                },
+                set: function(v) {
+                    var cl = this.classList;
+                    cl.value = String(v);
                 },
                 configurable: true
             },
