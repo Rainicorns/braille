@@ -1797,13 +1797,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Attr.prototype inherits from Node (EP) for instanceof, but we
         // override getter-based properties with own data properties via defineProperty.
         function Attr(name, value, ns, prefix) {
+            this._value = value || '';
             var props = {
                 nodeType: 2,
                 name: name || '',
                 localName: name || '',
-                value: value || '',
-                nodeValue: value || '',
-                textContent: value || '',
                 namespaceURI: ns || null,
                 prefix: prefix || null,
                 ownerElement: null,
@@ -1821,6 +1819,21 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             for (var k in props) {
                 Object.defineProperty(this, k, { value: props[k], writable: true, enumerable: true, configurable: true });
             }
+            var self = this;
+            var valueDef = {
+                get: function() { return self._value; },
+                set: function(v) {
+                    var s = String(v);
+                    self._value = s;
+                    if (self.ownerElement && self.ownerElement.setAttribute) {
+                        self.ownerElement.setAttribute(self.name, s);
+                    }
+                },
+                enumerable: true, configurable: true
+            };
+            Object.defineProperty(this, 'value', valueDef);
+            Object.defineProperty(this, 'nodeValue', valueDef);
+            Object.defineProperty(this, 'textContent', valueDef);
         }
         Attr.prototype = Object.create(EP);
         Attr.prototype.constructor = Attr;
@@ -1906,9 +1919,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return e;
         };
         Document.prototype.getElementById = function(id) {
+            var sid = String(id);
             var de = this.documentElement;
             if (!de || !de.querySelector) return null;
-            return de.querySelector('[id="' + id.replace(/"/g, '\\"') + '"]');
+            return de.querySelector('[id="' + sid.replace(/"/g, '\\"') + '"]');
         };
         Document.prototype.querySelector = function(sel) {
             var de = this.documentElement;
