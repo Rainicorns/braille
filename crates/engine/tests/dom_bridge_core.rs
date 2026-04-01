@@ -237,3 +237,159 @@ fn handle_type_fires_input_event() {
     assert_eq!(result.unwrap(), "true");
 }
 
+// =========================================================================
+// getElementsByTagName namespace-aware case sensitivity
+// =========================================================================
+
+#[test]
+fn getelementsbytagname_html_ns_case_insensitive() {
+    // HTML-namespace elements match case-insensitively
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js(r#"
+        (function() {
+            var div = document.createElement('div');
+            var a1 = document.createElementNS('http://www.w3.org/1999/xhtml', 'a');
+            var a2 = document.createElementNS('http://www.w3.org/1999/xhtml', 'A');
+            div.appendChild(a1);
+            div.appendChild(a2);
+            var list = div.getElementsByTagName('A');
+            return list.length;
+        })()
+    "#).unwrap();
+    // Per spec: only the input is lowercased. XHTML 'a' matches (stored 'a' == lowered 'a'),
+    // but XHTML 'A' does NOT match (stored 'A' != lowered 'a'). Only parser-created elements
+    // have lowercased tag names; createElementNS preserves case.
+    assert_eq!(result, "1", "getElementsByTagName('A') lowercases input but not element name for XHTML namespace");
+}
+
+#[test]
+fn getelementsbytagname_non_html_ns_case_sensitive() {
+    // Non-HTML-namespace elements match case-sensitively
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js(r#"
+        (function() {
+            var div = document.createElement('div');
+            var a1 = document.createElementNS('', 'a');
+            var a2 = document.createElementNS('', 'A');
+            div.appendChild(a1);
+            div.appendChild(a2);
+            var list = div.getElementsByTagName('A');
+            return list.length;
+        })()
+    "#).unwrap();
+    assert_eq!(result, "1", "getElementsByTagName('A') should only match 'A' (case-sensitive) for non-HTML namespace");
+}
+
+#[test]
+fn getelementsbytagname_mixed_namespaces() {
+    // The WPT test pattern: mixed XHTML and null-namespace elements
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js(r#"
+        (function() {
+            var parent = document.createElement('div');
+            var child1 = document.createElementNS('http://www.w3.org/1999/xhtml', 'a');
+            var child2 = document.createElementNS('http://www.w3.org/1999/xhtml', 'A');
+            var child3 = document.createElementNS('', 'a');
+            var child4 = document.createElementNS('', 'A');
+            parent.appendChild(child1);
+            parent.appendChild(child2);
+            parent.appendChild(child3);
+            parent.appendChild(child4);
+
+            var list = parent.getElementsByTagName('A');
+            // XHTML 'a' matches (lowercased 'A' = 'a'), XHTML 'A' matches (lowercased 'A' = 'a'),
+            // null-ns 'a' doesn't match ('a' != 'A'), null-ns 'A' matches ('A' == 'A')
+            var names = [];
+            for (var i = 0; i < list.length; i++) {
+                names.push(list[i].textContent || list[i].tagName);
+            }
+            return list.length + ':' + names.join(',');
+        })()
+    "#).unwrap();
+    // child1 (xhtml:a, stored "a" == lowered "a"), child4 (null:A, "A" == "A") = 2 matches
+    // child2 (xhtml:A, stored "A" != lowered "a") does NOT match
+    // child3 (null:a, "a" != "A") does NOT match
+    assert!(result.starts_with("2:"), "Expected 2 matches for mixed namespaces, got: {}", result);
+}
+
+
+#[test]
+fn getelementsbytagname_wpt_change_document_htmlness_flow() {
+    // Simulates the full WPT Element-getElementsByTagName-change-document-HTMLNess test flow
+    use std::collections::HashMap;
+    use braille_engine::FetchedResources;
+
+    let html = r#"<!doctype html>
+<iframe src="test.xml"></iframe>
+<script>
+  window.debugSteps = [];
+  window.onload = function() {
+    try {
+      var parent = document.createElement("div");
+      var child1 = document.createElementNS("http://www.w3.org/1999/xhtml", "a");
+      var child2 = document.createElementNS("http://www.w3.org/1999/xhtml", "A");
+      var child3 = document.createElementNS("", "a");
+      var child4 = document.createElementNS("", "A");
+      parent.appendChild(child1);
+      parent.appendChild(child2);
+      parent.appendChild(child3);
+      parent.appendChild(child4);
+
+      var list = parent.getElementsByTagName("A");
+      debugSteps.push('list.length=' + list.length);
+      debugSteps.push('list[0]===child1: ' + (list[0] === child1));
+      debugSteps.push('list[1]===child4: ' + (list[1] === child4));
+
+      debugSteps.push('frames.length=' + frames.length);
+      frames[0].document.documentElement.appendChild(parent);
+      debugSteps.push('moved to iframe doc');
+
+      // list was created in HTML context — should still show HTML lowercasing
+      debugSteps.push('list after move len=' + list.length);
+      debugSteps.push('list[0]===child1 after move: ' + (list[0] === child1));
+      debugSteps.push('list[1]===child4 after move: ' + (list[1] === child4));
+
+      // New list created in XML context — case-sensitive matching
+      var list2 = parent.getElementsByTagName("A");
+      debugSteps.push('list2.length=' + list2.length);
+      debugSteps.push('list2[0]===child2: ' + (list2[0] === child2));
+      debugSteps.push('list2[1]===child4: ' + (list2[1] === child4));
+
+      // Re-append children (blow away caches)
+      parent.appendChild(child1);
+      parent.appendChild(child2);
+      parent.appendChild(child3);
+      parent.appendChild(child4);
+      debugSteps.push('after reappend list.length=' + list.length);
+      debugSteps.push('list[0]===child1: ' + (list[0] === child1));
+      debugSteps.push('list[1]===child4: ' + (list[1] === child4));
+      debugSteps.push('list2.length=' + list2.length);
+      debugSteps.push('list2[0]===child2: ' + (list2[0] === child2));
+      debugSteps.push('list2[1]===child4: ' + (list2[1] === child4));
+
+      debugSteps.push('DONE');
+    } catch(e) {
+      debugSteps.push('ERROR: ' + e.toString());
+    }
+  };
+</script>"#;
+
+    let mut iframes = HashMap::new();
+    iframes.insert("test.xml".to_string(), "<root/>".to_string());
+
+    let mut engine = Engine::new();
+    let fetched = FetchedResources {
+        scripts: HashMap::new(),
+        iframes,
+    };
+    engine.load_html_with_resources(html, &fetched);
+    engine.settle();
+
+    let log = engine.eval_js("JSON.stringify(window.debugSteps)").unwrap();
+    eprintln!("debugSteps: {}", log);
+
+    // First assertion: list should contain [child1, child4] (2 elements)
+    assert!(log.contains("\"list.length=2\""), "getElementsByTagName should return 2 elements, got: {}", log);
+    assert!(log.contains("\"DONE\""), "onload should complete without error, got: {}", log);
+}
+

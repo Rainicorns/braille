@@ -527,3 +527,130 @@ fn wpt_iframe_content_document_script_pattern() {
         .unwrap();
     assert_eq!(has_body, "true", "iframe contentDocument should have body");
 }
+
+// ---------------------------------------------------------------------------
+// window.frames collection
+// ---------------------------------------------------------------------------
+
+#[test]
+fn window_frames_returns_iframe_contentwindows() {
+    let html = r#"<html><body>
+        <iframe id="f1" src="https://example.com/a.html"></iframe>
+        <iframe id="f2" src="https://example.com/b.html"></iframe>
+    </body></html>"#;
+
+    let mut iframes = HashMap::new();
+    iframes.insert(
+        "https://example.com/a.html".to_string(),
+        "<html><body><p>A</p></body></html>".to_string(),
+    );
+    iframes.insert(
+        "https://example.com/b.html".to_string(),
+        "<html><body><p>B</p></body></html>".to_string(),
+    );
+
+    let mut engine = engine_with_iframes(html, iframes);
+    engine.settle();
+
+    let typeof_frames = engine.eval_js("typeof window.frames").unwrap();
+    eprintln!("typeof frames: {}", typeof_frames);
+
+    let frames_len = engine.eval_js("window.frames.length").unwrap();
+    eprintln!("frames.length: {}", frames_len);
+    assert_eq!(frames_len, "2", "window.frames should have 2 entries");
+
+    let frame0_is_cw = engine
+        .eval_js("window.frames[0] === document.getElementById('f1').contentWindow")
+        .unwrap();
+    eprintln!("frames[0] === f1.contentWindow: {}", frame0_is_cw);
+    assert_eq!(frame0_is_cw, "true", "frames[0] should be f1's contentWindow");
+
+    let frame1_is_cw = engine
+        .eval_js("window.frames[1] === document.getElementById('f2').contentWindow")
+        .unwrap();
+    assert_eq!(frame1_is_cw, "true", "frames[1] should be f2's contentWindow");
+}
+
+#[test]
+fn window_length_counts_iframes() {
+    let html = r#"<html><body>
+        <iframe src="https://example.com/a.html"></iframe>
+    </body></html>"#;
+
+    let mut iframes = HashMap::new();
+    iframes.insert(
+        "https://example.com/a.html".to_string(),
+        "<html><body></body></html>".to_string(),
+    );
+
+    let mut engine = engine_with_iframes(html, iframes);
+    engine.settle();
+
+    let len = engine.eval_js("window.length").unwrap();
+    assert_eq!(len, "1", "window.length should count iframes");
+}
+
+#[test]
+fn window_frames_accessible_in_onload() {
+    let html = r#"<html><body>
+        <iframe src="https://example.com/frame.html"></iframe>
+        <script>
+            window.testResult = 'not set';
+            window.onload = function() {
+                window.testResult = 'frames_len=' + window.frames.length;
+                if (window.frames.length > 0 && window.frames[0].document) {
+                    window.testResult += ',has_doc=true';
+                }
+            };
+        </script>
+    </body></html>"#;
+
+    let mut iframes = HashMap::new();
+    iframes.insert(
+        "https://example.com/frame.html".to_string(),
+        "<html><body><p>hello</p></body></html>".to_string(),
+    );
+
+    let mut engine = Engine::new();
+    let fetched = FetchedResources {
+        scripts: HashMap::new(),
+        iframes,
+    };
+    engine.load_html_with_resources(html, &fetched);
+    engine.settle();
+
+    let result = engine.eval_js("window.testResult").unwrap();
+    eprintln!("testResult: {}", result);
+    assert_eq!(result, "frames_len=1,has_doc=true", "frames should be accessible in onload with document");
+}
+
+#[test]
+fn window_frames_xml_iframe_document_access() {
+    // Verify frames[0].document.documentElement is accessible for XML iframes
+    let html = r#"<!doctype html>
+<iframe src="test.xml"></iframe>
+<script>
+  window.testResult = 'not set';
+  window.onload = function() {
+    var f = window.frames;
+    if (f.length > 0 && f[0].document && f[0].document.documentElement) {
+      window.testResult = 'tag=' + f[0].document.documentElement.tagName;
+    }
+  };
+</script>"#;
+
+    let mut iframes = HashMap::new();
+    iframes.insert("test.xml".to_string(), "<root/>".to_string());
+
+    let mut engine = Engine::new();
+    let fetched = FetchedResources {
+        scripts: HashMap::new(),
+        iframes,
+    };
+    engine.load_html_with_resources(html, &fetched);
+    engine.settle();
+
+    let result = engine.eval_js("window.testResult").unwrap();
+    eprintln!("testResult: {}", result);
+    assert!(result.starts_with("tag="), "should access iframe document element: {}", result);
+}

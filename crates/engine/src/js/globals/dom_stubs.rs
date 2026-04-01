@@ -363,6 +363,29 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         window.outerWidth = 1280;
         window.outerHeight = 900;
         window.devicePixelRatio = 1;
+        window.parent = window;
+        window.top = window;
+        window.self = window;
+        Object.defineProperty(window, 'frames', {
+            get: function() {
+                var iframeIds = __braille_find_iframes();
+                var result = [];
+                for (var i = 0; i < iframeIds.length; i++) {
+                    var el = __braille_get_element_wrapper(iframeIds[i]);
+                    if (el && el.contentWindow) {
+                        result.push(el.contentWindow);
+                    }
+                }
+                return result;
+            },
+            configurable: true
+        });
+        Object.defineProperty(window, 'length', {
+            get: function() {
+                return __braille_find_iframes().length;
+            },
+            configurable: true
+        });
         window.__scrollX = 0;
         window.__scrollY = 0;
         Object.defineProperty(window, 'scrollX', {

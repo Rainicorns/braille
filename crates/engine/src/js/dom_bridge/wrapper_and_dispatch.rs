@@ -616,6 +616,17 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             throw new DOMException(msg, name);
         }
 
+        // Adopt a subtree into a new document (update __ownerDoc recursively)
+        function __adoptSubtree(node, newDoc) {
+            if (!node || node.__nid === undefined) return;
+            node.__ownerDoc = newDoc;
+            var childIds = __n_getAllChildIds(node.__nid);
+            for (var i = 0; i < childIds.length; i++) {
+                var child = _cache[childIds[i]];
+                if (child) child.__ownerDoc = newDoc;
+            }
+        }
+
         // Element mutation methods that operate on the real DomTree
         EP.appendChild = function(child) {
             if (child !== null && child !== undefined && typeof child === 'object' && child.nodeType === 2) {
@@ -644,6 +655,14 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 } else {
                     __n_appendChild(this.__nid, child.__nid);
                     if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [child]});
+                }
+            }
+            // Adopt: update ownerDocument for child (and descendants) if parent is in a different document
+            var parentDoc = this.ownerDocument || (this.nodeType === 9 ? this : document);
+            if (child && child.__nid !== undefined) {
+                var childDoc = child.ownerDocument || document;
+                if (parentDoc !== childDoc) {
+                    __adoptSubtree(child, parentDoc);
                 }
             }
             // CE lifecycle: connectedCallback for inserted nodes
@@ -916,7 +935,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return __w(nid);
         };
         doc.getElementsByTagName = function(tag) {
-            return __makeHTMLCollection(function() { return __n_getElementsByTagName(0, tag).map(__w); });
+            return __makeHTMLCollection(function() { return __n_getElementsByTagName(0, tag, true).map(__w); });
         };
         doc.getElementsByTagNameNS = function(ns, localName) {
             var nsStr = (ns === null || ns === undefined) ? '' : String(ns);
@@ -1825,12 +1844,16 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // override getter-based properties with own data properties via defineProperty.
         function Attr(name, value, ns, prefix) {
             this._value = value || '';
+            var qn = name || '';
+            var colonIdx = qn.indexOf(':');
+            var ln = colonIdx >= 0 ? qn.substring(colonIdx + 1) : qn;
+            var pfx = prefix !== undefined ? prefix : (colonIdx >= 0 ? qn.substring(0, colonIdx) : null);
             var props = {
                 nodeType: 2,
-                name: name || '',
-                localName: name || '',
+                name: qn,
+                localName: ln,
                 namespaceURI: ns || null,
-                prefix: prefix || null,
+                prefix: pfx || null,
                 ownerElement: null,
                 specified: true,
                 nodeName: name || '',

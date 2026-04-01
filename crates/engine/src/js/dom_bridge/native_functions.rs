@@ -615,6 +615,26 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // __n_getAttributesFull(nodeId) -> JSON array of {name, value, ns, prefix} objects
+    g.set("__n_getAttributesFull", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            let node = tree.get_node(node_id as NodeId);
+            if let NodeData::Element { ref attributes, .. } = node.data {
+                let entries: Vec<_> = attributes.iter().map(|a| {
+                    serde_json::json!({
+                        "name": a.qualified_name(),
+                        "value": a.value,
+                        "ns": if a.namespace.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(a.namespace.clone()) },
+                        "prefix": if a.prefix.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(a.prefix.clone()) }
+                    })
+                }).collect();
+                serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+            } else {
+                "[]".to_string()
+            }
+        })
+    }).unwrap()).unwrap();
+
     // __n_cssSupports(declaration) -> bool
     g.set("__n_cssSupports", Function::new(ctx.clone(), |decl: String| -> bool {
         !crate::css::parser::parse_inline_style(&decl).is_empty()
@@ -832,16 +852,17 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
-    // getElementsByTagName(rootNodeId, tagName) -> array of nodeIds
+    // getElementsByTagName(rootNodeId, tagName, isHTMLDoc) -> array of nodeIds
     // Unlike querySelectorAll, this handles any tag name including those with special CSS chars
-    // Per DOM spec §4.4.4: HTML-namespace elements match against ASCII-lowercased input;
-    // non-HTML-namespace elements match against the original input (case-sensitive).
-    g.set("__n_getElementsByTagName", Function::new(ctx.clone(), |root_id: u32, tag: String| -> Vec<u32> {
+    // Per DOM spec §4.4.4: when the node document is HTML, HTML-namespace elements match against
+    // ASCII-lowercased input; non-HTML-namespace elements match case-sensitively.
+    // When the node document is NOT HTML (e.g. XML), all matching is case-sensitive.
+    g.set("__n_getElementsByTagName", Function::new(ctx.clone(), |root_id: u32, tag: String, is_html_doc: bool| -> Vec<u32> {
         with_tree(|tree| {
             let mut result = Vec::new();
             let tag_lower = tag.to_ascii_lowercase();
             let is_wildcard = tag == "*";
-            fn collect(tree: &DomTree, node_id: NodeId, tag_lower: &str, tag_original: &str, is_wildcard: bool, result: &mut Vec<u32>) {
+            fn collect(tree: &DomTree, node_id: NodeId, tag_lower: &str, tag_original: &str, is_wildcard: bool, is_html_doc: bool, result: &mut Vec<u32>) {
                 let node = tree.get_node(node_id);
                 if let NodeData::Element { tag_name, namespace, prefix, .. } = &node.data {
                     if is_wildcard {
@@ -852,13 +873,13 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
                             Some(p) => format!("{}:{}", p, tag_name),
                             None => tag_name.clone(),
                         };
-                        if namespace == "http://www.w3.org/1999/xhtml" {
-                            // HTML namespace: compare qualified name against ASCII-lowercased input
+                        if is_html_doc && namespace == "http://www.w3.org/1999/xhtml" {
+                            // HTML doc + HTML namespace: compare element qname against lowercased input
                             if qname == tag_lower {
                                 result.push(node_id as u32);
                             }
                         } else {
-                            // Non-HTML namespace: exact match against original input
+                            // Non-HTML doc or non-HTML namespace: exact case-sensitive match
                             if qname == tag_original {
                                 result.push(node_id as u32);
                             }
@@ -866,10 +887,14 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
                     }
                 }
                 for &child_id in &node.children {
-                    collect(tree, child_id, tag_lower, tag_original, is_wildcard, result);
+                    collect(tree, child_id, tag_lower, tag_original, is_wildcard, is_html_doc, result);
                 }
             }
-            collect(tree, root_id as NodeId, &tag_lower, &tag, is_wildcard, &mut result);
+            // Only collect descendants, not the root itself
+            let root_node = tree.get_node(root_id as NodeId);
+            for &child_id in &root_node.children {
+                collect(tree, child_id, &tag_lower, &tag, is_wildcard, is_html_doc, &mut result);
+            }
             result
         })
     }).unwrap()).unwrap();
@@ -895,7 +920,11 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
                     collect(tree, child_id, ns, ln, ns_wildcard, ln_wildcard, result);
                 }
             }
-            collect(tree, root_id as NodeId, &namespace, &local_name, ns_wildcard, ln_wildcard, &mut result);
+            // Only collect descendants, not the root itself
+            let root_node = tree.get_node(root_id as NodeId);
+            for &child_id in &root_node.children {
+                collect(tree, child_id, &namespace, &local_name, ns_wildcard, ln_wildcard, &mut result);
+            }
             result
         })
     }).unwrap()).unwrap();

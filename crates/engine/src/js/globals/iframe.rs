@@ -437,7 +437,18 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     var content = __braille_iframe_lookup_content(src);
                     if (!content) continue;
 
-                    __braille_create_iframe_realm(nid, content);
+                    var realm = __braille_create_iframe_realm(nid, content);
+
+                    // Mark XML documents: if src ends with .xml or .xhtml, flag as non-HTML
+                    if (src && realm && realm.document) {
+                        var srcLower = src.toLowerCase();
+                        if (srcLower.indexOf('.xml') === srcLower.length - 4 ||
+                            srcLower.indexOf('.xhtml') === srcLower.length - 6 ||
+                            srcLower.indexOf('.svg') === srcLower.length - 4) {
+                            realm.document.__isXML = true;
+                            realm.document.contentType = 'application/xml';
+                        }
+                    }
 
                     var el = __braille_get_element_wrapper(nid);
                     if (el) {

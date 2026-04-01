@@ -237,8 +237,15 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return __n_querySelectorAll(this.__nid, sel).map(__w);
         };
         ElemProto.getElementsByTagName = function(tag) {
-            var self = this;
-            return __makeHTMLCollection(function() { return self.querySelectorAll(tag); });
+            var nid = this.__nid;
+            // Per spec, capture the document's HTML-ness at creation time —
+            // the live collection remembers whether to lowercase even if the
+            // node later moves to a different document type.
+            var od = this.ownerDocument;
+            var isHTML = !od || !od.__isXML;
+            return __makeHTMLCollection(function() {
+                return __n_getElementsByTagName(nid, tag, isHTML).map(__w);
+            });
         };
         ElemProto.getElementsByTagNameNS = function(ns, localName) {
             var nid = this.__nid;
@@ -255,11 +262,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (this.__nid === undefined) return undefined;
                 var el = this;
                 function getAttrs() {
-                    var names = JSON.parse(__n_getAttributeNames(el.__nid));
+                    var full = JSON.parse(__n_getAttributesFull(el.__nid));
                     var attrs = [];
-                    for (var i = 0; i < names.length; i++) {
-                        var val = __n_getAttribute(el.__nid, names[i]);
-                        var attr = new Attr(names[i], val);
+                    for (var i = 0; i < full.length; i++) {
+                        var a = full[i];
+                        var attr = new Attr(a.name, a.value, a.ns, a.prefix);
                         attr.ownerElement = el;
                         attrs.push(attr);
                     }
@@ -577,6 +584,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             }
         };
         ElemProto.matches = function(sel) { return __n_matchesSelector(this.__nid, sel); };
+        ElemProto.webkitMatchesSelector = ElemProto.matches;
         ElemProto.closest = function(sel) {
             var id = __n_closest(this.__nid, sel);
             return id >= 0 ? __w(id) : null;
@@ -691,20 +699,33 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return __n_hasAttributeNS(this.__nid, ns, String(localName));
         };
         ElemProto.insertAdjacentHTML = function(position, html) {
+            var p = String(position).toLowerCase();
             var temp = document.createElement('div');
             __n_setInnerHTML(temp.__nid, html);
             var frag = document.createDocumentFragment();
             while (temp.firstChild) frag.appendChild(temp.firstChild);
-            if (position === 'beforebegin') this.before(frag);
-            else if (position === 'afterbegin') this.prepend(frag);
-            else if (position === 'beforeend') this.append(frag);
-            else if (position === 'afterend') this.after(frag);
+            if (p === 'beforebegin') this.before(frag);
+            else if (p === 'afterbegin') this.prepend(frag);
+            else if (p === 'beforeend') this.append(frag);
+            else if (p === 'afterend') this.after(frag);
+            else throw new DOMException("Failed to execute 'insertAdjacentHTML' on 'Element': The value provided ('" + position + "') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.", "SyntaxError");
+        };
+        ElemProto.insertAdjacentText = function(position, text) {
+            var p = String(position).toLowerCase();
+            var node = document.createTextNode(text);
+            if (p === 'beforebegin') this.before(node);
+            else if (p === 'afterbegin') this.prepend(node);
+            else if (p === 'beforeend') this.append(node);
+            else if (p === 'afterend') this.after(node);
+            else throw new DOMException("Failed to execute 'insertAdjacentText' on 'Element': The value provided ('" + position + "') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.", "SyntaxError");
         };
         ElemProto.insertAdjacentElement = function(position, el) {
-            if (position === 'beforebegin') this.before(el);
-            else if (position === 'afterbegin') this.prepend(el);
-            else if (position === 'beforeend') this.append(el);
-            else if (position === 'afterend') this.after(el);
+            var p = String(position).toLowerCase();
+            if (p === 'beforebegin') this.before(el);
+            else if (p === 'afterbegin') this.prepend(el);
+            else if (p === 'beforeend') this.append(el);
+            else if (p === 'afterend') this.after(el);
+            else throw new DOMException("Failed to execute 'insertAdjacentElement' on 'Element': The value provided ('" + position + "') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.", "SyntaxError");
             return el;
         };
         ElemProto.getAnimations = function() { return []; };
@@ -846,6 +867,30 @@ pub(crate) fn element_prototype_js() -> &'static str {
             },
             previousSibling: {
                 get: function() { if (this.__nid === undefined) return null; var id = __n_getPrevSibling(this.__nid); return id >= 0 ? __w(id) : null; },
+                configurable: true
+            },
+            nextElementSibling: {
+                get: function() {
+                    if (this.__nid === undefined) return null;
+                    var id = __n_getNextSibling(this.__nid);
+                    while (id >= 0) {
+                        if (__n_getNodeType(id) === 1) return __w(id);
+                        id = __n_getNextSibling(id);
+                    }
+                    return null;
+                },
+                configurable: true
+            },
+            previousElementSibling: {
+                get: function() {
+                    if (this.__nid === undefined) return null;
+                    var id = __n_getPrevSibling(this.__nid);
+                    while (id >= 0) {
+                        if (__n_getNodeType(id) === 1) return __w(id);
+                        id = __n_getPrevSibling(id);
+                    }
+                    return null;
+                },
                 configurable: true
             },
             nodeValue: {
