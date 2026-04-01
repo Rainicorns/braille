@@ -93,11 +93,13 @@ impl DomTree {
                         tag_name: t1,
                         attributes: a1,
                         namespace: ns1,
+                        ..
                     },
                     NodeData::Element {
                         tag_name: t2,
                         attributes: a2,
                         namespace: ns2,
+                        ..
                     },
                 ) => {
                     // Compare localName, namespace, and prefix (we store them in tag_name)

@@ -52,6 +52,7 @@ pub enum NodeData {
         tag_name: String,
         attributes: Vec<DomAttribute>,
         namespace: String,
+        prefix: Option<String>,
     },
     Text {
         content: String,

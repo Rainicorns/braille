@@ -111,9 +111,10 @@ impl TreeSink for BrailleSink {
             .collect();
 
         let namespace = ns_to_label(&name.ns);
+        let elem_prefix = name.prefix.as_ref().map(|p| p.to_string());
 
         let mut tree = self.tree.borrow_mut();
-        let id = tree.create_element_ns(&tag_name, attributes, namespace);
+        let id = tree.create_element_ns_with_prefix(&tag_name, attributes, namespace, elem_prefix.as_deref());
 
         // For <template> elements, create an associated content fragment.
         if flags.template {

@@ -20,6 +20,7 @@ impl DomTree {
                 tag_name,
                 namespace,
                 attributes,
+                ..
             } => self.locate_namespace_for_element(node_id, tag_name, namespace, attributes, prefix),
             NodeData::Document => {
                 // Delegate to document element if it exists
@@ -133,6 +134,7 @@ impl DomTree {
                 tag_name,
                 namespace: elem_ns,
                 attributes,
+                ..
             } => self.locate_prefix_for_element(node_id, tag_name, elem_ns, attributes, namespace),
             NodeData::Document => {
                 // Delegate to document element if it exists

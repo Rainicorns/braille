@@ -73,6 +73,17 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // getLocalName(nodeId) -> string (raw tag_name, no case conversion)
+    g.set("__n_getLocalName", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            let node = tree.get_node(node_id as NodeId);
+            match &node.data {
+                NodeData::Element { tag_name, .. } => tag_name.clone(),
+                _ => String::new(),
+            }
+        })
+    }).unwrap()).unwrap();
+
     // getNodeType(nodeId) -> u32
     g.set("__n_getNodeType", Function::new(ctx.clone(), |node_id: u32| -> u32 {
         with_tree(|tree| {
@@ -144,7 +155,16 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     // createElement(tagName) -> nodeId
     g.set("__n_createElement", Function::new(ctx.clone(), |tag: String| -> u32 {
         with_tree_mut(|tree| {
-            tree.create_element(&tag.to_lowercase()) as u32
+            tree.create_element(&tag.to_ascii_lowercase()) as u32
+        })
+    }).unwrap()).unwrap();
+
+    // createElementNS(localName, namespace, prefix) -> nodeId
+    // Stores raw localName (no lowercasing), namespace, and optional prefix in the DomTree.
+    g.set("__n_createElementNS", Function::new(ctx.clone(), |local_name: String, namespace: String, prefix: String| -> u32 {
+        with_tree_mut(|tree| {
+            let pfx = if prefix.is_empty() { None } else { Some(prefix.as_str()) };
+            tree.create_element_ns_with_prefix(&local_name, Vec::new(), &namespace, pfx) as u32
         })
     }).unwrap()).unwrap();
 
@@ -795,23 +815,42 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
 
     // getElementsByTagName(rootNodeId, tagName) -> array of nodeIds
     // Unlike querySelectorAll, this handles any tag name including those with special CSS chars
+    // Per DOM spec §4.4.4: HTML-namespace elements match against ASCII-lowercased input;
+    // non-HTML-namespace elements match against the original input (case-sensitive).
     g.set("__n_getElementsByTagName", Function::new(ctx.clone(), |root_id: u32, tag: String| -> Vec<u32> {
         with_tree(|tree| {
             let mut result = Vec::new();
             let tag_lower = tag.to_ascii_lowercase();
             let is_wildcard = tag == "*";
-            fn collect(tree: &DomTree, node_id: NodeId, tag: &str, is_wildcard: bool, result: &mut Vec<u32>) {
+            fn collect(tree: &DomTree, node_id: NodeId, tag_lower: &str, tag_original: &str, is_wildcard: bool, result: &mut Vec<u32>) {
                 let node = tree.get_node(node_id);
-                if let NodeData::Element { tag_name, .. } = &node.data {
-                    if is_wildcard || tag_name.eq_ignore_ascii_case(tag) {
+                if let NodeData::Element { tag_name, namespace, prefix, .. } = &node.data {
+                    if is_wildcard {
                         result.push(node_id as u32);
+                    } else {
+                        // Reconstruct qualified name
+                        let qname = match prefix {
+                            Some(p) => format!("{}:{}", p, tag_name),
+                            None => tag_name.clone(),
+                        };
+                        if namespace == "http://www.w3.org/1999/xhtml" {
+                            // HTML namespace: compare qualified name against ASCII-lowercased input
+                            if qname == tag_lower {
+                                result.push(node_id as u32);
+                            }
+                        } else {
+                            // Non-HTML namespace: exact match against original input
+                            if qname == tag_original {
+                                result.push(node_id as u32);
+                            }
+                        }
                     }
                 }
                 for &child_id in &node.children {
-                    collect(tree, child_id, tag, is_wildcard, result);
+                    collect(tree, child_id, tag_lower, tag_original, is_wildcard, result);
                 }
             }
-            collect(tree, root_id as NodeId, &tag_lower, is_wildcard, &mut result);
+            collect(tree, root_id as NodeId, &tag_lower, &tag, is_wildcard, &mut result);
             result
         })
     }).unwrap()).unwrap();

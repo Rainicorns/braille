@@ -1365,7 +1365,7 @@ fn sanitize_json_surrogates(json: &str) -> String {
                             && std::str::from_utf8(&bytes[i + 8..i + 12])
                                 .ok()
                                 .and_then(|s| u16::from_str_radix(s, 16).ok())
-                                .map_or(false, |low| (0xDC00..=0xDFFF).contains(&low));
+                                .is_some_and(|low| (0xDC00..=0xDFFF).contains(&low));
                         if has_low {
                             // Valid pair — copy both escapes through as-is
                             out.push_str(&json[i..i + 12]);

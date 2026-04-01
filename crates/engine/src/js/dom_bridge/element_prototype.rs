@@ -868,8 +868,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
             localName: { get: function() {
                 if (this.__localName !== undefined) return this.__localName;
                 if (this.__nid !== undefined) {
-                    var tn = __n_getTagName(this.__nid);
-                    if (tn) return tn.toLowerCase();
+                    var ln = __n_getLocalName(this.__nid);
+                    if (ln) return ln;
                 }
                 return null;
             }, set: function(v) { this.__localName = v; }, configurable: true },

@@ -869,12 +869,14 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 throw new DOMException("Failed to execute 'createElementNS' on 'Document': The qualified name provided ('" + qn + "') " + (eName === 'InvalidCharacterError' ? 'contains the invalid character' : 'has a namespace error') + ".", eName);
             }
             var localName = result.ok.localName;
-            var nid = __n_createElement(localName);
-            var el = __w(nid);
+            var pfx = result.ok.prefix || '';
             var nsNorm = (ns === null || ns === undefined || ns === '') ? null : String(ns);
+            var nsForNative = nsNorm || '';
+            var nid = __n_createElementNS(localName, nsForNative, pfx);
+            var el = __w(nid);
             el.namespaceURI = nsNorm;
             el.__localName = localName;
-            el.prefix = result.ok.prefix || null;
+            el.prefix = pfx || null;
             // Fix prototype based on namespace
             if (nsNorm !== 'http://www.w3.org/1999/xhtml') {
                 // Non-HTML namespace → plain Element

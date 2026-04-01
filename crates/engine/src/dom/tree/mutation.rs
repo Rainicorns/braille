@@ -9,6 +9,7 @@ impl DomTree {
             tag_name: tag_name.to_string(),
             attributes: Vec::new(),
             namespace: "http://www.w3.org/1999/xhtml".to_string(),
+            prefix: None,
         })
     }
 
@@ -90,6 +91,7 @@ impl DomTree {
             tag_name: tag_name.to_string(),
             attributes,
             namespace: "http://www.w3.org/1999/xhtml".to_string(),
+            prefix: None,
         })
     }
 
@@ -108,6 +110,17 @@ impl DomTree {
             tag_name: tag_name.to_string(),
             attributes,
             namespace: namespace.to_string(),
+            prefix: None,
+        })
+    }
+
+    /// Allocates a new Element node with namespace and prefix (unattached) and returns its NodeId.
+    pub fn create_element_ns_with_prefix(&mut self, tag_name: &str, attributes: Vec<DomAttribute>, namespace: &str, prefix: Option<&str>) -> NodeId {
+        self.alloc_node(NodeData::Element {
+            tag_name: tag_name.to_string(),
+            attributes,
+            namespace: namespace.to_string(),
+            prefix: prefix.map(|s| s.to_string()),
         })
     }
 
@@ -284,7 +297,8 @@ impl DomTree {
                 tag_name,
                 attributes,
                 namespace,
-            } => self.create_element_ns(tag_name, attributes.clone(), namespace),
+                prefix,
+            } => self.create_element_ns_with_prefix(tag_name, attributes.clone(), namespace, prefix.as_deref()),
             NodeData::Text { content } => self.create_text(content),
             NodeData::Comment { content } => self.create_comment(content),
             NodeData::ProcessingInstruction { target, data } => self.create_processing_instruction(target, data),

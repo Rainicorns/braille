@@ -39,7 +39,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 if (el.getAttribute('id') === s) return el;
                 // name attribute only applies to elements in HTML namespace
                 var ns = el.namespaceURI;
-                if ((!ns || ns === 'http://www.w3.org/1999/xhtml') && el.getAttribute('name') === s) return el;
+                if (ns === 'http://www.w3.org/1999/xhtml' && el.getAttribute('name') === s) return el;
             }
             return null;
         }
@@ -58,8 +58,6 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                         if (receiver !== proxy) throw new TypeError("Illegal invocation");
                         return live.length;
                     }
-                    if (p === 'item') return function(i) { var idx = i >>> 0; return idx < live.length ? live[idx] : null; };
-                    if (p === 'namedItem') return function(name) { return __findNamed(live, name); };
                     // Array index → indexed access
                     if (__isArrayIndex(p)) return live[p >>> 0];
                     // HTMLCollection does NOT have Array iterable methods
@@ -72,13 +70,19 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                         p === 'concat' || p === 'join' || p === 'reverse' || p === 'sort' ||
                         p === 'toString' || p === 'toLocaleString' || p === 'toReversed' ||
                         p === 'toSorted' || p === 'toSpliced' || p === 'with') return undefined;
-                    // Own properties on target shadow named item access
+                    // Expandos on target shadow everything (including item/namedItem)
                     if (typeof p === 'string' && Object.prototype.hasOwnProperty.call(t, p)) return t[p];
+                    // item/namedItem: return prototype methods (same reference identity)
+                    if (p === 'item') return HTMLCollection.prototype.item;
+                    if (p === 'namedItem') return HTMLCollection.prototype.namedItem;
                     // Named item access (skip empty string and JS internals)
                     if (typeof p === 'string' && p !== '' && p !== 'then' && p !== 'toJSON' && p !== 'constructor' && p !== '__proto__') {
                         var found = __findNamed(live, p);
                         if (found) return found;
                     }
+                    // Fall through to prototype chain (HTMLCollection.prototype → Object.prototype)
+                    var proto = HTMLCollection.prototype;
+                    if (p in proto) return proto[p];
                     return undefined;
                 },
                 has: function(t, p) {
@@ -102,7 +106,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                         var id = el.getAttribute('id');
                         if (id && !seen[id]) { keys.push(id); seen[id] = true; }
                         var ns = el.namespaceURI;
-                        if (!ns || ns === 'http://www.w3.org/1999/xhtml') {
+                        if (ns === 'http://www.w3.org/1999/xhtml') {
                             var nm = el.getAttribute('name');
                             if (nm && !seen[nm]) { keys.push(nm); seen[nm] = true; }
                         }
@@ -1727,6 +1731,19 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         // Expose constructor globals for interface-objects conformance
         globalThis.NodeList = class NodeList {};
         globalThis.HTMLCollection = class HTMLCollection {};
+        HTMLCollection.prototype.item = function(i) { var idx = i >>> 0; return idx < this.length ? this[idx] : null; };
+        HTMLCollection.prototype.namedItem = function(name) {
+            var s = String(name);
+            if (!s) return null;
+            for (var i = 0; i < this.length; i++) {
+                var el = this[i];
+                if (!el.getAttribute) continue;
+                if (el.getAttribute('id') === s) return el;
+                var ns = el.namespaceURI;
+                if (ns === 'http://www.w3.org/1999/xhtml' && el.getAttribute('name') === s) return el;
+            }
+            return null;
+        };
         globalThis.DOMTokenList = class DOMTokenList {};
         DOMTokenList.prototype[Symbol.toStringTag] = 'DOMTokenList';
         DOMTokenList.prototype.keys = Array.prototype.keys;
