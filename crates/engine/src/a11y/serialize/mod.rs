@@ -4,6 +4,7 @@ mod accessibility;
 mod compact;
 mod interactive;
 mod text;
+mod webmcp;
 
 // Re-export public API — keeps all external callers unchanged.
 pub use refs::assign_refs;
@@ -11,6 +12,7 @@ pub use accessibility::{serialize_a11y, serialize_a11y_rooted};
 pub use compact::serialize_compact;
 pub use interactive::{serialize_interactive, serialize_links, serialize_forms};
 pub use text::{serialize_headings, serialize_text, serialize_selector, serialize_region};
+pub use webmcp::collect_webmcp_section;
 
 #[cfg(test)]
 mod tests {
