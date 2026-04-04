@@ -1353,8 +1353,8 @@ PASS wpt:dom/nodes/Node-cloneNode-document-with-doctype.html
 PASS wpt:dom/nodes/Node-cloneNode-external-stylesheet-no-bc.sub.html
 PASS wpt:dom/nodes/Node-cloneNode-on-inactive-document-crash.html
 PASS wpt:dom/nodes/Node-cloneNode-svg.html
-FAIL wpt:dom/nodes/Node-cloneNode.html
-NOT_RUN wpt:dom/nodes/Node-compareDocumentPosition.html
+PASS wpt:dom/nodes/Node-cloneNode.html
+FAIL wpt:dom/nodes/Node-compareDocumentPosition.html
 NOT_RUN wpt:dom/nodes/Node-constants.html
 NOT_RUN wpt:dom/nodes/Node-contains.html
 NOT_RUN wpt:dom/nodes/Node-insertBefore.html

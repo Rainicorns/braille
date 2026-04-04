@@ -22,6 +22,48 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             VIDEO: HTMLVideoElement, AUDIO: HTMLAudioElement,
             SOURCE: HTMLSourceElement, LABEL: HTMLLabelElement,
             TEMPLATE: HTMLTemplateElement,
+            AREA: HTMLAreaElement, BASE: HTMLBaseElement,
+            BR: HTMLBRElement, DATA: HTMLDataElement,
+            DATALIST: HTMLDataListElement, DETAILS: HTMLDetailsElement,
+            DIALOG: HTMLDialogElement, DIR: HTMLDirectoryElement,
+            DL: HTMLDListElement, EMBED: HTMLEmbedElement,
+            FIELDSET: HTMLFieldSetElement, FONT: HTMLFontElement,
+            FRAME: HTMLFrameElement,
+            H1: HTMLHeadingElement, H2: HTMLHeadingElement,
+            H3: HTMLHeadingElement, H4: HTMLHeadingElement,
+            H5: HTMLHeadingElement, H6: HTMLHeadingElement,
+            HR: HTMLHRElement, LEGEND: HTMLLegendElement,
+            MAP: HTMLMapElement, MARQUEE: HTMLMarqueeElement,
+            MENU: HTMLMenuElement, METER: HTMLMeterElement,
+            INS: HTMLModElement, DEL: HTMLModElement,
+            OBJECT: HTMLObjectElement, OPTGROUP: HTMLOptGroupElement,
+            OUTPUT: HTMLOutputElement, PARAM: HTMLParamElement,
+            PICTURE: HTMLPictureElement, PROGRESS: HTMLProgressElement,
+            BLOCKQUOTE: HTMLQuoteElement, Q: HTMLQuoteElement,
+            CAPTION: HTMLTableCaptionElement,
+            COL: HTMLTableColElement, COLGROUP: HTMLTableColElement,
+            THEAD: HTMLTableSectionElement, TBODY: HTMLTableSectionElement,
+            TFOOT: HTMLTableSectionElement,
+            TIME: HTMLTimeElement, TRACK: HTMLTrackElement,
+            // Generic HTML elements that use HTMLElement (not a specialized subclass)
+            ABBR: HTMLElement, ADDRESS: HTMLElement, ARTICLE: HTMLElement,
+            ASIDE: HTMLElement, B: HTMLElement, BDI: HTMLElement, BDO: HTMLElement,
+            CITE: HTMLElement, CODE: HTMLElement, DD: HTMLElement,
+            DFN: HTMLElement, DT: HTMLElement, EM: HTMLElement,
+            FIGCAPTION: HTMLElement, FIGURE: HTMLElement, FOOTER: HTMLElement,
+            HEADER: HTMLElement, HGROUP: HTMLElement, I: HTMLElement,
+            KBD: HTMLElement, MAIN: HTMLElement, MARK: HTMLElement,
+            NAV: HTMLElement, NOSCRIPT: HTMLElement, RP: HTMLElement,
+            RT: HTMLElement, RUBY: HTMLElement, S: HTMLElement,
+            SAMP: HTMLElement, SEARCH: HTMLElement, SECTION: HTMLElement,
+            SMALL: HTMLElement, STRONG: HTMLElement, SUB: HTMLElement,
+            SUMMARY: HTMLElement, SUP: HTMLElement, U: HTMLElement,
+            VAR: HTMLElement, WBR: HTMLElement,
+            // Deprecated/obsolete tags that are also HTMLElement
+            ACRONYM: HTMLElement, BIG: HTMLElement, CENTER: HTMLElement,
+            NOBR: HTMLElement, NOFRAMES: HTMLElement, NOEMBED: HTMLElement,
+            PLAINTEXT: HTMLElement, RB: HTMLElement, RTC: HTMLElement,
+            SPACER: HTMLElement, STRIKE: HTMLElement, TT: HTMLElement, XMP: HTMLElement,
         };
 
         // Wrapper factory
@@ -52,7 +94,13 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     obj = Object.create(ctor.prototype);
                     obj.constructor = ctor;
                 } else {
-                    obj = Object.create(Element.prototype);
+                    var ns = __n_getNamespace(nodeId);
+                    if (!ns || ns === 'http://www.w3.org/1999/xhtml') {
+                        obj = Object.create(HTMLUnknownElement.prototype);
+                        obj.constructor = HTMLUnknownElement;
+                    } else {
+                        obj = Object.create(Element.prototype);
+                    }
                 }
             } else if (nt === 11 && __n_isShadowRoot(nodeId)) {
                 // ShadowRoot — use ShadowRoot.prototype
@@ -1930,6 +1978,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         }
         Attr.prototype = Object.create(EP);
         Attr.prototype.constructor = Attr;
+        Attr.prototype.cloneNode = function() {
+            var clone = new Attr(this.name, this.value, this.namespaceURI, this.prefix);
+            clone.localName = this.localName;
+            return clone;
+        };
         globalThis.Attr = Attr;
 
         // Document constructor is defined earlier (line ~898) as a factory function.
