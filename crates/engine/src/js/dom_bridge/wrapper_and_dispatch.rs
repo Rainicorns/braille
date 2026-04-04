@@ -871,6 +871,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             newDoc.createComment = function(text) { var n = document.createComment(text); n.__ownerDoc = newDoc; return n; };
             newDoc.createDocumentFragment = function() { var n = document.createDocumentFragment(); n.__ownerDoc = newDoc; return n; };
             newDoc.createProcessingInstruction = function(t, d) { var n = document.createProcessingInstruction(t, d); n.__ownerDoc = newDoc; return n; };
+            newDoc.createCDATASection = function(data) { var n = document.createCDATASection(data); n.__ownerDoc = newDoc; return n; };
             newDoc.createAttribute = function(n) { return document.createAttribute(n); };
             newDoc.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
             newDoc.createEvent = function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; };
@@ -1011,7 +1012,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             var node = __w(nid);
             return node;
         };
-        doc.createComment = function(text) { return { nodeType: 8, textContent: text }; };
+        doc.createComment = function(text) {
+            var nid = __n_createComment(String(text));
+            return __w(nid);
+        };
         doc.createDocumentFragment = function() {
             var nid = __n_createDocFragment();
             return __w(nid);
@@ -1309,6 +1313,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (!__n_isValidXmlName(t)) throw new DOMException("The target provided ('" + t + "') is not a valid XML name.", "InvalidCharacterError");
             if (d.indexOf('?>') !== -1) throw new DOMException("The data provided ('..?>..') contains '?>'.", "InvalidCharacterError");
             var nid = __n_createPI(t, d);
+            return __w(nid);
+        };
+
+        doc.createCDATASection = function(data) {
+            if (arguments.length < 1) throw new TypeError("Failed to execute 'createCDATASection' on 'Document': 1 argument required.");
+            var nid = __n_createCDATASection(String(data));
             return __w(nid);
         };
 
@@ -2042,6 +2052,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Wire global document to Document.prototype
         // nodeId 0 is always the Document node (DomTree::new() allocates it first)
         document.__nid = 0;
+        document.__props = document.__props || {};
+        _cache[0] = document;
         Object.setPrototypeOf(document, Document.prototype);
 
         // Add Document-specific methods to Document.prototype
@@ -2052,6 +2064,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Document.prototype.createComment = function(text) { return document.createComment(text); };
         Document.prototype.createDocumentFragment = function() { return document.createDocumentFragment(); };
         Document.prototype.createProcessingInstruction = function(t, d) { return document.createProcessingInstruction(t, d); };
+        Document.prototype.createCDATASection = function(data) { return document.createCDATASection(data); };
         Document.prototype.createAttribute = function(n) { return document.createAttribute(n); };
         Document.prototype.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
         Document.prototype.createEvent = function(type) {
@@ -2144,6 +2157,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Wire: Element.prototype → __ElemProto → Node.prototype
         Object.setPrototypeOf(__ElemProto, globalThis.Node.prototype);
         Object.setPrototypeOf(globalThis.Element.prototype, __ElemProto);
+        Object.setPrototypeOf(Document.prototype, globalThis.Node.prototype);
+        Object.setPrototypeOf(DocumentType.prototype, globalThis.Node.prototype);
+        Object.setPrototypeOf(DocumentFragment.prototype, globalThis.Node.prototype);
 
         // DocumentFragment also gets querySelector/querySelectorAll
         DocumentFragment.prototype.querySelector = function(sel) {

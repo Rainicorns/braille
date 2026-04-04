@@ -376,6 +376,13 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // createCDATASection(content) -> nodeId
+    g.set("__n_createCDATASection", Function::new(ctx.clone(), |content: String| -> u32 {
+        with_tree_mut(|tree| {
+            tree.create_cdata_section(&content) as u32
+        })
+    }).unwrap()).unwrap();
+
     // getPITarget(nodeId) -> target string for ProcessingInstruction nodes
     g.set("__n_getPITarget", Function::new(ctx.clone(), |node_id: u32| -> String {
         with_tree(|tree| {

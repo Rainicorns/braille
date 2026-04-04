@@ -321,7 +321,17 @@ pub(crate) fn element_prototype_js() -> &'static str {
             enumerable: true, configurable: true
         });
         EP.contains = function(other) {
-            if (!other || other.__nid === undefined) return false;
+            if (!other || other.__nid === undefined || this.__nid === undefined) {
+                // Handle non-Rust-backed nodes: walk parentNode chain in JS
+                if (this === other) return true;
+                if (!other) return false;
+                var node = other;
+                while (node) {
+                    if (node === this) return true;
+                    node = node.parentNode;
+                }
+                return false;
+            }
             return __n_contains(this.__nid, other.__nid);
         };
         EP.cloneNode = function(deep) {
@@ -878,7 +888,17 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         EP.getRootNode = function() { return document; };
         EP.compareDocumentPosition = function(other) {
-            if (!other || other.__nid === undefined || this.__nid === undefined) return 0;
+            if (!other || (other.__nid === undefined && other.nodeType === undefined)) return 0;
+            if (this === other) return 0;
+            // If either node lacks __nid (non-Rust-backed, e.g. foreign/xml doc), they're disconnected
+            if (other.__nid === undefined || this.__nid === undefined) {
+                // DISCONNECTED | IMPLEMENTATION_SPECIFIC | PRECEDING or FOLLOWING
+                // Use a consistent ordering based on some stable property
+                var thisId = this.__nid !== undefined ? this.__nid : -1;
+                var otherId = other.__nid !== undefined ? other.__nid : -2;
+                var dir = otherId < thisId ? 2 : 4; // PRECEDING=2, FOLLOWING=4
+                return 1 | 32 | dir; // DISCONNECTED | IMPLEMENTATION_SPECIFIC | dir
+            }
             return __n_compareDocumentPosition(this.__nid, other.__nid);
         };
 
