@@ -230,11 +230,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
 
         ElemProto.querySelector = function(sel) {
-            var id = __n_querySelector(this.__nid, sel);
+            var id = __n_querySelector(this.__nid, sel, this.__nid);
             return id >= 0 ? __w(id) : null;
         };
         ElemProto.querySelectorAll = function(sel) {
-            return __makeStaticNodeList(__n_querySelectorAll(this.__nid, sel).map(__w));
+            return __makeStaticNodeList(__n_querySelectorAll(this.__nid, sel, this.__nid).map(__w));
         };
         ElemProto.getElementsByTagName = function(tag) {
             var nid = this.__nid;
@@ -729,13 +729,20 @@ pub(crate) fn element_prototype_js() -> &'static str {
             __ceFlushReactions();
         };
         EP.replaceChildren = function() {
-            __ceBatchDepth++;
-            while (this.firstChild) this.removeChild(this.firstChild);
+            var frag = document.createDocumentFragment();
             for (var i = 0; i < arguments.length; i++) {
                 var arg = arguments[i];
                 if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
-                this.appendChild(arg);
+                frag.appendChild(arg);
             }
+            var err = __n_validatePreInsert(this.__nid, frag.__nid, -1);
+            if (err) {
+                var parts = err.split(':');
+                throw new DOMException(parts.slice(1).join(':'), parts[0]);
+            }
+            __ceBatchDepth++;
+            while (this.firstChild) this.removeChild(this.firstChild);
+            this.appendChild(frag);
             __ceBatchDepth--;
             __ceFlushReactions();
         };

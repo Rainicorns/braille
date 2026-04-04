@@ -5,8 +5,8 @@ pub type NodeId = usize;
 pub type ComputedStyles = std::collections::HashMap<String, String>;
 
 /// DOM string type that abstracts the internal representation of string values.
-/// Today wraps `String` (UTF-8). Tomorrow can be swapped to `Vec<u8>` (WTF-8)
-/// to support lone surrogates at the JS↔Rust boundary without touching callsites.
+/// Wraps `String` (UTF-8). At the JS↔Rust boundary, lone surrogates are replaced
+/// with U+FFFD via `FromJs` lossy conversion.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct DomString(String);
@@ -22,6 +22,26 @@ impl DomString {
 
     pub fn into_string(self) -> String {
         self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'js> rquickjs::FromJs<'js> for DomString {
+    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+        let js_string = rquickjs::String::from_value(value)?;
+        match js_string.to_string() {
+            Ok(s) => Ok(DomString(s)),
+            Err(_) => {
+                let cstr = js_string.to_cstring()?;
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(cstr.as_ptr() as *const u8, cstr.len())
+                };
+                Ok(DomString(String::from_utf8_lossy(bytes).into_owned()))
+            }
+        }
     }
 }
 

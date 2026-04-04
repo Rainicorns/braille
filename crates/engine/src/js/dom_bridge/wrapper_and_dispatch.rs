@@ -969,11 +969,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return nid >= 0 ? __w(nid) : null;
         };
         doc.querySelector = function(sel) {
-            var nid = __n_querySelector(0, sel);
+            var nid = __n_querySelector(0, sel, 0);
             return nid >= 0 ? __w(nid) : null;
         };
         doc.querySelectorAll = function(sel) {
-            return __makeStaticNodeList(__n_querySelectorAll(0, sel).map(__w));
+            return __makeStaticNodeList(__n_querySelectorAll(0, sel, 0).map(__w));
         };
         doc.createElement = function(tag) {
             var nid = __n_createElement(tag);
@@ -1911,7 +1911,18 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Text.prototype = Object.create(CharacterData.prototype);
         Text.prototype.constructor = Text;
         Object.defineProperty(Text.prototype, 'wholeText', {
-            get: function() { return this.data; },
+            get: function() {
+                var result = '';
+                var n = this;
+                while (n.previousSibling && n.previousSibling.nodeType === 3) {
+                    n = n.previousSibling;
+                }
+                while (n && n.nodeType === 3) {
+                    result += n.data;
+                    n = n.nextSibling;
+                }
+                return result;
+            },
             configurable: true
         });
         Text.prototype.splitText = function(offset) {
@@ -2088,12 +2099,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return de.querySelector('[id="' + sid.replace(/"/g, '\\"') + '"]');
         };
         Document.prototype.querySelector = function(sel) {
-            var de = this.documentElement;
-            return de && de.querySelector ? de.querySelector(sel) : null;
+            var id = __n_querySelector(0, sel, 0);
+            return id >= 0 ? __w(id) : null;
         };
         Document.prototype.querySelectorAll = function(sel) {
-            var de = this.documentElement;
-            return de && de.querySelectorAll ? de.querySelectorAll(sel) : __makeStaticNodeList([]);
+            return __makeStaticNodeList(__n_querySelectorAll(0, sel, 0).map(__w));
         };
         Document.prototype.getElementsByTagName = function(tag) {
             var de = this.documentElement;
@@ -2164,16 +2174,16 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // DocumentFragment also gets querySelector/querySelectorAll
         DocumentFragment.prototype.querySelector = function(sel) {
             if (this.__nid === undefined) return null;
-            var nid = __n_querySelector(this.__nid, sel);
+            var nid = __n_querySelector(this.__nid, sel, this.__nid);
             return nid >= 0 ? __w(nid) : null;
         };
         DocumentFragment.prototype.querySelectorAll = function(sel) {
             if (this.__nid === undefined) return __makeStaticNodeList([]);
-            return __makeStaticNodeList(__n_querySelectorAll(this.__nid, sel).map(__w));
+            return __makeStaticNodeList(__n_querySelectorAll(this.__nid, sel, this.__nid).map(__w));
         };
         DocumentFragment.prototype.getElementById = function(id) {
             if (this.__nid === undefined || !id) return null;
-            var nid = __n_querySelector(this.__nid, '[id="' + id.replace(/"/g, '\\"') + '"]');
+            var nid = __n_querySelector(this.__nid, '[id="' + id.replace(/"/g, '\\"') + '"]', this.__nid);
             return nid >= 0 ? __w(nid) : null;
         };
 

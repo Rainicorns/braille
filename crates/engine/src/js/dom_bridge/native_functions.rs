@@ -1,6 +1,6 @@
 use rquickjs::{Ctx, Function};
 
-use crate::dom::node::{NodeData, ShadowRootMode};
+use crate::dom::node::{DomString, NodeData, ShadowRootMode};
 use crate::dom::tree::{is_valid_xml_name, DomTree};
 use crate::dom::NodeId;
 
@@ -11,14 +11,14 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
 
 
     // getAttribute(nodeId, name) -> string | null (empty string = null)
-    g.set("__n_getAttribute", Function::new(ctx.clone(), |node_id: u32, name: String| -> String {
+    g.set("__n_getAttribute", Function::new(ctx.clone(), |node_id: u32, name: DomString| -> String {
         with_tree(|tree| {
             tree.get_attribute(node_id as NodeId, &name).map(|v| v.to_string()).unwrap_or_default()
         })
     }).unwrap()).unwrap();
 
     // hasAttribute(nodeId, name) -> bool
-    g.set("__n_hasAttribute", Function::new(ctx.clone(), |node_id: u32, name: String| -> bool {
+    g.set("__n_hasAttribute", Function::new(ctx.clone(), |node_id: u32, name: DomString| -> bool {
         with_tree(|tree| tree.has_attribute(node_id as NodeId, &name))
     }).unwrap()).unwrap();
 
@@ -28,27 +28,27 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // setAttribute(nodeId, name, value)
-    g.set("__n_setAttribute", Function::new(ctx.clone(), |node_id: u32, name: String, value: String| {
+    g.set("__n_setAttribute", Function::new(ctx.clone(), |node_id: u32, name: DomString, value: DomString| {
         with_tree_mut(|tree| tree.set_attribute(node_id as NodeId, &name, &value));
     }).unwrap()).unwrap();
 
     // removeAttribute(nodeId, name)
-    g.set("__n_removeAttribute", Function::new(ctx.clone(), |node_id: u32, name: String| {
+    g.set("__n_removeAttribute", Function::new(ctx.clone(), |node_id: u32, name: DomString| {
         with_tree_mut(|tree| { tree.remove_attribute(node_id as NodeId, &name); });
     }).unwrap()).unwrap();
 
     // setAttributeNS(nodeId, namespace, qualifiedName, value)
-    g.set("__n_setAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, qualified_name: String, value: String| {
+    g.set("__n_setAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: DomString, qualified_name: DomString, value: DomString| {
         with_tree_mut(|tree| tree.set_attribute_ns(node_id as NodeId, &namespace, &qualified_name, &value));
     }).unwrap()).unwrap();
 
     // getAttributeNS(nodeId, namespace, localName) -> string (empty = not found)
-    g.set("__n_getAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| -> String {
+    g.set("__n_getAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: DomString, local_name: DomString| -> String {
         with_tree(|tree| tree.get_attribute_ns(node_id as NodeId, &namespace, &local_name).map(|v| v.to_string()).unwrap_or_default())
     }).unwrap()).unwrap();
 
     // getAttributeNodeNS(nodeId, namespace, localName) -> JSON string with full attr info, or empty
-    g.set("__n_getAttributeNodeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| -> String {
+    g.set("__n_getAttributeNodeNS", Function::new(ctx.clone(), |node_id: u32, namespace: DomString, local_name: DomString| -> String {
         with_tree(|tree| {
             let node = tree.get_node(node_id as NodeId);
             if let NodeData::Element { ref attributes, .. } = node.data {
@@ -67,12 +67,12 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // hasAttributeNS(nodeId, namespace, localName) -> bool
-    g.set("__n_hasAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| -> bool {
+    g.set("__n_hasAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: DomString, local_name: DomString| -> bool {
         with_tree(|tree| tree.has_attribute_ns(node_id as NodeId, &namespace, &local_name))
     }).unwrap()).unwrap();
 
     // removeAttributeNS(nodeId, namespace, localName)
-    g.set("__n_removeAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| {
+    g.set("__n_removeAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: DomString, local_name: DomString| {
         with_tree_mut(|tree| { tree.remove_attribute_ns(node_id as NodeId, &namespace, &local_name); });
     }).unwrap()).unwrap();
 
@@ -163,25 +163,25 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // getElementById(id) -> nodeId or -1
-    g.set("__n_getElementById", Function::new(ctx.clone(), |id: String| -> i32 {
+    g.set("__n_getElementById", Function::new(ctx.clone(), |id: DomString| -> i32 {
         with_tree(|tree| {
             tree.get_element_by_id(&id).map(|nid| nid as i32).unwrap_or(-1)
         })
     }).unwrap()).unwrap();
 
-    // querySelector(rootNodeId, selector) -> nodeId or -1
-    g.set("__n_querySelector", Function::new(ctx.clone(), |root_id: u32, selector: String| -> i32 {
+    // querySelector(rootNodeId, selector, scopeNodeId) -> nodeId or -1
+    g.set("__n_querySelector", Function::new(ctx.clone(), |root_id: u32, selector: DomString, scope_id: u32| -> i32 {
         with_tree(|tree| {
-            crate::css::matching::query_selector(tree, root_id as NodeId, &selector, None)
+            crate::css::matching::query_selector(tree, root_id as NodeId, &selector, Some(scope_id as NodeId))
                 .map(|nid| nid as i32)
                 .unwrap_or(-1)
         })
     }).unwrap()).unwrap();
 
-    // querySelectorAll(rootNodeId, selector) -> array of nodeIds
-    g.set("__n_querySelectorAll", Function::new(ctx.clone(), |root_id: u32, selector: String| -> Vec<u32> {
+    // querySelectorAll(rootNodeId, selector, scopeNodeId) -> array of nodeIds
+    g.set("__n_querySelectorAll", Function::new(ctx.clone(), |root_id: u32, selector: DomString, scope_id: u32| -> Vec<u32> {
         with_tree(|tree| {
-            crate::css::matching::query_selector_all(tree, root_id as NodeId, &selector, None)
+            crate::css::matching::query_selector_all(tree, root_id as NodeId, &selector, Some(scope_id as NodeId))
                 .into_iter()
                 .map(|nid| nid as u32)
                 .collect()
@@ -189,12 +189,12 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // hasAttrValue(nodeId, name) -> bool (has the attribute at all?)
-    g.set("__n_hasAttrValue", Function::new(ctx.clone(), |node_id: u32, name: String| -> bool {
+    g.set("__n_hasAttrValue", Function::new(ctx.clone(), |node_id: u32, name: DomString| -> bool {
         with_tree(|tree| tree.get_attribute(node_id as NodeId, &name).is_some())
     }).unwrap()).unwrap();
 
     // createElement(tagName) -> nodeId
-    g.set("__n_createElement", Function::new(ctx.clone(), |tag: String| -> u32 {
+    g.set("__n_createElement", Function::new(ctx.clone(), |tag: DomString| -> u32 {
         with_tree_mut(|tree| {
             tree.create_element(&tag.to_ascii_lowercase()) as u32
         })
@@ -202,7 +202,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
 
     // createElementNS(localName, namespace, prefix) -> nodeId
     // Stores raw localName (no lowercasing), namespace, and optional prefix in the DomTree.
-    g.set("__n_createElementNS", Function::new(ctx.clone(), |local_name: String, namespace: String, prefix: String| -> u32 {
+    g.set("__n_createElementNS", Function::new(ctx.clone(), |local_name: DomString, namespace: DomString, prefix: DomString| -> u32 {
         with_tree_mut(|tree| {
             let pfx = if prefix.is_empty() { None } else { Some(prefix.as_str()) };
             tree.create_element_ns_with_prefix(&local_name, Vec::new(), &namespace, pfx) as u32
@@ -210,7 +210,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // createTextNode(text) -> nodeId
-    g.set("__n_createTextNode", Function::new(ctx.clone(), |text: String| -> u32 {
+    g.set("__n_createTextNode", Function::new(ctx.clone(), |text: DomString| -> u32 {
         with_tree_mut(|tree| {
             tree.create_text(&text) as u32
         })
@@ -249,7 +249,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // setTextContent(nodeId, text) — removes all children and sets text
-    g.set("__n_setTextContent", Function::new(ctx.clone(), |node_id: u32, text: String| {
+    g.set("__n_setTextContent", Function::new(ctx.clone(), |node_id: u32, text: DomString| {
         with_tree_mut(|tree| {
             tree.set_text_content(node_id as NodeId, &text);
         });
@@ -287,7 +287,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // closest(nodeId, selector) -> nodeId or -1
-    g.set("__n_closest", Function::new(ctx.clone(), |node_id: u32, selector: String| -> i32 {
+    g.set("__n_closest", Function::new(ctx.clone(), |node_id: u32, selector: DomString| -> i32 {
         with_tree(|tree| {
             let mut current = Some(node_id as NodeId);
             while let Some(id) = current {
@@ -303,7 +303,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // getDataAttribute(nodeId, camelCaseName) -> string or empty
-    g.set("__n_getDataAttr", Function::new(ctx.clone(), |node_id: u32, name: String| -> String {
+    g.set("__n_getDataAttr", Function::new(ctx.clone(), |node_id: u32, name: DomString| -> String {
         let mut kebab = String::from("data-");
         for ch in name.chars() {
             if ch.is_uppercase() {
@@ -319,7 +319,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // innerHTML setter: parse HTML fragment and replace children
-    g.set("__n_setInnerHTML", Function::new(ctx.clone(), |parent_id: u32, html: String| {
+    g.set("__n_setInnerHTML", Function::new(ctx.clone(), |parent_id: u32, html: DomString| {
         let fragment_tree = crate::html::parser::parse_html_fragment(&html, "div", "");
         with_tree_mut(|tree| {
             let old_children: Vec<NodeId> = tree.get_node(parent_id as NodeId).children.clone();
@@ -347,7 +347,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     // parseHTMLDocument(html) -> JSON array of imported top-level node IDs
     // Parses as a full document (not fragment), so doctypes are preserved.
     // Returns IDs in document order (e.g. [doctypeNid, htmlElementNid]).
-    g.set("__n_parseHTMLDocument", Function::new(ctx.clone(), |html: String| -> String {
+    g.set("__n_parseHTMLDocument", Function::new(ctx.clone(), |html: DomString| -> String {
         let doc_tree = crate::html::parser::parse_html(&html);
         with_tree_mut(|tree| {
             let src = doc_tree.borrow();
@@ -370,21 +370,21 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // createComment(text) -> nodeId
-    g.set("__n_createComment", Function::new(ctx.clone(), |text: String| -> u32 {
+    g.set("__n_createComment", Function::new(ctx.clone(), |text: DomString| -> u32 {
         with_tree_mut(|tree| {
             tree.create_comment(&text) as u32
         })
     }).unwrap()).unwrap();
 
     // createProcessingInstruction(target, data) -> nodeId
-    g.set("__n_createPI", Function::new(ctx.clone(), |target: String, data: String| -> u32 {
+    g.set("__n_createPI", Function::new(ctx.clone(), |target: DomString, data: DomString| -> u32 {
         with_tree_mut(|tree| {
             tree.create_processing_instruction(&target, &data) as u32
         })
     }).unwrap()).unwrap();
 
     // createCDATASection(content) -> nodeId
-    g.set("__n_createCDATASection", Function::new(ctx.clone(), |content: String| -> u32 {
+    g.set("__n_createCDATASection", Function::new(ctx.clone(), |content: DomString| -> u32 {
         with_tree_mut(|tree| {
             tree.create_cdata_section(&content) as u32
         })
@@ -401,7 +401,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // isValidXmlName(name) -> bool
-    g.set("__n_isValidXmlName", Function::new(ctx.clone(), |name: String| -> bool {
+    g.set("__n_isValidXmlName", Function::new(ctx.clone(), |name: DomString| -> bool {
         is_valid_xml_name(&name)
     }).unwrap()).unwrap();
 
@@ -491,14 +491,14 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // charDataAppend(nodeId, data)
-    g.set("__n_charDataAppend", Function::new(ctx.clone(), |node_id: u32, data: String| {
+    g.set("__n_charDataAppend", Function::new(ctx.clone(), |node_id: u32, data: DomString| {
         with_tree_mut(|tree| {
             tree.character_data_append(node_id as NodeId, &data);
         });
     }).unwrap()).unwrap();
 
     // charDataInsert(nodeId, offset, data) -> "" on success, error name on failure
-    g.set("__n_charDataInsert", Function::new(ctx.clone(), |node_id: u32, offset: u32, data: String| -> String {
+    g.set("__n_charDataInsert", Function::new(ctx.clone(), |node_id: u32, offset: u32, data: DomString| -> String {
         with_tree_mut(|tree| {
             match tree.character_data_insert(node_id as NodeId, offset as usize, &data) {
                 Ok(()) => String::new(),
@@ -518,7 +518,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // charDataReplace(nodeId, offset, count, data) -> "" on success, error name on failure
-    g.set("__n_charDataReplace", Function::new(ctx.clone(), |node_id: u32, offset: u32, count: u32, data: String| -> String {
+    g.set("__n_charDataReplace", Function::new(ctx.clone(), |node_id: u32, offset: u32, count: u32, data: DomString| -> String {
         with_tree_mut(|tree| {
             match tree.character_data_replace(node_id as NodeId, offset as usize, count as usize, &data) {
                 Ok(()) => String::new(),
@@ -567,7 +567,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // createDoctype(name, publicId, systemId) -> nodeId
-    g.set("__n_createDoctype", Function::new(ctx.clone(), |name: String, public_id: String, system_id: String| -> u32 {
+    g.set("__n_createDoctype", Function::new(ctx.clone(), |name: DomString, public_id: DomString, system_id: DomString| -> u32 {
         with_tree_mut(|tree| {
             tree.create_doctype(&name, &public_id, &system_id) as u32
         })
@@ -664,7 +664,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // matchesSelector(nodeId, selector) -> bool
-    g.set("__n_matchesSelector", Function::new(ctx.clone(), |node_id: u32, selector: String| -> bool {
+    g.set("__n_matchesSelector", Function::new(ctx.clone(), |node_id: u32, selector: DomString| -> bool {
         with_tree(|tree| {
             crate::css::matching::matches_selector_str(tree, node_id as NodeId, &selector, None)
         })
@@ -711,16 +711,16 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // __n_cssSupports(declaration) -> bool
-    g.set("__n_cssSupports", Function::new(ctx.clone(), |decl: String| -> bool {
+    g.set("__n_cssSupports", Function::new(ctx.clone(), |decl: DomString| -> bool {
         !crate::css::parser::parse_inline_style(&decl).is_empty()
     }).unwrap()).unwrap();
 
     // __n_getComputedStyle(nodeId, prop) -> string value or empty
-    g.set("__n_getComputedStyle", Function::new(ctx.clone(), |node_id: u32, prop: String| -> String {
+    g.set("__n_getComputedStyle", Function::new(ctx.clone(), |node_id: u32, prop: DomString| -> String {
         with_tree(|tree| {
             let node = tree.get_node(node_id as NodeId);
             node.computed_style.as_ref()
-                .and_then(|cs| cs.get(&prop))
+                .and_then(|cs| cs.get(prop.as_str()))
                 .cloned()
                 .unwrap_or_default()
         })
@@ -860,7 +860,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // createShadowRoot(hostId, modeStr) -> nodeId
-    g.set("__n_createShadowRoot", Function::new(ctx.clone(), |host_id: u32, mode_str: String| -> u32 {
+    g.set("__n_createShadowRoot", Function::new(ctx.clone(), |host_id: u32, mode_str: DomString| -> u32 {
         let mode = if mode_str == "closed" { ShadowRootMode::Closed } else { ShadowRootMode::Open };
         with_tree_mut(|tree| {
             tree.create_shadow_root(mode, host_id as NodeId) as u32
@@ -932,7 +932,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     // Per DOM spec §4.4.4: when the node document is HTML, HTML-namespace elements match against
     // ASCII-lowercased input; non-HTML-namespace elements match case-sensitively.
     // When the node document is NOT HTML (e.g. XML), all matching is case-sensitive.
-    g.set("__n_getElementsByTagName", Function::new(ctx.clone(), |root_id: u32, tag: String, is_html_doc: bool| -> Vec<u32> {
+    g.set("__n_getElementsByTagName", Function::new(ctx.clone(), |root_id: u32, tag: DomString, is_html_doc: bool| -> Vec<u32> {
         with_tree(|tree| {
             let mut result = Vec::new();
             let tag_lower = tag.to_ascii_lowercase();
@@ -977,7 +977,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     // getElementsByTagNameNS(rootNodeId, namespace, localName) -> array of nodeIds
     // Per DOM spec §4.4.4: matches localName (not qualified name), always case-sensitive.
     // namespace/localName "*" = wildcard. null namespace mapped to "" by JS caller.
-    g.set("__n_getElementsByTagNameNS", Function::new(ctx.clone(), |root_id: u32, namespace: String, local_name: String| -> Vec<u32> {
+    g.set("__n_getElementsByTagNameNS", Function::new(ctx.clone(), |root_id: u32, namespace: DomString, local_name: DomString| -> Vec<u32> {
         with_tree(|tree| {
             let mut result = Vec::new();
             let ns_wildcard = namespace == "*";
@@ -1016,7 +1016,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
 
     // validateAndExtract(namespace, qualifiedName) -> JSON result
     // Returns {"ok":{"prefix":"...","localName":"..."}} or {"err":"ErrorName"}
-    g.set("__n_validateAndExtract", Function::new(ctx.clone(), |namespace: String, qualified_name: String| -> String {
+    g.set("__n_validateAndExtract", Function::new(ctx.clone(), |namespace: DomString, qualified_name: DomString| -> String {
         let ns = if namespace.is_empty() || namespace == "null" { None } else { Some(namespace.as_str()) };
         match crate::dom::tree::validate_and_extract(ns, &qualified_name) {
             Ok((prefix, local_name)) => {
