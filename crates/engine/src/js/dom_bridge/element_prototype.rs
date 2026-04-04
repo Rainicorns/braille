@@ -848,9 +848,6 @@ pub(crate) fn element_prototype_js() -> &'static str {
             var shadowId = __n_createShadowRoot(this.__nid, opts.mode);
             var shadow = __w(shadowId);
             shadow._shadowHost = this;
-            if (opts.mode === 'open') {
-                this.shadowRoot = shadow;
-            }
             return shadow;
         };
         ElemProto.getAttributeNode = function(name) {
@@ -1105,7 +1102,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 var tn = prefix ? prefix + ':' + ln : ln;
                 // HTML elements in HTML documents get uppercased tagName
                 // In XML documents (contentType !== 'text/html'), preserve case
-                if (this.namespaceURI === 'http://www.w3.org/1999/xhtml' || (this.__namespaceURI === undefined && !prefix)) {
+                if (this.namespaceURI === 'http://www.w3.org/1999/xhtml') {
                     var od = this.__ownerDoc || (typeof document !== 'undefined' ? document : null);
                     if (od && od.contentType && od.contentType !== 'text/html') return tn;
                     return tn.toUpperCase();
@@ -1121,10 +1118,20 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 return null;
             }, set: function(v) { this.__localName = v; }, configurable: true },
             prefix: { get: function() {
-                return (this.__prefix !== undefined) ? this.__prefix : null;
+                if (this.__prefix !== undefined) return this.__prefix;
+                if (this.__nid !== undefined) {
+                    var p = __n_getPrefix(this.__nid);
+                    if (p) return p;
+                }
+                return null;
             }, set: function(v) { this.__prefix = v; }, configurable: true },
             namespaceURI: { get: function() {
-                return (this.__namespaceURI !== undefined) ? this.__namespaceURI : 'http://www.w3.org/1999/xhtml';
+                if (this.__namespaceURI !== undefined) return this.__namespaceURI;
+                if (this.__nid !== undefined) {
+                    var ns = __n_getNamespace(this.__nid);
+                    if (ns) return ns;
+                }
+                return 'http://www.w3.org/1999/xhtml';
             }, set: function(v) { this.__namespaceURI = v; }, configurable: true },
             id: {
                 get: function() { return this.getAttribute('id') || ''; },
@@ -1926,6 +1933,18 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     if (v.stepMismatch) return 'Please enter a valid value. The nearest valid values are those aligned with the step.';
                     if (v.badInput) return 'Please enter a valid value.';
                     return '';
+                },
+                configurable: true
+            },
+            shadowRoot: {
+                get: function() {
+                    if (this.__nid === undefined) return null;
+                    var srId = __n_getShadowRootId(this.__nid);
+                    if (srId < 0) return null;
+                    // Only open shadow roots are exposed via .shadowRoot
+                    var mode = __n_getShadowRootMode(srId);
+                    if (mode !== 'open') return null;
+                    return __w(srId);
                 },
                 configurable: true
             },

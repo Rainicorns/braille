@@ -433,6 +433,75 @@ fn collect_options(
     }
 }
 
+// ---------------------------------------------------------------------------
+// POLYFILL: declarative shadow DOM (post-processing)
+//
+// Per the HTML spec, `<template shadowrootmode="open|closed">` inside a host
+// element should attach a ShadowRoot to the host, move the template's content
+// children into it, and remove the <template> element. html5ever does not
+// support this natively, so we handle it as a post-parse fixup.
+// ---------------------------------------------------------------------------
+
+fn polyfill_declarative_shadow_roots(tree: &mut DomTree) {
+    use crate::dom::node::ShadowRootMode;
+
+    // Collect all <template> elements with a `shadowrootmode` attribute.
+    let templates: Vec<(NodeId, String)> = (0..tree.node_count())
+        .filter_map(|id| {
+            if let NodeData::Element {
+                ref tag_name,
+                ref attributes,
+                ..
+            } = tree.get_node(id).data
+            {
+                if tag_name == "template" {
+                    if let Some(attr) = attributes.iter().find(|a| a.local_name == "shadowrootmode") {
+                        let mode_str = attr.value.clone();
+                        if mode_str == "open" || mode_str == "closed" {
+                            return Some((id, mode_str));
+                        }
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+
+    for (template_id, mode_str) in templates {
+        let mode = if mode_str == "open" {
+            ShadowRootMode::Open
+        } else {
+            ShadowRootMode::Closed
+        };
+
+        // The host is the template's parent element.
+        let host_id = match tree.get_node(template_id).parent {
+            Some(id) => id,
+            None => continue,
+        };
+
+        // Skip if host already has a shadow root.
+        if tree.get_node(host_id).shadow_root.is_some() {
+            continue;
+        }
+
+        // Create the shadow root attached to the host.
+        let shadow_id = tree.create_shadow_root(mode, host_id);
+
+        // Move children from the template's content fragment into the shadow root.
+        if let Some(content_id) = tree.get_node(template_id).template_contents {
+            let content_children: Vec<NodeId> = tree.get_node(content_id).children.clone();
+            for child_id in content_children {
+                tree.remove_from_parent(child_id);
+                tree.append_child(shadow_id, child_id);
+            }
+        }
+
+        // Remove the <template> element from the DOM.
+        tree.remove_from_parent(template_id);
+    }
+}
+
 /// Maps an html5ever namespace URL to a full namespace URI string.
 fn ns_to_label(ns: &Namespace) -> &'static str {
     if *ns == ns!(svg) {
@@ -488,6 +557,8 @@ pub fn parse_html_scripting(html: &str, scripting_enabled: bool) -> Rc<RefCell<D
     let tree = parser.one(html);
     // POLYFILL: selectedcontent cloning (see polyfill_selectedcontent docs).
     polyfill_selectedcontent(&mut tree.borrow_mut());
+    // POLYFILL: declarative shadow DOM (see polyfill_declarative_shadow_roots docs).
+    polyfill_declarative_shadow_roots(&mut tree.borrow_mut());
     tree
 }
 
@@ -522,6 +593,8 @@ pub fn parse_html_fragment_scripting(
     let tree = parser.one(html);
     // POLYFILL: selectedcontent cloning (see polyfill_selectedcontent docs).
     polyfill_selectedcontent(&mut tree.borrow_mut());
+    // POLYFILL: declarative shadow DOM (see polyfill_declarative_shadow_roots docs).
+    polyfill_declarative_shadow_roots(&mut tree.borrow_mut());
     tree
 }
 
@@ -566,6 +639,8 @@ impl IncrementalParser {
     pub fn finish(self) -> Rc<RefCell<DomTree>> {
         let tree = self.parser.finish();
         polyfill_selectedcontent(&mut tree.borrow_mut());
+        // POLYFILL: declarative shadow DOM (see polyfill_declarative_shadow_roots docs).
+        polyfill_declarative_shadow_roots(&mut tree.borrow_mut());
         tree
     }
 }
@@ -691,5 +766,40 @@ mod tests {
         } else {
             panic!("expected Text node as child of script, got {:?}", child_node.data);
         }
+    }
+
+    #[test]
+    fn declarative_shadow_dom_full_document() {
+        let tree_rc = parse_html("<html><body><div><template shadowrootmode=\"open\">hello</template></div></body></html>");
+        let tree = tree_rc.borrow();
+        let divs = tree.get_elements_by_tag_name("div");
+        assert_eq!(divs.len(), 1);
+        let div_id = divs[0];
+        let shadow = tree.get_node(div_id).shadow_root;
+        assert!(shadow.is_some(), "div should have a shadow root");
+        let shadow_id = shadow.unwrap();
+        // Shadow root should have children (the text "hello")
+        assert!(!tree.get_node(shadow_id).children.is_empty(), "shadow root should have children");
+        assert_eq!(tree.get_text_content(shadow_id), "hello");
+        // The <template> should be removed from the div
+        assert!(tree.get_node(div_id).children.is_empty(), "template should be removed from div");
+    }
+
+    #[test]
+    fn declarative_shadow_dom_fragment() {
+        let tree_rc = parse_html_fragment(
+            "<div><template shadowrootmode=\"open\">frag</template></div>",
+            "div",
+            "",
+        );
+        let tree = tree_rc.borrow();
+        // Fragment parse creates: Document -> <html> -> <div> (our content div)
+        // The polyfill should attach a shadow root to our <div>
+        let divs = tree.get_elements_by_tag_name("div");
+        // Find the div that has the shadow root (skip the context element)
+        let shadow_div = divs.iter().find(|&&id| tree.get_node(id).shadow_root.is_some());
+        assert!(shadow_div.is_some(), "one div should have a shadow root from fragment parse");
+        let shadow_id = tree.get_node(*shadow_div.unwrap()).shadow_root.unwrap();
+        assert_eq!(tree.get_text_content(shadow_id), "frag");
     }
 }

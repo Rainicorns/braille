@@ -149,16 +149,35 @@ pub(crate) fn import_node_recursive(
             tag_name,
             attributes,
             namespace,
-            ..
+            prefix,
         } => {
             let attrs: Vec<crate::dom::node::DomAttribute> = attributes.clone();
-            dst.create_element_ns(tag_name, attrs, namespace)
+            dst.create_element_ns_with_prefix(tag_name, attrs, namespace, prefix.as_deref())
         }
         NodeData::Text { content } => dst.create_text(content),
         NodeData::Comment { content } => dst.create_comment(content),
+        NodeData::Doctype {
+            name,
+            public_id,
+            system_id,
+        } => dst.create_doctype(name, public_id, system_id),
         _ => return,
     };
     dst.append_child(dst_parent_id, new_id);
+
+    // Import shadow root if the source node has one.
+    let shadow_root_id = src_node.shadow_root;
+    if let Some(src_shadow_id) = shadow_root_id {
+        let mode = match &src.get_node(src_shadow_id).data {
+            NodeData::ShadowRoot { mode, .. } => *mode,
+            _ => unreachable!(),
+        };
+        let dst_shadow_id = dst.create_shadow_root(mode, new_id);
+        let shadow_children: Vec<NodeId> = src.get_node(src_shadow_id).children.clone();
+        for &child_id in &shadow_children {
+            import_node_recursive(dst, src, child_id, dst_shadow_id);
+        }
+    }
 
     let children: Vec<NodeId> = src_node.children.clone();
     for &child_id in &children {

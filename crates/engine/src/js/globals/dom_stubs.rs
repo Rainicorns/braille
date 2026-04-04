@@ -1251,22 +1251,28 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             parseFromString(str, type) {
                 var ct = type || 'text/html';
                 if (ct === 'text/html') {
-                    // HTML: parse into a full document structure
-                    var htmlEl = document.createElement('html');
-                    var headEl = document.createElement('head');
-                    var bodyEl = document.createElement('body');
-                    htmlEl.appendChild(headEl);
-                    htmlEl.appendChild(bodyEl);
-                    // Parse the string — if it contains <html>/<body>, put in body
-                    var temp = document.createElement('div');
-                    __n_setInnerHTML(temp.__nid, str);
-                    while (temp.firstChild) bodyEl.appendChild(temp.firstChild);
+                    // Full document parse — preserves doctype, <html>, <head>, <body>
+                    var nodeIds = JSON.parse(__n_parseHTMLDocument(str));
+                    var htmlEl = null;
+                    var dtNode = null;
+                    for (var i = 0; i < nodeIds.length; i++) {
+                        var w = __w(nodeIds[i]);
+                        if (w.nodeType === 10) dtNode = w;
+                        else if (w.nodeType === 1 && w.tagName === 'HTML') htmlEl = w;
+                    }
+                    if (!htmlEl) {
+                        htmlEl = document.createElement('html');
+                        htmlEl.appendChild(document.createElement('head'));
+                        htmlEl.appendChild(document.createElement('body'));
+                    }
                     var newDoc = __makeDocumentLike(htmlEl);
                     newDoc.contentType = 'text/html';
-                    newDoc.body = bodyEl;
-                    newDoc.head = headEl;
-                    headEl.__ownerDoc = newDoc;
-                    bodyEl.__ownerDoc = newDoc;
+                    if (dtNode) {
+                        dtNode.__ownerDoc = newDoc;
+                        newDoc.childNodes.unshift(dtNode);
+                        newDoc.firstChild = dtNode;
+                        Object.defineProperty(newDoc, 'doctype', { get: function() { return dtNode; }, configurable: true });
+                    }
                     __adoptSubtree(htmlEl, newDoc);
                     return newDoc;
                 } else {

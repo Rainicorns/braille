@@ -103,6 +103,28 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // getNamespace(nodeId) -> namespace URI string (empty for non-elements)
+    g.set("__n_getNamespace", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            let node = tree.get_node(node_id as NodeId);
+            match &node.data {
+                NodeData::Element { namespace, .. } => namespace.clone(),
+                _ => String::new(),
+            }
+        })
+    }).unwrap()).unwrap();
+
+    // getPrefix(nodeId) -> prefix string (empty for no prefix)
+    g.set("__n_getPrefix", Function::new(ctx.clone(), |node_id: u32| -> String {
+        with_tree(|tree| {
+            let node = tree.get_node(node_id as NodeId);
+            match &node.data {
+                NodeData::Element { prefix, .. } => prefix.clone().unwrap_or_default(),
+                _ => String::new(),
+            }
+        })
+    }).unwrap()).unwrap();
+
     // getNodeType(nodeId) -> u32
     g.set("__n_getNodeType", Function::new(ctx.clone(), |node_id: u32| -> u32 {
         with_tree(|tree| {
@@ -315,6 +337,31 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         });
     }).unwrap()).unwrap();
 
+    // parseHTMLDocument(html) -> JSON array of imported top-level node IDs
+    // Parses as a full document (not fragment), so doctypes are preserved.
+    // Returns IDs in document order (e.g. [doctypeNid, htmlElementNid]).
+    g.set("__n_parseHTMLDocument", Function::new(ctx.clone(), |html: String| -> String {
+        let doc_tree = crate::html::parser::parse_html(&html);
+        with_tree_mut(|tree| {
+            let src = doc_tree.borrow();
+            let src_doc = src.document();
+            let src_children: Vec<NodeId> = src.get_node(src_doc).children.clone();
+            let mut imported_ids: Vec<u32> = Vec::new();
+            // Create a temporary holder in the main tree
+            let holder = tree.create_document_fragment();
+            for &child_id in &src_children {
+                import_node_recursive(tree, &src, child_id, holder);
+            }
+            // Collect the imported children and detach them from the holder
+            let holder_children: Vec<NodeId> = tree.get_node(holder).children.clone();
+            for &child_id in &holder_children {
+                tree.remove_from_parent(child_id);
+                imported_ids.push(child_id as u32);
+            }
+            format!("[{}]", imported_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(","))
+        })
+    }).unwrap()).unwrap();
+
     // createComment(text) -> nodeId
     g.set("__n_createComment", Function::new(ctx.clone(), |text: String| -> u32 {
         with_tree_mut(|tree| {
@@ -495,6 +542,13 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     g.set("__n_createDocFragment", Function::new(ctx.clone(), || -> u32 {
         with_tree_mut(|tree| {
             tree.create_document_fragment() as u32
+        })
+    }).unwrap()).unwrap();
+
+    // createDoctype(name, publicId, systemId) -> nodeId
+    g.set("__n_createDoctype", Function::new(ctx.clone(), |name: String, public_id: String, system_id: String| -> u32 {
+        with_tree_mut(|tree| {
+            tree.create_doctype(&name, &public_id, &system_id) as u32
         })
     }).unwrap()).unwrap();
 

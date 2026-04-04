@@ -56,7 +56,7 @@ When testing against an external system (e.g., Anubis), read their source code a
 
 ## Code Structure
 
-- **New tests go in `crates/engine/tests/`**, not inline in source files and never in `/tmp`. Use the public API (`eval_js`, `handle_click`, `handle_type`, `snapshot`, etc.) from external test files.
+- **New tests go in `crates/engine/tests/`**, not inline in source files and never in `/tmp`. Use the public API (`eval_js`, `handle_click`, `handle_type`, `snapshot`, etc.) from external test files. Even quick debug/experiment tests go in the repo — every test is an opportunity to grow the test library.
 - **Don't grow big files.** `lib.rs` and `dom_bridge.rs` are already too large. New Engine functionality goes in its own module. New JS bindings go in `js/bindings/` (one file per API surface).
 
 ## Code Style

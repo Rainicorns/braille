@@ -786,17 +786,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             newDoc.__captureListeners = {};
             Object.defineProperty(newDoc, 'documentElement', { get: function() { return rootEl; }, configurable: true });
             Object.defineProperty(newDoc, 'body', { get: function() {
+                if (this._body) return this._body;
                 if (!rootEl) return null;
                 var kids = rootEl.childNodes;
                 for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'BODY') return kids[i];
                 return null;
-            }, configurable: true });
+            }, set: function(v) { this._body = v; }, configurable: true });
             Object.defineProperty(newDoc, 'head', { get: function() {
+                if (this._head) return this._head;
                 if (!rootEl) return null;
                 var kids = rootEl.childNodes;
                 for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'HEAD') return kids[i];
                 return null;
-            }, configurable: true });
+            }, set: function(v) { this._head = v; }, configurable: true });
             // Each doc gets its own implementation that knows its owning document
             var impl = Object.create(DOMImplementation.prototype);
             impl.__ownerDocument = newDoc;
@@ -804,7 +806,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             impl.createDocument = function(ns, qn, dt) { return document.implementation.createDocument(ns, qn, dt); };
             impl.createDocumentType = function(qn, pub_, sys_) {
                 var dt = document.implementation.createDocumentType(qn, pub_, sys_);
-                dt.ownerDocument = this.__ownerDocument;
+                dt.__ownerDoc = this.__ownerDocument;
                 return dt;
             };
             impl.hasFeature = function() { return true; };
@@ -1248,10 +1250,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return node;
         };
         doc.cloneNode = function(deep) {
-            var docEl = doc.documentElement;
-            if (!docEl) return __makeDocumentLike(document.createElement('html'));
-            var cloned = docEl.cloneNode(!!deep);
-            return __makeDocumentLike(cloned);
+            return Document.prototype.cloneNode.call(doc, deep);
         };
         doc.exitFullscreen = function() { __fullscreenElement = null; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
         doc.getAnimations = function() { return []; };
@@ -1446,17 +1445,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     headEl.__ownerDoc = newDoc;
                     bodyEl.__ownerDoc = newDoc;
                     if (title !== undefined) titleEl.__ownerDoc = newDoc;
-                    // Create DOCTYPE node as first child
-                    var dt = Object.create(DocumentType.prototype);
-                    var dtProps = {
-                        nodeType: 10, nodeName: 'html', name: 'html',
-                        publicId: '', systemId: '',
-                        parentNode: newDoc, parentElement: null,
-                        childNodes: [], firstChild: null, lastChild: null,
-                        previousSibling: null, nextSibling: null,
-                        ownerDocument: newDoc
-                    };
-                    for (var k in dtProps) Object.defineProperty(dt, k, { value: dtProps[k], writable: true, enumerable: true, configurable: true });
+                    // Create DOCTYPE node as first child (Rust-backed)
+                    var dt = document.implementation.createDocumentType('html', '', '');
                     newDoc.childNodes = [dt, htmlEl];
                     newDoc.firstChild = dt;
                     Object.defineProperty(newDoc, 'doctype', { get: function() { return dt; }, configurable: true });
@@ -1500,8 +1490,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     Object.setPrototypeOf(newDoc, XMLDocument.prototype);
                     // Handle doctype parameter
                     if (doctype) {
-                        doctype.ownerDocument = newDoc;
-                        doctype.parentNode = newDoc;
+                        doctype.__ownerDoc = newDoc;
                         if (rootEl) {
                             newDoc.childNodes = [doctype, rootEl];
                             newDoc.firstChild = doctype;
@@ -1542,19 +1531,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     if (/[>\s]/.test(qn)) {
                         throw new DOMException("Failed to execute 'createDocumentType' on 'DOMImplementation': The qualified name provided is not a valid name.", "InvalidCharacterError");
                     }
-                    var dt = Object.create(DocumentType.prototype);
-                    var props = {
-                        nodeType: 10, nodeName: qn,
-                        name: qn,
-                        publicId: String(publicId),
-                        systemId: String(systemId),
-                        parentNode: null, parentElement: null,
-                        childNodes: [], firstChild: null, lastChild: null,
-                        previousSibling: null, nextSibling: null,
-                        ownerDocument: document
-                    };
-                    for (var k in props) Object.defineProperty(dt, k, { value: props[k], writable: true, enumerable: true, configurable: true });
-                    return dt;
+                    var nid = __n_createDoctype(qn, String(publicId), String(systemId));
+                    return __w(nid);
                 },
                 hasFeature: function() { return true; },
             }, configurable: true },
@@ -2067,14 +2045,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Document.prototype.importNode = function(node, deep) { return doc.importNode.call(this, node, deep); };
         Document.prototype.cloneNode = function(deep) {
             var de = this.documentElement;
-            if (!de) {
-                var newDoc = __makeDocumentLike(null);
-                Object.setPrototypeOf(newDoc, Object.getPrototypeOf(this));
-                return newDoc;
-            }
-            var cloned = de.cloneNode(!!deep);
-            var newDoc = __makeDocumentLike(cloned);
+            var clonedDE = de ? de.cloneNode(!!deep) : null;
+            var newDoc = __makeDocumentLike(clonedDE);
             Object.setPrototypeOf(newDoc, Object.getPrototypeOf(this));
+            // Clone doctype if present
+            var dt = this.doctype;
+            if (dt && deep) {
+                var clonedDT = dt.cloneNode(false);
+                // Insert doctype before documentElement in childNodes
+                newDoc.childNodes.unshift(clonedDT);
+                newDoc.firstChild = clonedDT;
+                Object.defineProperty(newDoc, 'doctype', { get: function() { return clonedDT; }, configurable: true });
+            }
+            if (this.contentType) newDoc.contentType = this.contentType;
             return newDoc;
         };
 
