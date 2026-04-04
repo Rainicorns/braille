@@ -871,7 +871,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return newDoc;
         }
         globalThis.__makeDocumentLike = __makeDocumentLike;
+        globalThis.__adoptSubtree = __adoptSubtree;
         globalThis.__w = __w;
+        globalThis.__cache = _cache;
 
         // Override document methods
         var doc = globalThis.document;
@@ -1181,7 +1183,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 attr.localName = node.localName;
                 return attr;
             }
-            if (node.__nid !== undefined) return node.cloneNode(!!deep);
+            if (node.__nid !== undefined) {
+                var clone = node.cloneNode(!!deep);
+                __adoptSubtree(clone, this);
+                return clone;
+            }
             return node;
         };
         doc.adoptNode = function(node) {
@@ -1748,9 +1754,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     return __n_getCharData(this.__nid);
                 },
                 set: function(v) {
+                    var old = this.data;
                     var s = v === null ? '' : String(v);
                     __cdCache.set(this.__nid, s);
                     __n_setCharData(this.__nid, s);
+                    if (typeof __mo_notify === 'function') __mo_notify('characterData', this, {oldValue: old});
                 },
                 configurable: true
             },
@@ -1999,7 +2007,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
 
         Document.prototype.adoptNode = function(node) { return doc.adoptNode.call(this, node); };
-        Document.prototype.importNode = function(node, deep) { return doc.importNode(node, deep); };
+        Document.prototype.importNode = function(node, deep) { return doc.importNode.call(this, node, deep); };
         Document.prototype.cloneNode = function(deep) {
             var de = this.documentElement;
             if (!de) return __makeDocumentLike(null);
@@ -2101,7 +2109,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (el && el.__nid !== undefined) {
                 var kids = __n_getAllChildIds(el.__nid);
                 for (var i = 0; i < kids.length; i++) {
-                    var child = _cache[kids[i]];
+                    var child = __cache[kids[i]];
                     if (child) __ceConnected(child);
                 }
             }
@@ -2113,7 +2121,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (el && el.__nid !== undefined) {
                 var kids = __n_getAllChildIds(el.__nid);
                 for (var i = 0; i < kids.length; i++) {
-                    var child = _cache[kids[i]];
+                    var child = __cache[kids[i]];
                     if (child) __ceDisconnected(child);
                 }
             }

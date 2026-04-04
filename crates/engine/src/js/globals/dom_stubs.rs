@@ -764,7 +764,8 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             function MutationRecord(type, target) {
                 this.type = type; this.target = target;
                 this.addedNodes = []; this.removedNodes = [];
-                this.attributeName = null; this.oldValue = null;
+                this.attributeName = null; this.attributeNamespace = null;
+                this.oldValue = null;
                 this.previousSibling = null; this.nextSibling = null;
             }
 
@@ -786,7 +787,22 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                         if (record.type === 'attributes' && Array.isArray(entry.options.attributeFilter) && entry.options.attributeFilter.indexOf(record.attributeName) < 0) continue;
                         if (record.type === 'childList' && !entry.options.childList) continue;
                         if (record.type === 'characterData' && !entry.options.characterData) continue;
-                        obs._records.push(record);
+                        // Clone record and filter oldValue based on observer options
+                        var rec = new MutationRecord(record.type, record.target);
+                        rec.addedNodes = record.addedNodes;
+                        rec.removedNodes = record.removedNodes;
+                        rec.attributeName = record.attributeName;
+                        rec.attributeNamespace = record.attributeNamespace;
+                        rec.previousSibling = record.previousSibling;
+                        rec.nextSibling = record.nextSibling;
+                        if (record.type === 'attributes' && entry.options.attributeOldValue) {
+                            rec.oldValue = record.oldValue;
+                        } else if (record.type === 'characterData' && entry.options.characterDataOldValue) {
+                            rec.oldValue = record.oldValue;
+                        } else {
+                            rec.oldValue = null;
+                        }
+                        obs._records.push(rec);
                     }
                 }
                 if (!pendingDeliver) {
@@ -797,7 +813,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                             var obs = observers[i];
                             if (obs._records.length > 0) {
                                 var recs = obs._records.splice(0);
-                                obs._cb(recs, obs);
+                                obs._cb.call(obs, recs, obs);
                             }
                         }
                     });
@@ -808,13 +824,43 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this._cb = cb; this._records = []; this._targets = [];
             };
             MutationObserver.prototype.observe = function(target, options) {
+                if (!target || typeof target !== 'object') throw new TypeError("Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'.");
                 options = options || {};
-                if (options.attributeFilter && options.attributes === undefined) options.attributes = true;
+                // Spec: implicitly set attributes/characterData when old-value or filter is requested
+                if (options.attributeOldValue || options.attributeFilter) {
+                    if (options.attributes === undefined) options.attributes = true;
+                }
+                if (options.characterDataOldValue) {
+                    if (options.characterData === undefined) options.characterData = true;
+                }
+                // Spec: at least one of childList, attributes, characterData must be true
+                if (!options.childList && !options.attributes && !options.characterData) {
+                    throw new TypeError("Failed to execute 'observe' on 'MutationObserver': The options object must set at least one of 'attributes', 'characterData', or 'childList' to true.");
+                }
+                // Spec: attributeOldValue/attributeFilter require attributes not explicitly false
+                if (options.attributeOldValue && options.attributes === false) {
+                    throw new TypeError("Failed to execute 'observe' on 'MutationObserver': The options object may not set both 'attributeOldValue' to true and 'attributes' to false.");
+                }
+                if (options.attributeFilter && options.attributes === false) {
+                    throw new TypeError("Failed to execute 'observe' on 'MutationObserver': The options object may not set 'attributeFilter' when 'attributes' is false.");
+                }
+                if (options.characterDataOldValue && options.characterData === false) {
+                    throw new TypeError("Failed to execute 'observe' on 'MutationObserver': The options object may not set both 'characterDataOldValue' to true and 'characterData' to false.");
+                }
+                // If re-observing the same target, replace options
+                for (var i = 0; i < this._targets.length; i++) {
+                    if (this._targets[i].target === target) {
+                        this._targets[i].options = options;
+                        if (observers.indexOf(this) < 0) observers.push(this);
+                        return;
+                    }
+                }
                 this._targets.push({target: target, options: options});
                 if (observers.indexOf(this) < 0) observers.push(this);
             };
             MutationObserver.prototype.disconnect = function() {
                 this._targets = [];
+                this._records = [];
                 var idx = observers.indexOf(this);
                 if (idx >= 0) observers.splice(idx, 1);
             };
@@ -825,11 +871,15 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 if (extra) {
                     if (extra.addedNodes) r.addedNodes = extra.addedNodes;
                     if (extra.removedNodes) r.removedNodes = extra.removedNodes;
-                    if (extra.attributeName) r.attributeName = extra.attributeName;
+                    if (extra.attributeName !== undefined) r.attributeName = extra.attributeName;
+                    if (extra.attributeNamespace !== undefined) r.attributeNamespace = extra.attributeNamespace;
                     if (extra.oldValue !== undefined) r.oldValue = extra.oldValue;
+                    if (extra.previousSibling !== undefined) r.previousSibling = extra.previousSibling;
+                    if (extra.nextSibling !== undefined) r.nextSibling = extra.nextSibling;
                 }
                 queueRecord(r);
             };
+            globalThis.MutationRecord = MutationRecord;
         })();
 
         // Performance — real monotonic timer anchored to engine start
@@ -1199,33 +1249,43 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         })();
         globalThis.DOMParser = class DOMParser {
             parseFromString(str, type) {
-                var div = document.createElement('div');
-                div.innerHTML = str;
-                var ct = type;
-                var useXhtml = (ct === 'text/html' || ct === 'application/xhtml+xml');
-                return {
-                    documentElement: div,
-                    body: div,
-                    head: null,
-                    title: '',
-                    contentType: ct,
-                    readyState: 'complete',
-                    querySelector: function(sel) { return div.querySelector(sel); },
-                    querySelectorAll: function(sel) { return div.querySelectorAll(sel); },
-                    getElementById: function(id) {
-                        var el = div.querySelector('#' + id);
-                        return el || null;
-                    },
-                    getElementsByTagName: function(tag) { return div.getElementsByTagName(tag); },
-                    getElementsByClassName: function(cls) { return div.getElementsByClassName(cls); },
-                    createDocumentFragment: function() { return document.createDocumentFragment(); },
-                    createElement: function(tag) {
-                        var el = document.createElement(tag);
-                        if (!useXhtml) el.namespaceURI = null;
-                        return el;
-                    },
-                    createTextNode: function(text) { return document.createTextNode(text); },
-                };
+                var ct = type || 'text/html';
+                if (ct === 'text/html') {
+                    // HTML: parse into a full document structure
+                    var htmlEl = document.createElement('html');
+                    var headEl = document.createElement('head');
+                    var bodyEl = document.createElement('body');
+                    htmlEl.appendChild(headEl);
+                    htmlEl.appendChild(bodyEl);
+                    // Parse the string — if it contains <html>/<body>, put in body
+                    var temp = document.createElement('div');
+                    __n_setInnerHTML(temp.__nid, str);
+                    while (temp.firstChild) bodyEl.appendChild(temp.firstChild);
+                    var newDoc = __makeDocumentLike(htmlEl);
+                    newDoc.contentType = 'text/html';
+                    newDoc.body = bodyEl;
+                    newDoc.head = headEl;
+                    headEl.__ownerDoc = newDoc;
+                    bodyEl.__ownerDoc = newDoc;
+                    __adoptSubtree(htmlEl, newDoc);
+                    return newDoc;
+                } else {
+                    // XML types: text/xml, application/xml, application/xhtml+xml, image/svg+xml
+                    var div = document.createElement('div');
+                    __n_setInnerHTML(div.__nid, str);
+                    // The first child element is the document element
+                    var rootEl = null;
+                    var children = div.childNodes;
+                    for (var i = 0; i < children.length; i++) {
+                        if (children[i].nodeType === 1) { rootEl = children[i]; break; }
+                    }
+                    if (!rootEl) rootEl = div.firstChild;
+                    if (rootEl && rootEl.parentNode) rootEl.parentNode.removeChild(rootEl);
+                    var newDoc = __makeDocumentLike(rootEl);
+                    newDoc.contentType = ct;
+                    if (rootEl) __adoptSubtree(rootEl, newDoc);
+                    return newDoc;
+                }
             }
         };
         globalThis.Node = class Node {};
@@ -1240,10 +1300,16 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 if (typeof customElements !== 'undefined' && customElements._ctorToName) {
                     var name = customElements._ctorToName.get(new.target);
                     if (name) {
-                        var nid = __n_createElement(name);
+                        var entry = customElements._registry.get(name);
+                        var tagToCreate = (entry && entry.extends) ? entry.extends : name;
+                        var nid = __n_createElement(tagToCreate);
                         this.__nid = nid;
                         this.__props = {};
-                        _cache[nid] = this;
+                        this.__ce_upgraded = true;
+                        if (entry && entry.extends) {
+                            __n_setAttribute(nid, 'is', name);
+                        }
+                        if (typeof __cache !== 'undefined') __cache[nid] = this;
                     }
                 }
             }
@@ -1482,7 +1548,8 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 if (ctor.observedAttributes && Array.isArray(ctor.observedAttributes)) {
                     observedAttrs = ctor.observedAttributes.slice();
                 }
-                this._registry.set(name, {ctor: ctor, observedAttrs: observedAttrs});
+                var extendsTag = (options && options.extends) ? String(options.extends).toLowerCase() : null;
+                this._registry.set(name, {ctor: ctor, observedAttrs: observedAttrs, extends: extendsTag});
                 this._ctorToName.set(ctor, name);
                 // Upgrade existing elements in the DOM
                 __ceUpgradeAll(name, ctor, observedAttrs);

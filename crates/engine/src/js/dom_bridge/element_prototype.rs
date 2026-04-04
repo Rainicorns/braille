@@ -326,7 +326,13 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         EP.cloneNode = function(deep) {
             var nid = __n_cloneNode(this.__nid, !!deep);
-            return __w(nid);
+            var clone = __w(nid);
+            // Copy namespace metadata that lives on JS wrappers
+            if (this.__localName !== undefined) clone.__localName = this.__localName;
+            if (this.__prefix !== undefined) clone.__prefix = this.__prefix;
+            if (this.__namespaceURI !== undefined) clone.__namespaceURI = this.__namespaceURI;
+            if (this.__ownerDoc !== undefined) clone.__ownerDoc = this.__ownerDoc;
+            return clone;
         };
         EP.replaceChild = function(newChild, oldChild) {
             if (newChild !== null && newChild !== undefined && typeof newChild === 'object' && newChild.nodeType === 2) {
@@ -791,7 +797,25 @@ pub(crate) fn element_prototype_js() -> &'static str {
         Object.defineProperties(EP, {
             textContent: {
                 get: function() { if (this.__nid === undefined) return ''; return __n_getTextContent(this.__nid); },
-                set: function(v) { if (this.__nid === undefined) return; __n_setTextContent(this.__nid, String(v)); },
+                set: function(v) {
+                    if (this.__nid === undefined) return;
+                    // For element nodes, capture children for MO notification
+                    var removedNodes = [];
+                    var isElement = (this.nodeType === 1);
+                    if (isElement && typeof __mo_notify === 'function') {
+                        var kids = this.childNodes;
+                        for (var i = 0; i < kids.length; i++) removedNodes.push(kids[i]);
+                    }
+                    __n_setTextContent(this.__nid, String(v));
+                    if (isElement && typeof __mo_notify === 'function') {
+                        var addedNodes = [];
+                        var newKids = this.childNodes;
+                        for (var i = 0; i < newKids.length; i++) addedNodes.push(newKids[i]);
+                        if (removedNodes.length > 0 || addedNodes.length > 0) {
+                            __mo_notify('childList', this, {removedNodes: removedNodes, addedNodes: addedNodes});
+                        }
+                    }
+                },
                 configurable: true
             },
             nodeName: { get: function() {
@@ -925,7 +949,12 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (ln === undefined || ln === null) return __n_getTagName(this.__nid);
                 var tn = prefix ? prefix + ':' + ln : ln;
                 // HTML elements in HTML documents get uppercased tagName
-                if (this.namespaceURI === 'http://www.w3.org/1999/xhtml' || (this.__namespaceURI === undefined && !prefix)) return tn.toUpperCase();
+                // In XML documents (contentType !== 'text/html'), preserve case
+                if (this.namespaceURI === 'http://www.w3.org/1999/xhtml' || (this.__namespaceURI === undefined && !prefix)) {
+                    var od = this.__ownerDoc || (typeof document !== 'undefined' ? document : null);
+                    if (od && od.contentType && od.contentType !== 'text/html') return tn;
+                    return tn.toUpperCase();
+                }
                 return tn;
             }, configurable: true },
             localName: { get: function() {
@@ -1189,9 +1218,24 @@ pub(crate) fn element_prototype_js() -> &'static str {
             innerHTML: {
                 get: function() { return __n_getInnerHTML(this.__nid); },
                 set: function(v) {
+                    // Capture existing children for MO notification
+                    var removedNodes = [];
+                    if (typeof __mo_notify === 'function') {
+                        var kids = this.childNodes;
+                        for (var i = 0; i < kids.length; i++) removedNodes.push(kids[i]);
+                    }
                     __n_setInnerHTML(this.__nid, String(v));
                     // Upgrade custom elements in new content
                     if (typeof __ceUpgradeTree === 'function') __ceUpgradeTree(this);
+                    // Fire MO childList notification
+                    if (typeof __mo_notify === 'function') {
+                        var addedNodes = [];
+                        var newKids = this.childNodes;
+                        for (var i = 0; i < newKids.length; i++) addedNodes.push(newKids[i]);
+                        if (removedNodes.length > 0 || addedNodes.length > 0) {
+                            __mo_notify('childList', this, {removedNodes: removedNodes, addedNodes: addedNodes});
+                        }
+                    }
                 },
                 configurable: true
             },
