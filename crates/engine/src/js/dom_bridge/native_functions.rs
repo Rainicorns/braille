@@ -929,6 +929,16 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // isEqualNode(a, b) -> bool
+    g.set("__n_isEqualNode", Function::new(ctx.clone(), |a: u32, b: u32| -> bool {
+        with_tree(|tree| tree.is_equal_node(a as NodeId, b as NodeId))
+    }).unwrap()).unwrap();
+
+    // normalize(nodeId) — merge adjacent text nodes, remove empty text nodes
+    g.set("__n_normalize", Function::new(ctx.clone(), |node_id: u32| {
+        with_tree_mut(|tree| tree.normalize(node_id as NodeId));
+    }).unwrap()).unwrap();
+
     // validateAndExtract(namespace, qualifiedName) -> JSON result
     // Returns {"ok":{"prefix":"...","localName":"..."}} or {"err":"ErrorName"}
     g.set("__n_validateAndExtract", Function::new(ctx.clone(), |namespace: String, qualified_name: String| -> String {

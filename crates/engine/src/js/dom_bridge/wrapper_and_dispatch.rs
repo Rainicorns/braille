@@ -597,12 +597,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                             node.dispatchEvent(new Event('load'));
                         }, 0);
                     } else {
-                        setTimeout(function() {
-                            document.currentScript = node;
-                            (0, eval)(code);
-                            document.currentScript = null;
-                            node.dispatchEvent(new Event('load'));
-                        }, 0);
+                        document.currentScript = node;
+                        (0, eval)(code);
+                        document.currentScript = null;
+                        node.dispatchEvent(new Event('load'));
                     }
                 }
             }
@@ -620,16 +618,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         function __adoptSubtree(node, newDoc) {
             if (!node || node.__nid === undefined) return;
             node.__ownerDoc = newDoc;
-            var childIds = __n_getAllChildIds(node.__nid);
-            for (var i = 0; i < childIds.length; i++) {
-                var child = _cache[childIds[i]];
+            var stack = __n_getAllChildIds(node.__nid).slice();
+            while (stack.length > 0) {
+                var cid = stack.pop();
+                var child = _cache[cid];
                 if (child) child.__ownerDoc = newDoc;
+                var grandkids = __n_getAllChildIds(cid);
+                for (var i = 0; i < grandkids.length; i++) stack.push(grandkids[i]);
             }
         }
 
         // Element mutation methods that operate on the real DomTree
         EP.appendChild = function(child) {
-            if (child !== null && child !== undefined && typeof child === 'object' && child.nodeType === 2) {
+            if (child !== null && child !== undefined && typeof child === 'object' && (child.nodeType === 2 || child.nodeType === 9)) {
                 throw new DOMException("The new child element contains the parent.", "HierarchyRequestError");
             }
             if (child === null || child === undefined || (typeof child === 'object' && child.__nid === undefined && child.nodeType === undefined)) {
@@ -676,6 +677,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             __braille_maybe_load_script(child);
             __braille_maybe_load_link(child);
             if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(child);
+            __ceFlushReactions();
             return child;
         };
         EP.removeChild = function(child) {
@@ -693,6 +695,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 __n_removeChild(this.__nid, child.__nid);
                 if (typeof __mo_notify === 'function') __mo_notify('childList', this, {removedNodes: [child]});
             }
+            __ceFlushReactions();
             return child;
         };
         EP.insertBefore = function(newChild, refChild) {
@@ -739,6 +742,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             __braille_maybe_load_script(newChild);
             __braille_maybe_load_link(newChild);
             if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(newChild);
+            __ceFlushReactions();
             return newChild;
         };
 
@@ -762,10 +766,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             // Document.prototype is defined later via function hoisting
             var newDoc = Object.create(Document.prototype);
             // Override getter-based properties from EP with own data properties
+            var __docKids = rootEl ? [rootEl] : [];
+            __docKids.item = function(i) { return (i >= 0 && i < this.length) ? this[i] : null; };
             var ownProps = {
                 nodeType: 9, nodeName: '#document', readyState: 'complete',
                 parentNode: null, parentElement: null,
-                childNodes: rootEl ? [rootEl] : [],
+                childNodes: __docKids,
                 firstChild: rootEl || null, lastChild: rootEl || null,
                 previousSibling: null, nextSibling: null,
                 ownerDocument: null, isConnected: false,
@@ -866,8 +872,24 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             Object.defineProperty(newDoc, 'scrollingElement', { get: function() { return rootEl; }, configurable: true });
             newDoc.elementFromPoint = function(x, y) { return rootEl || null; };
             newDoc.elementsFromPoint = function(x, y) { return rootEl ? [rootEl] : []; };
-            // Tag the root element so EP.dispatchEvent can find the owning document
-            if (rootEl) rootEl.__ownerDoc = newDoc;
+            newDoc.write = function() {
+                var html = Array.prototype.join.call(arguments, '');
+                if (!html) return;
+                var body = newDoc.body;
+                if (!body) return;
+                var temp = document.createElement('div');
+                __n_setInnerHTML(temp.__nid, html);
+                while (temp.firstChild) body.appendChild(temp.firstChild);
+            };
+            newDoc.writeln = function() {
+                newDoc.write.apply(newDoc, arguments);
+                newDoc.write('\n');
+            };
+            // Tag the root element and all descendants so EP.ownerDocument works
+            if (rootEl) {
+                rootEl.__ownerDoc = newDoc;
+                if (rootEl.__nid !== undefined) __adoptSubtree(rootEl, newDoc);
+            }
             return newDoc;
         }
         globalThis.__makeDocumentLike = __makeDocumentLike;
@@ -881,6 +903,14 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.parentNode = null;
         doc.parentElement = null;
         doc.title = '';
+        Object.defineProperty(doc, 'URL', {
+            get: function() { return (typeof location !== 'undefined' && location.href) || 'about:blank'; },
+            configurable: true
+        });
+        Object.defineProperty(doc, 'documentURI', {
+            get: function() { return doc.URL; },
+            configurable: true
+        });
         doc.getElementById = function(id) {
             var nid = __n_getElementById(String(id));
             return nid >= 0 ? __w(nid) : null;
@@ -1233,6 +1263,33 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (d.indexOf('?>') !== -1) throw new DOMException("The data provided ('..?>..') contains '?>'.", "InvalidCharacterError");
             var nid = __n_createPI(t, d);
             return __w(nid);
+        };
+
+        doc.write = function() {
+            var html = Array.prototype.join.call(arguments, '');
+            if (!html) return;
+            var body = doc.body;
+            if (!body) return;
+            var temp = doc.createElement('div');
+            __n_setInnerHTML(temp.__nid, html);
+            while (temp.firstChild) body.appendChild(temp.firstChild);
+        };
+        doc.writeln = function() {
+            doc.write.apply(doc, arguments);
+            doc.write('\n');
+        };
+        Document.prototype.write = function() {
+            var html = Array.prototype.join.call(arguments, '');
+            if (!html) return;
+            var body = this.body;
+            if (!body) return;
+            var temp = document.createElement('div');
+            __n_setInnerHTML(temp.__nid, html);
+            while (temp.firstChild) body.appendChild(temp.firstChild);
+        };
+        Document.prototype.writeln = function() {
+            this.write.apply(this, arguments);
+            this.write('\n');
         };
 
         // window.dispatchEvent assigned after EventTarget is defined (below)
@@ -2010,9 +2067,15 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Document.prototype.importNode = function(node, deep) { return doc.importNode.call(this, node, deep); };
         Document.prototype.cloneNode = function(deep) {
             var de = this.documentElement;
-            if (!de) return __makeDocumentLike(null);
+            if (!de) {
+                var newDoc = __makeDocumentLike(null);
+                Object.setPrototypeOf(newDoc, Object.getPrototypeOf(this));
+                return newDoc;
+            }
             var cloned = de.cloneNode(!!deep);
-            return __makeDocumentLike(cloned);
+            var newDoc = __makeDocumentLike(cloned);
+            Object.setPrototypeOf(newDoc, Object.getPrototypeOf(this));
+            return newDoc;
         };
 
         // HTMLStyleElement.sheet → lazily creates a CSSStyleSheet
@@ -2103,8 +2166,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             });
         };
         globalThis.__ceConnected = function(el) {
-            if (el && el.__ce_upgraded && typeof el.connectedCallback === 'function') {
-                el.connectedCallback();
+            if (el && el.__ce_upgraded) {
+                __cePushReaction('connected', el);
             }
             if (el && el.__nid !== undefined) {
                 var kids = __n_getAllChildIds(el.__nid);
@@ -2115,8 +2178,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
         };
         globalThis.__ceDisconnected = function(el) {
-            if (el && el.__ce_upgraded && typeof el.disconnectedCallback === 'function') {
-                el.disconnectedCallback();
+            if (el && el.__ce_upgraded) {
+                __cePushReaction('disconnected', el);
             }
             if (el && el.__nid !== undefined) {
                 var kids = __n_getAllChildIds(el.__nid);

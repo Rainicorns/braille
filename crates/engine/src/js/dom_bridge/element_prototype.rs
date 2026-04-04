@@ -372,9 +372,92 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (wasConnected && typeof __ceConnected === 'function') __ceConnected(newChild);
                 if (typeof __ceUpgradeTree === 'function') __ceUpgradeTree(newChild);
             }
+            __ceFlushReactions();
             return oldChild;
         };
         EP.hasChildNodes = function() { return __n_getFirstChild(this.__nid) >= 0; };
+
+        EP.isSameNode = function(other) { return this === other; };
+
+        EP.isEqualNode = function(other) {
+            if (other === null) return false;
+            if (this === other) return true;
+            if (this.__nid === undefined || other.__nid === undefined) return false;
+            return __n_isEqualNode(this.__nid, other.__nid);
+        };
+
+        EP.normalize = function() {
+            if (this.__nid === undefined) return;
+            __n_normalize(this.__nid);
+        };
+
+        EP.lookupNamespaceURI = function(prefix) {
+            if (prefix === '') prefix = null;
+            if (prefix !== undefined && prefix !== null) prefix = String(prefix);
+            var nt = this.nodeType;
+            if (nt === 1) {
+                var ns = this.namespaceURI;
+                if (ns && this.prefix === prefix) return ns;
+                // Check xmlns attributes
+                if (this.__nid !== undefined) {
+                    var attrs = JSON.parse(__n_getAttributesFull(this.__nid));
+                    for (var i = 0; i < attrs.length; i++) {
+                        var a = attrs[i];
+                        if (a.ns === 'http://www.w3.org/2000/xmlns/') {
+                            if (a.prefix === 'xmlns' && a.name.substring(6) === prefix) return a.value || null;
+                            if (prefix === null && a.name === 'xmlns' && !a.prefix) return a.value || null;
+                        }
+                    }
+                }
+                var pe = this.parentElement;
+                return pe ? pe.lookupNamespaceURI(prefix) : null;
+            }
+            if (nt === 9) {
+                var de = this.documentElement;
+                return de ? de.lookupNamespaceURI(prefix) : null;
+            }
+            if (nt === 10 || nt === 11) return null;
+            var pe = this.parentElement;
+            return pe ? pe.lookupNamespaceURI(prefix) : null;
+        };
+
+        EP.isDefaultNamespace = function(ns) {
+            if (ns === '') ns = null;
+            if (ns === undefined) ns = null;
+            var defaultNs = this.lookupNamespaceURI(null);
+            return defaultNs === ns;
+        };
+
+        EP.lookupPrefix = function(ns) {
+            if (ns === null || ns === undefined || ns === '') return null;
+            var nt = this.nodeType;
+            if (nt === 1) return __lookupPrefixOnElement(this, ns);
+            if (nt === 9) {
+                var de = this.documentElement;
+                return de ? __lookupPrefixOnElement(de, ns) : null;
+            }
+            if (nt === 10 || nt === 11) return null;
+            var pe = this.parentElement;
+            return pe ? __lookupPrefixOnElement(pe, ns) : null;
+        };
+
+        function __lookupPrefixOnElement(el, ns) {
+            if (el.namespaceURI === ns && el.prefix !== null) {
+                if (el.lookupNamespaceURI(el.prefix) === ns) return el.prefix;
+            }
+            if (el.__nid !== undefined) {
+                var attrs = JSON.parse(__n_getAttributesFull(el.__nid));
+                for (var i = 0; i < attrs.length; i++) {
+                    var a = attrs[i];
+                    if (a.ns === 'http://www.w3.org/2000/xmlns/' && a.prefix === 'xmlns' && a.value === ns) {
+                        var localPart = a.name.substring(6);
+                        if (el.lookupNamespaceURI(localPart) === ns) return localPart;
+                    }
+                }
+            }
+            var pe = el.parentElement;
+            return pe ? __lookupPrefixOnElement(pe, ns) : null;
+        }
 
         // CharacterData methods
         EP.substringData = function(offset, count) {
@@ -599,13 +682,17 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return JSON.parse(__n_getAttributeNames(this.__nid));
         };
         EP.append = function() {
+            __ceBatchDepth++;
             for (var i = 0; i < arguments.length; i++) {
                 var arg = arguments[i];
                 if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
                 this.appendChild(arg);
             }
+            __ceBatchDepth--;
+            __ceFlushReactions();
         };
         EP.prepend = function() {
+            __ceBatchDepth++;
             var first = this.firstChild;
             for (var i = 0; i < arguments.length; i++) {
                 var arg = arguments[i];
@@ -613,14 +700,19 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (first) this.insertBefore(arg, first);
                 else this.appendChild(arg);
             }
+            __ceBatchDepth--;
+            __ceFlushReactions();
         };
         EP.replaceChildren = function() {
+            __ceBatchDepth++;
             while (this.firstChild) this.removeChild(this.firstChild);
             for (var i = 0; i < arguments.length; i++) {
                 var arg = arguments[i];
                 if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
                 this.appendChild(arg);
             }
+            __ceBatchDepth--;
+            __ceFlushReactions();
         };
         EP.after = function() {
             var parent = this.parentNode;
@@ -828,6 +920,14 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 return __n_getTagName(this.__nid) || '#node';
             }, configurable: true },
             nodeType: { get: function() { if (this.__nid === undefined) return undefined; return __n_getNodeType(this.__nid); }, configurable: true },
+            baseURI: {
+                get: function() {
+                    var doc = this.ownerDocument || (this.nodeType === 9 ? this : document);
+                    if (doc && doc.URL) return doc.URL;
+                    return (typeof location !== 'undefined' && location.href) || '';
+                },
+                configurable: true
+            },
             parentNode: {
                 get: function() { if (this.__nid === undefined) return null; var p = __n_getParent(this.__nid); return p >= 0 ? __w(p) : null; },
                 configurable: true
@@ -851,7 +951,48 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 configurable: true
             },
             childNodes: {
-                get: function() { if (this.__nid === undefined) return []; return __n_getAllChildIds(this.__nid).map(__w); },
+                get: function() {
+                    if (this.__nid === undefined) return [];
+                    if (this.__childNodesList) return this.__childNodesList;
+                    var self = this;
+                    var list = new Proxy(Object.create(NodeList.prototype), {
+                        get: function(t, p) {
+                            if (p === Symbol.iterator) return Array.prototype[Symbol.iterator];
+                            if (p === 'keys') return Array.prototype.keys;
+                            if (p === 'values') return Array.prototype.values;
+                            if (p === 'entries') return Array.prototype.entries;
+                            if (p === 'forEach') return Array.prototype.forEach;
+                            var kids = __n_getAllChildIds(self.__nid).map(__w);
+                            if (p === 'length') return kids.length;
+                            if (typeof p === 'string' && p === (p >>> 0).toString() && (p >>> 0) !== 0xFFFFFFFF) return kids[p >>> 0];
+                            if (p === 'item') return function(i) { return (i >= 0 && i < kids.length) ? kids[i] : null; };
+                            return t[p];
+                        },
+                        has: function(t, p) {
+                            if (p === 'length' || p === 'item' || p === 'forEach' || p === 'keys' || p === 'values' || p === 'entries' || p === Symbol.iterator) return true;
+                            if (typeof p === 'string' && p === (p >>> 0).toString() && (p >>> 0) !== 0xFFFFFFFF) return (p >>> 0) < __n_getAllChildIds(self.__nid).length;
+                            return p in t;
+                        },
+                        ownKeys: function() {
+                            var kids = __n_getAllChildIds(self.__nid);
+                            var keys = [];
+                            for (var i = 0; i < kids.length; i++) keys.push(String(i));
+                            keys.push('length');
+                            return keys;
+                        },
+                        getOwnPropertyDescriptor: function(t, p) {
+                            if (p === 'length') return { value: __n_getAllChildIds(self.__nid).length, writable: false, enumerable: false, configurable: true };
+                            if (typeof p === 'string' && p === (p >>> 0).toString() && (p >>> 0) !== 0xFFFFFFFF) {
+                                var kids = __n_getAllChildIds(self.__nid);
+                                var idx = p >>> 0;
+                                if (idx < kids.length) return { value: __w(kids[idx]), writable: false, enumerable: true, configurable: true };
+                            }
+                            return Object.getOwnPropertyDescriptor(t, p);
+                        }
+                    });
+                    this.__childNodesList = list;
+                    return list;
+                },
                 configurable: true
             },
             firstChild: {
@@ -931,7 +1072,21 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 configurable: true
             },
-            ownerDocument: { get: function() { return this.__ownerDoc || document; }, configurable: true },
+            ownerDocument: { get: function() {
+                if (this.__ownerDoc) return this.__ownerDoc;
+                if (this.__nid === undefined) return document;
+                var cur = __n_getParent(this.__nid);
+                while (cur >= 0) {
+                    var w = _cache[cur];
+                    if (w && w.__ownerDoc) return w.__ownerDoc;
+                    if (__n_getNodeType(cur) === 9) {
+                        w = __w(cur);
+                        return w.__ownerDoc || document;
+                    }
+                    cur = __n_getParent(cur);
+                }
+                return document;
+            }, configurable: true },
             isConnected: {
                 get: function() {
                     if (this.__nid === undefined) return false;

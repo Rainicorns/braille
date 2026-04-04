@@ -1611,6 +1611,28 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         }
         globalThis.__isConnected = __isConnected;
 
+        // CE reaction queue — batches connectedCallback/disconnectedCallback
+        globalThis.__ceReactionQueue = [];
+        globalThis.__ceBatchDepth = 0;
+        globalThis.__cePushReaction = function(type, el) {
+            __ceReactionQueue.push({type: type, el: el});
+        };
+        globalThis.__ceFlushReactions = function() {
+            if (__ceBatchDepth > 0) return;
+            while (__ceReactionQueue.length > 0) {
+                var queue = __ceReactionQueue;
+                __ceReactionQueue = [];
+                for (var i = 0; i < queue.length; i++) {
+                    var r = queue[i];
+                    if (r.type === 'connected' && typeof r.el.connectedCallback === 'function') {
+                        r.el.connectedCallback();
+                    } else if (r.type === 'disconnected' && typeof r.el.disconnectedCallback === 'function') {
+                        r.el.disconnectedCallback();
+                    }
+                }
+            }
+        };
+
         // JS retarget: retarget nodeA relative to nodeB (or null for non-node B)
         // Returns the nid that A should be retargeted to
         function __jsRetarget(aNid, bNid) {

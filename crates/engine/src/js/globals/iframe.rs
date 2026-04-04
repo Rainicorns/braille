@@ -316,7 +316,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 if (iframeRealms[node.__nid]) return;
 
                 var src = node.getAttribute('src');
-                if (src) return;
+                if (src && src !== 'about:blank') return;
 
                 var iframeDoc = buildRealDomDocument(node.__nid);
                 var built = buildIframeWindow(node, iframeDoc);
