@@ -241,6 +241,13 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         });
     }).unwrap()).unwrap();
 
+    // removeAllChildren(nodeId) — removes all children of a node
+    g.set("__n_removeAllChildren", Function::new(ctx.clone(), |node_id: u32| {
+        with_tree_mut(|tree| {
+            tree.remove_all_children(node_id as NodeId);
+        });
+    }).unwrap()).unwrap();
+
     // setTextContent(nodeId, text) — removes all children and sets text
     g.set("__n_setTextContent", Function::new(ctx.clone(), |node_id: u32, text: String| {
         with_tree_mut(|tree| {
@@ -549,6 +556,13 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     g.set("__n_createDocFragment", Function::new(ctx.clone(), || -> u32 {
         with_tree_mut(|tree| {
             tree.create_document_fragment() as u32
+        })
+    }).unwrap()).unwrap();
+
+    // createDocumentNode() -> nodeId (standalone Document node, no parent)
+    g.set("__n_createDocumentNode", Function::new(ctx.clone(), || -> u32 {
+        with_tree_mut(|tree| {
+            tree.alloc_node(NodeData::Document) as u32
         })
     }).unwrap()).unwrap();
 

@@ -268,6 +268,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                         var a = full[i];
                         var attr = new Attr(a.name, a.value, a.ns, a.prefix);
                         attr.ownerElement = el;
+                        attr.__ownerDoc = el.__ownerDoc;
                         attrs.push(attr);
                     }
                     return attrs;
@@ -354,6 +355,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
             if (oldChild === null || oldChild === undefined || (typeof oldChild === 'object' && oldChild.__nid === undefined)) {
                 throw new TypeError("Failed to execute 'replaceChild' on 'Node': parameter 2 is not of type 'Node'.");
             }
+            // Capture ownerDocument BEFORE mutation (tree walk changes after replace)
+            var parentDoc = this.ownerDocument || (this.nodeType === 9 ? this : document);
+            var childDoc = (newChild && newChild.__nid !== undefined) ? (newChild.ownerDocument || document) : null;
             if (newChild.__nid !== undefined && oldChild.__nid !== undefined && this.__nid !== undefined) {
                 var err = __n_validatePreReplace(this.__nid, newChild.__nid, oldChild.__nid);
                 if (err) {
@@ -382,6 +386,14 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (wasConnected && typeof __ceConnected === 'function') __ceConnected(newChild);
                 if (typeof __ceUpgradeTree === 'function') __ceUpgradeTree(newChild);
             }
+            // Adopt: update ownerDocument if moving between documents
+            if (childDoc && parentDoc !== childDoc) {
+                __adoptSubtree(newChild, parentDoc);
+            }
+            // Removed node retains ownerDocument per spec
+            if (oldChild && oldChild.__nid !== undefined) {
+                oldChild.__ownerDoc = parentDoc;
+            }
             __ceFlushReactions();
             return oldChild;
         };
@@ -406,6 +418,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
             if (prefix !== undefined && prefix !== null) prefix = String(prefix);
             var nt = this.nodeType;
             if (nt === 1) {
+                // Built-in prefix mappings per spec (only for elements)
+                if (prefix === 'xml') return 'http://www.w3.org/XML/1998/namespace';
+                if (prefix === 'xmlns') return 'http://www.w3.org/2000/xmlns/';
                 var ns = this.namespaceURI;
                 if (ns && this.prefix === prefix) return ns;
                 // Check xmlns attributes
@@ -905,17 +920,36 @@ pub(crate) fn element_prototype_js() -> &'static str {
         // === Node-level properties (stay on EP) ===
         Object.defineProperties(EP, {
             textContent: {
-                get: function() { if (this.__nid === undefined) return ''; return __n_getTextContent(this.__nid); },
+                get: function() {
+                    if (this.__nid === undefined) return '';
+                    var nt = __n_getNodeType(this.__nid);
+                    if (nt === 9 || nt === 10) return null;
+                    return __n_getTextContent(this.__nid);
+                },
                 set: function(v) {
                     if (this.__nid === undefined) return;
-                    // For element nodes, capture children for MO notification
+                    var nt = __n_getNodeType(this.__nid);
+                    // Document and Doctype: setting textContent is a no-op
+                    if (nt === 9 || nt === 10) return;
+                    // CharacterData nodes (Text=3, Comment=8, PI=7, CDATA=4): set data directly
+                    if (nt === 3 || nt === 8 || nt === 7 || nt === 4) {
+                        __n_setCharData(this.__nid, v === null || v === undefined ? '' : String(v));
+                        return;
+                    }
+                    // Element and DocumentFragment: remove all children, optionally add text node
                     var removedNodes = [];
-                    var isElement = (this.nodeType === 1);
+                    var isElement = (nt === 1);
                     if (isElement && typeof __mo_notify === 'function') {
                         var kids = this.childNodes;
                         for (var i = 0; i < kids.length; i++) removedNodes.push(kids[i]);
                     }
-                    __n_setTextContent(this.__nid, String(v));
+                    var str = v === null || v === undefined ? '' : String(v);
+                    if (str === '') {
+                        // Remove all children, don't create a text node
+                        __n_removeAllChildren(this.__nid);
+                    } else {
+                        __n_setTextContent(this.__nid, str);
+                    }
                     if (isElement && typeof __mo_notify === 'function') {
                         var addedNodes = [];
                         var newKids = this.childNodes;
@@ -933,7 +967,10 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 if (nt === 3) return '#text';
                 if (nt === 8) return '#comment';
                 if (nt === 9) return '#document';
+                if (nt === 10) { var dn = __n_getDoctypeName(this.__nid); return dn || ''; }
                 if (nt === 11) return '#document-fragment';
+                if (nt === 7) return __n_getPITarget(this.__nid) || '';
+                if (nt === 1) return this.tagName;
                 return __n_getTagName(this.__nid) || '#node';
             }, configurable: true },
             nodeType: { get: function() { if (this.__nid === undefined) return undefined; return __n_getNodeType(this.__nid); }, configurable: true },
@@ -994,7 +1031,6 @@ pub(crate) fn element_prototype_js() -> &'static str {
                             var kids = __n_getAllChildIds(self.__nid);
                             var keys = [];
                             for (var i = 0; i < kids.length; i++) keys.push(String(i));
-                            keys.push('length');
                             return keys;
                         },
                         getOwnPropertyDescriptor: function(t, p) {
@@ -1079,13 +1115,13 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 get: function() {
                     if (this.__nid === undefined) return null;
                     var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8) return __n_getNodeValue(this.__nid);
+                    if (nt === 3 || nt === 8 || nt === 7) return __n_getNodeValue(this.__nid);
                     return null;
                 },
                 set: function(v) {
                     if (this.__nid === undefined) return;
                     var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8) __n_setCharData(this.__nid, String(v));
+                    if (nt === 3 || nt === 8 || nt === 7) __n_setCharData(this.__nid, v === null ? '' : String(v));
                 },
                 configurable: true
             },
@@ -1098,7 +1134,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     if (w && w.__ownerDoc) return w.__ownerDoc;
                     if (__n_getNodeType(cur) === 9) {
                         w = __w(cur);
-                        return w.__ownerDoc || document;
+                        return w.__ownerDoc || w;
                     }
                     cur = __n_getParent(cur);
                 }

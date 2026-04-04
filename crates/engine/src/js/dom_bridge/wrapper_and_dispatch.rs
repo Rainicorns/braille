@@ -678,9 +678,6 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         // Element mutation methods that operate on the real DomTree
         EP.appendChild = function(child) {
-            if (child !== null && child !== undefined && typeof child === 'object' && (child.nodeType === 2 || child.nodeType === 9)) {
-                throw new DOMException("The new child element contains the parent.", "HierarchyRequestError");
-            }
             if (child === null || child === undefined || (typeof child === 'object' && child.__nid === undefined && child.nodeType === undefined)) {
                 throw new TypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.");
             }
@@ -690,6 +687,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 throw new DOMException("CharacterData type " + this.nodeName + " must not have children", "HierarchyRequestError");
             }
             if (this.__nid === undefined) return child;
+            // Capture ownerDocument BEFORE mutation (tree walk changes after append)
+            var parentDoc = this.ownerDocument || (this.nodeType === 9 ? this : document);
+            var childDoc = (child && child.__nid !== undefined) ? (child.ownerDocument || document) : null;
             if (child && child.__nid !== undefined) {
                 var err = __n_validatePreInsert(this.__nid, child.__nid, -1);
                 if (err) __throwValidationError(err);
@@ -707,12 +707,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 }
             }
             // Adopt: update ownerDocument for child (and descendants) if parent is in a different document
-            var parentDoc = this.ownerDocument || (this.nodeType === 9 ? this : document);
-            if (child && child.__nid !== undefined) {
-                var childDoc = child.ownerDocument || document;
-                if (parentDoc !== childDoc) {
-                    __adoptSubtree(child, parentDoc);
-                }
+            if (childDoc && parentDoc !== childDoc) {
+                __adoptSubtree(child, parentDoc);
             }
             // CE lifecycle: connectedCallback for inserted nodes
             if (typeof __ceConnected === 'function' && __isConnected(this.__nid)) {
@@ -747,10 +743,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return child;
         };
         EP.insertBefore = function(newChild, refChild) {
-            if (newChild !== null && newChild !== undefined && typeof newChild === 'object' && newChild.nodeType === 2) {
-                throw new DOMException("The new child element contains the parent.", "HierarchyRequestError");
-            }
-            if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined)) {
+            if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined && newChild.nodeType === undefined)) {
                 throw new TypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'.");
             }
             if (arguments.length < 2) {
@@ -811,39 +804,51 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         }
 
         function __makeDocumentLike(rootEl) {
-            // Document.prototype is defined later via function hoisting
-            var newDoc = Object.create(Document.prototype);
-            // Override getter-based properties from EP with own data properties
-            var __docKids = rootEl ? [rootEl] : [];
-            __docKids.item = function(i) { return (i >= 0 && i < this.length) ? this[i] : null; };
+            // Create a Rust-backed Document node so all EP methods (appendChild, insertBefore, etc.) work
+            var docNid = __n_createDocumentNode();
+            var newDoc = __w(docNid);
+            // If rootEl is provided and Rust-backed, parent it under the document node
+            if (rootEl && rootEl.__nid !== undefined) {
+                __n_appendChild(docNid, rootEl.__nid);
+            }
+            // Set own data properties — use defineProperty for getter-only EP properties
             var ownProps = {
-                nodeType: 9, nodeName: '#document', readyState: 'complete',
-                parentNode: null, parentElement: null,
-                childNodes: __docKids,
-                firstChild: rootEl || null, lastChild: rootEl || null,
-                previousSibling: null, nextSibling: null,
-                ownerDocument: null, isConnected: false,
+                readyState: 'complete',
+                ownerDocument: null,
+                isConnected: false,
                 location: null,
-                title: '', contentType: 'application/xml',
-                URL: 'about:blank', documentURI: 'about:blank',
-                compatMode: 'CSS1Compat', characterSet: 'UTF-8',
-                charset: 'UTF-8', inputEncoding: 'UTF-8'
+                title: '',
+                contentType: 'application/xml',
+                URL: 'about:blank',
+                documentURI: 'about:blank',
+                compatMode: 'CSS1Compat',
+                characterSet: 'UTF-8',
+                charset: 'UTF-8',
+                inputEncoding: 'UTF-8'
             };
             for (var k in ownProps) Object.defineProperty(newDoc, k, { value: ownProps[k], writable: true, enumerable: true, configurable: true });
             newDoc.__listeners = {};
             newDoc.__captureListeners = {};
-            Object.defineProperty(newDoc, 'documentElement', { get: function() { return rootEl; }, configurable: true });
+            Object.defineProperty(newDoc, 'documentElement', { get: function() {
+                var kids = __n_getAllChildIds(docNid);
+                for (var i = 0; i < kids.length; i++) {
+                    if (__n_getNodeType(kids[i]) === 1) return __w(kids[i]);
+                }
+                return null;
+            }, configurable: true });
             Object.defineProperty(newDoc, 'body', { get: function() {
                 if (this._body) return this._body;
-                if (!rootEl) return null;
-                var kids = rootEl.childNodes;
+                var de = this.documentElement;
+                if (!de) return null;
+                var kids = de.childNodes;
                 for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'BODY') return kids[i];
                 return null;
             }, set: function(v) { this._body = v; }, configurable: true });
             Object.defineProperty(newDoc, 'head', { get: function() {
                 if (this._head) return this._head;
-                if (!rootEl) return null;
-                var kids = rootEl.childNodes;
+                var de = this.documentElement;
+                if (!de) return null;
+                var kids = de.childNodes;
                 for (var i = 0; i < kids.length; i++) if (kids[i].tagName === 'HEAD') return kids[i];
                 return null;
             }, set: function(v) { this._head = v; }, configurable: true });
@@ -859,12 +864,18 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             };
             impl.hasFeature = function() { return true; };
             Object.defineProperty(newDoc, 'implementation', { value: impl, writable: true, configurable: true });
-            Object.defineProperty(newDoc, 'doctype', { get: function() { return null; }, configurable: true });
-            newDoc.querySelector = function(sel) { return rootEl ? rootEl.querySelector(sel) : null; };
-            newDoc.querySelectorAll = function(sel) { return rootEl ? rootEl.querySelectorAll(sel) : []; };
-            newDoc.getElementById = function(id) { return rootEl ? (rootEl.querySelector('#' + id) || null) : null; };
-            newDoc.getElementsByTagName = function(tag) { return rootEl ? rootEl.querySelectorAll(tag) : []; };
-            newDoc.getElementsByClassName = function(cls) { return rootEl ? rootEl.querySelectorAll('.' + cls) : []; };
+            Object.defineProperty(newDoc, 'doctype', { get: function() {
+                var kids = __n_getAllChildIds(docNid);
+                for (var i = 0; i < kids.length; i++) {
+                    if (__n_getNodeType(kids[i]) === 10) return __w(kids[i]);
+                }
+                return null;
+            }, configurable: true });
+            newDoc.querySelector = function(sel) { var de = this.documentElement; return de ? de.querySelector(sel) : null; };
+            newDoc.querySelectorAll = function(sel) { var de = this.documentElement; return de ? de.querySelectorAll(sel) : []; };
+            newDoc.getElementById = function(id) { var de = this.documentElement; return de ? (de.querySelector('#' + id) || null) : null; };
+            newDoc.getElementsByTagName = function(tag) { var de = this.documentElement; return de ? de.querySelectorAll(tag) : []; };
+            newDoc.getElementsByClassName = function(cls) { var de = this.documentElement; return de ? de.querySelectorAll('.' + cls) : []; };
             newDoc.createElement = function(tag) { var el = document.createElement(tag); el.__ownerDoc = newDoc; return el; };
             newDoc.createElementNS = function(ns, tag) { var el = document.createElementNS(ns, tag); el.__ownerDoc = newDoc; return el; };
             newDoc.createTextNode = function(text) { var n = document.createTextNode(text); n.__ownerDoc = newDoc; return n; };
@@ -875,25 +886,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             newDoc.createAttribute = function(n) { return document.createAttribute(n); };
             newDoc.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
             newDoc.createEvent = function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; };
-            newDoc.appendChild = function(child) {
-                if (child.__nid !== undefined && rootEl) return rootEl.appendChild(child);
-                if (child.__nid === undefined) child.parentNode = newDoc;
-                var kids = newDoc.childNodes;
-                kids.push(child);
-                newDoc.firstChild = kids[0];
-                newDoc.lastChild = kids[kids.length - 1];
-                return child;
-            };
-            newDoc.removeChild = function(child) {
-                var kids = newDoc.childNodes;
-                var idx = kids.indexOf(child);
-                if (idx < 0) throw new DOMException("The node to be removed is not a child of this node.", "NotFoundError");
-                kids.splice(idx, 1);
-                if (child.__nid === undefined) child.parentNode = null;
-                newDoc.firstChild = kids.length > 0 ? kids[0] : null;
-                newDoc.lastChild = kids.length > 0 ? kids[kids.length - 1] : null;
-                return child;
-            };
+            // Event handling — own-property versions for standalone docs
             newDoc.addEventListener = function(type, cb, opts) {
                 if (typeof cb !== 'function') return;
                 var capture = !!(opts === true || (opts && opts.capture));
@@ -920,9 +913,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 event.eventPhase = 0;
                 return !event.defaultPrevented;
             };
-            Object.defineProperty(newDoc, 'scrollingElement', { get: function() { return rootEl; }, configurable: true });
-            newDoc.elementFromPoint = function(x, y) { return rootEl || null; };
-            newDoc.elementsFromPoint = function(x, y) { return rootEl ? [rootEl] : []; };
+            Object.defineProperty(newDoc, 'scrollingElement', { get: function() { return this.documentElement; }, configurable: true });
+            newDoc.elementFromPoint = function(x, y) { return this.documentElement || null; };
+            newDoc.elementsFromPoint = function(x, y) { var de = this.documentElement; return de ? [de] : []; };
             newDoc.write = function() {
                 var html = Array.prototype.join.call(arguments, '');
                 if (!html) return;
@@ -954,6 +947,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         doc.parentNode = null;
         doc.parentElement = null;
         doc.title = '';
+        doc.compatMode = 'CSS1Compat';
+        doc.characterSet = 'UTF-8';
+        doc.charset = 'UTF-8';
+        doc.inputEncoding = 'UTF-8';
+        doc.contentType = 'text/html';
+        Object.defineProperty(doc, 'ownerDocument', { value: null, writable: true, configurable: true });
         Object.defineProperty(doc, 'URL', {
             get: function() { return (typeof location !== 'undefined' && location.href) || 'about:blank'; },
             configurable: true
@@ -1503,11 +1502,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     headEl.__ownerDoc = newDoc;
                     bodyEl.__ownerDoc = newDoc;
                     if (title !== undefined) titleEl.__ownerDoc = newDoc;
-                    // Create DOCTYPE node as first child (Rust-backed)
+                    // Create DOCTYPE node and insert before htmlEl in the Rust tree
                     var dt = document.implementation.createDocumentType('html', '', '');
-                    newDoc.childNodes = [dt, htmlEl];
-                    newDoc.firstChild = dt;
-                    Object.defineProperty(newDoc, 'doctype', { get: function() { return dt; }, configurable: true });
+                    __n_insertBefore(newDoc.__nid, dt.__nid, htmlEl.__nid);
                     return newDoc;
                 },
                 createDocument: function(ns, qualifiedName, doctype) {
@@ -1546,18 +1543,14 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     }
                     // Set prototype to XMLDocument
                     Object.setPrototypeOf(newDoc, XMLDocument.prototype);
-                    // Handle doctype parameter
+                    // Handle doctype parameter — insert into Rust tree
                     if (doctype) {
                         doctype.__ownerDoc = newDoc;
-                        if (rootEl) {
-                            newDoc.childNodes = [doctype, rootEl];
-                            newDoc.firstChild = doctype;
+                        if (rootEl && rootEl.__nid !== undefined) {
+                            __n_insertBefore(newDoc.__nid, doctype.__nid, rootEl.__nid);
                         } else {
-                            newDoc.childNodes = [doctype];
-                            newDoc.firstChild = doctype;
-                            newDoc.lastChild = doctype;
+                            __n_appendChild(newDoc.__nid, doctype.__nid);
                         }
-                        Object.defineProperty(newDoc, 'doctype', { get: function() { return doctype; }, configurable: true });
                     }
                     // Set ownerDocument on root element
                     if (rootEl) rootEl.__ownerDoc = newDoc;
@@ -1570,6 +1563,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                         var ct = newDoc.contentType;
                         if (ct === 'text/html' || ct === 'application/xhtml+xml') {
                             el.namespaceURI = 'http://www.w3.org/1999/xhtml';
+                        } else {
+                            el.namespaceURI = null;
                         }
                         return el;
                     };
@@ -1650,6 +1645,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 el.__props = {};
                 el.__localName = String(tag);
                 el.__ownerDoc = newDoc;
+                el.namespaceURI = null;
                 el.constructor = Element;
                 _cache[nid] = el;
                 return el;
@@ -2114,14 +2110,15 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             var clonedDE = de ? de.cloneNode(!!deep) : null;
             var newDoc = __makeDocumentLike(clonedDE);
             Object.setPrototypeOf(newDoc, Object.getPrototypeOf(this));
-            // Clone doctype if present
+            // Clone doctype if present — insert into Rust tree before documentElement
             var dt = this.doctype;
             if (dt && deep) {
                 var clonedDT = dt.cloneNode(false);
-                // Insert doctype before documentElement in childNodes
-                newDoc.childNodes.unshift(clonedDT);
-                newDoc.firstChild = clonedDT;
-                Object.defineProperty(newDoc, 'doctype', { get: function() { return clonedDT; }, configurable: true });
+                if (clonedDE && clonedDE.__nid !== undefined) {
+                    __n_insertBefore(newDoc.__nid, clonedDT.__nid, clonedDE.__nid);
+                } else {
+                    __n_appendChild(newDoc.__nid, clonedDT.__nid);
+                }
             }
             if (this.contentType) newDoc.contentType = this.contentType;
             return newDoc;

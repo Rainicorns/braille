@@ -331,6 +331,16 @@ impl DomTree {
         self.nodes[child].parent = Some(parent);
     }
 
+    /// Removes all children of the node.
+    pub fn remove_all_children(&mut self, node_id: NodeId) {
+        let children: Vec<NodeId> = self.nodes[node_id].children.clone();
+        for child_id in children {
+            self.nodes[child_id].parent = None;
+        }
+        self.nodes[node_id].children.clear();
+        self.layout_cache.mark_dirty();
+    }
+
     /// Removes all children of the node and replaces them with a single Text child.
     pub fn set_text_content(&mut self, node_id: NodeId, text: &str) {
         // Clone needed: loop mutates self.nodes[child_id] while iterating node_id's children

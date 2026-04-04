@@ -93,17 +93,17 @@ impl DomTree {
                         tag_name: t1,
                         attributes: a1,
                         namespace: ns1,
-                        ..
+                        prefix: p1,
                     },
                     NodeData::Element {
                         tag_name: t2,
                         attributes: a2,
                         namespace: ns2,
-                        ..
+                        prefix: p2,
                     },
                 ) => {
-                    // Compare localName, namespace, and prefix (we store them in tag_name)
-                    if t1 != t2 || ns1 != ns2 {
+                    // Compare localName, namespace, prefix, and attributes
+                    if t1 != t2 || ns1 != ns2 || p1 != p2 {
                         return false;
                     }
                     // Compare attributes: same count, and each attr in a1 has a match in a2
