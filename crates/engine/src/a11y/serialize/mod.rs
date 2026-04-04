@@ -1,4 +1,5 @@
 mod helpers;
+mod markdown;
 mod refs;
 mod accessibility;
 mod compact;
@@ -10,6 +11,7 @@ pub use refs::assign_refs;
 pub use accessibility::{serialize_a11y, serialize_a11y_rooted};
 pub use compact::serialize_compact;
 pub use interactive::{serialize_interactive, serialize_links, serialize_forms};
+pub use markdown::serialize_markdown;
 pub use text::{serialize_headings, serialize_text, serialize_selector, serialize_region};
 
 #[cfg(test)]

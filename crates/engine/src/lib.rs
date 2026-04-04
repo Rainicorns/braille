@@ -316,7 +316,7 @@ impl Engine {
                 }
             }
             SnapMode::Dom => "[DOM mode not yet implemented]".to_string(),
-            SnapMode::Markdown => "[Markdown mode not yet implemented]".to_string(),
+            SnapMode::Markdown => serialize::serialize_markdown(&tree),
         };
 
         // Drop the immutable borrow before restoring
