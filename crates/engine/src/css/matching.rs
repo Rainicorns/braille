@@ -88,6 +88,7 @@ impl<'a> DomElement<'a> {
                     let value = self
                         .tree
                         .get_attribute(current, "value")
+                        .map(|v| v.to_string())
                         .unwrap_or_else(|| self.tree.get_text_content(current));
                     if !value.is_empty() {
                         return true;
@@ -619,7 +620,7 @@ fn collect_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::node::DomAttribute;
+    use crate::dom::node::{DomAttribute, DomString};
 
     fn setup_test_tree() -> DomTree {
         let mut tree = DomTree::new();
@@ -693,7 +694,7 @@ mod tests {
         assert!(result.is_some());
 
         let node_id = result.unwrap();
-        assert_eq!(tree.get_attribute(node_id, "class"), Some("highlight".to_string()));
+        assert_eq!(tree.get_attribute(node_id, "class"), Some(DomString::from("highlight")));
     }
 
     #[test]
@@ -705,7 +706,7 @@ mod tests {
         assert!(result.is_some());
 
         let node_id = result.unwrap();
-        assert_eq!(tree.get_attribute(node_id, "id"), Some("first".to_string()));
+        assert_eq!(tree.get_attribute(node_id, "id"), Some(DomString::from("first")));
     }
 
     #[test]
@@ -840,7 +841,7 @@ mod tests {
         assert!(result.is_some());
 
         let node_id = result.unwrap();
-        assert_eq!(tree.get_attribute(node_id, "class"), Some("container".to_string()));
+        assert_eq!(tree.get_attribute(node_id, "class"), Some(DomString::from("container")));
     }
 
     #[test]

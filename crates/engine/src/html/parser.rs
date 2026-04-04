@@ -105,7 +105,7 @@ impl TreeSink for BrailleSink {
                     local_name,
                     prefix,
                     namespace,
-                    value: a.value.to_string(),
+                    value: crate::dom::node::DomString::from(a.value.as_ref()),
                 }
             })
             .collect();
@@ -290,7 +290,7 @@ impl TreeSink for BrailleSink {
                     local_name,
                     prefix,
                     namespace,
-                    value: attr.value.to_string(),
+                    value: crate::dom::node::DomString::from(attr.value.as_ref()),
                 };
                 let qname = dom_attr.qualified_name();
                 if !existing.contains(&qname) {
@@ -456,7 +456,7 @@ fn polyfill_declarative_shadow_roots(tree: &mut DomTree) {
             {
                 if tag_name == "template" {
                     if let Some(attr) = attributes.iter().find(|a| a.local_name == "shadowrootmode") {
-                        let mode_str = attr.value.clone();
+                        let mode_str = attr.value.to_string();
                         if mode_str == "open" || mode_str == "closed" {
                             return Some((id, mode_str));
                         }

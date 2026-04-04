@@ -337,7 +337,7 @@ impl Engine {
                 if let Ok(pairs) = serde_json::from_str::<Vec<(usize, String)>>(&json) {
                     let mut tree = self.tree.borrow_mut();
                     for (nid, val) in pairs {
-                        let original = tree.get_attribute(nid, "value");
+                        let original = tree.get_attribute(nid, "value").map(|v| v.to_string());
                         patched.push((nid, original));
                         tree.set_attribute(nid, "value", &val);
                     }

@@ -234,7 +234,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return id >= 0 ? __w(id) : null;
         };
         ElemProto.querySelectorAll = function(sel) {
-            return __n_querySelectorAll(this.__nid, sel).map(__w);
+            return __makeStaticNodeList(__n_querySelectorAll(this.__nid, sel).map(__w));
         };
         ElemProto.getElementsByTagName = function(tag) {
             var nid = this.__nid;

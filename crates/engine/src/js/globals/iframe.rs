@@ -21,6 +21,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
         Function::new(ctx.clone(), move |node_id: u32| -> String {
             with_tree(|tree| {
                 tree.get_attribute(node_id as usize, "src")
+                    .map(|v| v.to_string())
                     .unwrap_or_default()
             })
         })

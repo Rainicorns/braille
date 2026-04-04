@@ -72,7 +72,7 @@ impl Engine {
             {
                 if tag_name.eq_ignore_ascii_case("script") {
                     // Check type attribute — skip non-JS scripts (data blocks)
-                    let type_attr = attributes.iter().find(|a| a.local_name == "type").map(|a| a.value.as_str());
+                    let type_attr = attributes.iter().find(|a| a.local_name == "type").map(|a| &*a.value);
                     if let Some(t) = type_attr {
                         if !is_javascript_type(t) && !t.trim().eq_ignore_ascii_case("module") {
                             continue; // data block (importmap, ld+json, etc.) — skip
@@ -118,14 +118,14 @@ impl Engine {
                     let type_attr = attributes
                         .iter()
                         .find(|a| a.local_name == "type")
-                        .map(|a| a.value.as_str());
+                        .map(|a| &*a.value);
 
                     let type_trimmed = type_attr.map(|t| t.trim().to_ascii_lowercase());
 
                     if let Some(ref t) = type_trimmed {
                         if t == "module" {
                             // Module script
-                            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+                            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.to_string());
                             if let Some(url) = src {
                                 descriptors.push(ScriptDescriptor::ExternalModule(url));
                             } else {
@@ -136,7 +136,7 @@ impl Engine {
                             descriptors.push(ScriptDescriptor::ImportMap(tree.get_text_content(node_id)));
                         } else if is_javascript_type(t) {
                             // Explicit JS MIME type — treat as classic script
-                            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+                            let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.to_string());
                             if let Some(url) = src {
                                 descriptors.push(ScriptDescriptor::External(url, Some(node_id)));
                             } else {
@@ -146,7 +146,7 @@ impl Engine {
                         // else: data block (ld+json, etc.) — skip entirely
                     } else {
                         // No type attribute — classic script
-                        let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.clone());
+                        let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.to_string());
                         if let Some(url) = src {
                             descriptors.push(ScriptDescriptor::External(url, Some(node_id)));
                         } else {

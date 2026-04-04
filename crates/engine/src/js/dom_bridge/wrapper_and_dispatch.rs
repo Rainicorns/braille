@@ -220,6 +220,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 var lineno = (err && err.lineNumber) ? err.lineNumber : 0;
                 var colno = (err && err.columnNumber) ? err.columnNumber : 0;
 
+                // 0. Route to console so drain_console() captures it
+                console.error('Uncaught ' + message + (err instanceof Error && err.stack ? '\n' + err.stack : ''));
+
                 // 1. Fire window.onerror IDL handler (gets string args per spec)
                 if (typeof window.onerror === 'function') {
                     window.onerror(message, filename, lineno, colno, err);
@@ -872,7 +875,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 return null;
             }, configurable: true });
             newDoc.querySelector = function(sel) { var de = this.documentElement; return de ? de.querySelector(sel) : null; };
-            newDoc.querySelectorAll = function(sel) { var de = this.documentElement; return de ? de.querySelectorAll(sel) : []; };
+            newDoc.querySelectorAll = function(sel) { var de = this.documentElement; return de ? de.querySelectorAll(sel) : __makeStaticNodeList([]); };
             newDoc.getElementById = function(id) { var de = this.documentElement; return de ? (de.querySelector('#' + id) || null) : null; };
             newDoc.getElementsByTagName = function(tag) { var de = this.documentElement; return de ? de.querySelectorAll(tag) : []; };
             newDoc.getElementsByClassName = function(cls) { var de = this.documentElement; return de ? de.querySelectorAll('.' + cls) : []; };
@@ -970,7 +973,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return nid >= 0 ? __w(nid) : null;
         };
         doc.querySelectorAll = function(sel) {
-            return __n_querySelectorAll(0, sel).map(__w);
+            return __makeStaticNodeList(__n_querySelectorAll(0, sel).map(__w));
         };
         doc.createElement = function(tag) {
             var nid = __n_createElement(tag);
@@ -2090,7 +2093,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
         Document.prototype.querySelectorAll = function(sel) {
             var de = this.documentElement;
-            return de && de.querySelectorAll ? de.querySelectorAll(sel) : [];
+            return de && de.querySelectorAll ? de.querySelectorAll(sel) : __makeStaticNodeList([]);
         };
         Document.prototype.getElementsByTagName = function(tag) {
             var de = this.documentElement;
@@ -2165,8 +2168,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return nid >= 0 ? __w(nid) : null;
         };
         DocumentFragment.prototype.querySelectorAll = function(sel) {
-            if (this.__nid === undefined) return [];
-            return __n_querySelectorAll(this.__nid, sel).map(__w);
+            if (this.__nid === undefined) return __makeStaticNodeList([]);
+            return __makeStaticNodeList(__n_querySelectorAll(this.__nid, sel).map(__w));
         };
         DocumentFragment.prototype.getElementById = function(id) {
             if (this.__nid === undefined || !id) return null;

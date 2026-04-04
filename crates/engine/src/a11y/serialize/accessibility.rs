@@ -90,7 +90,7 @@ fn walk_a11y(
                 attributes
                     .iter()
                     .find(|a| a.local_name == "alt")
-                    .map(|a| a.value.clone())
+                    .map(|a| a.value.to_string())
                     .unwrap_or_default()
             } else {
                 collect_direct_text(tree, node_id)

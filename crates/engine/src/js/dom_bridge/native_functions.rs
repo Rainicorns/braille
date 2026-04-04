@@ -13,7 +13,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     // getAttribute(nodeId, name) -> string | null (empty string = null)
     g.set("__n_getAttribute", Function::new(ctx.clone(), |node_id: u32, name: String| -> String {
         with_tree(|tree| {
-            tree.get_attribute(node_id as NodeId, &name).unwrap_or_default()
+            tree.get_attribute(node_id as NodeId, &name).map(|v| v.to_string()).unwrap_or_default()
         })
     }).unwrap()).unwrap();
 
@@ -44,7 +44,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
 
     // getAttributeNS(nodeId, namespace, localName) -> string (empty = not found)
     g.set("__n_getAttributeNS", Function::new(ctx.clone(), |node_id: u32, namespace: String, local_name: String| -> String {
-        with_tree(|tree| tree.get_attribute_ns(node_id as NodeId, &namespace, &local_name).unwrap_or_default())
+        with_tree(|tree| tree.get_attribute_ns(node_id as NodeId, &namespace, &local_name).map(|v| v.to_string()).unwrap_or_default())
     }).unwrap()).unwrap();
 
     // getAttributeNodeNS(nodeId, namespace, localName) -> JSON string with full attr info, or empty
@@ -314,7 +314,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
             }
         }
         with_tree(|tree| {
-            tree.get_attribute(node_id as NodeId, &kebab).unwrap_or_default()
+            tree.get_attribute(node_id as NodeId, &kebab).map(|v| v.to_string()).unwrap_or_default()
         })
     }).unwrap()).unwrap();
 
@@ -811,7 +811,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
             }
 
             let mut labels = Vec::new();
-            let control_id_attr = tree.get_attribute(control_id as NodeId, "id");
+            let control_id_attr = tree.get_attribute(control_id as NodeId, "id").map(|v| v.to_string());
 
             fn collect_labels(
                 tree: &DomTree,

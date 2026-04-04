@@ -377,7 +377,7 @@ impl Engine {
                             let src = attributes
                                 .iter()
                                 .find(|a| a.local_name == "src")
-                                .map(|a| a.value.clone());
+                                .map(|a| a.value.to_string());
                             let inline_text = t.get_text_content(nid);
                             scripts.push((nid, src, inline_text));
                         }

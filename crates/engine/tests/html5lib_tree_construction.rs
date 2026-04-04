@@ -161,6 +161,7 @@ fn serialize_node(tree: &DomTree, node_id: NodeId, depth: usize, out: &mut Strin
             tag_name,
             attributes,
             namespace,
+            ..
         } => {
             if namespace.is_empty() || namespace == "http://www.w3.org/1999/xhtml" {
                 out.push_str(&format!("| {indent}<{tag_name}>\n"));

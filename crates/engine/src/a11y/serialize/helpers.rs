@@ -125,7 +125,7 @@ pub(crate) fn get_interactive_value(
         "input" => attributes
             .iter()
             .find(|a| a.local_name == "value")
-            .map(|a| a.value.clone()),
+            .map(|a| a.value.to_string()),
         "select" => {
             let node = tree.get_node(node_id);
             let mut first_option_text: Option<String> = None;

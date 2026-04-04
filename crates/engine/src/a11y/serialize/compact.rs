@@ -92,7 +92,7 @@ fn walk_compact(
                             let alt = attributes
                                 .iter()
                                 .find(|a| a.local_name == "alt")
-                                .map(|a| a.value.as_str())
+                                .map(|a| &*a.value)
                                 .unwrap_or("");
                             if !alt.is_empty() {
                                 output.push_str(&format!("[image: {}]", alt));

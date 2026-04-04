@@ -16,11 +16,12 @@ impl Engine {
             .ok_or_else(|| format!("no parent <form> found for submit button (node {})", button_id))?;
 
         // 2. Get form's action attribute (default to current URL or "")
-        let action = tree.get_attribute(form_id, "action").unwrap_or_default();
+        let action = tree.get_attribute(form_id, "action").map(|v| v.to_string()).unwrap_or_default();
 
         // 3. Get form's method attribute (default to "get")
         let method_str = tree
             .get_attribute(form_id, "method")
+            .map(|v| v.to_string())
             .unwrap_or_else(|| "get".to_string())
             .to_ascii_lowercase();
 
@@ -128,13 +129,14 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
     for input_id in inputs {
         // Skip if no name attribute
         let name = match tree.get_attribute(input_id, "name") {
-            Some(n) => n,
+            Some(n) => n.to_string(),
             None => continue,
         };
 
         // Check input type
         let input_type = tree
             .get_attribute(input_id, "type")
+            .map(|v| v.to_string())
             .unwrap_or_else(|| "text".to_string())
             .to_ascii_lowercase();
 
@@ -144,7 +146,7 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
         }
 
         // Get value (default to empty string)
-        let value = tree.get_attribute(input_id, "value").unwrap_or_default();
+        let value = tree.get_attribute(input_id, "value").map(|v| v.to_string()).unwrap_or_default();
 
         data.push((name, value));
     }
@@ -155,12 +157,12 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
     for select_id in selects {
         // Skip if no name attribute
         let name = match tree.get_attribute(select_id, "name") {
-            Some(n) => n,
+            Some(n) => n.to_string(),
             None => continue,
         };
 
         // Get value attribute
-        let value = tree.get_attribute(select_id, "value").unwrap_or_default();
+        let value = tree.get_attribute(select_id, "value").map(|v| v.to_string()).unwrap_or_default();
 
         data.push((name, value));
     }
@@ -171,12 +173,12 @@ pub fn collect_form_data(tree: &DomTree, form_id: NodeId) -> Vec<(String, String
     for textarea_id in textareas {
         // Skip if no name attribute
         let name = match tree.get_attribute(textarea_id, "name") {
-            Some(n) => n,
+            Some(n) => n.to_string(),
             None => continue,
         };
 
         // Get value attribute
-        let value = tree.get_attribute(textarea_id, "value").unwrap_or_default();
+        let value = tree.get_attribute(textarea_id, "value").map(|v| v.to_string()).unwrap_or_default();
 
         data.push((name, value));
     }

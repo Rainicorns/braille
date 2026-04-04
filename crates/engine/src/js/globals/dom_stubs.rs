@@ -1881,6 +1881,36 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
 
         // Expose constructor globals for interface-objects conformance
         globalThis.NodeList = class NodeList {};
+        Object.defineProperty(NodeList.prototype, 'length', {
+            get: function() { return this.__nlLen !== undefined ? this.__nlLen : 0; },
+            configurable: true
+        });
+        NodeList.prototype.item = function(i) { var idx = i >>> 0; return idx < this.length ? this[idx] : null; };
+        NodeList.prototype.forEach = function(cb, thisArg) { for (var i = 0; i < this.length; i++) cb.call(thisArg, this[i], i, this); };
+        NodeList.prototype.keys = function() {
+            var self = this; var idx = 0;
+            return { next: function() { return idx < self.length ? { value: idx++, done: false } : { value: undefined, done: true }; }, [Symbol.iterator]: function() { return this; } };
+        };
+        NodeList.prototype.values = function() {
+            var self = this; var idx = 0;
+            return { next: function() { return idx < self.length ? { value: self[idx++], done: false } : { value: undefined, done: true }; }, [Symbol.iterator]: function() { return this; } };
+        };
+        NodeList.prototype.entries = function() {
+            var self = this; var idx = 0;
+            return { next: function() { return idx < self.length ? { value: [idx, self[idx++]], done: false } : { value: undefined, done: true }; }, [Symbol.iterator]: function() { return this; } };
+        };
+        NodeList.prototype[Symbol.iterator] = NodeList.prototype.values;
+        NodeList.prototype[Symbol.toStringTag] = 'NodeList';
+
+        globalThis.__makeStaticNodeList = function(items) {
+            var obj = Object.create(NodeList.prototype);
+            for (var i = 0; i < items.length; i++) {
+                Object.defineProperty(obj, String(i), { value: items[i], writable: false, enumerable: true, configurable: true });
+            }
+            Object.defineProperty(obj, '__nlLen', { value: items.length, writable: false, enumerable: false, configurable: false });
+            return obj;
+        };
+
         globalThis.HTMLCollection = class HTMLCollection {};
         HTMLCollection.prototype.item = function(i) { var idx = i >>> 0; return idx < this.length ? this[idx] : null; };
         HTMLCollection.prototype.namedItem = function(name) {

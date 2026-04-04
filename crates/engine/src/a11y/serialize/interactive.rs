@@ -157,8 +157,8 @@ fn walk_forms(
             }
 
             if tag == "form" {
-                let action = attributes.iter().find(|a| a.local_name == "action").map(|a| a.value.as_str());
-                let method = attributes.iter().find(|a| a.local_name == "method").map(|a| a.value.as_str());
+                let action = attributes.iter().find(|a| a.local_name == "action").map(|a| &*a.value);
+                let method = attributes.iter().find(|a| a.local_name == "method").map(|a| &*a.value);
                 let mut header = "form".to_string();
                 if let Some(action) = action {
                     header.push_str(&format!(" action=\"{}\"", action));

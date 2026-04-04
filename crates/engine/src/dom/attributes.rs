@@ -1,10 +1,10 @@
-use super::node::{DomAttribute, NodeData, NodeId};
+use super::node::{DomAttribute, DomString, NodeData, NodeId};
 use super::tree::DomTree;
 
 impl DomTree {
     /// Returns the attribute value if the node is an Element and has that attribute, None otherwise.
     /// Matches on qualified name or local name.
-    pub fn get_attribute(&self, node_id: NodeId, name: &str) -> Option<String> {
+    pub fn get_attribute(&self, node_id: NodeId, name: &str) -> Option<DomString> {
         let node = self.get_node(node_id);
         if let NodeData::Element { ref attributes, .. } = node.data {
             attributes
@@ -30,7 +30,7 @@ impl DomTree {
                 .iter_mut()
                 .find(|a| a.qualified_name() == name || a.local_name == name)
             {
-                existing.value = value.to_string();
+                existing.value = DomString::from(value);
             } else {
                 // Add new attribute
                 attributes.push(DomAttribute::new(name, value));
@@ -87,7 +87,7 @@ impl DomTree {
     // -----------------------------------------------------------------------
 
     /// Returns the attribute value matching (namespace, localName), or None.
-    pub fn get_attribute_ns(&self, node_id: NodeId, namespace: &str, local_name: &str) -> Option<String> {
+    pub fn get_attribute_ns(&self, node_id: NodeId, namespace: &str, local_name: &str) -> Option<DomString> {
         let node = self.get_node(node_id);
         if let NodeData::Element { ref attributes, .. } = node.data {
             attributes
@@ -114,14 +114,14 @@ impl DomTree {
                 .iter_mut()
                 .find(|a| a.matches_ns(namespace, local_name))
             {
-                existing.value = value.to_string();
+                existing.value = DomString::from(value);
                 existing.prefix = prefix.to_string();
             } else {
                 attributes.push(DomAttribute {
                     local_name: local_name.to_string(),
                     prefix: prefix.to_string(),
                     namespace: namespace.to_string(),
-                    value: value.to_string(),
+                    value: DomString::from(value),
                 });
             }
         } else {
@@ -186,8 +186,8 @@ mod tests {
             vec![DomAttribute::new("class", "container"), DomAttribute::new("id", "main")],
         );
 
-        assert_eq!(tree.get_attribute(div, "class"), Some("container".to_string()));
-        assert_eq!(tree.get_attribute(div, "id"), Some("main".to_string()));
+        assert_eq!(tree.get_attribute(div, "class"), Some(DomString::from("container")));
+        assert_eq!(tree.get_attribute(div, "id"), Some(DomString::from("main")));
     }
 
     #[test]
@@ -218,8 +218,8 @@ mod tests {
         tree.set_attribute(div, "class", "container");
         tree.set_attribute(div, "id", "main");
 
-        assert_eq!(tree.get_attribute(div, "class"), Some("container".to_string()));
-        assert_eq!(tree.get_attribute(div, "id"), Some("main".to_string()));
+        assert_eq!(tree.get_attribute(div, "class"), Some(DomString::from("container")));
+        assert_eq!(tree.get_attribute(div, "id"), Some(DomString::from("main")));
     }
 
     #[test]
@@ -227,11 +227,11 @@ mod tests {
         let mut tree = DomTree::new();
         let div = tree.create_element_with_attrs("div", vec![DomAttribute::new("class", "old-value")]);
 
-        assert_eq!(tree.get_attribute(div, "class"), Some("old-value".to_string()));
+        assert_eq!(tree.get_attribute(div, "class"), Some(DomString::from("old-value")));
 
         tree.set_attribute(div, "class", "new-value");
 
-        assert_eq!(tree.get_attribute(div, "class"), Some("new-value".to_string()));
+        assert_eq!(tree.get_attribute(div, "class"), Some(DomString::from("new-value")));
 
         // Verify that we didn't add a duplicate attribute
         let node = tree.get_node(div);
@@ -264,13 +264,13 @@ mod tests {
             vec![DomAttribute::new("class", "container"), DomAttribute::new("id", "main")],
         );
 
-        assert_eq!(tree.get_attribute(div, "class"), Some("container".to_string()));
+        assert_eq!(tree.get_attribute(div, "class"), Some(DomString::from("container")));
 
         let removed = tree.remove_attribute(div, "class");
 
         assert!(removed);
         assert_eq!(tree.get_attribute(div, "class"), None);
-        assert_eq!(tree.get_attribute(div, "id"), Some("main".to_string()));
+        assert_eq!(tree.get_attribute(div, "id"), Some(DomString::from("main")));
     }
 
     #[test]
@@ -281,7 +281,7 @@ mod tests {
         let removed = tree.remove_attribute(div, "id");
 
         assert!(!removed);
-        assert_eq!(tree.get_attribute(div, "class"), Some("container".to_string()));
+        assert_eq!(tree.get_attribute(div, "class"), Some(DomString::from("container")));
     }
 
     #[test]
@@ -348,17 +348,17 @@ mod tests {
         // Set an attribute
         tree.set_attribute(div, "class", "container");
         assert!(tree.has_attribute(div, "class"));
-        assert_eq!(tree.get_attribute(div, "class"), Some("container".to_string()));
+        assert_eq!(tree.get_attribute(div, "class"), Some(DomString::from("container")));
 
         // Update the attribute
         tree.set_attribute(div, "class", "wrapper");
         assert!(tree.has_attribute(div, "class"));
-        assert_eq!(tree.get_attribute(div, "class"), Some("wrapper".to_string()));
+        assert_eq!(tree.get_attribute(div, "class"), Some(DomString::from("wrapper")));
 
         // Add another attribute
         tree.set_attribute(div, "id", "main");
         assert!(tree.has_attribute(div, "id"));
-        assert_eq!(tree.get_attribute(div, "id"), Some("main".to_string()));
+        assert_eq!(tree.get_attribute(div, "id"), Some(DomString::from("main")));
 
         // Remove first attribute
         assert!(tree.remove_attribute(div, "class"));
@@ -367,7 +367,7 @@ mod tests {
 
         // Second attribute should still be there
         assert!(tree.has_attribute(div, "id"));
-        assert_eq!(tree.get_attribute(div, "id"), Some("main".to_string()));
+        assert_eq!(tree.get_attribute(div, "id"), Some(DomString::from("main")));
 
         // Try removing non-existent attribute
         assert!(!tree.remove_attribute(div, "data-value"));

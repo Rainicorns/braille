@@ -41,7 +41,7 @@ impl Engine {
             if tag_name.eq_ignore_ascii_case("a") {
                 if let Some(href) = tree.get_attribute(node_id, "href") {
                     return EngineAction::Navigate(NavigateRequest {
-                        url: href,
+                        url: href.to_string(),
                         method: HttpMethod::Get,
                         body: None,
                         content_type: None,

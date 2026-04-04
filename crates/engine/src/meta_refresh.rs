@@ -37,7 +37,7 @@ impl Engine {
                 let content = attributes
                     .iter()
                     .find(|a| a.local_name.eq_ignore_ascii_case("content"))
-                    .map(|a| a.value.as_str());
+                    .map(|a| &*a.value);
                 if let Some(content) = content {
                     return Some(parse_meta_refresh_content(content, base_url));
                 }

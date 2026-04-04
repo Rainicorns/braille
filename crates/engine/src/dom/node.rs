@@ -4,13 +4,95 @@ pub type NodeId = usize;
 /// when the CSS property system is integrated.
 pub type ComputedStyles = std::collections::HashMap<String, String>;
 
+/// DOM string type that abstracts the internal representation of string values.
+/// Today wraps `String` (UTF-8). Tomorrow can be swapped to `Vec<u8>` (WTF-8)
+/// to support lone surrogates at the JS↔Rust boundary without touching callsites.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct DomString(String);
+
+impl DomString {
+    pub fn new() -> Self {
+        DomString(String::new())
+    }
+
+    pub fn from_string(s: String) -> Self {
+        DomString(s)
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl Default for DomString {
+    fn default() -> Self {
+        DomString::new()
+    }
+}
+
+impl std::ops::Deref for DomString {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for DomString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl From<&str> for DomString {
+    fn from(s: &str) -> Self {
+        DomString(s.to_string())
+    }
+}
+
+impl From<String> for DomString {
+    fn from(s: String) -> Self {
+        DomString(s)
+    }
+}
+
+impl PartialEq<str> for DomString {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for DomString {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<String> for DomString {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<DomString> for String {
+    fn eq(&self, other: &DomString) -> bool {
+        *self == other.0
+    }
+}
+
+impl PartialEq<DomString> for &str {
+    fn eq(&self, other: &DomString) -> bool {
+        *self == other.0.as_str()
+    }
+}
+
 /// Structured attribute storage supporting namespace-aware methods.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DomAttribute {
     pub local_name: String,
     pub prefix: String,
     pub namespace: String,
-    pub value: String,
+    pub value: DomString,
 }
 
 impl DomAttribute {
@@ -20,7 +102,7 @@ impl DomAttribute {
             local_name: name.to_string(),
             prefix: String::new(),
             namespace: String::new(),
-            value: value.to_string(),
+            value: DomString::from(value),
         }
     }
 

@@ -73,6 +73,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dom::node::DomString;
     use braille_wire::SnapMode;
 
     #[test]
@@ -92,7 +93,7 @@ mod tests {
         // Verify the value attribute was set
         let tree = engine.tree.borrow();
         let node_id = tree.get_element_by_id("username").unwrap();
-        assert_eq!(tree.get_attribute(node_id, "value"), Some("john_doe".to_string()));
+        assert_eq!(tree.get_attribute(node_id, "value"), Some(DomString::from("john_doe")));
     }
 
     #[test]
@@ -114,7 +115,7 @@ mod tests {
         let node_id = tree.get_element_by_id("email").unwrap();
         assert_eq!(
             tree.get_attribute(node_id, "value"),
-            Some("test@example.com".to_string())
+            Some(DomString::from("test@example.com"))
         );
     }
 
@@ -208,7 +209,7 @@ mod tests {
         {
             let tree = engine.tree.borrow();
             let node_id = tree.get_element_by_id("username").unwrap();
-            assert_eq!(tree.get_attribute(node_id, "value"), Some("old_value".to_string()));
+            assert_eq!(tree.get_attribute(node_id, "value"), Some(DomString::from("old_value")));
         }
 
         // Type new value
@@ -218,7 +219,7 @@ mod tests {
         // Verify the value was overwritten
         let tree = engine.tree.borrow();
         let node_id = tree.get_element_by_id("username").unwrap();
-        assert_eq!(tree.get_attribute(node_id, "value"), Some("new_value".to_string()));
+        assert_eq!(tree.get_attribute(node_id, "value"), Some(DomString::from("new_value")));
     }
 
     #[test]
@@ -239,7 +240,7 @@ mod tests {
         let tree = engine.tree.borrow();
         let inputs = tree.get_elements_by_tag_name("input");
         assert_eq!(inputs.len(), 1);
-        assert_eq!(tree.get_attribute(inputs[0], "value"), Some("typed text".to_string()));
+        assert_eq!(tree.get_attribute(inputs[0], "value"), Some(DomString::from("typed text")));
     }
 
     #[test]
@@ -280,7 +281,7 @@ mod tests {
 
         let tree = engine.tree.borrow();
         let node_id = tree.get_element_by_id("clear-me").unwrap();
-        assert_eq!(tree.get_attribute(node_id, "value"), Some("".to_string()));
+        assert_eq!(tree.get_attribute(node_id, "value"), Some(DomString::from("")));
     }
 
     #[test]
@@ -339,7 +340,7 @@ mod tests {
 
         let tree = engine.tree.borrow();
         let node_id = tree.get_element_by_id("default-input").unwrap();
-        assert_eq!(tree.get_attribute(node_id, "value"), Some("default text".to_string()));
+        assert_eq!(tree.get_attribute(node_id, "value"), Some(DomString::from("default text")));
     }
 
     #[test]

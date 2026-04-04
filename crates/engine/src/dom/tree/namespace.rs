@@ -87,7 +87,7 @@ impl DomTree {
                     return if attr.value.is_empty() {
                         None
                     } else {
-                        Some(attr.value.clone())
+                        Some(attr.value.to_string())
                     };
                 }
             } else {
@@ -96,7 +96,7 @@ impl DomTree {
                     return if attr.value.is_empty() {
                         None
                     } else {
-                        Some(attr.value.clone())
+                        Some(attr.value.to_string())
                     };
                 }
             }
