@@ -1908,6 +1908,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 Object.defineProperty(obj, String(i), { value: items[i], writable: false, enumerable: true, configurable: true });
             }
             Object.defineProperty(obj, '__nlLen', { value: items.length, writable: false, enumerable: false, configurable: false });
+            Object.defineProperty(obj, 'length', { get: function() { return this.__nlLen !== undefined ? this.__nlLen : 0; }, configurable: true });
             return obj;
         };
 
