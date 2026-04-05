@@ -99,6 +99,9 @@ pub struct Engine {
     pub(crate) cookies_pending_js_sync: bool,
     /// Controls whether JS runtime is reused across page loads.
     pub runtime_mode: RuntimeMode,
+    /// When true, snapshot() appends a [Hidden Content] section listing display:none
+    /// and visibility:hidden text. Intended for CLI/agent use. Default is false.
+    pub include_hidden_content: bool,
     /// Tracks elements that have already fired their initial scroll-snap scrollend.
     /// Reset when an element goes back to display:none so it fires again on re-show.
     snap_fired: HashSet<NodeId>,
@@ -121,6 +124,7 @@ impl Engine {
             http_cookie_jar: Vec::new(),
             cookies_pending_js_sync: false,
             runtime_mode: RuntimeMode::default(),
+            include_hidden_content: false,
             snap_fired: HashSet::new(),
         }
     }
@@ -328,10 +332,13 @@ impl Engine {
             }
         }
 
-        // Append hidden content section so agents know what's hidden on the page
-        let hidden = serialize::collect_hidden_content(&tree);
-        if !hidden.is_empty() {
-            result.push_str(&hidden);
+        // Append hidden content section so agents know what's hidden on the page.
+        // Only when include_hidden_content is enabled (CLI/agent use).
+        if self.include_hidden_content {
+            let hidden = serialize::collect_hidden_content(&tree);
+            if !hidden.is_empty() {
+                result.push_str(&hidden);
+            }
         }
 
         // Drop the immutable borrow before restoring
@@ -421,6 +428,59 @@ impl Engine {
             output
         } else {
             Vec::new()
+        }
+    }
+
+    /// Fire a keyboard event on an element identified by selector.
+    /// Exposed for testing; the main entry point is `handle_send_keys`.
+    pub fn fire_keyboard_event_on(
+        &mut self,
+        selector: &str,
+        event_type: &str,
+        key: &str,
+        code: &str,
+    ) -> Result<(), String> {
+        let node_id = {
+            let tree = self.tree.borrow();
+            crate::dom::find::resolve_selector(&tree, &self.ref_map, selector)
+                .ok_or_else(|| format!("element not found: {}", selector))?
+        };
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.fire_keyboard_event(node_id, event_type, key, code);
+        }
+        Ok(())
+    }
+
+    /// Move input cursor using a key name, on an element identified by selector.
+    /// Exposed for testing; normally called internally by `handle_send_keys`.
+    pub fn move_input_cursor_on(
+        &mut self,
+        selector: &str,
+        key: &str,
+    ) -> Result<(), String> {
+        let node_id = {
+            let tree = self.tree.borrow();
+            crate::dom::find::resolve_selector(&tree, &self.ref_map, selector)
+                .ok_or_else(|| format!("element not found: {}", selector))?
+        };
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.move_input_cursor(node_id, key);
+        }
+        Ok(())
+    }
+
+    /// Get the engine's virtual time in milliseconds since epoch.
+    pub fn virtual_time_ms(&self) -> u64 {
+        match &self.runtime {
+            Some(r) => r.current_time_ms(),
+            None => 0,
+        }
+    }
+
+    /// Set the engine's virtual time in milliseconds since epoch.
+    pub fn set_virtual_time_ms(&mut self, time_ms: u64) {
+        if let Some(r) = &self.runtime {
+            r.set_timer_current_time(time_ms);
         }
     }
 

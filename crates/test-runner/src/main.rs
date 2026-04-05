@@ -135,7 +135,7 @@ fn run_edge(manifest_path: &std::path::Path) {
     }
 }
 
-fn run_regression(manifest_path: &std::path::Path) {
+fn run_regression(manifest_path: &std::path::Path, from: usize) {
     let mut entries = parse_manifest(manifest_path);
     let pass_entries: Vec<usize> = entries
         .iter()
@@ -151,9 +151,15 @@ fn run_regression(manifest_path: &std::path::Path) {
         return;
     }
 
+    // --from is 1-based test number; skip_count converts to 0-based index into pass_entries
+    let skip_count = if from > 0 { from - 1 } else { 0 };
+    if skip_count > 0 {
+        println!("skipping to test {}...", from);
+    }
+
     println!("checking {} PASS tests for regressions...", total_pass);
 
-    for (check_num, &idx) in pass_entries.iter().enumerate() {
+    for (check_num, &idx) in pass_entries.iter().enumerate().skip(skip_count) {
         let test_path = entries[idx].path.clone();
 
         let result = run_single_test(&test_path);
@@ -566,6 +572,7 @@ fn main_inner() {
     let default_manifest = workspace_root().join("tests/manifest.txt");
     let mut manifest_path = default_manifest;
     let mut mode = "edge";
+    let mut from: usize = 0;
 
     let mut i = 1;
     while i < args.len() {
@@ -580,6 +587,10 @@ fn main_inner() {
             "--discover" => {
                 mode = "discover";
             }
+            "--from" => {
+                i += 1;
+                from = args[i].parse().expect("--from requires a number");
+            }
             "--help" | "-h" => {
                 println!("Usage: wpt-runner [OPTIONS]");
                 println!();
@@ -587,6 +598,7 @@ fn main_inner() {
                 println!("  --manifest <path>  Path to manifest file (default: tests/manifest.txt)");
                 println!("  --discover         Discover cargo + WPT tests, append new as NOT_RUN");
                 println!("  --regression       Re-run PASS tests, stop on first failure");
+                println!("  --from <N>         Skip to test number N (1-based, works with --regression)");
                 println!("  (default)          Run the edge test (first non-PASS)");
                 return;
             }
@@ -600,7 +612,7 @@ fn main_inner() {
 
     match mode {
         "discover" => run_discover(&manifest_path),
-        "regression" => run_regression(&manifest_path),
+        "regression" => run_regression(&manifest_path, from),
         _ => run_edge(&manifest_path),
     }
 }

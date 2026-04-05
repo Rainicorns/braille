@@ -265,6 +265,7 @@ dependencies = [
  "braille-engine",
  "braille-wire",
  "clap",
+ "getrandom 0.2.17",
  "reqwest",
  "serde",
  "serde_json",

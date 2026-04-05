@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
 use braille_engine::Engine;
@@ -25,8 +23,10 @@ impl Default for Session {
 #[cfg(test)]
 impl Session {
     pub fn new() -> Self {
+        let mut engine = Engine::new();
+        engine.include_hidden_content = true;
         Session {
-            engine: Engine::new(),
+            engine,
             current_url: None,
             history: Vec::new(),
             history_index: None,
@@ -127,18 +127,14 @@ impl SessionManager {
     }
 }
 
-/// Generate a unique session ID.
+/// Generate a unique session ID with 128 bits of cryptographic randomness.
 ///
-/// Format: "sess_" + 8 hex characters derived from current timestamp.
-///
-/// DESIGN NOTE: Uses SystemTime for uniqueness. In a multi-threaded daemon,
-/// this could have collisions. For now, CLI is single-threaded so this is safe.
-/// A production implementation should use a proper UUID library or atomic counter.
+/// Format: "sess_" + 32 hex characters (128 bits from OS CSPRNG).
 pub fn generate_session_id() -> String {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    format!("sess_{:08x}", ((now as u64).wrapping_add(count) & 0xFFFFFFFF) as u32)
+    let mut buf = [0u8; 16];
+    getrandom::getrandom(&mut buf).expect("failed to generate random bytes for session ID");
+    let hex: String = buf.iter().map(|b| format!("{:02x}", b)).collect();
+    format!("sess_{}", hex)
 }
 
 #[cfg(test)]
@@ -152,8 +148,26 @@ mod tests {
 
         assert!(id1.starts_with("sess_"));
         assert!(id2.starts_with("sess_"));
-        assert_eq!(id1.len(), 13); // "sess_" (5) + 8 hex chars
         assert_ne!(id1, id2, "consecutive IDs should be different");
+    }
+
+    #[test]
+    fn session_id_has_sufficient_entropy() {
+        let id = generate_session_id();
+        let hex_part = &id["sess_".len()..];
+        // 128 bits of entropy = 32 hex chars minimum
+        assert!(
+            hex_part.len() >= 32,
+            "session ID hex portion should be at least 32 chars (128 bits) but got {} chars: {}",
+            hex_part.len(),
+            hex_part
+        );
+        // Verify it's actually valid hex
+        assert!(
+            hex_part.chars().all(|c| c.is_ascii_hexdigit()),
+            "session ID hex portion should be valid hex: {}",
+            hex_part
+        );
     }
 
     #[test]

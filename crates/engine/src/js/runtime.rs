@@ -10,6 +10,28 @@ use crate::dom::NodeId;
 use super::module_loader::{self, SharedModuleRegistry, BrailleResolver, BrailleLoader};
 use super::state::EngineState;
 
+/// Escape a string for safe interpolation into a JS single-quoted string literal.
+/// Prevents injection attacks by escaping characters that could break out of the string.
+fn escape_js_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            // Unicode line/paragraph separators can break JS string literals
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 thread_local! {
     static PENDING_REJECTIONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
@@ -546,9 +568,9 @@ impl JsRuntime {
                 }}));
             }})()"#,
             nid = node_id,
-            etype = event_type,
-            key = key,
-            code = code,
+            etype = escape_js_string(event_type),
+            key = escape_js_string(key),
+            code = escape_js_string(code),
         );
         self.eval_or_log(&js);
         self.flush_jobs();
@@ -569,13 +591,13 @@ impl JsRuntime {
                 if (t !== 'INPUT' && t !== 'TEXTAREA') return;
                 var val = el.value || '';
                 var pos = el.selectionStart;
-                if ('{key}' === 'ArrowRight') {{
+                if ('{escaped_key}' === 'ArrowRight') {{
                     if (pos < val.length) pos++;
-                }} else if ('{key}' === 'ArrowLeft') {{
+                }} else if ('{escaped_key}' === 'ArrowLeft') {{
                     if (pos > 0) pos--;
-                }} else if ('{key}' === 'Home') {{
+                }} else if ('{escaped_key}' === 'Home') {{
                     pos = 0;
-                }} else if ('{key}' === 'End') {{
+                }} else if ('{escaped_key}' === 'End') {{
                     pos = val.length;
                 }}
                 el.selectionStart = pos;
@@ -592,7 +614,7 @@ impl JsRuntime {
                 }}
             }})()"#,
             nid = node_id,
-            key = key,
+            escaped_key = escape_js_string(key),
         );
         self.eval_or_log(&js);
         self.flush_jobs();
@@ -611,7 +633,7 @@ impl JsRuntime {
                     }}));
                 }})()"#,
                 nid = node_id,
-                etype = event_type,
+                etype = escape_js_string(event_type),
             );
             self.eval_or_log(&js);
         }

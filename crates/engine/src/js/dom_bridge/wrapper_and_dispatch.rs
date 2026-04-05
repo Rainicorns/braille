@@ -593,18 +593,22 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             el.click();
         };
 
-        // Fire load event on <link> elements (CSS, prefetch, etc.)
+        // Unified link load event firing.  dispatchEvent already invokes on<type>
+        // handlers via fireOnHandler, so we never call node.onload() manually.
+        globalThis.__braille_fire_link_load = function(node) {
+            if (!node || node.__linkLoadFired) return;
+            node.__linkLoadFired = true;
+            node.dispatchEvent(new Event('load'));
+        };
+
+        // Schedule a deferred link load for dynamically-inserted <link> elements.
         // We don't actually load CSS, but frameworks need the onload to resolve promises.
         globalThis.__braille_maybe_load_link = function(node) {
             if (!node || node.tagName !== 'LINK') return;
             var rel = node.rel || node.getAttribute('rel') || '';
             if (rel === 'stylesheet' || rel === 'prefetch' || rel === 'preload') {
-                setTimeout(function() {
-                    if (typeof node.onload === 'function') {
-                        node.onload({type: 'load', target: node});
-                    }
-                    node.dispatchEvent(new Event('load'));
-                }, 0);
+                node.__linkLoadScheduled = true;
+                setTimeout(function() { __braille_fire_link_load(node); }, 0);
             }
         };
 
@@ -645,16 +649,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     (0, eval)(code);
                     document.currentScript = null;
                     __braille_script_log.push('OK: ' + shortSrc);
-                    if (typeof node.onload === 'function') {
-                        node.onload({type: 'load', target: node});
-                    }
                     node.dispatchEvent(new Event('load'));
                 }).catch(function(err) {
                     document.currentScript = null;
                     __braille_script_log.push('ERR: ' + shortSrc + ' -> ' + String(err).substring(0, 100));
-                    if (typeof node.onerror === 'function') {
-                        node.onerror({type: 'error', target: node, message: String(err)});
-                    }
                     node.dispatchEvent(new Event('error'));
                 });
             } else {
@@ -702,6 +700,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         EP.appendChild = function(child) {
             if (child === null || child === undefined || (typeof child === 'object' && child.__nid === undefined && child.nodeType === undefined)) {
                 throw new TypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.");
+            }
+            // Attr nodes (nodeType 2) cannot be inserted as children per DOM spec
+            if (child && child.nodeType === 2) {
+                throw new DOMException("Cannot insert an Attr node", "HierarchyRequestError");
             }
             // CharacterData nodes (Text=3, PI=7, Comment=8) cannot have children
             var pnt = this.nodeType;

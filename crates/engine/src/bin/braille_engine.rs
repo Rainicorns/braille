@@ -33,8 +33,10 @@ struct Session {
 
 impl Session {
     fn new() -> Self {
+        let mut engine = Engine::new();
+        engine.include_hidden_content = true;
         Session {
-            engine: Engine::new(),
+            engine,
             history: Vec::new(),
             history_index: None,
             workers: HashMap::new(),

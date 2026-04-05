@@ -823,7 +823,8 @@ fn html_element_properties() {
     assert!(snap.contains("lang=en-US"), "lang: {}", snap);
     assert!(snap.contains("dir=ltr"), "dir: {}", snap);
     assert!(snap.contains("titleAttr=My tooltip"), "title attr: {}", snap);
-    assert!(snap.contains("rectW=0"), "rect width: {}", snap);
+    // A <div> is a block element — width is viewport width (1280), height 0 for empty div
+    assert!(snap.contains("rectW=1280"), "rect width: {}", snap);
     assert!(snap.contains("rectH=0"), "rect height: {}", snap);
     assert!(snap.contains("focusBlur=ok"), "focus/blur: {}", snap);
     assert!(snap.contains("clickEvent=click"), "click event: {}", snap);

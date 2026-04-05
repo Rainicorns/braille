@@ -44,9 +44,18 @@ impl Engine {
             .unwrap_or("/")
             .to_string();
 
+        let now_ms = if let Some(runtime) = &self.runtime {
+            runtime.current_time_ms() as f64
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as f64
+        };
+
         for (name, value) in headers {
             if name.eq_ignore_ascii_case("set-cookie") {
-                if let Some(cookie) = parse_set_cookie(value, &default_domain, &default_path) {
+                if let Some(cookie) = parse_set_cookie(value, &default_domain, &default_path, now_ms) {
                     // Remove any existing cookie with same name+domain+path
                     self.http_cookie_jar.retain(|c| {
                         !(c.name == cookie.name && c.domain == cookie.domain && c.path == cookie.path)
@@ -78,10 +87,14 @@ impl Engine {
         };
         let req_domain = parsed.host_str().unwrap_or("");
         let req_path = parsed.path();
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as f64;
+        let now_ms = if let Some(runtime) = &self.runtime {
+            runtime.current_time_ms() as f64
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as f64
+        };
 
         // Also collect cookies that were set via JS
         let js_cookie_string = if let Some(runtime) = &mut self.runtime {
@@ -93,22 +106,28 @@ impl Engine {
         let mut parts: Vec<String> = Vec::new();
         let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        // HTTP jar cookies (including HttpOnly)
+        // HTTP jar cookies (including HttpOnly).
+        // We track ALL cookie names from the jar (even skipped ones) in seen_names
+        // to prevent them from being re-added via the JS cookie string path.
         for cookie in &self.http_cookie_jar {
-            if let Some(exp) = cookie.expires_ms {
-                if exp < now_ms {
-                    continue;
-                }
-            }
             if !domain_matches(req_domain, &cookie.domain) {
                 continue;
             }
             if !req_path.starts_with(&cookie.path) {
                 continue;
             }
+            // Always record the name so JS cookies don't bypass expiry/Secure checks
+            seen_names.insert(cookie.name.clone());
+            if let Some(exp) = cookie.expires_ms {
+                if exp < now_ms {
+                    continue;
+                }
+            }
+            if cookie.secure && parsed.scheme() != "https" {
+                continue;
+            }
 
             parts.push(format!("{}={}", cookie.name, cookie.value));
-            seen_names.insert(cookie.name.clone());
         }
 
         // JS-set cookies not already in the HTTP jar
@@ -142,7 +161,7 @@ fn sync_cookies_to_runtime(http_cookie_jar: &[StoredCookie], runtime: &mut JsRun
 }
 
 /// Parse a single Set-Cookie header value into a StoredCookie.
-fn parse_set_cookie(header: &str, default_domain: &str, default_path: &str) -> Option<StoredCookie> {
+fn parse_set_cookie(header: &str, default_domain: &str, default_path: &str, now_ms: f64) -> Option<StoredCookie> {
     let parts: Vec<&str> = header.split(';').collect();
     let first = parts.first()?.trim();
     let eq_pos = first.find('=')?;
@@ -173,11 +192,7 @@ fn parse_set_cookie(header: &str, default_domain: &str, default_path: &str) -> O
             path = part.trim()[5..].trim().to_string();
         } else if lower.starts_with("max-age=") {
             if let Ok(secs) = part.trim()[8..].trim().parse::<f64>() {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as f64;
-                expires_ms = Some(now + secs * 1000.0);
+                expires_ms = Some(now_ms + secs * 1000.0);
             }
         } else if lower.starts_with("expires=") {
             let date_str = part.trim()[8..].trim();

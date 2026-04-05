@@ -35,10 +35,11 @@ fn link_appendchild_triggers_maybe_load() {
 </body></html>"#;
 
     let js = r#"
+window.__linkCalls = [];
+window.__linkFired = false;
 var origFn = __braille_maybe_load_link;
-var calls = [];
 __braille_maybe_load_link = function(node) {
-    calls.push(node ? (node.tagName + ':' + node.getAttribute('rel')) : 'null');
+    window.__linkCalls.push(node ? (node.tagName + ':' + node.getAttribute('rel')) : 'null');
     origFn(node);
 };
 
@@ -46,11 +47,9 @@ var link = document.createElement('link');
 link.setAttribute('rel', 'stylesheet');
 link.setAttribute('href', '/test.css');
 link.onload = function() {
-    document.getElementById('out').textContent = 'fired';
+    window.__linkFired = true;
 };
 document.head.appendChild(link);
-
-document.getElementById('out').textContent = 'calls=' + calls.join(',');
 "#;
 
     let mut engine = Engine::new();
@@ -60,11 +59,13 @@ document.getElementById('out').textContent = 'calls=' + calls.join(',');
     let e = engine.execute_scripts_lossy(&d, &FetchedResources::scripts_only(scripts));
     assert!(e.is_empty(), "{e:?}");
 
-    let r = engine.eval_js("document.getElementById('out').textContent").unwrap();
-    assert!(r.contains("LINK:stylesheet"), "should call __braille_maybe_load_link with LINK, got: {r}");
+    // Verify __braille_maybe_load_link was called with the LINK element
+    let calls = engine.eval_js("window.__linkCalls.join(',')").unwrap();
+    assert!(calls.contains("LINK:stylesheet"), "should call __braille_maybe_load_link with LINK, got: {calls}");
 
+    // onload fires via setTimeout(0) — may have already fired during execute_scripts_lossy's
+    // load cycle, or will fire on settle. Either way it must be true after settle.
     engine.settle();
-
-    let r2 = engine.eval_js("document.getElementById('out').textContent").unwrap();
-    assert_eq!(r2, "fired", "onload should fire after settle, got: {r2}");
+    let fired = engine.eval_js("window.__linkFired").unwrap();
+    assert_eq!(fired, "true", "onload should have fired");
 }

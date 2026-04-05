@@ -1544,34 +1544,8 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             }
         });
 
-        // Value descriptors on HTML*Element prototypes for React's inputValueTracking.
-        // React uses node.constructor.prototype to find native get/set for 'value'
-        // and 'checked'. These must exist so React can set up change detection.
-        var _valDesc = {
-            get: function() {
-                if (this.__props && this.__props._value !== undefined) return this.__props._value;
-                if (this.tagName === 'TEXTAREA') return this.textContent || '';
-                return (this.getAttribute && this.getAttribute('value')) || '';
-            },
-            set: function(v) {
-                if (!this.__props) this.__props = {};
-                var s = String(v);
-                if (this.getAttribute) {
-                    var ml = this.getAttribute('maxlength');
-                    if (ml !== null) { var n = parseInt(ml, 10); if (!isNaN(n) && n >= 0 && s.length > n) s = s.substring(0, n); }
-                }
-                this.__props._value = s;
-                if (this.tagName === 'TEXTAREA' && this.__nid !== undefined) {
-                    __n_setTextContent(this.__nid, s);
-                } else if (this.__nid !== undefined) {
-                    __n_setAttribute(this.__nid, 'value', s);
-                }
-            },
-            configurable: true,
-        };
-        Object.defineProperty(HTMLInputElement.prototype, 'value', _valDesc);
-        Object.defineProperty(HTMLTextAreaElement.prototype, 'value', _valDesc);
-        Object.defineProperty(HTMLSelectElement.prototype, 'value', _valDesc);
+        // value property is defined with full logic in element_prototype.rs on ElemProto.
+        // Do not duplicate here — stubs would shadow the proper implementation.
 
         // HTMLSelectElement: add(), remove(), options, selectedIndex, length
         HTMLSelectElement.prototype.add = function(element, before) {
@@ -1607,15 +1581,15 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             get: function() {
                 var opts = this.querySelectorAll('option');
                 for (var i = 0; i < opts.length; i++) {
-                    if (opts[i].selected || opts[i].hasAttribute('selected')) return i;
+                    if (opts[i].selected) return i;
                 }
                 return opts.length > 0 ? 0 : -1;
             },
             set: function(idx) {
                 var opts = this.querySelectorAll('option');
                 for (var i = 0; i < opts.length; i++) {
-                    if (i === idx) { opts[i].selected = true; opts[i].setAttribute('selected', ''); }
-                    else { opts[i].selected = false; opts[i].removeAttribute('selected'); }
+                    if (!opts[i].__props) opts[i].__props = {};
+                    opts[i].__props._selected = (i === idx);
                 }
             },
             configurable: true,
@@ -1745,10 +1719,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         __reflectBool(HTMLButtonElement.prototype, 'disabled', 'disabled');
         __reflectAttr(HTMLButtonElement.prototype, 'name', 'name');
         __reflectAttr(HTMLButtonElement.prototype, 'value', 'value');
-        Object.defineProperty(HTMLButtonElement.prototype, 'form', {
-            get: function() { return this.closest ? this.closest('form') : null; },
-            configurable: true, enumerable: true,
-        });
+        // form getter is defined with form-attribute lookup in form_bindings.rs — do not duplicate here
 
         // --- HTMLFormElement ---
         __reflectAttr(HTMLFormElement.prototype, 'action', 'action');
@@ -1758,21 +1729,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             configurable: true, enumerable: true,
         });
         __reflectAttr(HTMLFormElement.prototype, 'target', 'target');
-        Object.defineProperty(HTMLFormElement.prototype, 'enctype', {
-            get: function() { return this.getAttribute('enctype') || 'application/x-www-form-urlencoded'; },
-            set: function(v) { this.setAttribute('enctype', String(v)); },
-            configurable: true, enumerable: true,
-        });
-        Object.defineProperty(HTMLFormElement.prototype, 'elements', {
-            get: function() { return this.querySelectorAll('input,select,textarea,button,fieldset,output'); },
-            configurable: true, enumerable: true,
-        });
-        Object.defineProperty(HTMLFormElement.prototype, 'length', {
-            get: function() { return this.querySelectorAll('input,select,textarea,button,fieldset,output').length; },
-            configurable: true, enumerable: true,
-        });
-        HTMLFormElement.prototype.submit = function() {};
-        HTMLFormElement.prototype.reset = function() {};
+        // enctype, elements, length, submit, reset are defined with proper logic in form_bindings.rs — do not duplicate here
 
         // --- HTMLLabelElement ---
         Object.defineProperty(HTMLLabelElement.prototype, 'htmlFor', {
@@ -1802,10 +1759,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         __reflectBool(HTMLInputElement.prototype, 'disabled', 'disabled');
         __reflectAttr(HTMLInputElement.prototype, 'placeholder', 'placeholder');
         __reflectBool(HTMLInputElement.prototype, 'required', 'required');
-        Object.defineProperty(HTMLInputElement.prototype, 'form', {
-            get: function() { return this.closest ? this.closest('form') : null; },
-            configurable: true, enumerable: true,
-        });
+        // form getter is defined with form-attribute lookup in form_bindings.rs — do not duplicate here
         Object.defineProperty(HTMLInputElement.prototype, 'defaultValue', {
             get: function() { return this.getAttribute('value') || ''; },
             set: function(v) { this.setAttribute('value', String(v)); },
@@ -1827,11 +1781,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             set: function(v) { this.setAttribute('cols', String(v)); },
             configurable: true, enumerable: true,
         });
-        Object.defineProperty(HTMLTextAreaElement.prototype, 'defaultValue', {
-            get: function() { return this.getAttribute('value') || ''; },
-            set: function(v) { this.setAttribute('value', String(v)); },
-            configurable: true, enumerable: true,
-        });
+        // defaultValue for textarea is defined with textContent logic in element_prototype.rs — do not duplicate here
 
         // --- HTMLCanvasElement ---
         Object.defineProperty(HTMLCanvasElement.prototype, 'width', {

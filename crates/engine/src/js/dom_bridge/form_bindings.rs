@@ -93,9 +93,8 @@ pub(crate) fn form_bindings_js() -> &'static str {
         ElemProto.reportValidity = function() { return this.checkValidity(); };
 
         // elements property for <form>: returns live HTMLFormControlsCollection
-        Object.defineProperty(ElemProto, 'elements', {
+        Object.defineProperty(HTMLFormElement.prototype, 'elements', {
             get: function() {
-                if (this.tagName !== 'FORM') return undefined;
                 var self = this;
                 return new Proxy([], {
                     get: function(t, prop) {
@@ -140,6 +139,12 @@ pub(crate) fn form_bindings_js() -> &'static str {
             configurable: true
         });
 
+        // length property for <form>: number of form controls
+        Object.defineProperty(HTMLFormElement.prototype, 'length', {
+            get: function() { return this.elements.length; },
+            configurable: true
+        });
+
         // action/method properties for all elements (meaningful on <form>)
         Object.defineProperty(ElemProto, 'action', {
             get: function() { return this.getAttribute('action') || ''; },
@@ -153,7 +158,8 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // enctype property (defaults to "application/x-www-form-urlencoded", validates values)
-        Object.defineProperty(ElemProto, 'enctype', {
+        // Defined on HTMLFormElement.prototype so it isn't shadowed by stubs.
+        Object.defineProperty(HTMLFormElement.prototype, 'enctype', {
             get: function() {
                 var v = (this.getAttribute('enctype') || '').toLowerCase();
                 if (v === 'application/x-www-form-urlencoded' || v === 'multipart/form-data' || v === 'text/plain') return v;
@@ -164,7 +170,7 @@ pub(crate) fn form_bindings_js() -> &'static str {
         });
 
         // encoding property (alias for enctype per spec)
-        Object.defineProperty(ElemProto, 'encoding', {
+        Object.defineProperty(HTMLFormElement.prototype, 'encoding', {
             get: function() { return this.enctype; },
             set: function(v) { this.enctype = v; },
             configurable: true

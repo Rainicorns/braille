@@ -1,3 +1,5 @@
+use std::net::ToSocketAddrs;
+
 use reqwest::blocking::Client;
 
 /// Response from a network fetch.
@@ -43,6 +45,7 @@ impl NetworkClient {
         let resolved = self.resolve_url(url);
         let mut current_url = url::Url::parse(&resolved)
             .map_err(|e| format!("invalid URL {resolved}: {e}"))?;
+        reject_private_url(&current_url)?;
         let mut accumulated_cookies: Vec<String> = Vec::new();
 
         for _ in 0..10 {
@@ -72,6 +75,7 @@ impl NetworkClient {
                     if current_url.scheme() == "https" && next.scheme() == "http" {
                         let _ = next.set_scheme("https");
                     }
+                    reject_private_url(&next)?;
                     current_url = next;
                     continue;
                 }
@@ -154,6 +158,7 @@ impl NetworkClient {
         let resolved = self.resolve_url(url);
         let mut current_url = url::Url::parse(&resolved)
             .map_err(|e| format!("invalid URL {resolved}: {e}"))?;
+        reject_private_url(&current_url)?;
         let initial_origin = origin_of(current_url.as_str());
         let mut current_method = method.to_uppercase();
         let mut current_body: Option<String> = body.map(|s| s.to_string());
@@ -224,6 +229,7 @@ impl NetworkClient {
                     if current_url.scheme() == "https" && next.scheme() == "http" {
                         let _ = next.set_scheme("https");
                     }
+                    reject_private_url(&next)?;
                     current_url = next;
                     if (301..=303).contains(&status) {
                         current_method = "GET".to_string();
@@ -256,6 +262,65 @@ impl NetworkClient {
     /// Update the base URL (typically after navigation).
     pub fn set_base_url(&mut self, url: &str) {
         self.base_url = Some(url.to_string());
+    }
+}
+
+/// Check if a URL resolves to a private/internal IP address (SSRF protection).
+/// Resolves DNS and rejects loopback, private (RFC 1918), link-local, and
+/// other non-globally-routable addresses.
+fn reject_private_url(url: &url::Url) -> Result<(), String> {
+    let host = url.host_str().unwrap_or("");
+    let port = url.port_or_known_default().unwrap_or(80);
+
+    let addr_str = format!("{}:{}", host, port);
+    let addrs: Vec<std::net::SocketAddr> = addr_str
+        .to_socket_addrs()
+        .map_err(|e| format!("DNS resolution failed for {}: {}", host, e))?
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(format!("DNS resolution returned no addresses for {}", host));
+    }
+
+    for addr in &addrs {
+        let ip = addr.ip();
+        if is_private_ip(&ip) {
+            return Err(format!(
+                "blocked request to private/internal address {} (resolved from {})",
+                ip, host
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Returns true if an IP address is private, loopback, link-local, or otherwise
+/// not globally routable.
+fn is_private_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()           // 127.0.0.0/8
+            || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+            || v4.is_link_local()      // 169.254.0.0/16
+            || v4.is_broadcast()       // 255.255.255.255
+            || v4.is_unspecified()     // 0.0.0.0
+            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64  // 100.64.0.0/10 (CGNAT)
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()           // ::1
+            || v6.is_unspecified()     // ::
+            // Check for IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+            || if let Some(v4) = v6.to_ipv4_mapped() {
+                is_private_ip(&std::net::IpAddr::V4(v4))
+            } else {
+                false
+            }
+            // Unique local addresses (fc00::/7)
+            || (v6.segments()[0] & 0xfe00) == 0xfc00
+            // Link-local (fe80::/10)
+            || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
     }
 }
 

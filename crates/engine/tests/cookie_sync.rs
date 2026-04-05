@@ -87,6 +87,49 @@ fn document_cookie_httponly_not_readable_in_js() {
 }
 
 #[test]
+fn secure_cookie_not_sent_over_http() {
+    let mut e = Engine::new();
+    // Inject a Secure cookie from an HTTPS URL
+    e.inject_response_cookies("https://example.com/login", &[
+        ("Set-Cookie".to_string(), "token=secret; Path=/; Secure".to_string()),
+        ("Set-Cookie".to_string(), "theme=dark; Path=/".to_string()),
+    ]);
+    e.load_html("<html><body></body></html>");
+
+    // Requesting over HTTPS should include both cookies
+    let https_cookies = e.get_cookies_for_url("https://example.com/api");
+    assert!(https_cookies.contains("token=secret"), "Secure cookie should be sent over HTTPS: {}", https_cookies);
+    assert!(https_cookies.contains("theme=dark"), "Non-secure cookie should be sent over HTTPS: {}", https_cookies);
+
+    // Requesting over HTTP should NOT include the Secure cookie
+    let http_cookies = e.get_cookies_for_url("http://example.com/api");
+    assert!(!http_cookies.contains("token=secret"), "Secure cookie must NOT be sent over HTTP: {}", http_cookies);
+    assert!(http_cookies.contains("theme=dark"), "Non-secure cookie should still be sent over HTTP: {}", http_cookies);
+}
+
+#[test]
+fn cookie_expiry_uses_virtual_time() {
+    let mut e = Engine::new();
+    // Load HTML first so the runtime exists and virtual time is used
+    e.load_html("<html><body></body></html>");
+
+    // Virtual time starts at 0. Set a cookie with Max-Age=1 (expires at virtual time 1000ms)
+    e.inject_response_cookies("https://example.com/", &[
+        ("Set-Cookie".to_string(), "sess=abc; Path=/; Max-Age=1".to_string()),
+    ]);
+
+    // Cookie should be present immediately (virtual time is 0, expiry is 1000)
+    let cookies = e.get_cookies_for_url("https://example.com/api");
+    assert!(cookies.contains("sess=abc"), "cookie should be present before expiry: {}", cookies);
+
+    // Advance virtual clock past expiry
+    e.set_virtual_time_ms(2000);
+
+    let cookies = e.get_cookies_for_url("https://example.com/api");
+    assert!(!cookies.contains("sess=abc"), "cookie should be expired after advancing virtual time: {}", cookies);
+}
+
+#[test]
 fn document_cookie_delete_via_max_age_zero() {
     let mut e = engine_with_html("<html><body></body></html>");
     e.eval_js(r#"document.cookie = "temp=value""#).unwrap();

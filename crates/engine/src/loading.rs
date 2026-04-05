@@ -525,17 +525,16 @@ impl Engine {
                 var links = document.querySelectorAll('link[rel="stylesheet"], link[rel="preload"], link[rel="prefetch"]');
                 for (var i = 0; i < links.length; i++) {
                     var link = links[i];
-                    // Handle onload as HTML attribute (e.g. onload="deferCss.cssLoaded(this, true)")
+                    // Skip links whose load was already scheduled by __braille_maybe_load_link (dynamic insertion)
+                    if (link.__linkLoadScheduled) continue;
+                    // Compile onload HTML attribute into an IDL handler so dispatchEvent can invoke it
                     if (!link.onload || typeof link.onload !== 'function') {
                         var attrVal = link.getAttribute('onload');
                         if (attrVal) {
                             link.onload = new Function('event', attrVal);
                         }
                     }
-                    if (typeof link.onload === 'function') {
-                        try { link.onload({type: 'load', target: link}); } catch(e) {}
-                    }
-                    link.dispatchEvent(new Event('load'));
+                    __braille_fire_link_load(link);
                 }
             })();
         "#);
