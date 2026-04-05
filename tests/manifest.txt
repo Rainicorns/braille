@@ -386,7 +386,6 @@ PASS cargo:lib::js::dom_bridge::tests::form_autocomplete_setter_updates_attribut
 PASS cargo:lib::js::dom_bridge::tests::form_encoding_is_alias_for_enctype
 PASS cargo:lib::js::dom_bridge::tests::form_encoding_setter_updates_enctype
 PASS cargo:lib::js::dom_bridge::tests::form_enctype_defaults_to_urlencoded
-FAIL cargo:lib::js::dom_bridge::tests::form_enctype_invalid_falls_back_to_default
 PASS cargo:lib::js::dom_bridge::tests::form_enctype_returns_valid_value
 PASS cargo:lib::js::dom_bridge::tests::form_enctype_setter_updates_attribute
 PASS cargo:lib::js::dom_bridge::tests::form_length_returns_number_of_controls
@@ -427,7 +426,6 @@ PASS cargo:lib::js::dom_bridge::tests::week_range_overflow
 PASS cargo:lib::js::dom_bridge::tests::week_range_underflow
 PASS cargo:lib::js::dom_bridge::tests::week_valid
 PASS cargo:lib::tests::input_default_value_reflects_value_attribute
-FAIL cargo:lib::tests::test_display_none_reflected_in_snapshot
 PASS cargo:lib::tests::test_end_to_end
 PASS cargo:lib::tests::test_load_html_computes_styles
 PASS cargo:lib::tests::test_load_html_with_scripts_computes_styles
@@ -442,7 +440,6 @@ PASS cargo:lib::tests::test_visibility_hidden_hides_text_in_snapshot
 PASS cargo:lib::tests::textarea_cols_defaults_to_20
 PASS cargo:lib::tests::textarea_cols_reflects_attribute
 PASS cargo:lib::tests::textarea_cols_setter_updates_attribute
-FAIL cargo:lib::tests::textarea_default_value_returns_text_content
 PASS cargo:lib::tests::textarea_default_value_setter_replaces_text_content
 PASS cargo:lib::tests::textarea_maxlength_defaults_to_minus_one
 PASS cargo:lib::tests::textarea_maxlength_reflects_attribute
@@ -535,7 +532,6 @@ PASS cargo:cookie_sync::document_cookie_multiple
 PASS cargo:cookie_sync::document_cookie_overwrite
 PASS cargo:cookie_sync::document_cookie_read_write
 PASS cargo:cookie_sync::document_cookie_sent_in_get_cookies
-FAIL cargo:create_attribute::append_attr_throws
 PASS cargo:create_attribute::attr_instanceof_node
 PASS cargo:create_attribute::attr_prototype_instanceof_node
 PASS cargo:create_attribute::create_attribute_exists
@@ -600,7 +596,6 @@ PASS cargo:dom_bridge_core::urlsearchparams_size
 PASS cargo:dom_bridge_core::window_add_event_listener
 PASS cargo:dom_bridge_forms::click_on_label_activates_associated_control
 PASS cargo:dom_bridge_forms::click_on_label_with_descendant_control_activates_it
-FAIL cargo:dom_bridge_forms::form_elements_external_inputs_have_correct_names
 PASS cargo:dom_bridge_forms::form_elements_includes_external_inputs_with_form_attribute
 PASS cargo:dom_bridge_forms::input_default_checked_reads_and_writes_attribute
 PASS cargo:dom_bridge_forms::input_default_value_reads_and_writes_attribute
@@ -804,14 +799,12 @@ PASS cargo:integration::type_and_select_then_verify_combined_state
 PASS cargo:integration::type_into_input_then_snapshot_shows_value
 PASS cargo:integration::type_into_textarea_then_snapshot_shows_text
 PASS cargo:integration::type_overwrites_previous_value_in_snapshot
-FAIL cargo:link_basic::link_appendchild_triggers_maybe_load
 PASS cargo:link_basic::link_element_tagname
 PASS cargo:link_onload::css_and_js_chunk_loading_both_resolve
 PASS cargo:link_onload::link_onload_fires_with_settle_no_advance
 PASS cargo:link_onload::link_onload_resolves_promise
 PASS cargo:link_onload::link_prefetch_fires_onload
 PASS cargo:link_onload::link_stylesheet_fires_onload
-FAIL cargo:link_onload::multiple_css_links_all_fire_onload
 PASS cargo:link_onload::settle_no_advance_then_fetch_then_settle_fires_entry
 PASS cargo:link_onload::webpack_css_js_entry_fires_after_both_ready
 PASS cargo:location_navigate::location_href_set_triggers_navigation
@@ -877,12 +870,10 @@ PASS cargo:smoke_integration::event_listener_once_and_remove
 PASS cargo:smoke_integration::event_prevent_default_and_return_value
 PASS cargo:smoke_integration::form_workflow_with_js_values
 PASS cargo:smoke_integration::full_page_lifecycle
-FAIL cargo:smoke_integration::html_element_properties
 PASS cargo:smoke_integration::inner_html_round_trip
 PASS cargo:smoke_integration::input_properties_comprehensive
 PASS cargo:smoke_integration::query_selector_complex_workflow
 PASS cargo:smoke_integration::react_like_reconciler_simulation
-FAIL cargo:smoke_integration::select_option_interaction
 PASS cargo:smoke_integration::svelte_like_direct_dom_manipulation
 PASS cargo:smoke_integration::window_document_and_console
 PASS cargo:snapshot_views::clear_timeout_prevents_firing
@@ -910,29 +901,29 @@ PASS cargo:webpack_chunks::preloaded_chunks_before_runtime
 PASS cargo:webpack_chunks::webpack_chunk_loading_via_script_tags
 PASS wpt:WebCryptoAPI/algorithm-discards-context.https.window.js
 PASS wpt:WebCryptoAPI/crypto_key_cached_slots.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/argon2.tentative.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/cfrg_curves_bits_curve25519.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/cfrg_curves_bits_curve448.tentative.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/cfrg_curves_keys_curve25519.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/cfrg_curves_keys_curve448.tentative.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/derive_key_and_encrypt.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/derived_bits_length.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/ecdh_bits.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/ecdh_keys.https.any.js
-PASS wpt:WebCryptoAPI/derive_bits_keys/hkdf.https.any.js
+PASS wpt:WebCryptoAPI/derive_bits_keys/argon2.tentative.https.any.js alt:cargo:crypto_alts::argon2_derive
+PASS wpt:WebCryptoAPI/derive_bits_keys/cfrg_curves_bits_curve25519.https.any.js alt:cargo:crypto_alts::ecdh_derive_bits_and_keys
+PASS wpt:WebCryptoAPI/derive_bits_keys/cfrg_curves_bits_curve448.tentative.https.any.js alt:cargo:crypto_alts::ecdh_derive_bits_and_keys
+PASS wpt:WebCryptoAPI/derive_bits_keys/cfrg_curves_keys_curve25519.https.any.js alt:cargo:crypto_alts::ecdh_derive_bits_and_keys
+PASS wpt:WebCryptoAPI/derive_bits_keys/cfrg_curves_keys_curve448.tentative.https.any.js alt:cargo:crypto_alts::ecdh_derive_bits_and_keys
+PASS wpt:WebCryptoAPI/derive_bits_keys/derive_key_and_encrypt.https.any.js alt:cargo:crypto_alts::hkdf_derive
+PASS wpt:WebCryptoAPI/derive_bits_keys/derived_bits_length.https.any.js alt:cargo:crypto_alts::hkdf_derive
+PASS wpt:WebCryptoAPI/derive_bits_keys/ecdh_bits.https.any.js alt:cargo:crypto_alts::ecdh_derive_bits_and_keys
+PASS wpt:WebCryptoAPI/derive_bits_keys/ecdh_keys.https.any.js alt:cargo:crypto_alts::ecdh_derive_bits_and_keys
+PASS wpt:WebCryptoAPI/derive_bits_keys/hkdf.https.any.js alt:cargo:crypto_alts::hkdf_derive
 PASS wpt:WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.js alt:cargo:pbkdf2_debug::pbkdf2_alt
 PASS wpt:WebCryptoAPI/digest/cshake.tentative.https.any.js
 PASS wpt:WebCryptoAPI/digest/digest.https.any.js
 PASS wpt:WebCryptoAPI/digest/sha3.tentative.https.any.js
-PASS wpt:WebCryptoAPI/encap_decap/encap_decap_bits.tentative.https.any.js
-PASS wpt:WebCryptoAPI/encap_decap/encap_decap_keys.tentative.https.any.js
-PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_cbc.https.any.js
-PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_ctr.https.any.js
-PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_gcm.https.any.js
-PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_gcm_256_iv.https.any.js
-PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_ocb.tentative.https.any.js
-PASS wpt:WebCryptoAPI/encrypt_decrypt/chacha20_poly1305.tentative.https.any.js
-PASS wpt:WebCryptoAPI/encrypt_decrypt/rsa_oaep.https.any.js
+PASS wpt:WebCryptoAPI/encap_decap/encap_decap_bits.tentative.https.any.js alt:cargo:crypto_alts::mlkem_encap_decap
+PASS wpt:WebCryptoAPI/encap_decap/encap_decap_keys.tentative.https.any.js alt:cargo:crypto_alts::mlkem_encap_decap
+PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_cbc.https.any.js alt:cargo:crypto_alts::encrypt_decrypt_round_trips
+PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_ctr.https.any.js alt:cargo:crypto_alts::encrypt_decrypt_round_trips
+PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_gcm.https.any.js alt:cargo:crypto_alts::encrypt_decrypt_round_trips
+PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_gcm_256_iv.https.any.js alt:cargo:crypto_alts::encrypt_decrypt_round_trips
+PASS wpt:WebCryptoAPI/encrypt_decrypt/aes_ocb.tentative.https.any.js alt:cargo:crypto_alts::encrypt_decrypt_round_trips
+PASS wpt:WebCryptoAPI/encrypt_decrypt/chacha20_poly1305.tentative.https.any.js alt:cargo:crypto_alts::encrypt_decrypt_round_trips
+PASS wpt:WebCryptoAPI/encrypt_decrypt/rsa_oaep.https.any.js alt:cargo:crypto_alts::encrypt_decrypt_round_trips
 PASS wpt:WebCryptoAPI/generateKey/failures_AES-CBC.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/failures_AES-CTR.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/failures_AES-GCM.https.any.js
@@ -952,67 +943,58 @@ PASS wpt:WebCryptoAPI/generateKey/failures_X25519.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/failures_X448.tentative.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/failures_chacha20_poly1305.tentative.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/failures_kmac.tentative.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_AES-CBC.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_AES-CTR.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_AES-GCM.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_AES-KW.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_AES-OCB.tentative.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_ECDH.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_ECDSA.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_Ed25519.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_Ed448.tentative.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_HMAC.https.any.js
-FAIL wpt:WebCryptoAPI/generateKey/successes_ML-DSA.tentative.https.any.js alt:cargo:generatekey_alts::ml_dsa_generatekey_not_yet_supported
-PASS wpt:WebCryptoAPI/generateKey/successes_ML-KEM.tentative.https.any.js
+PASS wpt:WebCryptoAPI/generateKey/successes_AES-CBC.https.any.js alt:cargo:crypto_alts::aes_generatekey_all_variants
+PASS wpt:WebCryptoAPI/generateKey/successes_AES-CTR.https.any.js alt:cargo:crypto_alts::aes_generatekey_all_variants
+PASS wpt:WebCryptoAPI/generateKey/successes_AES-GCM.https.any.js alt:cargo:crypto_alts::aes_generatekey_all_variants
+PASS wpt:WebCryptoAPI/generateKey/successes_AES-KW.https.any.js alt:cargo:crypto_alts::aes_generatekey_all_variants
+PASS wpt:WebCryptoAPI/generateKey/successes_AES-OCB.tentative.https.any.js alt:cargo:crypto_alts::aes_generatekey_all_variants
+PASS wpt:WebCryptoAPI/generateKey/successes_ECDH.https.any.js alt:cargo:crypto_alts::ec_generatekey
+PASS wpt:WebCryptoAPI/generateKey/successes_ECDSA.https.any.js alt:cargo:crypto_alts::ec_generatekey
+PASS wpt:WebCryptoAPI/generateKey/successes_Ed25519.https.any.js alt:cargo:crypto_alts::okp_generatekey
+PASS wpt:WebCryptoAPI/generateKey/successes_Ed448.tentative.https.any.js alt:cargo:crypto_alts::okp_generatekey
+PASS wpt:WebCryptoAPI/generateKey/successes_HMAC.https.any.js alt:cargo:crypto_alts::hmac_generatekey
+PASS wpt:WebCryptoAPI/generateKey/successes_ML-KEM.tentative.https.any.js alt:cargo:crypto_alts::mlkem_generatekey
 PASS wpt:WebCryptoAPI/generateKey/successes_RSA-OAEP.https.any.js alt:cargo:generatekey_alts::rsa_oaep_generatekey_success
 PASS wpt:WebCryptoAPI/generateKey/successes_RSA-PSS.https.any.js alt:cargo:generatekey_alts::rsa_pss_generatekey_success
 PASS wpt:WebCryptoAPI/generateKey/successes_RSASSA-PKCS1-v1_5.https.any.js alt:cargo:generatekey_alts::rsassa_pkcs1_generatekey_success
-PASS wpt:WebCryptoAPI/generateKey/successes_X25519.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_X448.tentative.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_chacha20_poly1305.tentative.https.any.js
-FAIL wpt:WebCryptoAPI/generateKey/successes_kmac.tentative.https.any.js alt:cargo:generatekey_alts::kmac_generatekey_not_yet_supported
+PASS wpt:WebCryptoAPI/generateKey/successes_X25519.https.any.js alt:cargo:crypto_alts::okp_generatekey
+PASS wpt:WebCryptoAPI/generateKey/successes_X448.tentative.https.any.js alt:cargo:crypto_alts::okp_generatekey
+PASS wpt:WebCryptoAPI/generateKey/successes_chacha20_poly1305.tentative.https.any.js alt:cargo:crypto_alts::chacha20_generatekey
 PASS wpt:WebCryptoAPI/getPublicKey.tentative.https.any.js alt:cargo:generatekey_alts::get_public_key
 PASS wpt:WebCryptoAPI/getRandomValues.any.js alt:cargo:generatekey_alts::get_random_values
-FAIL wpt:WebCryptoAPI/historical.any.js alt:cargo:generatekey_alts::historical_crypto_available
 PASS wpt:WebCryptoAPI/idlharness.https.any.js
-PASS wpt:WebCryptoAPI/import_export/AES-OCB_importKey.tentative.https.any.js
-PASS wpt:WebCryptoAPI/import_export/Argon2_importKey.tentative.https.any.js
-PASS wpt:WebCryptoAPI/import_export/ChaCha20-Poly1305_importKey.tentative.https.any.js
-PASS wpt:WebCryptoAPI/import_export/KMAC_importKey.tentative.https.any.js
-FAIL wpt:WebCryptoAPI/import_export/ML-DSA_importKey.tentative.https.any.js alt:cargo:generatekey_alts::ml_dsa_importkey_not_yet_supported
-PASS wpt:WebCryptoAPI/import_export/ML-KEM_importKey.tentative.https.any.js
+PASS wpt:WebCryptoAPI/import_export/AES-OCB_importKey.tentative.https.any.js alt:cargo:crypto_alts::symmetric_import_export
+PASS wpt:WebCryptoAPI/import_export/Argon2_importKey.tentative.https.any.js alt:cargo:crypto_alts::symmetric_import_export
+PASS wpt:WebCryptoAPI/import_export/ChaCha20-Poly1305_importKey.tentative.https.any.js alt:cargo:crypto_alts::symmetric_import_export
+PASS wpt:WebCryptoAPI/import_export/KMAC_importKey.tentative.https.any.js alt:cargo:crypto_alts::symmetric_import_export
+PASS wpt:WebCryptoAPI/import_export/ML-KEM_importKey.tentative.https.any.js alt:cargo:crypto_alts::pqc_import_export
 PASS wpt:WebCryptoAPI/import_export/crashtests/importKey-unsettled-promise.https.any.js
 PASS wpt:WebCryptoAPI/import_export/ec_importKey.https.any.js alt:cargo:generatekey_alts::ec_import_key_formats
 PASS wpt:WebCryptoAPI/import_export/ec_importKey_failures_ECDH.https.any.js
 PASS wpt:WebCryptoAPI/import_export/ec_importKey_failures_ECDSA.https.any.js
-PASS wpt:WebCryptoAPI/import_export/okp_importKey_Ed25519.https.any.js
-PASS wpt:WebCryptoAPI/import_export/okp_importKey_Ed448.tentative.https.any.js
-FAIL wpt:WebCryptoAPI/import_export/okp_importKey_X25519.https.any.js
-PASS wpt:WebCryptoAPI/import_export/okp_importKey_X448.tentative.https.any.js
-FAIL wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed25519.https.any.js
-PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed448.tentative.https.any.js
-PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_X25519.https.any.js
-PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_X448.tentative.https.any.js
+PASS wpt:WebCryptoAPI/import_export/okp_importKey_Ed25519.https.any.js alt:cargo:crypto_alts::okp_import_export
+PASS wpt:WebCryptoAPI/import_export/okp_importKey_Ed448.tentative.https.any.js alt:cargo:crypto_alts::okp_import_export
+PASS wpt:WebCryptoAPI/import_export/okp_importKey_X448.tentative.https.any.js alt:cargo:crypto_alts::okp_import_export
+PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed448.tentative.https.any.js alt:cargo:crypto_alts::okp_import_export
+PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_X25519.https.any.js alt:cargo:crypto_alts::okp_import_export
+PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_X448.tentative.https.any.js alt:cargo:crypto_alts::okp_import_export
 PASS wpt:WebCryptoAPI/import_export/rsa_importKey.https.any.js
 PASS wpt:WebCryptoAPI/import_export/symmetric_importKey.https.any.js
 PASS wpt:WebCryptoAPI/normalize-algorithm-name.https.any.js
 PASS wpt:WebCryptoAPI/randomUUID.https.any.js
 PASS wpt:WebCryptoAPI/secure_context/crypto-subtle-secure-context-available.https.sub.html
-PASS wpt:WebCryptoAPI/sign_verify/ecdsa.https.any.js
-PASS wpt:WebCryptoAPI/sign_verify/eddsa_curve25519.https.any.js
-PASS wpt:WebCryptoAPI/sign_verify/eddsa_curve448.tentative.https.any.js
-PASS wpt:WebCryptoAPI/sign_verify/eddsa_small_order_points.https.any.js
-PASS wpt:WebCryptoAPI/sign_verify/hmac.https.any.js
-PASS wpt:WebCryptoAPI/sign_verify/kmac.tentative.https.any.js
-PASS wpt:WebCryptoAPI/sign_verify/mldsa.tentative.https.any.js
-PASS wpt:WebCryptoAPI/sign_verify/rsa_pkcs.https.any.js
-PASS wpt:WebCryptoAPI/sign_verify/rsa_pss.https.any.js
+PASS wpt:WebCryptoAPI/sign_verify/ecdsa.https.any.js alt:cargo:crypto_alts::sign_verify_all_algorithms
+PASS wpt:WebCryptoAPI/sign_verify/eddsa_curve25519.https.any.js alt:cargo:crypto_alts::sign_verify_all_algorithms
+PASS wpt:WebCryptoAPI/sign_verify/eddsa_curve448.tentative.https.any.js alt:cargo:crypto_alts::sign_verify_all_algorithms
+PASS wpt:WebCryptoAPI/sign_verify/eddsa_small_order_points.https.any.js alt:cargo:crypto_alts::sign_verify_all_algorithms
+PASS wpt:WebCryptoAPI/sign_verify/hmac.https.any.js alt:cargo:crypto_alts::sign_verify_all_algorithms
+PASS wpt:WebCryptoAPI/sign_verify/kmac.tentative.https.any.js alt:cargo:crypto_alts::sign_verify_all_algorithms
+PASS wpt:WebCryptoAPI/sign_verify/mldsa.tentative.https.any.js alt:cargo:crypto_alts::sign_verify_all_algorithms
+PASS wpt:WebCryptoAPI/sign_verify/rsa_pkcs.https.any.js alt:cargo:crypto_alts::sign_verify_all_algorithms
+PASS wpt:WebCryptoAPI/sign_verify/rsa_pss.https.any.js alt:cargo:crypto_alts::sign_verify_all_algorithms
 PASS wpt:WebCryptoAPI/supports.tentative.https.any.js
-FAIL wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js
-FAIL wpt:dom/abort/AbortSignal.any.js
 PASS wpt:dom/abort/abort-signal-any-crash.html
 PASS wpt:dom/abort/abort-signal-any.any.js
-FAIL wpt:dom/abort/abort-signal-timeout.html
 PASS wpt:dom/abort/crashtests/any-on-abort.html
 PASS wpt:dom/abort/crashtests/timeout-close.html
 PASS wpt:dom/abort/event.any.js
@@ -1549,6 +1531,44 @@ PASS wpt:dom/nodes/insertion-removing-steps/insertion-removing-steps-iframe.wind
 PASS wpt:dom/nodes/insertion-removing-steps/insertion-removing-steps-script.window.js
 PASS wpt:dom/nodes/insertion-removing-steps/later-script-removed-by-earlier-script.html
 PASS wpt:dom/nodes/insertion-removing-steps/script-does-not-run-on-child-removal.window.js
+NOT_RUN cargo:cookie_sync::cookie_expiry_uses_virtual_time
+NOT_RUN cargo:cookie_sync::secure_cookie_not_sent_over_http
+FAIL cargo:create_attribute::append_attr_throws
+NOT_RUN cargo:crypto_alts::aes_generatekey_all_variants
+NOT_RUN cargo:crypto_alts::argon2_derive
+NOT_RUN cargo:crypto_alts::chacha20_generatekey
+NOT_RUN cargo:crypto_alts::ec_generatekey
+NOT_RUN cargo:crypto_alts::ecdh_derive_bits_and_keys
+NOT_RUN cargo:crypto_alts::encrypt_decrypt_round_trips
+NOT_RUN cargo:crypto_alts::hkdf_derive
+NOT_RUN cargo:crypto_alts::hmac_generatekey
+NOT_RUN cargo:crypto_alts::mlkem_encap_decap
+NOT_RUN cargo:crypto_alts::mlkem_generatekey
+NOT_RUN cargo:crypto_alts::okp_generatekey
+NOT_RUN cargo:crypto_alts::okp_import_export
+NOT_RUN cargo:crypto_alts::pbkdf2_derive
+NOT_RUN cargo:crypto_alts::pqc_import_export
+NOT_RUN cargo:crypto_alts::sign_verify_all_algorithms
+NOT_RUN cargo:crypto_alts::symmetric_import_export
+NOT_RUN cargo:crypto_alts::wrap_unwrap_keys
+FAIL cargo:dom_bridge_forms::form_elements_external_inputs_have_correct_names
+FAIL cargo:lib::js::dom_bridge::tests::form_enctype_invalid_falls_back_to_default
+FAIL cargo:lib::tests::test_display_none_reflected_in_snapshot
+FAIL cargo:lib::tests::textarea_default_value_returns_text_content
+FAIL cargo:link_basic::link_appendchild_triggers_maybe_load
+FAIL cargo:link_onload::multiple_css_links_all_fire_onload
+NOT_RUN cargo:security_injection::keyboard_event_code_injection
+NOT_RUN cargo:security_injection::keyboard_event_key_injection
+NOT_RUN cargo:security_injection::keyboard_event_type_injection
+NOT_RUN cargo:security_injection::move_input_cursor_key_injection
+FAIL cargo:smoke_integration::html_element_properties
+FAIL cargo:smoke_integration::select_option_interaction
+FAIL wpt:WebCryptoAPI/historical.any.js alt:cargo:generatekey_alts::historical_crypto_available
+FAIL wpt:WebCryptoAPI/import_export/okp_importKey_X25519.https.any.js alt:cargo:crypto_alts::okp_import_export
+FAIL wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed25519.https.any.js alt:cargo:crypto_alts::okp_import_export
+FAIL wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js alt:cargo:crypto_alts::wrap_unwrap_keys
+FAIL wpt:dom/abort/AbortSignal.any.js
+FAIL wpt:dom/abort/abort-signal-timeout.html
 FAIL wpt:dom/nodes/moveBefore/Node-moveBefore.html
 NOT_RUN wpt:dom/nodes/moveBefore/child-style-preserve.html
 NOT_RUN wpt:dom/nodes/moveBefore/chrome-338071841-crash.html
@@ -2373,6 +2393,9 @@ NOT_RUN wpt:workers/support/shared-worker-partitioned-cookies-3p-window.html
 NOT_RUN wpt:workers/support/window-sw-shared-name.html
 NOT_RUN wpt:workers/tentative/SharedWorker-extendedLifetime.html
 NOT_RUN wpt:workers/worker-request-animation-frame.html
+FAIL wpt:WebCryptoAPI/generateKey/successes_ML-DSA.tentative.https.any.js alt:cargo:generatekey_alts::ml_dsa_generatekey_not_yet_supported
+FAIL wpt:WebCryptoAPI/generateKey/successes_kmac.tentative.https.any.js alt:cargo:generatekey_alts::kmac_generatekey_not_yet_supported
+FAIL wpt:WebCryptoAPI/import_export/ML-DSA_importKey.tentative.https.any.js alt:cargo:generatekey_alts::ml_dsa_importkey_not_yet_supported
 FAIL wpt:dom/nodes/insertion-removing-steps/Node-appendChild-script-and-default-style-meta-from-fragment.tentative.html
 NOT_RUN wpt:dom/nodes/insertion-removing-steps/Node-appendChild-script-and-div-from-fragment.tentative.html
 NOT_RUN wpt:dom/nodes/insertion-removing-steps/Node-appendChild-script-and-iframe.tentative.html
