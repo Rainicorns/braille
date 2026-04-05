@@ -291,7 +291,9 @@ impl Engine {
         let (ref_map, reverse) = serialize::assign_refs(&tree);
         self.ref_map = ref_map;
 
-        let result = match mode {
+        let append_webmcp = matches!(mode, SnapMode::Compact | SnapMode::Accessibility);
+
+        let mut result = match mode {
             SnapMode::Compact => {
                 let (output, ref_map) = serialize::serialize_compact(&tree, self.focused_element);
                 self.ref_map = ref_map;
@@ -318,6 +320,13 @@ impl Engine {
             SnapMode::Dom => "[DOM mode not yet implemented]".to_string(),
             SnapMode::Markdown => serialize::serialize_markdown(&tree),
         };
+
+        if append_webmcp {
+            let webmcp = serialize::collect_webmcp_section(&tree);
+            if !webmcp.is_empty() {
+                result.push_str(&webmcp);
+            }
+        }
 
         // Drop the immutable borrow before restoring
         drop(tree);
