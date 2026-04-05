@@ -1570,6 +1570,78 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         Object.defineProperty(HTMLInputElement.prototype, 'value', _valDesc);
         Object.defineProperty(HTMLTextAreaElement.prototype, 'value', _valDesc);
         Object.defineProperty(HTMLSelectElement.prototype, 'value', _valDesc);
+
+        // HTMLSelectElement: add(), remove(), options, selectedIndex, length
+        HTMLSelectElement.prototype.add = function(element, before) {
+            if (before && before.parentNode === this) {
+                this.insertBefore(element, before);
+            } else if (typeof before === 'number') {
+                var opts = this.querySelectorAll('option');
+                if (before < opts.length) {
+                    this.insertBefore(element, opts[before]);
+                } else {
+                    this.appendChild(element);
+                }
+            } else {
+                this.appendChild(element);
+            }
+        };
+        HTMLSelectElement.prototype.remove = function(index) {
+            if (typeof index === 'number') {
+                var opts = this.querySelectorAll('option');
+                if (index >= 0 && index < opts.length) {
+                    opts[index].parentNode.removeChild(opts[index]);
+                }
+            } else {
+                // Element.prototype.remove() — remove self from parent
+                if (this.parentNode) this.parentNode.removeChild(this);
+            }
+        };
+        Object.defineProperty(HTMLSelectElement.prototype, 'options', {
+            get: function() { return this.querySelectorAll('option'); },
+            configurable: true,
+        });
+        Object.defineProperty(HTMLSelectElement.prototype, 'selectedIndex', {
+            get: function() {
+                var opts = this.querySelectorAll('option');
+                for (var i = 0; i < opts.length; i++) {
+                    if (opts[i].selected || opts[i].hasAttribute('selected')) return i;
+                }
+                return opts.length > 0 ? 0 : -1;
+            },
+            set: function(idx) {
+                var opts = this.querySelectorAll('option');
+                for (var i = 0; i < opts.length; i++) {
+                    if (i === idx) { opts[i].selected = true; opts[i].setAttribute('selected', ''); }
+                    else { opts[i].selected = false; opts[i].removeAttribute('selected'); }
+                }
+            },
+            configurable: true,
+        });
+        Object.defineProperty(HTMLSelectElement.prototype, 'length', {
+            get: function() { return this.querySelectorAll('option').length; },
+            configurable: true,
+        });
+
+        // HTMLOptionElement: text, selected
+        Object.defineProperty(HTMLOptionElement.prototype, 'text', {
+            get: function() { return this.textContent || ''; },
+            set: function(v) { this.textContent = v; },
+            configurable: true,
+        });
+        Object.defineProperty(HTMLOptionElement.prototype, 'selected', {
+            get: function() {
+                if (this.__props && this.__props._selected !== undefined) return this.__props._selected;
+                return this.hasAttribute('selected');
+            },
+            set: function(v) {
+                if (!this.__props) this.__props = {};
+                this.__props._selected = !!v;
+                if (v) this.setAttribute('selected', ''); else this.removeAttribute('selected');
+            },
+            configurable: true,
+        });
+
         Object.defineProperty(HTMLInputElement.prototype, 'checked', {
             get: function() {
                 if (this.__props && this.__props._checked !== undefined) return this.__props._checked;
