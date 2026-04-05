@@ -203,6 +203,9 @@ fn walk_form_inputs(
             if is_display_none(node) {
                 return;
             }
+            if SKIP_ELEMENTS.contains(&tag.as_str()) {
+                return;
+            }
 
             if INTERACTIVE_ELEMENTS.contains(&tag.as_str()) {
                 let eref = reverse.get(&node_id).map(|s| s.as_str()).unwrap_or("???");

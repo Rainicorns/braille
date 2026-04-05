@@ -49,6 +49,50 @@ pub(crate) fn is_parent_block_level(tree: &DomTree, text_node_id: NodeId) -> boo
     }
 }
 
+/// Collect text content from elements with `display:none` or `visibility:hidden`.
+/// Returns a formatted section string to append to snapshot output.
+/// Skips structural elements (script, style, etc.) — only content-bearing hidden elements.
+pub fn collect_hidden_content(tree: &DomTree) -> String {
+    let mut hidden_texts: Vec<String> = Vec::new();
+    collect_hidden_recursive(tree, tree.document(), &mut hidden_texts);
+    if hidden_texts.is_empty() {
+        return String::new();
+    }
+    let mut section = String::from("\n[Hidden Content]\n");
+    for text in &hidden_texts {
+        section.push_str("- ");
+        // Truncate long hidden text to keep snapshot manageable
+        if text.len() > 200 {
+            section.push_str(&text[..200]);
+            section.push_str("...");
+        } else {
+            section.push_str(text);
+        }
+        section.push('\n');
+    }
+    section
+}
+
+fn collect_hidden_recursive(tree: &DomTree, node_id: NodeId, out: &mut Vec<String>) {
+    let node = tree.get_node(node_id);
+    if let NodeData::Element { tag_name, .. } = &node.data {
+        let tag = tag_name.to_ascii_lowercase();
+        if SKIP_ELEMENTS.contains(&tag.as_str()) {
+            return;
+        }
+        if is_display_none(node) || is_visibility_hidden(node) {
+            let text = collect_deep_text(tree, node_id).trim().to_string();
+            if !text.is_empty() {
+                out.push(text);
+            }
+            return; // don't recurse into hidden subtrees (already collected)
+        }
+    }
+    for &child_id in &node.children {
+        collect_hidden_recursive(tree, child_id, out);
+    }
+}
+
 pub(crate) fn trim_trailing_newlines(s: &mut String) {
     while s.ends_with('\n') {
         s.pop();

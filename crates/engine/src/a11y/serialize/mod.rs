@@ -15,6 +15,7 @@ pub use interactive::{serialize_interactive, serialize_links, serialize_forms};
 pub use markdown::serialize_markdown;
 pub use text::{serialize_headings, serialize_text, serialize_selector, serialize_region};
 pub use webmcp::collect_webmcp_section;
+pub use helpers::collect_hidden_content;
 
 #[cfg(test)]
 mod tests {

@@ -328,6 +328,12 @@ impl Engine {
             }
         }
 
+        // Append hidden content section so agents know what's hidden on the page
+        let hidden = serialize::collect_hidden_content(&tree);
+        if !hidden.is_empty() {
+            result.push_str(&hidden);
+        }
+
         // Drop the immutable borrow before restoring
         drop(tree);
 
