@@ -973,13 +973,13 @@ PASS wpt:WebCryptoAPI/generateKey/successes_chacha20_poly1305.tentative.https.an
 FAIL wpt:WebCryptoAPI/generateKey/successes_kmac.tentative.https.any.js alt:cargo:generatekey_alts::kmac_generatekey_not_yet_supported
 PASS wpt:WebCryptoAPI/getPublicKey.tentative.https.any.js alt:cargo:generatekey_alts::get_public_key
 PASS wpt:WebCryptoAPI/getRandomValues.any.js alt:cargo:generatekey_alts::get_random_values
-PASS wpt:WebCryptoAPI/historical.any.js alt:cargo:generatekey_alts::historical_crypto_available
+FAIL wpt:WebCryptoAPI/historical.any.js alt:cargo:generatekey_alts::historical_crypto_available
 PASS wpt:WebCryptoAPI/idlharness.https.any.js
 PASS wpt:WebCryptoAPI/import_export/AES-OCB_importKey.tentative.https.any.js
 PASS wpt:WebCryptoAPI/import_export/Argon2_importKey.tentative.https.any.js
 PASS wpt:WebCryptoAPI/import_export/ChaCha20-Poly1305_importKey.tentative.https.any.js
 PASS wpt:WebCryptoAPI/import_export/KMAC_importKey.tentative.https.any.js
-PASS wpt:WebCryptoAPI/import_export/ML-DSA_importKey.tentative.https.any.js alt:cargo:generatekey_alts::ml_dsa_importkey_not_yet_supported
+FAIL wpt:WebCryptoAPI/import_export/ML-DSA_importKey.tentative.https.any.js alt:cargo:generatekey_alts::ml_dsa_importkey_not_yet_supported
 PASS wpt:WebCryptoAPI/import_export/ML-KEM_importKey.tentative.https.any.js
 PASS wpt:WebCryptoAPI/import_export/crashtests/importKey-unsettled-promise.https.any.js
 PASS wpt:WebCryptoAPI/import_export/ec_importKey.https.any.js alt:cargo:generatekey_alts::ec_import_key_formats

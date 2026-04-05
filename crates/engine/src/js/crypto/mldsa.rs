@@ -42,6 +42,13 @@ macro_rules! mldsa_ops {
                 let vk = VerifyingKey::<$variant>::from_public_key_der(der).ok()?;
                 Some(vk.encode().to_vec())
             }
+
+            fn vk_from_seed(seed: &[u8]) -> Option<Vec<u8>> {
+                let seed_arr: ml_dsa::Seed = seed.try_into().ok()?;
+                let kp = <$variant as KeyGen>::from_seed(&seed_arr);
+                let vk = ml_dsa::signature::Keypair::verifying_key(&kp);
+                Some(vk.encode().to_vec())
+            }
         }
     };
 }
@@ -51,6 +58,7 @@ trait MlDsaOps {
     fn verify(vk_bytes: &[u8], signature: &[u8], data: &[u8]) -> bool;
     fn pkcs8_import(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)>;
     fn spki_import(der: &[u8]) -> Option<Vec<u8>>;
+    fn vk_from_seed(seed: &[u8]) -> Option<Vec<u8>>;
 }
 
 mldsa_ops!(MlDsa44);
@@ -117,6 +125,24 @@ pub fn register(ctx: &Ctx<'_>) {
                     Some((seed, vk)) => vec![seed, vk],
                     None => vec![],
                 }
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    g.set(
+        "__braille_crypto_mldsa_from_seed",
+        Function::new(
+            ctx.clone(),
+            |algo: String, seed: Vec<u8>| -> Vec<u8> {
+                let result = match algo.as_str() {
+                    "ML-DSA-44" => MlDsa44::vk_from_seed(&seed),
+                    "ML-DSA-65" => MlDsa65::vk_from_seed(&seed),
+                    "ML-DSA-87" => MlDsa87::vk_from_seed(&seed),
+                    _ => None,
+                };
+                result.unwrap_or_default()
             },
         )
         .unwrap(),

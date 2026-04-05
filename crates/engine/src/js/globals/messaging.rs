@@ -31,16 +31,7 @@ pub(super) fn register_messaging(ctx: &Ctx<'_>) {
                         origin: (typeof location !== 'undefined' && location.origin) || '',
                         source: window
                     });
-                    // Fire via EventTarget listeners on window
-                    if (window.__et_listeners) {
-                        var cbs = window.__et_listeners['message_b'];
-                        if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(window, event); }
-                        cbs = window.__et_listeners['message_c'];
-                        if (cbs) { var s = cbs.slice(); for (var i = 0; i < s.length; i++) s[i].call(window, event); }
-                    }
-                    if (typeof window.onmessage === 'function') {
-                        window.onmessage(event);
-                    }
+                    window.dispatchEvent(event);
                 }, 0);
             };
         })();

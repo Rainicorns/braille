@@ -583,9 +583,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.getClientRects = function() { return [this.getBoundingClientRect()]; };
         // focus/blur defined later after defineProperties to track activeElement
         ElemProto.scrollIntoView = function() {};
-        ElemProto.animate = function(keyframes, options) {
-            return { finished: Promise.resolve(), cancel: function(){}, play: function(){}, pause: function(){} };
-        };
+        // animate: better version with onfinish/finish defined later (~line 964)
         function __computeSnapNearest(arr, target) {
             var best = arr[0], bestDist = Math.abs(arr[0] - target);
             for (var i = 1; i < arr.length; i++) {
@@ -1523,29 +1521,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 },
                 configurable: true
             },
-            type: {
-                get: function() { return this.getAttribute('type') || ''; },
-                set: function(v) { this.setAttribute('type', String(v)); },
-                configurable: true
-            },
-            disabled: {
-                get: function() { return this.hasAttribute('disabled'); },
-                set: function(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); },
-                configurable: true
-            },
-            form: {
-                get: function() {
-                    if (this.__nid === undefined) return null;
-                    var cur = __n_getParent(this.__nid);
-                    while (cur >= 0) {
-                        var w = __w(cur);
-                        if (w.tagName === 'FORM') return w;
-                        cur = __n_getParent(cur);
-                    }
-                    return null;
-                },
-                configurable: true
-            },
+            // type: smart version with INPUT/BUTTON defaults is defined below (~line 1595)
+            // disabled: defined below (~line 1570) — identical, just deduplicated
+            // form: proper version with form-attribute lookup is in form_bindings.rs
             checked: {
                 get: function() {
                     if (this.__props && this.__props._checked !== undefined) return this.__props._checked;

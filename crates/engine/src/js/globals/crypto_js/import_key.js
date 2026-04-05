@@ -69,13 +69,21 @@
                 }
             }
 
-            // ML-KEM raw-seed import (64-byte seed → dk + ek)
+            // raw-seed import (seed → deterministic keypair)
             if (format === 'raw-seed') {
                 if (name === 'ML-KEM-512' || name === 'ML-KEM-768' || name === 'ML-KEM-1024') {
                     var seedBytes = Array.from(toBytes(keyData));
                     var pair = __braille_crypto_mlkem_from_seed(name, seedBytes);
                     var algoObj = {name: name};
                     return Promise.resolve(mkKey('private', algoObj, extractable, usages, {privateKeyBytes: seedBytes, publicKeyBytes: pair[0]}));
+                }
+                if (name === 'ML-DSA-44' || name === 'ML-DSA-65' || name === 'ML-DSA-87') {
+                    var seedBytes = Array.from(toBytes(keyData));
+                    var vkBytes = __braille_crypto_mldsa_from_seed(name, seedBytes);
+                    if (vkBytes.length === 0) {
+                        return Promise.reject(new DOMException('invalid ML-DSA raw-seed data', 'DataError'));
+                    }
+                    return Promise.resolve(mkKey('private', {name: name}, extractable, usages, {privateKeyBytes: seedBytes, publicKeyBytes: vkBytes}));
                 }
                 return Promise.reject(new DOMException('importKey format raw-seed for ' + name + ' not supported', 'NotSupportedError'));
             }

@@ -481,16 +481,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                                 location.hash = href;
                                 location._href = location.origin + location.pathname + location.search + href;
                                 var newURL = location.href;
-                                if (typeof window.onhashchange === 'function') {
-                                    window.onhashchange({type:'hashchange', newURL: newURL, oldURL: oldURL});
-                                }
                                 var hevt = new Event('hashchange', {bubbles: false});
                                 hevt.newURL = newURL;
                                 hevt.oldURL = oldURL;
-                                if (window.__et_listeners && window.__et_listeners['hashchange_b']) {
-                                    var hcbs = window.__et_listeners['hashchange_b'];
-                                    for (var hi = 0; hi < hcbs.length; hi++) hcbs[hi].call(window, hevt);
-                                }
+                                window.dispatchEvent(hevt);
                             }
                         }
                         break;
@@ -1844,6 +1838,15 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                     }
                 }
                 if (event._stopImmediate || event._stopPropagation) break;
+            }
+            // Fire on<type> IDL handler (e.g. onload, onmessage) — consistent with DOM dispatch
+            if (!event._stopImmediate) {
+                var handlerName = 'on' + event.type;
+                var handler = self[handlerName];
+                if (typeof handler === 'function') {
+                    var ret = handler.call(self, event);
+                    if (ret === false && event.cancelable) event.preventDefault();
+                }
             }
             event._dispatching = false;
             event._stopPropagation = false;

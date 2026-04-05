@@ -1579,36 +1579,8 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             configurable: true,
         });
 
-        // HTMLOptionElement: text, selected
-        Object.defineProperty(HTMLOptionElement.prototype, 'text', {
-            get: function() { return this.textContent || ''; },
-            set: function(v) { this.textContent = v; },
-            configurable: true,
-        });
-        Object.defineProperty(HTMLOptionElement.prototype, 'selected', {
-            get: function() {
-                if (this.__props && this.__props._selected !== undefined) return this.__props._selected;
-                return this.hasAttribute('selected');
-            },
-            set: function(v) {
-                if (!this.__props) this.__props = {};
-                this.__props._selected = !!v;
-                if (v) this.setAttribute('selected', ''); else this.removeAttribute('selected');
-            },
-            configurable: true,
-        });
-
-        Object.defineProperty(HTMLInputElement.prototype, 'checked', {
-            get: function() {
-                if (this.__props && this.__props._checked !== undefined) return this.__props._checked;
-                return this.hasAttribute && this.hasAttribute('checked');
-            },
-            set: function(v) {
-                if (!this.__props) this.__props = {};
-                this.__props._checked = !!v;
-            },
-            configurable: true,
-        });
+        // HTMLOptionElement text/selected and HTMLInputElement checked are properly
+        // defined in element_prototype.rs/form_bindings.rs ��� do not duplicate here
         // --- Attribute reflection helper ---
         function __reflectAttr(proto, prop, attr) {
             Object.defineProperty(proto, prop, {
@@ -2054,9 +2026,6 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                     cancelable: true, promise: null, reason: arr[i]
                 });
                 window.dispatchEvent(evt);
-                if (typeof window.onunhandledrejection === 'function') {
-                    window.onunhandledrejection(evt);
-                }
             }
         };
         globalThis.structuredClone = globalThis.structuredClone || function(v) {

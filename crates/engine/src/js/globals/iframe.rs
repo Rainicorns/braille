@@ -68,15 +68,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                                         origin: (typeof location !== 'undefined' && location.origin) || '',
                                         source: iframeWindow
                                     });
-                                    if (target.__et_listeners) {
-                                        var cbs = target.__et_listeners['message_b'];
-                                        if (cbs) { var s = cbs.slice(); for (var j = 0; j < s.length; j++) s[j].call(target, event); }
-                                        cbs = target.__et_listeners['message_c'];
-                                        if (cbs) { var s = cbs.slice(); for (var j = 0; j < s.length; j++) s[j].call(target, event); }
-                                    }
-                                    if (typeof target.onmessage === 'function') {
-                                        target.onmessage(event);
-                                    }
+                                    target.dispatchEvent(event);
                                 }, 0);
                             };
                         }
@@ -278,15 +270,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                                 origin: (typeof location !== 'undefined' && location.origin) || '',
                                 source: iw
                             });
-                            if (window.__et_listeners) {
-                                var cbs = window.__et_listeners['message_b'];
-                                if (cbs) { var s = cbs.slice(); for (var j = 0; j < s.length; j++) s[j].call(window, event); }
-                                cbs = window.__et_listeners['message_c'];
-                                if (cbs) { var s = cbs.slice(); for (var j = 0; j < s.length; j++) s[j].call(window, event); }
-                            }
-                            if (typeof window.onmessage === 'function') {
-                                window.onmessage(event);
-                            }
+                            window.dispatchEvent(event);
                         }, 0);
                     },
                     iw.addEventListener,
