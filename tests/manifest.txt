@@ -1012,7 +1012,7 @@ FAIL wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js
 FAIL wpt:dom/abort/AbortSignal.any.js
 PASS wpt:dom/abort/abort-signal-any-crash.html
 PASS wpt:dom/abort/abort-signal-any.any.js
-PASS wpt:dom/abort/abort-signal-timeout.html
+FAIL wpt:dom/abort/abort-signal-timeout.html
 PASS wpt:dom/abort/crashtests/any-on-abort.html
 PASS wpt:dom/abort/crashtests/timeout-close.html
 PASS wpt:dom/abort/event.any.js

@@ -177,6 +177,16 @@
                 var raw = __braille_crypto_get_random_bytes(keyLenBits / 8);
                 return Promise.resolve(mkKey('secret', {name:name,length:keyLenBits}, extractable, usages, {raw:raw}));
             }
+            if (name === 'ML-DSA-44' || name === 'ML-DSA-65' || name === 'ML-DSA-87') {
+                var seed = __braille_crypto_get_random_bytes(32);
+                var vkBytes = __braille_crypto_mldsa_from_seed(name, Array.from(new Uint8Array(seed)));
+                var algoObj = {name: name};
+                var pubUsages = usages.filter(function(u){return u==='verify';});
+                var privUsages = usages.filter(function(u){return u==='sign';});
+                var pubKey = mkKey('public', algoObj, true, pubUsages, {publicKeyBytes: vkBytes});
+                var privKey = mkKey('private', algoObj, extractable, privUsages, {privateKeyBytes: Array.from(new Uint8Array(seed)), publicKeyBytes: vkBytes});
+                return Promise.resolve({publicKey: pubKey, privateKey: privKey});
+            }
             if (name === 'ML-KEM-512' || name === 'ML-KEM-768' || name === 'ML-KEM-1024') {
                 var pair = __braille_crypto_mlkem_generate(name);
                 var algoObj = {name: name};

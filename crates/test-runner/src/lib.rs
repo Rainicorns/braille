@@ -1168,7 +1168,6 @@ fn wrap_shadowrealm_html(title: &str, js_content: &str, meta_scripts: &str) -> S
     var webOnly = [
         'window', 'self', 'document', 'navigator', 'location', 'history',
         'screen', 'performance', 'localStorage', 'sessionStorage',
-        'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
         'fetch', 'Request', 'Response', 'Headers',
         'XMLHttpRequest', 'Worker', 'MessageChannel', 'MessagePort',
         'Blob', 'FormData', 'CSS',
