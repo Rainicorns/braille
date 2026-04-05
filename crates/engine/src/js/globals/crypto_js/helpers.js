@@ -102,6 +102,7 @@
         'ed448':'Ed448',
         'argon2d':'Argon2d','argon2i':'Argon2i','argon2id':'Argon2id',
         'ml-kem-512':'ML-KEM-512','ml-kem-768':'ML-KEM-768','ml-kem-1024':'ML-KEM-1024',
+        'ml-dsa-44':'ML-DSA-44','ml-dsa-65':'ML-DSA-65','ml-dsa-87':'ML-DSA-87',
         'aes-ocb':'AES-OCB',
         'chacha20-poly1305':'ChaCha20-Poly1305',
         'rsa-oaep':'RSA-OAEP','rsa-pss':'RSA-PSS','rsassa-pkcs1-v1_5':'RSASSA-PKCS1-v1_5',

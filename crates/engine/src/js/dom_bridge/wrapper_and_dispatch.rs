@@ -523,10 +523,6 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                                 if (formConnected) {
                                     var submitEvt = new Event('submit', {bubbles: true, cancelable: true});
                                     submitEvt.submitter = ael;
-                                    if (typeof form.onsubmit === 'function') {
-                                        var ret = form.onsubmit(submitEvt);
-                                        if (ret === false) submitEvt.preventDefault();
-                                    }
                                     form.dispatchEvent(submitEvt);
                                 }
                             }
@@ -543,9 +539,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                                     cur = __n_getParent(cur);
                                 }
                                 if (formConnected) {
-                                    var resetEvt = new Event('reset', {bubbles: true, cancelable: true});
-                                    if (typeof form.onreset === 'function') form.onreset(resetEvt);
-                                    form.dispatchEvent(resetEvt);
+                                    form.dispatchEvent(new Event('reset', {bubbles: true, cancelable: true}));
                                 }
                             }
                             break;

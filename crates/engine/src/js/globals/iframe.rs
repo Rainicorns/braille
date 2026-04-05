@@ -336,12 +336,9 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 iframeRealms[node.__nid] = realm;
 
                 // Fire load event synchronously for about:blank iframes (per spec)
-                var loadEvent = new Event('load');
-                if (typeof node.onload === 'function') {
-                    node.onload(loadEvent);
-                }
+                // dispatchEvent invokes on<type> handlers via fireOnHandler — no manual call needed
                 if (node.dispatchEvent) {
-                    node.dispatchEvent(loadEvent);
+                    node.dispatchEvent(new Event('load'));
                 }
             }
 
@@ -486,12 +483,8 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
 
                     var el = __braille_get_element_wrapper(nid);
                     if (el) {
-                        var loadEvent = new Event('load');
-                        if (typeof el.onload === 'function') {
-                            el.onload(loadEvent);
-                        }
                         if (el.dispatchEvent) {
-                            el.dispatchEvent(loadEvent);
+                            el.dispatchEvent(new Event('load'));
                         }
                     }
                 }

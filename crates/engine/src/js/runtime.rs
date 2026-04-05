@@ -449,7 +449,7 @@ impl JsRuntime {
             window.onload = new Function('event', _bodyOnload);
         }
     }
-    if (typeof window.onload === 'function') { window.onload(new Event('load')); }
+    window.dispatchEvent(new Event('load'));
 }"#,
             );
         });

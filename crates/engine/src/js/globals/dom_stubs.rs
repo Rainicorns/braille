@@ -1573,27 +1573,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 if (this.parentNode) this.parentNode.removeChild(this);
             }
         };
-        Object.defineProperty(HTMLSelectElement.prototype, 'options', {
-            get: function() { return this.querySelectorAll('option'); },
-            configurable: true,
-        });
-        Object.defineProperty(HTMLSelectElement.prototype, 'selectedIndex', {
-            get: function() {
-                var opts = this.querySelectorAll('option');
-                for (var i = 0; i < opts.length; i++) {
-                    if (opts[i].selected) return i;
-                }
-                return opts.length > 0 ? 0 : -1;
-            },
-            set: function(idx) {
-                var opts = this.querySelectorAll('option');
-                for (var i = 0; i < opts.length; i++) {
-                    if (!opts[i].__props) opts[i].__props = {};
-                    opts[i].__props._selected = (i === idx);
-                }
-            },
-            configurable: true,
-        });
+        // options, selectedIndex, length are properly defined in form_bindings.rs — do not duplicate
         Object.defineProperty(HTMLSelectElement.prototype, 'length', {
             get: function() { return this.querySelectorAll('option').length; },
             configurable: true,
@@ -1646,7 +1626,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         }
 
         // --- HTMLAnchorElement ---
-        __reflectAttr(HTMLAnchorElement.prototype, 'href', 'href');
+        // href is properly defined in element_prototype.rs with URL resolution — do not duplicate
         __reflectAttr(HTMLAnchorElement.prototype, 'target', 'target');
         __reflectAttr(HTMLAnchorElement.prototype, 'rel', 'rel');
         __reflectAttr(HTMLAnchorElement.prototype, 'download', 'download');
@@ -1711,77 +1691,28 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         });
 
         // --- HTMLButtonElement ---
-        Object.defineProperty(HTMLButtonElement.prototype, 'type', {
-            get: function() { return this.getAttribute('type') || 'submit'; },
-            set: function(v) { this.setAttribute('type', String(v)); },
-            configurable: true, enumerable: true,
-        });
+        // type, value, form are properly defined in element_prototype.rs/form_bindings.rs — do not duplicate
         __reflectBool(HTMLButtonElement.prototype, 'disabled', 'disabled');
         __reflectAttr(HTMLButtonElement.prototype, 'name', 'name');
-        __reflectAttr(HTMLButtonElement.prototype, 'value', 'value');
-        // form getter is defined with form-attribute lookup in form_bindings.rs — do not duplicate here
 
         // --- HTMLFormElement ---
-        __reflectAttr(HTMLFormElement.prototype, 'action', 'action');
-        Object.defineProperty(HTMLFormElement.prototype, 'method', {
-            get: function() { return (this.getAttribute('method') || 'get').toLowerCase(); },
-            set: function(v) { this.setAttribute('method', String(v)); },
-            configurable: true, enumerable: true,
-        });
-        __reflectAttr(HTMLFormElement.prototype, 'target', 'target');
-        // enctype, elements, length, submit, reset are defined with proper logic in form_bindings.rs — do not duplicate here
+        // action, method, target, enctype, elements, length, submit, reset are all
+        // properly defined in form_bindings.rs — do not duplicate here
 
         // --- HTMLLabelElement ---
-        Object.defineProperty(HTMLLabelElement.prototype, 'htmlFor', {
-            get: function() { return this.getAttribute('for') || ''; },
-            set: function(v) { this.setAttribute('for', String(v)); },
-            configurable: true, enumerable: true,
-        });
-        Object.defineProperty(HTMLLabelElement.prototype, 'control', {
-            get: function() {
-                var forId = this.getAttribute('for');
-                if (forId) {
-                    var owner = this.ownerDocument || document;
-                    return owner.getElementById(forId);
-                }
-                return this.querySelector('input,select,textarea,button');
-            },
-            configurable: true, enumerable: true,
-        });
+        // htmlFor and control are properly defined in label_bindings.rs (uses native __n_findLabelControl) — do not duplicate here
 
-        // --- HTMLInputElement (additional properties — value/checked already defined) ---
-        Object.defineProperty(HTMLInputElement.prototype, 'type', {
-            get: function() { return this.getAttribute('type') || 'text'; },
-            set: function(v) { this.setAttribute('type', String(v)); },
-            configurable: true, enumerable: true,
-        });
+        // --- HTMLInputElement ---
+        // type, disabled, placeholder, form, value, defaultValue, checked are in element_prototype.rs / form_bindings.rs
+        // name and required have no ElemProto equivalent — keep these:
         __reflectAttr(HTMLInputElement.prototype, 'name', 'name');
-        __reflectBool(HTMLInputElement.prototype, 'disabled', 'disabled');
-        __reflectAttr(HTMLInputElement.prototype, 'placeholder', 'placeholder');
         __reflectBool(HTMLInputElement.prototype, 'required', 'required');
-        // form getter is defined with form-attribute lookup in form_bindings.rs — do not duplicate here
-        Object.defineProperty(HTMLInputElement.prototype, 'defaultValue', {
-            get: function() { return this.getAttribute('value') || ''; },
-            set: function(v) { this.setAttribute('value', String(v)); },
-            configurable: true, enumerable: true,
-        });
 
-        // --- HTMLTextAreaElement (value already defined) ---
+        // --- HTMLTextAreaElement ---
+        // value, disabled, placeholder, rows, cols, defaultValue are in element_prototype.rs
+        // name and required have no ElemProto equivalent — keep these:
         __reflectAttr(HTMLTextAreaElement.prototype, 'name', 'name');
-        __reflectBool(HTMLTextAreaElement.prototype, 'disabled', 'disabled');
-        __reflectAttr(HTMLTextAreaElement.prototype, 'placeholder', 'placeholder');
         __reflectBool(HTMLTextAreaElement.prototype, 'required', 'required');
-        Object.defineProperty(HTMLTextAreaElement.prototype, 'rows', {
-            get: function() { return parseInt(this.getAttribute('rows'), 10) || 2; },
-            set: function(v) { this.setAttribute('rows', String(v)); },
-            configurable: true, enumerable: true,
-        });
-        Object.defineProperty(HTMLTextAreaElement.prototype, 'cols', {
-            get: function() { return parseInt(this.getAttribute('cols'), 10) || 20; },
-            set: function(v) { this.setAttribute('cols', String(v)); },
-            configurable: true, enumerable: true,
-        });
-        // defaultValue for textarea is defined with textContent logic in element_prototype.rs — do not duplicate here
 
         // --- HTMLCanvasElement ---
         Object.defineProperty(HTMLCanvasElement.prototype, 'width', {

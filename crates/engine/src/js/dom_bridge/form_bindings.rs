@@ -204,14 +204,13 @@ pub(crate) fn form_bindings_js() -> &'static str {
             configurable: true
         });
 
-        // <select> selectedIndex property
+        // <select> selectedIndex property — use selected IDL property, not hasAttribute
         Object.defineProperty(ElemProto, 'selectedIndex', {
             get: function() {
                 if (this.tagName !== 'SELECT') return -1;
                 var opts = this.querySelectorAll('option');
                 for (var i = 0; i < opts.length; i++) {
-                    if (opts[i].__props && opts[i].__props._selected) return i;
-                    if (opts[i].hasAttribute('selected')) return i;
+                    if (opts[i].selected) return i;
                 }
                 return opts.length > 0 ? 0 : -1;
             },

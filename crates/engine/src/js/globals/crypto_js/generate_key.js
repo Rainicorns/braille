@@ -171,6 +171,12 @@
                 var raw = __braille_crypto_get_random_bytes(32);
                 return Promise.resolve(mkKey('secret', {name:'ChaCha20-Poly1305'}, extractable, usages, {raw:raw}));
             }
+            if (name === 'KMAC128' || name === 'KMAC256') {
+                var defaultLen = (name === 'KMAC128') ? 256 : 512;
+                var keyLenBits = a.length || defaultLen;
+                var raw = __braille_crypto_get_random_bytes(keyLenBits / 8);
+                return Promise.resolve(mkKey('secret', {name:name,length:keyLenBits}, extractable, usages, {raw:raw}));
+            }
             if (name === 'ML-KEM-512' || name === 'ML-KEM-768' || name === 'ML-KEM-1024') {
                 var pair = __braille_crypto_mlkem_generate(name);
                 var algoObj = {name: name};

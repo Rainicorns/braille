@@ -962,7 +962,7 @@ PASS wpt:WebCryptoAPI/generateKey/successes_ECDSA.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/successes_Ed25519.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/successes_Ed448.tentative.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/successes_HMAC.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_ML-DSA.tentative.https.any.js alt:cargo:generatekey_alts::ml_dsa_generatekey_not_yet_supported
+FAIL wpt:WebCryptoAPI/generateKey/successes_ML-DSA.tentative.https.any.js alt:cargo:generatekey_alts::ml_dsa_generatekey_not_yet_supported
 PASS wpt:WebCryptoAPI/generateKey/successes_ML-KEM.tentative.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/successes_RSA-OAEP.https.any.js alt:cargo:generatekey_alts::rsa_oaep_generatekey_success
 PASS wpt:WebCryptoAPI/generateKey/successes_RSA-PSS.https.any.js alt:cargo:generatekey_alts::rsa_pss_generatekey_success
@@ -970,7 +970,7 @@ PASS wpt:WebCryptoAPI/generateKey/successes_RSASSA-PKCS1-v1_5.https.any.js alt:c
 PASS wpt:WebCryptoAPI/generateKey/successes_X25519.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/successes_X448.tentative.https.any.js
 PASS wpt:WebCryptoAPI/generateKey/successes_chacha20_poly1305.tentative.https.any.js
-PASS wpt:WebCryptoAPI/generateKey/successes_kmac.tentative.https.any.js alt:cargo:generatekey_alts::kmac_generatekey_not_yet_supported
+FAIL wpt:WebCryptoAPI/generateKey/successes_kmac.tentative.https.any.js alt:cargo:generatekey_alts::kmac_generatekey_not_yet_supported
 PASS wpt:WebCryptoAPI/getPublicKey.tentative.https.any.js alt:cargo:generatekey_alts::get_public_key
 PASS wpt:WebCryptoAPI/getRandomValues.any.js alt:cargo:generatekey_alts::get_random_values
 PASS wpt:WebCryptoAPI/historical.any.js alt:cargo:generatekey_alts::historical_crypto_available
