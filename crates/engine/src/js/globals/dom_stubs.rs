@@ -1293,9 +1293,9 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                     newDoc.contentType = 'text/html';
                     if (dtNode) {
                         dtNode.__ownerDoc = newDoc;
-                        newDoc.childNodes.unshift(dtNode);
-                        newDoc.firstChild = dtNode;
-                        Object.defineProperty(newDoc, 'doctype', { get: function() { return dtNode; }, configurable: true });
+                        // Insert doctype before the html element in the Rust tree
+                        // (matches createHTMLDocument pattern in wrapper_and_dispatch.rs)
+                        __n_insertBefore(newDoc.__nid, dtNode.__nid, htmlEl.__nid);
                     }
                     __adoptSubtree(htmlEl, newDoc);
                     return newDoc;
