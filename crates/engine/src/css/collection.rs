@@ -163,6 +163,125 @@ pub fn ua_stylesheet() -> Vec<CollectedRule> {
         ],
         source_order,
     });
+    source_order += 1;
+
+    // Additional block elements
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "article, aside, footer, header, main, nav, section, details, dialog, dd, dl, dt, fieldset, figcaption, figure, legend, menu, summary, blockquote, address, center, dir, pre, hr".to_string(),
+        declarations: vec![("display".to_string(), "block".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    // Table elements
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "table".to_string(),
+        declarations: vec![("display".to_string(), "table".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "thead, tbody, tfoot".to_string(),
+        declarations: vec![("display".to_string(), "table-row-group".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "tr".to_string(),
+        declarations: vec![("display".to_string(), "table-row".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "td, th".to_string(),
+        declarations: vec![("display".to_string(), "table-cell".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    // Form elements — inline-block
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "input, textarea, select, button".to_string(),
+        declarations: vec![("display".to_string(), "inline-block".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    // Replaced / inline-block elements
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "img, svg".to_string(),
+        declarations: vec![("display".to_string(), "inline-block".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    // Hidden elements (additional)
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "noscript, template".to_string(),
+        declarations: vec![("display".to_string(), "none".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    // Monospace font family
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "pre, code, kbd, samp".to_string(),
+        declarations: vec![("font-family".to_string(), "monospace".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    // Pre whitespace
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "pre".to_string(),
+        declarations: vec![("white-space".to_string(), "pre".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    // Heading h4-h6 (h1-h3 already defined above)
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "h4".to_string(),
+        declarations: vec![("font-weight".to_string(), "bold".to_string(), false)],
+        source_order,
+    });
+    source_order += 1;
+
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "h5".to_string(),
+        declarations: vec![
+            ("font-size".to_string(), "0.83em".to_string(), false),
+            ("font-weight".to_string(), "bold".to_string(), false),
+        ],
+        source_order,
+    });
+    source_order += 1;
+
+    rules.push(CollectedRule {
+        origin: StyleOrigin::UserAgent,
+        selector_text: "h6".to_string(),
+        declarations: vec![
+            ("font-size".to_string(), "0.67em".to_string(), false),
+            ("font-weight".to_string(), "bold".to_string(), false),
+        ],
+        source_order,
+    });
+    let _ = source_order;
 
     rules
 }

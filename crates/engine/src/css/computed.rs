@@ -17,6 +17,7 @@
 
 use std::collections::HashMap;
 
+use crate::css::calc::{self, CalcContext};
 use crate::css::properties::PropertyId;
 
 // ---------------------------------------------------------------------------
@@ -178,6 +179,28 @@ pub struct ComputedStyle {
     pub overflow: Overflow,
     pub scroll_snap_type: String,
     pub scroll_snap_align: String,
+    pub custom_properties: HashMap<String, String>,
+    // Grid properties (stored as raw strings, parsed at layout time)
+    pub grid_template_columns: String,
+    pub grid_template_rows: String,
+    pub grid_column_start: String,
+    pub grid_column_end: String,
+    pub grid_row_start: String,
+    pub grid_row_end: String,
+    pub row_gap: String,
+    pub column_gap: String,
+    pub grid_auto_flow: String,
+    pub grid_auto_columns: String,
+    pub grid_auto_rows: String,
+    pub align_content: String,
+    pub justify_items: String,
+    pub align_self: String,
+    pub justify_self: String,
+    // Min/max size
+    pub min_width: Option<ComputedLength>,
+    pub min_height: Option<ComputedLength>,
+    pub max_width: Option<ComputedLength>,
+    pub max_height: Option<ComputedLength>,
 }
 
 /// Root default font size used for `rem` units.
@@ -223,6 +246,26 @@ impl ComputedStyle {
             overflow: Overflow::Visible,
             scroll_snap_type: "none".to_string(),
             scroll_snap_align: "none".to_string(),
+            custom_properties: HashMap::new(),
+            grid_template_columns: String::new(),
+            grid_template_rows: String::new(),
+            grid_column_start: String::new(),
+            grid_column_end: String::new(),
+            grid_row_start: String::new(),
+            grid_row_end: String::new(),
+            row_gap: String::new(),
+            column_gap: String::new(),
+            grid_auto_flow: String::new(),
+            grid_auto_columns: String::new(),
+            grid_auto_rows: String::new(),
+            align_content: String::new(),
+            justify_items: String::new(),
+            align_self: String::new(),
+            justify_self: String::new(),
+            min_width: None,
+            min_height: None,
+            max_width: None,
+            max_height: None,
         }
     }
 }
@@ -410,6 +453,20 @@ fn parse_length(val: &str, parent_font_size: f32) -> f32 {
         return 0.0;
     }
 
+    // calc()/min()/max()/clamp() — delegate to calc module
+    if calc::is_math_function(&trimmed) {
+        let ctx = CalcContext {
+            font_size: parent_font_size,
+            parent_font_size,
+            root_font_size: ROOT_FONT_SIZE,
+            vw: VIEWPORT_WIDTH,
+            vh: VIEWPORT_HEIGHT,
+        };
+        if let Some(result) = calc::eval_math_function(&trimmed, &ctx) {
+            return result;
+        }
+    }
+
     if let Some(num) = trimmed.strip_suffix("px") {
         return num.trim().parse::<f32>().unwrap_or(0.0);
     }
@@ -447,6 +504,77 @@ fn parse_length(val: &str, parent_font_size: f32) -> f32 {
 
     // Bare number
     trimmed.parse::<f32>().unwrap_or(0.0)
+}
+
+/// Substitute `var(--name)` and `var(--name, fallback)` in a CSS value string.
+/// Handles nested var() references.
+fn substitute_var(value: &str, custom_props: &HashMap<String, String>) -> String {
+    let mut result = value.to_string();
+    // Iterate up to 10 times to handle nested var() references
+    for _ in 0..10 {
+        if !result.contains("var(") {
+            break;
+        }
+        let mut new_result = String::with_capacity(result.len());
+        let mut i = 0;
+        let bytes = result.as_bytes();
+        while i < bytes.len() {
+            if i + 4 <= bytes.len() && &result[i..i + 4] == "var(" {
+                // Find matching close paren
+                let start = i + 4;
+                let mut depth = 1;
+                let mut end = start;
+                while end < bytes.len() {
+                    if bytes[end] == b'(' {
+                        depth += 1;
+                    } else if bytes[end] == b')' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    end += 1;
+                }
+                let inner = &result[start..end];
+                // Split on first comma for fallback
+                let (name, fallback) = if let Some(comma_pos) = find_top_level_comma(inner) {
+                    (inner[..comma_pos].trim(), Some(inner[comma_pos + 1..].trim()))
+                } else {
+                    (inner.trim(), None)
+                };
+                // Look up the custom property
+                if let Some(val) = custom_props.get(name) {
+                    new_result.push_str(val.trim());
+                } else if let Some(fb) = fallback {
+                    new_result.push_str(fb);
+                }
+                // Skip past the closing paren
+                i = if end < bytes.len() { end + 1 } else { end };
+            } else {
+                new_result.push(result.as_bytes()[i] as char);
+                i += 1;
+            }
+        }
+        if new_result == result {
+            break;
+        }
+        result = new_result;
+    }
+    result
+}
+
+/// Find the first comma at top level (not inside nested parens).
+fn find_top_level_comma(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Parse a font-size value, handling keywords like "medium", "small", "large", etc.
@@ -534,6 +662,10 @@ fn parse_opacity(val: &str) -> f32 {
 
 /// Returns true if the given CSS property name is inherited by default.
 fn is_inherited_property(property: &str) -> bool {
+    // CSS custom properties always inherit
+    if property.starts_with("--") {
+        return true;
+    }
     match PropertyId::from_name(property) {
         Some(pid) => pid.inherits(),
         None => {
@@ -606,6 +738,24 @@ pub fn resolve_style(cascaded: &HashMap<String, CascadedEntry>, parent_style: Op
     // Start from initial values.
     let mut style = ComputedStyle::initial();
 
+    // Phase 0: Collect custom properties (--*) and inherit from parent.
+    // Custom properties always inherit.
+    if parent_style.is_some() {
+        style.custom_properties = parent.custom_properties.clone();
+    }
+    for (property, entry) in cascaded.iter() {
+        if property.starts_with("--") {
+            let val = entry.value.trim();
+            if val == "initial" {
+                style.custom_properties.remove(property.as_str());
+            } else if val == "inherit" || val == "unset" {
+                // Already inherited from parent in the clone above
+            } else {
+                style.custom_properties.insert(property.clone(), val.to_string());
+            }
+        }
+    }
+
     // Phase 1: For inherited properties NOT in the cascaded map, inherit from parent.
     // We do this first so that explicit cascaded values can override in Phase 2.
     for &prop in INHERITED_PROPERTIES {
@@ -621,7 +771,8 @@ pub fn resolve_style(cascaded: &HashMap<String, CascadedEntry>, parent_style: Op
     // Phase 2: font-size must be resolved first because other properties (em, line-height)
     // depend on the element's own font-size.
     if let Some(entry) = cascaded.get("font-size") {
-        let val = entry.value.trim();
+        let val = substitute_var(entry.value.trim(), &style.custom_properties);
+        let val = val.trim();
         match val {
             "inherit" => style.font_size = parent.font_size,
             "initial" => style.font_size = initial.font_size,
@@ -638,12 +789,15 @@ pub fn resolve_style(cascaded: &HashMap<String, CascadedEntry>, parent_style: Op
 
     // Phase 3: Resolve all other cascaded properties.
     for (property, entry) in cascaded.iter() {
-        // Skip font-size (already handled).
-        if property == "font-size" {
+        // Skip font-size (already handled) and custom properties (handled in Phase 0).
+        if property == "font-size" || property.starts_with("--") {
             continue;
         }
 
-        let val = entry.value.trim();
+        // Substitute var() references before processing
+        let raw_val = entry.value.trim();
+        let val = substitute_var(raw_val, &style.custom_properties);
+        let val = val.trim();
 
         // Handle CSS-wide keywords.
         if val == "inherit" {
@@ -718,6 +872,49 @@ fn apply_parsed_value(style: &mut ComputedStyle, property: &str, val: &str, pare
         "overflow" => style.overflow = parse_overflow(val),
         "scroll-snap-type" => style.scroll_snap_type = val.trim().to_ascii_lowercase(),
         "scroll-snap-align" => style.scroll_snap_align = val.trim().to_ascii_lowercase(),
+        // Min/max size
+        "min-width" => style.min_width = parse_optional_length_or_percent(val, own_font_size),
+        "min-height" => style.min_height = parse_optional_length_or_percent(val, own_font_size),
+        "max-width" => style.max_width = parse_optional_length_or_percent(val, own_font_size),
+        "max-height" => style.max_height = parse_optional_length_or_percent(val, own_font_size),
+        // Grid properties (stored as raw strings)
+        "grid-template-columns" => style.grid_template_columns = val.trim().to_string(),
+        "grid-template-rows" => style.grid_template_rows = val.trim().to_string(),
+        "grid-column-start" => style.grid_column_start = val.trim().to_string(),
+        "grid-column-end" => style.grid_column_end = val.trim().to_string(),
+        "grid-row-start" => style.grid_row_start = val.trim().to_string(),
+        "grid-row-end" => style.grid_row_end = val.trim().to_string(),
+        "grid-column" => {
+            // Shorthand: grid-column: start / end
+            let parts: Vec<&str> = val.splitn(2, '/').collect();
+            style.grid_column_start = parts[0].trim().to_string();
+            if parts.len() > 1 {
+                style.grid_column_end = parts[1].trim().to_string();
+            }
+        }
+        "grid-row" => {
+            // Shorthand: grid-row: start / end
+            let parts: Vec<&str> = val.splitn(2, '/').collect();
+            style.grid_row_start = parts[0].trim().to_string();
+            if parts.len() > 1 {
+                style.grid_row_end = parts[1].trim().to_string();
+            }
+        }
+        "row-gap" => style.row_gap = val.trim().to_string(),
+        "column-gap" => style.column_gap = val.trim().to_string(),
+        "gap" => {
+            // Shorthand: gap sets both row-gap and column-gap
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            style.row_gap = parts[0].to_string();
+            style.column_gap = if parts.len() > 1 { parts[1].to_string() } else { parts[0].to_string() };
+        }
+        "grid-auto-flow" => style.grid_auto_flow = val.trim().to_string(),
+        "grid-auto-columns" => style.grid_auto_columns = val.trim().to_string(),
+        "grid-auto-rows" => style.grid_auto_rows = val.trim().to_string(),
+        "align-content" => style.align_content = val.trim().to_string(),
+        "justify-items" => style.justify_items = val.trim().to_string(),
+        "align-self" => style.align_self = val.trim().to_string(),
+        "justify-self" => style.justify_self = val.trim().to_string(),
         _ => {
             // Unknown properties are silently ignored.
         }
@@ -752,6 +949,25 @@ fn apply_inherited_value(style: &mut ComputedStyle, property: &str, parent: &Com
         "overflow" => style.overflow = parent.overflow,
         "scroll-snap-type" => style.scroll_snap_type = parent.scroll_snap_type.clone(),
         "scroll-snap-align" => style.scroll_snap_align = parent.scroll_snap_align.clone(),
+        "min-width" => style.min_width = parent.min_width,
+        "min-height" => style.min_height = parent.min_height,
+        "max-width" => style.max_width = parent.max_width,
+        "max-height" => style.max_height = parent.max_height,
+        "grid-template-columns" => style.grid_template_columns = parent.grid_template_columns.clone(),
+        "grid-template-rows" => style.grid_template_rows = parent.grid_template_rows.clone(),
+        "grid-column-start" => style.grid_column_start = parent.grid_column_start.clone(),
+        "grid-column-end" => style.grid_column_end = parent.grid_column_end.clone(),
+        "grid-row-start" => style.grid_row_start = parent.grid_row_start.clone(),
+        "grid-row-end" => style.grid_row_end = parent.grid_row_end.clone(),
+        "row-gap" => style.row_gap = parent.row_gap.clone(),
+        "column-gap" => style.column_gap = parent.column_gap.clone(),
+        "grid-auto-flow" => style.grid_auto_flow = parent.grid_auto_flow.clone(),
+        "grid-auto-columns" => style.grid_auto_columns = parent.grid_auto_columns.clone(),
+        "grid-auto-rows" => style.grid_auto_rows = parent.grid_auto_rows.clone(),
+        "align-content" => style.align_content = parent.align_content.clone(),
+        "justify-items" => style.justify_items = parent.justify_items.clone(),
+        "align-self" => style.align_self = parent.align_self.clone(),
+        "justify-self" => style.justify_self = parent.justify_self.clone(),
         _ => {}
     }
 }

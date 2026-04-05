@@ -1,4 +1,5 @@
 use crate::dom::node::Node;
+use crate::layout::grid;
 use taffy::prelude::*;
 
 /// Convert a ComputedStyle (via the HashMap on the node) into a taffy::Style.
@@ -66,14 +67,76 @@ pub fn to_taffy_style(node: &Node) -> Style {
         };
         style.justify_content = parse_justify_content(cs.get("justify-content"));
         style.align_items = parse_align_items(cs.get("align-items"));
-        if let Some(gap_val) = cs.get("gap") {
-            let g = parse_px_value(gap_val);
-            style.gap = Size {
-                width: LengthPercentage::Length(g),
-                height: LengthPercentage::Length(g),
-            };
+    }
+
+    // Grid container properties
+    if display == taffy::Display::Grid {
+        if let Some(cols) = cs.get("grid-template-columns") {
+            style.grid_template_columns = grid::parse_grid_template(cols);
+        }
+        if let Some(rows) = cs.get("grid-template-rows") {
+            style.grid_template_rows = grid::parse_grid_template(rows);
+        }
+        if let Some(flow) = cs.get("grid-auto-flow") {
+            style.grid_auto_flow = grid::parse_grid_auto_flow(flow);
+        }
+        if let Some(auto_cols) = cs.get("grid-auto-columns") {
+            let tracks = grid::parse_grid_template(auto_cols);
+            if let Some(TrackSizingFunction::Single(nr)) = tracks.into_iter().next() {
+                style.grid_auto_columns = vec![nr];
+            }
+        }
+        if let Some(auto_rows) = cs.get("grid-auto-rows") {
+            let tracks = grid::parse_grid_template(auto_rows);
+            if let Some(TrackSizingFunction::Single(nr)) = tracks.into_iter().next() {
+                style.grid_auto_rows = vec![nr];
+            }
+        }
+        style.align_content = grid::parse_align_content(cs.get("align-content"));
+        style.justify_items = grid::parse_justify_items_val(cs.get("justify-items"));
+    }
+
+    // Shared gap for both flex and grid
+    if display == taffy::Display::Flex || display == taffy::Display::Grid {
+        let row_gap = cs.get("row-gap").map(|v| grid::parse_gap_value(v));
+        let col_gap = cs.get("column-gap").map(|v| grid::parse_gap_value(v));
+        if let Some(rg) = row_gap {
+            style.gap.height = rg;
+        }
+        if let Some(cg) = col_gap {
+            style.gap.width = cg;
         }
     }
+
+    // Grid item placement
+    if let Some(v) = cs.get("grid-column-start") {
+        style.grid_column = Line {
+            start: grid::parse_grid_placement(v),
+            end: style.grid_column.end,
+        };
+    }
+    if let Some(v) = cs.get("grid-column-end") {
+        style.grid_column = Line {
+            start: style.grid_column.start,
+            end: grid::parse_grid_placement(v),
+        };
+    }
+    if let Some(v) = cs.get("grid-row-start") {
+        style.grid_row = Line {
+            start: grid::parse_grid_placement(v),
+            end: style.grid_row.end,
+        };
+    }
+    if let Some(v) = cs.get("grid-row-end") {
+        style.grid_row = Line {
+            start: style.grid_row.start,
+            end: grid::parse_grid_placement(v),
+        };
+    }
+
+    // Alignment on items (works for both flex and grid children)
+    style.align_self = grid::parse_align_self_val(cs.get("align-self"));
+    style.justify_self = grid::parse_justify_self_val(cs.get("justify-self"));
 
     // flex-grow/shrink on child items
     if let Some(v) = cs.get("flex-grow") {
@@ -82,6 +145,16 @@ pub fn to_taffy_style(node: &Node) -> Style {
     if let Some(v) = cs.get("flex-shrink") {
         style.flex_shrink = v.parse::<f32>().unwrap_or(1.0);
     }
+
+    // Min/max size
+    style.min_size = Size {
+        width: parse_dimension(cs.get("min-width")),
+        height: parse_dimension(cs.get("min-height")),
+    };
+    style.max_size = Size {
+        width: parse_dimension(cs.get("max-width")),
+        height: parse_dimension(cs.get("max-height")),
+    };
 
     style
 }

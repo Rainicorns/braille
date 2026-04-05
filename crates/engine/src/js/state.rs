@@ -53,6 +53,27 @@ pub struct EngineState {
     pub pending_worker_spawns: Vec<PendingWorkerSpawn>,
     pub pending_worker_messages: Vec<PendingWorkerMessage>,
     pub pending_worker_terminates: Vec<PendingWorkerTerminate>,
+    pub pending_ws_connects: Vec<PendingWsConnect>,
+    pub pending_ws_sends: Vec<PendingWsSend>,
+    pub pending_ws_closes: Vec<PendingWsClose>,
+    pub pending_module_fetches: Vec<String>,
+}
+
+pub struct PendingWsConnect {
+    pub id: u32,
+    pub url: String,
+    pub protocols: String,
+}
+
+pub struct PendingWsSend {
+    pub id: u32,
+    pub data: String,
+}
+
+pub struct PendingWsClose {
+    pub id: u32,
+    pub code: u16,
+    pub reason: String,
 }
 
 impl Default for EngineState {
@@ -76,6 +97,10 @@ impl EngineState {
             pending_worker_spawns: Vec::new(),
             pending_worker_messages: Vec::new(),
             pending_worker_terminates: Vec::new(),
+            pending_ws_connects: Vec::new(),
+            pending_ws_sends: Vec::new(),
+            pending_ws_closes: Vec::new(),
+            pending_module_fetches: Vec::new(),
         }
     }
 }

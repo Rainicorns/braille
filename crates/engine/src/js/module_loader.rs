@@ -98,7 +98,15 @@ impl Loader for BrailleLoader {
 
         match source {
             Some(source) => Module::declare(ctx.clone(), name, source),
-            None => Err(Error::new_loading(name)),
+            None => {
+                // Module not in registry — record as pending fetch for host delivery
+                crate::js::dom_bridge::with_state_mut(|s| {
+                    if !s.pending_module_fetches.contains(&name.to_string()) {
+                        s.pending_module_fetches.push(name.to_string());
+                    }
+                });
+                Err(Error::new_loading(name))
+            }
         }
     }
 }

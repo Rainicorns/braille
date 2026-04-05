@@ -572,16 +572,20 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         })();
 
         // History — pushState/replaceState update URL components without triggering navigation
+        // back/forward/go fire popstate events with the stored state
         globalThis.history = (function() {
-            var stateStack = [null];
+            var stateStack = [{state: null, url: location.href}];
             var stateIndex = 0;
-            function updateUrl(url) {
-                if (!url) return;
+            function resolveUrl(url) {
+                if (!url) return location.href;
                 var u = String(url);
-                // Resolve relative URLs
                 if (u.charAt(0) === '/') u = location.origin + u;
                 else if (!/^https?:\/\//.test(u)) u = location.origin + location.pathname.replace(/[^\/]*$/, '') + u;
-                // Update location components directly (bypass the setter to avoid re-parse side effects)
+                return u;
+            }
+            function updateUrl(url) {
+                if (!url) return;
+                var u = resolveUrl(url);
                 var m = u.match(/^(https?:)\/\/([^/:]+)(?::(\d+))?(\/[^?#]*)?(\?[^#]*)?(#.*)?$/);
                 if (m) {
                     location._href = u;
@@ -595,29 +599,53 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                     location.origin = location.protocol + '//' + location.host;
                 }
             }
+            function firePopState(state) {
+                var evt = new PopStateEvent('popstate', {state: state});
+                window.dispatchEvent(evt);
+            }
             return {
                 pushState: function(s, t, u) {
                     stateStack.splice(stateIndex + 1);
-                    stateStack.push(s);
+                    var resolved = resolveUrl(u);
+                    stateStack.push({state: s, url: resolved});
                     stateIndex = stateStack.length - 1;
                     this.state = s;
                     this.length = stateStack.length;
                     updateUrl(u);
                 },
                 replaceState: function(s, t, u) {
-                    stateStack[stateIndex] = s;
+                    var resolved = u ? resolveUrl(u) : stateStack[stateIndex].url;
+                    stateStack[stateIndex] = {state: s, url: resolved};
                     this.state = s;
                     updateUrl(u);
                 },
                 back: function() {
-                    if (stateIndex > 0) { stateIndex--; this.state = stateStack[stateIndex]; }
+                    if (stateIndex > 0) {
+                        stateIndex--;
+                        var entry = stateStack[stateIndex];
+                        this.state = entry.state;
+                        updateUrl(entry.url);
+                        firePopState(entry.state);
+                    }
                 },
                 forward: function() {
-                    if (stateIndex < stateStack.length - 1) { stateIndex++; this.state = stateStack[stateIndex]; }
+                    if (stateIndex < stateStack.length - 1) {
+                        stateIndex++;
+                        var entry = stateStack[stateIndex];
+                        this.state = entry.state;
+                        updateUrl(entry.url);
+                        firePopState(entry.state);
+                    }
                 },
                 go: function(n) {
                     var idx = stateIndex + (n || 0);
-                    if (idx >= 0 && idx < stateStack.length) { stateIndex = idx; this.state = stateStack[stateIndex]; }
+                    if (idx >= 0 && idx < stateStack.length && idx !== stateIndex) {
+                        stateIndex = idx;
+                        var entry = stateStack[stateIndex];
+                        this.state = entry.state;
+                        updateUrl(entry.url);
+                        firePopState(entry.state);
+                    }
                 },
                 state: null,
                 length: 1,
@@ -735,51 +763,151 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             }
         };
 
-        // Observer stubs with initial callback firing
-        globalThis.ResizeObserver = class {
-            constructor(cb) { this._cb = cb; }
-            observe(target) {
-                var cb = this._cb;
-                if (typeof cb === 'function' && target && typeof target.getBoundingClientRect === 'function') {
-                    setTimeout(function() {
-                        var rect = target.getBoundingClientRect();
-                        var w = rect.width, h = rect.height;
-                        cb([{
+        // ResizeObserver — tracks dimension changes on observed elements
+        (function() {
+            var allROEntries = []; // [{observer, target, prevWidth, prevHeight}]
+
+            globalThis.__ro_check = function() {
+                var fired = false;
+                // Group entries by observer
+                var observerMap = new Map();
+                for (var i = 0; i < allROEntries.length; i++) {
+                    var entry = allROEntries[i];
+                    var target = entry.target;
+                    if (!target || typeof target.getBoundingClientRect !== 'function') continue;
+                    var rect = target.getBoundingClientRect();
+                    var w = rect.width, h = rect.height;
+                    if (w !== entry.prevWidth || h !== entry.prevHeight) {
+                        entry.prevWidth = w;
+                        entry.prevHeight = h;
+                        if (!observerMap.has(entry.observer)) observerMap.set(entry.observer, []);
+                        observerMap.get(entry.observer).push({
                             target: target,
                             contentRect: rect,
                             borderBoxSize: [{inlineSize: w, blockSize: h}],
                             contentBoxSize: [{inlineSize: w, blockSize: h}],
                             devicePixelContentBoxSize: [{inlineSize: w, blockSize: h}],
-                        }], this);
-                    }.bind(this), 0);
+                        });
+                    }
                 }
-            }
-            unobserve() {}
-            disconnect() {}
-        };
-        globalThis.IntersectionObserver = class {
-            constructor(cb, opts) { this._cb = cb; this._opts = opts || {}; }
-            observe(target) {
-                var cb = this._cb;
-                if (typeof cb === 'function' && target && typeof target.getBoundingClientRect === 'function') {
-                    setTimeout(function() {
-                        var rect = target.getBoundingClientRect();
-                        cb([{
+                observerMap.forEach(function(entries, obs) {
+                    obs._cb(entries, obs);
+                    fired = true;
+                });
+                return fired;
+            };
+
+            globalThis.ResizeObserver = class {
+                constructor(cb) { this._cb = cb; this._id = Math.random(); }
+                observe(target) {
+                    // Avoid duplicate registration
+                    for (var i = 0; i < allROEntries.length; i++) {
+                        if (allROEntries[i].observer === this && allROEntries[i].target === target) return;
+                    }
+                    allROEntries.push({observer: this, target: target, prevWidth: -1, prevHeight: -1});
+                }
+                unobserve(target) {
+                    allROEntries = allROEntries.filter(function(e) { return !(e.observer === this && e.target === target); }.bind(this));
+                }
+                disconnect() {
+                    allROEntries = allROEntries.filter(function(e) { return e.observer !== this; }.bind(this));
+                }
+            };
+        })();
+
+        // IntersectionObserver — tracks visibility of elements in viewport
+        (function() {
+            var allIOEntries = []; // [{observer, target, prevIntersecting}]
+            var viewportW = 1280, viewportH = 800;
+
+            globalThis.__io_check = function() {
+                var fired = false;
+                var observerMap = new Map();
+                for (var i = 0; i < allIOEntries.length; i++) {
+                    var entry = allIOEntries[i];
+                    var target = entry.target;
+                    if (!target || typeof target.getBoundingClientRect !== 'function') continue;
+                    var rect = target.getBoundingClientRect();
+                    var thresholds = entry.observer._thresholds;
+                    // Compute intersection with viewport
+                    var intTop = Math.max(rect.top, 0);
+                    var intLeft = Math.max(rect.left, 0);
+                    var intRight = Math.min(rect.right, viewportW);
+                    var intBottom = Math.min(rect.bottom, viewportH);
+                    var intW = Math.max(0, intRight - intLeft);
+                    var intH = Math.max(0, intBottom - intTop);
+                    var targetArea = rect.width * rect.height;
+                    var ratio = targetArea > 0 ? (intW * intH) / targetArea : 0;
+                    var isIntersecting = ratio > 0;
+
+                    // Check if any threshold was crossed
+                    var prevRatio = entry.prevRatio === undefined ? -1 : entry.prevRatio;
+                    var crossed = false;
+                    for (var t = 0; t < thresholds.length; t++) {
+                        var th = thresholds[t];
+                        if ((prevRatio < th && ratio >= th) || (prevRatio >= th && ratio < th)) {
+                            crossed = true;
+                            break;
+                        }
+                    }
+                    // Always fire on first check
+                    if (entry.prevRatio === undefined) crossed = true;
+
+                    if (crossed) {
+                        entry.prevRatio = ratio;
+                        if (!observerMap.has(entry.observer)) observerMap.set(entry.observer, []);
+                        var intRect = {top: intTop, left: intLeft, right: intRight, bottom: intBottom, width: intW, height: intH, x: intLeft, y: intTop};
+                        observerMap.get(entry.observer).push({
                             target: target,
-                            isIntersecting: true,
-                            intersectionRatio: 1.0,
+                            isIntersecting: isIntersecting,
+                            intersectionRatio: ratio,
                             boundingClientRect: rect,
-                            intersectionRect: rect,
-                            rootBounds: {top:0,left:0,width:1280,height:800,right:1280,bottom:800,x:0,y:0},
+                            intersectionRect: intRect,
+                            rootBounds: {top:0, left:0, width:viewportW, height:viewportH, right:viewportW, bottom:viewportH, x:0, y:0},
                             time: performance.now(),
-                        }], this);
-                    }.bind(this), 0);
+                        });
+                    }
                 }
-            }
-            unobserve() {}
-            disconnect() {}
-            takeRecords() { return []; }
-        };
+                observerMap.forEach(function(entries, obs) {
+                    obs._cb(entries, obs);
+                    fired = true;
+                });
+                return fired;
+            };
+
+            globalThis.IntersectionObserver = class {
+                constructor(cb, opts) {
+                    this._cb = cb;
+                    this._opts = opts || {};
+                    // Normalize thresholds
+                    var t = this._opts.threshold;
+                    if (t === undefined || t === null) t = [0];
+                    if (typeof t === 'number') t = [t];
+                    this._thresholds = t;
+                    this._pending = [];
+                }
+                observe(target) {
+                    for (var i = 0; i < allIOEntries.length; i++) {
+                        if (allIOEntries[i].observer === this && allIOEntries[i].target === target) return;
+                    }
+                    allIOEntries.push({observer: this, target: target, prevRatio: undefined});
+                }
+                unobserve(target) {
+                    allIOEntries = allIOEntries.filter(function(e) { return !(e.observer === this && e.target === target); }.bind(this));
+                }
+                disconnect() {
+                    allIOEntries = allIOEntries.filter(function(e) { return e.observer !== this; }.bind(this));
+                }
+                takeRecords() {
+                    var records = this._pending;
+                    this._pending = [];
+                    return records;
+                }
+                get thresholds() { return this._thresholds; }
+                get rootMargin() { return this._opts.rootMargin || '0px 0px 0px 0px'; }
+                get root() { return this._opts.root || null; }
+            };
+        })();
         // MutationObserver — functional implementation
         (function() {
             var observers = [];

@@ -273,6 +273,64 @@ fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
     map.insert("scroll-snap-type".to_string(), style.scroll_snap_type.clone());
     map.insert("scroll-snap-align".to_string(), style.scroll_snap_align.clone());
 
+    // Min/max size
+    map.insert("min-width".to_string(), format_optional_computed_length(style.min_width));
+    map.insert("min-height".to_string(), format_optional_computed_length(style.min_height));
+    map.insert("max-width".to_string(), format_optional_computed_length(style.max_width));
+    map.insert("max-height".to_string(), format_optional_computed_length(style.max_height));
+
+    // Grid properties
+    if !style.grid_template_columns.is_empty() {
+        map.insert("grid-template-columns".to_string(), style.grid_template_columns.clone());
+    }
+    if !style.grid_template_rows.is_empty() {
+        map.insert("grid-template-rows".to_string(), style.grid_template_rows.clone());
+    }
+    if !style.grid_column_start.is_empty() {
+        map.insert("grid-column-start".to_string(), style.grid_column_start.clone());
+    }
+    if !style.grid_column_end.is_empty() {
+        map.insert("grid-column-end".to_string(), style.grid_column_end.clone());
+    }
+    if !style.grid_row_start.is_empty() {
+        map.insert("grid-row-start".to_string(), style.grid_row_start.clone());
+    }
+    if !style.grid_row_end.is_empty() {
+        map.insert("grid-row-end".to_string(), style.grid_row_end.clone());
+    }
+    if !style.row_gap.is_empty() {
+        map.insert("row-gap".to_string(), style.row_gap.clone());
+    }
+    if !style.column_gap.is_empty() {
+        map.insert("column-gap".to_string(), style.column_gap.clone());
+    }
+    if !style.grid_auto_flow.is_empty() {
+        map.insert("grid-auto-flow".to_string(), style.grid_auto_flow.clone());
+    }
+    if !style.grid_auto_columns.is_empty() {
+        map.insert("grid-auto-columns".to_string(), style.grid_auto_columns.clone());
+    }
+    if !style.grid_auto_rows.is_empty() {
+        map.insert("grid-auto-rows".to_string(), style.grid_auto_rows.clone());
+    }
+    if !style.align_content.is_empty() {
+        map.insert("align-content".to_string(), style.align_content.clone());
+    }
+    if !style.justify_items.is_empty() {
+        map.insert("justify-items".to_string(), style.justify_items.clone());
+    }
+    if !style.align_self.is_empty() {
+        map.insert("align-self".to_string(), style.align_self.clone());
+    }
+    if !style.justify_self.is_empty() {
+        map.insert("justify-self".to_string(), style.justify_self.clone());
+    }
+
+    // Custom properties
+    for (name, value) in &style.custom_properties {
+        map.insert(name.clone(), value.clone());
+    }
+
     map
 }
 

@@ -88,6 +88,26 @@ pub enum PropertyId {
     // Scroll Snap
     ScrollSnapType,
     ScrollSnapAlign,
+
+    // Grid
+    GridTemplateColumns,
+    GridTemplateRows,
+    GridColumn,
+    GridColumnStart,
+    GridColumnEnd,
+    GridRow,
+    GridRowStart,
+    GridRowEnd,
+    RowGap,
+    ColumnGap,
+    Gap,
+    GridAutoFlow,
+    GridAutoColumns,
+    GridAutoRows,
+    AlignContent,
+    JustifyItems,
+    AlignSelf,
+    JustifySelf,
 }
 
 impl PropertyId {
@@ -182,6 +202,26 @@ impl PropertyId {
             "scroll-snap-type" => Some(PropertyId::ScrollSnapType),
             "scroll-snap-align" => Some(PropertyId::ScrollSnapAlign),
 
+            // Grid
+            "grid-template-columns" => Some(PropertyId::GridTemplateColumns),
+            "grid-template-rows" => Some(PropertyId::GridTemplateRows),
+            "grid-column" => Some(PropertyId::GridColumn),
+            "grid-column-start" => Some(PropertyId::GridColumnStart),
+            "grid-column-end" => Some(PropertyId::GridColumnEnd),
+            "grid-row" => Some(PropertyId::GridRow),
+            "grid-row-start" => Some(PropertyId::GridRowStart),
+            "grid-row-end" => Some(PropertyId::GridRowEnd),
+            "row-gap" => Some(PropertyId::RowGap),
+            "column-gap" => Some(PropertyId::ColumnGap),
+            "gap" => Some(PropertyId::Gap),
+            "grid-auto-flow" => Some(PropertyId::GridAutoFlow),
+            "grid-auto-columns" => Some(PropertyId::GridAutoColumns),
+            "grid-auto-rows" => Some(PropertyId::GridAutoRows),
+            "align-content" => Some(PropertyId::AlignContent),
+            "justify-items" => Some(PropertyId::JustifyItems),
+            "align-self" => Some(PropertyId::AlignSelf),
+            "justify-self" => Some(PropertyId::JustifySelf),
+
             _ => None,
         }
     }
@@ -274,6 +314,26 @@ impl PropertyId {
             // Scroll Snap
             PropertyId::ScrollSnapType => "scroll-snap-type",
             PropertyId::ScrollSnapAlign => "scroll-snap-align",
+
+            // Grid
+            PropertyId::GridTemplateColumns => "grid-template-columns",
+            PropertyId::GridTemplateRows => "grid-template-rows",
+            PropertyId::GridColumn => "grid-column",
+            PropertyId::GridColumnStart => "grid-column-start",
+            PropertyId::GridColumnEnd => "grid-column-end",
+            PropertyId::GridRow => "grid-row",
+            PropertyId::GridRowStart => "grid-row-start",
+            PropertyId::GridRowEnd => "grid-row-end",
+            PropertyId::RowGap => "row-gap",
+            PropertyId::ColumnGap => "column-gap",
+            PropertyId::Gap => "gap",
+            PropertyId::GridAutoFlow => "grid-auto-flow",
+            PropertyId::GridAutoColumns => "grid-auto-columns",
+            PropertyId::GridAutoRows => "grid-auto-rows",
+            PropertyId::AlignContent => "align-content",
+            PropertyId::JustifyItems => "justify-items",
+            PropertyId::AlignSelf => "align-self",
+            PropertyId::JustifySelf => "justify-self",
         }
     }
 
@@ -397,6 +457,23 @@ impl PropertyId {
             // Scroll Snap
             PropertyId::ScrollSnapType => CssValue::None,
             PropertyId::ScrollSnapAlign => CssValue::None,
+
+            // Grid
+            PropertyId::GridTemplateColumns | PropertyId::GridTemplateRows => CssValue::None,
+            PropertyId::GridColumn
+            | PropertyId::GridColumnStart
+            | PropertyId::GridColumnEnd
+            | PropertyId::GridRow
+            | PropertyId::GridRowStart
+            | PropertyId::GridRowEnd => CssValue::Auto,
+            PropertyId::RowGap | PropertyId::ColumnGap | PropertyId::Gap => {
+                CssValue::Keyword("normal".to_string())
+            }
+            PropertyId::GridAutoFlow => CssValue::Keyword("row".to_string()),
+            PropertyId::GridAutoColumns | PropertyId::GridAutoRows => CssValue::Auto,
+            PropertyId::AlignContent => CssValue::Keyword("normal".to_string()),
+            PropertyId::JustifyItems => CssValue::Keyword("legacy".to_string()),
+            PropertyId::AlignSelf | PropertyId::JustifySelf => CssValue::Auto,
         }
     }
 }
@@ -440,6 +517,21 @@ pub fn expand_shorthand(property: &str, value: &CssValue) -> Vec<(PropertyId, Cs
         PropertyId::Overflow => vec![
             (PropertyId::OverflowX, value.clone()),
             (PropertyId::OverflowY, value.clone()),
+        ],
+        // Gap shorthand sets both row-gap and column-gap
+        PropertyId::Gap => vec![
+            (PropertyId::RowGap, value.clone()),
+            (PropertyId::ColumnGap, value.clone()),
+        ],
+        // Grid-column shorthand
+        PropertyId::GridColumn => vec![
+            (PropertyId::GridColumnStart, value.clone()),
+            (PropertyId::GridColumnEnd, value.clone()),
+        ],
+        // Grid-row shorthand
+        PropertyId::GridRow => vec![
+            (PropertyId::GridRowStart, value.clone()),
+            (PropertyId::GridRowEnd, value.clone()),
         ],
         // Not a shorthand property, return as-is
         _ => vec![(prop_id, value.clone())],

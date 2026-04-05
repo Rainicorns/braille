@@ -116,7 +116,6 @@ impl JsRuntime {
             if (typeof _cookieJar !== 'undefined') {
                 for (var k in _cookieJar) delete _cookieJar[k];
             }
-            if (typeof localStorage !== 'undefined') localStorage.clear();
             if (typeof sessionStorage !== 'undefined') sessionStorage.clear();
             if (typeof __braille_pending_navigation !== 'undefined') __braille_pending_navigation = null;
             if (typeof __braille_fetch_resolvers !== 'undefined') __braille_fetch_resolvers = {};

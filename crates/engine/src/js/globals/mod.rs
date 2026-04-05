@@ -8,6 +8,7 @@ mod intl_js;
 mod messaging;
 mod shadowrealm;
 mod timers;
+mod websocket;
 mod worker;
 
 use std::cell::RefCell;
@@ -52,4 +53,42 @@ pub fn register_all(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell
     shadowrealm::register_shadowrealm(ctx);
     super::intl::register_intl(ctx);
     intl_js::register_intl_js(ctx);
+
+    // WebSocket native hooks (must be registered before the JS class)
+    ctx.globals()
+        .set(
+            "__braille_ws_connect",
+            Function::new(ctx.clone(), |id: u32, url: String, protocols: String| {
+                super::dom_bridge::with_state_mut(|s| {
+                    s.pending_ws_connects.push(super::state::PendingWsConnect { id, url, protocols });
+                });
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    ctx.globals()
+        .set(
+            "__braille_ws_send",
+            Function::new(ctx.clone(), |id: u32, data: String| {
+                super::dom_bridge::with_state_mut(|s| {
+                    s.pending_ws_sends.push(super::state::PendingWsSend { id, data });
+                });
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    ctx.globals()
+        .set(
+            "__braille_ws_close",
+            Function::new(ctx.clone(), |id: u32, code: u16, reason: String| {
+                super::dom_bridge::with_state_mut(|s| {
+                    s.pending_ws_closes.push(super::state::PendingWsClose { id, code, reason });
+                });
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+    // WebSocket JS class
+    ctx.eval::<(), _>(websocket::websocket_js()).unwrap_or(());
 }

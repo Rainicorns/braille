@@ -186,6 +186,27 @@ impl Engine {
             //    styles and fire scroll-snap events. This ensures snap scrollend fires
             //    before timeout-based promise rejections.
             crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+
+            // 4a. Fire ResizeObserver callbacks (before IO, per spec rendering pipeline)
+            {
+                let runtime = self.runtime.as_mut().unwrap();
+                let ro_fired = runtime.eval_to_string("typeof __ro_check === 'function' ? String(__ro_check()) : 'false'");
+                if ro_fired.as_deref() == Ok("true") {
+                    runtime.run_jobs();
+                    continue;
+                }
+            }
+
+            // 4b. Fire IntersectionObserver callbacks
+            {
+                let runtime = self.runtime.as_mut().unwrap();
+                let io_fired = runtime.eval_to_string("typeof __io_check === 'function' ? String(__io_check()) : 'false'");
+                if io_fired.as_deref() == Ok("true") {
+                    runtime.run_jobs();
+                    continue;
+                }
+            }
+
             if self.fire_scroll_snap_events() {
                 // Snap events fired — loop again to process microtasks/timers
                 continue;
@@ -279,6 +300,27 @@ impl Engine {
         }
 
         true
+    }
+
+    /// Deliver a WebSocket event to a JS WebSocket instance.
+    /// `event_type` is one of: "open", "message", "error", "close"
+    pub fn ws_deliver_event(&mut self, id: u32, event_type: &str, data: &str) {
+        if let Some(runtime) = self.runtime.as_mut() {
+            let code = format!(
+                "if (typeof __braille_ws_deliver === 'function') __braille_ws_deliver({}, '{}', {})",
+                id,
+                event_type,
+                serde_json::to_string(data).unwrap_or_else(|_| "\"\"".to_string())
+            );
+            runtime.eval_or_log(&code);
+        }
+    }
+
+    /// Deliver a dynamically-fetched module source to the engine.
+    pub fn deliver_module(&mut self, specifier: &str, source: &str) {
+        if let Some(runtime) = self.runtime.as_mut() {
+            let _ = runtime.register_module(specifier, source);
+        }
     }
 
     pub fn snapshot(&mut self, mode: SnapMode) -> String {
