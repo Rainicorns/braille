@@ -11,6 +11,45 @@ pub struct PendingFetch {
     pub resolve_id: u32,
     /// JS-side ID for the reject callback (stored in global __braille_fetch_rejecters)
     pub reject_id: u32,
+    /// CORS mode: "cors", "no-cors", "same-origin", or "navigate"
+    pub mode: String,
+}
+
+/// Content Security Policy directives parsed from response headers.
+#[derive(Debug, Clone, Default)]
+pub struct ContentSecurityPolicy {
+    pub directives: Vec<(String, String)>,
+}
+
+impl ContentSecurityPolicy {
+    /// Parse a Content-Security-Policy header value.
+    pub fn parse(header: &str) -> Self {
+        let directives = header
+            .split(';')
+            .filter_map(|directive| {
+                let trimmed = directive.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let mut parts = trimmed.splitn(2, char::is_whitespace);
+                let name = parts.next()?.to_ascii_lowercase();
+                let value = parts.next().unwrap_or("").trim().to_string();
+                Some((name, value))
+            })
+            .collect();
+        Self { directives }
+    }
+
+    /// Check if inline scripts are allowed. Default: permissive (always true).
+    pub fn allows_inline_script(&self) -> bool {
+        // Default permissive — we don't block anything yet
+        true
+    }
+
+    /// Check if eval() is allowed. Default: permissive (always true).
+    pub fn allows_eval(&self) -> bool {
+        true
+    }
 }
 
 /// A timer entry (setTimeout/setInterval).
@@ -57,6 +96,10 @@ pub struct EngineState {
     pub pending_ws_sends: Vec<PendingWsSend>,
     pub pending_ws_closes: Vec<PendingWsClose>,
     pub pending_module_fetches: Vec<String>,
+    /// URLs from CSS @import rules that need fetching.
+    pub pending_stylesheet_fetches: Vec<String>,
+    /// Pending SSE (EventSource) connections.
+    pub pending_sse_connects: Vec<PendingSseConnect>,
 }
 
 pub struct PendingWsConnect {
@@ -74,6 +117,12 @@ pub struct PendingWsClose {
     pub id: u32,
     pub code: u16,
     pub reason: String,
+}
+
+pub struct PendingSseConnect {
+    pub id: u32,
+    pub url: String,
+    pub with_credentials: bool,
 }
 
 impl Default for EngineState {
@@ -101,6 +150,8 @@ impl EngineState {
             pending_ws_sends: Vec::new(),
             pending_ws_closes: Vec::new(),
             pending_module_fetches: Vec::new(),
+            pending_stylesheet_fetches: Vec::new(),
+            pending_sse_connects: Vec::new(),
         }
     }
 }

@@ -689,32 +689,18 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             });
         };
         globalThis.matchMedia = function(q) {
-            var matches = false;
-            var m;
-            if ((m = q.match(/\(\s*min-width\s*:\s*(\d+)px\s*\)/))) {
-                matches = 1280 >= parseInt(m[1]);
-            } else if ((m = q.match(/\(\s*max-width\s*:\s*(\d+)px\s*\)/))) {
-                matches = 1280 <= parseInt(m[1]);
-            } else if ((m = q.match(/\(\s*min-height\s*:\s*(\d+)px\s*\)/))) {
-                matches = 800 >= parseInt(m[1]);
-            } else if ((m = q.match(/\(\s*max-height\s*:\s*(\d+)px\s*\)/))) {
-                matches = 800 <= parseInt(m[1]);
-            } else if (/prefers-color-scheme\s*:\s*dark/.test(q)) {
-                matches = false;
-            } else if (/prefers-color-scheme\s*:\s*light/.test(q)) {
-                matches = true;
-            } else if (/prefers-reduced-motion\s*:\s*reduce/.test(q)) {
-                matches = false;
-            }
-            return {
+            var matches = __n_matchMedia(q);
+            var _listeners = [];
+            var mql = {
                 matches: matches, media: q,
                 onchange: null,
-                addListener: function(cb) { /* deprecated, never fires */ },
-                removeListener: function(cb) {},
-                addEventListener: function(type, cb) {},
-                removeEventListener: function(type, cb) {},
+                addListener: function(cb) { if (cb) _listeners.push(cb); },
+                removeListener: function(cb) { var i = _listeners.indexOf(cb); if (i >= 0) _listeners.splice(i, 1); },
+                addEventListener: function(type, cb) { if (type === 'change' && cb) _listeners.push(cb); },
+                removeEventListener: function(type, cb) { var i = _listeners.indexOf(cb); if (i >= 0) _listeners.splice(i, 1); },
                 dispatchEvent: function() { return true; },
             };
+            return mql;
         };
         globalThis.requestAnimationFrame = function(cb) { return setTimeout(cb, 16); };
         globalThis.cancelAnimationFrame = function(id) { clearTimeout(id); };
@@ -1034,15 +1020,162 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             globalThis.MutationRecord = MutationRecord;
         })();
 
-        // Performance — real monotonic timer anchored to engine start
+        // Performance API — full implementation with marks, measures, and observers
         var __perf_start = Date.now();
-        globalThis.performance = {
-            now: function() { return Date.now() - __perf_start; },
-            timeOrigin: Date.now(),
-            mark: function(){}, measure: function(){},
-            getEntriesByType: function(){return [];}, getEntriesByName: function(){return [];},
-            timing: { navigationStart: __perf_start },
-        };
+        (function() {
+            var _entries = [];
+            var _observers = [];
+
+            function PerformanceEntry(name, entryType, startTime, duration) {
+                this.name = name;
+                this.entryType = entryType;
+                this.startTime = startTime;
+                this.duration = duration;
+            }
+            PerformanceEntry.prototype.toJSON = function() {
+                return { name: this.name, entryType: this.entryType, startTime: this.startTime, duration: this.duration };
+            };
+
+            function notifyObservers(entry) {
+                for (var i = 0; i < _observers.length; i++) {
+                    var obs = _observers[i];
+                    if (obs._types && obs._types.indexOf(entry.entryType) >= 0) {
+                        obs._buffer.push(entry);
+                        if (obs._scheduled) continue;
+                        obs._scheduled = true;
+                        var o = obs;
+                        setTimeout(function() {
+                            o._scheduled = false;
+                            if (o._buffer.length && o._cb) {
+                                var list = { getEntries: function() { return o._buffer.slice(); } };
+                                var buf = o._buffer;
+                                o._buffer = [];
+                                o._cb(list, o);
+                            }
+                        }, 0);
+                    }
+                }
+            }
+
+            globalThis.performance = {
+                now: function() { return Date.now() - __perf_start; },
+                timeOrigin: __perf_start,
+                mark: function(name, opts) {
+                    var startTime = (opts && opts.startTime !== undefined) ? opts.startTime : (Date.now() - __perf_start);
+                    var entry = new PerformanceEntry(name, 'mark', startTime, 0);
+                    if (opts && opts.detail !== undefined) entry.detail = opts.detail;
+                    _entries.push(entry);
+                    notifyObservers(entry);
+                    return entry;
+                },
+                measure: function(name, startOrOpts, endMark) {
+                    var startTime = 0, endTime = Date.now() - __perf_start;
+                    if (typeof startOrOpts === 'string') {
+                        for (var i = _entries.length - 1; i >= 0; i--) {
+                            if (_entries[i].name === startOrOpts && _entries[i].entryType === 'mark') {
+                                startTime = _entries[i].startTime;
+                                break;
+                            }
+                        }
+                        if (typeof endMark === 'string') {
+                            for (var j = _entries.length - 1; j >= 0; j--) {
+                                if (_entries[j].name === endMark && _entries[j].entryType === 'mark') {
+                                    endTime = _entries[j].startTime;
+                                    break;
+                                }
+                            }
+                        }
+                    } else if (startOrOpts && typeof startOrOpts === 'object') {
+                        if (startOrOpts.start !== undefined) {
+                            if (typeof startOrOpts.start === 'string') {
+                                for (var k = _entries.length - 1; k >= 0; k--) {
+                                    if (_entries[k].name === startOrOpts.start && _entries[k].entryType === 'mark') {
+                                        startTime = _entries[k].startTime;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                startTime = startOrOpts.start;
+                            }
+                        }
+                        if (startOrOpts.end !== undefined) {
+                            if (typeof startOrOpts.end === 'string') {
+                                for (var l = _entries.length - 1; l >= 0; l--) {
+                                    if (_entries[l].name === startOrOpts.end && _entries[l].entryType === 'mark') {
+                                        endTime = _entries[l].startTime;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                endTime = startOrOpts.end;
+                            }
+                        }
+                        if (startOrOpts.duration !== undefined) {
+                            endTime = startTime + startOrOpts.duration;
+                        }
+                    }
+                    var entry = new PerformanceEntry(name, 'measure', startTime, endTime - startTime);
+                    _entries.push(entry);
+                    notifyObservers(entry);
+                    return entry;
+                },
+                getEntries: function() { return _entries.slice(); },
+                getEntriesByName: function(name, type) {
+                    return _entries.filter(function(e) {
+                        return e.name === name && (!type || e.entryType === type);
+                    });
+                },
+                getEntriesByType: function(type) {
+                    return _entries.filter(function(e) { return e.entryType === type; });
+                },
+                clearMarks: function(name) {
+                    if (name) { _entries = _entries.filter(function(e) { return !(e.entryType === 'mark' && e.name === name); }); }
+                    else { _entries = _entries.filter(function(e) { return e.entryType !== 'mark'; }); }
+                },
+                clearMeasures: function(name) {
+                    if (name) { _entries = _entries.filter(function(e) { return !(e.entryType === 'measure' && e.name === name); }); }
+                    else { _entries = _entries.filter(function(e) { return e.entryType !== 'measure'; }); }
+                },
+                clearResourceTimings: function() {
+                    _entries = _entries.filter(function(e) { return e.entryType !== 'resource'; });
+                },
+                setResourceTimingBufferSize: function() {},
+                timing: {
+                    navigationStart: __perf_start, unloadEventStart: 0, unloadEventEnd: 0,
+                    redirectStart: 0, redirectEnd: 0, fetchStart: __perf_start,
+                    domainLookupStart: __perf_start, domainLookupEnd: __perf_start,
+                    connectStart: __perf_start, connectEnd: __perf_start,
+                    secureConnectionStart: 0, requestStart: __perf_start,
+                    responseStart: __perf_start, responseEnd: __perf_start,
+                    domLoading: __perf_start, domInteractive: __perf_start,
+                    domContentLoadedEventStart: __perf_start, domContentLoadedEventEnd: __perf_start,
+                    domComplete: __perf_start, loadEventStart: __perf_start, loadEventEnd: __perf_start,
+                },
+                navigation: { type: 0, redirectCount: 0 },
+            };
+
+            globalThis.PerformanceObserver = function PerformanceObserver(cb) {
+                this._cb = cb;
+                this._types = [];
+                this._buffer = [];
+                this._scheduled = false;
+            };
+            PerformanceObserver.prototype.observe = function(opts) {
+                if (opts && opts.entryTypes) this._types = opts.entryTypes;
+                else if (opts && opts.type) this._types = [opts.type];
+                if (_observers.indexOf(this) < 0) _observers.push(this);
+            };
+            PerformanceObserver.prototype.disconnect = function() {
+                var i = _observers.indexOf(this);
+                if (i >= 0) _observers.splice(i, 1);
+            };
+            PerformanceObserver.prototype.takeRecords = function() {
+                var buf = this._buffer;
+                this._buffer = [];
+                return buf;
+            };
+            PerformanceObserver.supportedEntryTypes = ['mark', 'measure'];
+        })();
 
         // URL
         globalThis.URL = class URL {
@@ -2510,6 +2643,46 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 });
             }
         });
+
+        // EventSource (Server-Sent Events)
+        globalThis.EventSource = function EventSource(url, opts) {
+            var self = this;
+            this.url = url;
+            this.withCredentials = (opts && opts.withCredentials) || false;
+            this.readyState = 0; // CONNECTING
+            this.onopen = null;
+            this.onmessage = null;
+            this.onerror = null;
+            this._listeners = {};
+            this.CONNECTING = 0;
+            this.OPEN = 1;
+            this.CLOSED = 2;
+            this.addEventListener = function(type, cb) {
+                if (!self._listeners[type]) self._listeners[type] = [];
+                self._listeners[type].push(cb);
+            };
+            this.removeEventListener = function(type, cb) {
+                if (!self._listeners[type]) return;
+                var i = self._listeners[type].indexOf(cb);
+                if (i >= 0) self._listeners[type].splice(i, 1);
+            };
+            this.dispatchEvent = function(event) {
+                var type = event.type;
+                if (self['on' + type]) self['on' + type](event);
+                if (self._listeners[type]) {
+                    for (var j = 0; j < self._listeners[type].length; j++) {
+                        self._listeners[type][j](event);
+                    }
+                }
+                return true;
+            };
+            this.close = function() {
+                self.readyState = 2; // CLOSED
+            };
+        };
+        EventSource.CONNECTING = 0;
+        EventSource.OPEN = 1;
+        EventSource.CLOSED = 2;
 
         // Analytics stubs
         globalThis.dataLayer = [];

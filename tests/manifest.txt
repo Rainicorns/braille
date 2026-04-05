@@ -1531,43 +1531,43 @@ PASS wpt:dom/nodes/insertion-removing-steps/insertion-removing-steps-iframe.wind
 PASS wpt:dom/nodes/insertion-removing-steps/insertion-removing-steps-script.window.js
 PASS wpt:dom/nodes/insertion-removing-steps/later-script-removed-by-earlier-script.html
 PASS wpt:dom/nodes/insertion-removing-steps/script-does-not-run-on-child-removal.window.js
-NOT_RUN cargo:cookie_sync::cookie_expiry_uses_virtual_time
-NOT_RUN cargo:cookie_sync::secure_cookie_not_sent_over_http
-FAIL cargo:create_attribute::append_attr_throws
-NOT_RUN cargo:crypto_alts::aes_generatekey_all_variants
-NOT_RUN cargo:crypto_alts::argon2_derive
-NOT_RUN cargo:crypto_alts::chacha20_generatekey
-NOT_RUN cargo:crypto_alts::ec_generatekey
-NOT_RUN cargo:crypto_alts::ecdh_derive_bits_and_keys
-NOT_RUN cargo:crypto_alts::encrypt_decrypt_round_trips
-NOT_RUN cargo:crypto_alts::hkdf_derive
-NOT_RUN cargo:crypto_alts::hmac_generatekey
-NOT_RUN cargo:crypto_alts::mlkem_encap_decap
-NOT_RUN cargo:crypto_alts::mlkem_generatekey
-NOT_RUN cargo:crypto_alts::okp_generatekey
-NOT_RUN cargo:crypto_alts::okp_import_export
-NOT_RUN cargo:crypto_alts::pbkdf2_derive
-NOT_RUN cargo:crypto_alts::pqc_import_export
-NOT_RUN cargo:crypto_alts::sign_verify_all_algorithms
-NOT_RUN cargo:crypto_alts::symmetric_import_export
-NOT_RUN cargo:crypto_alts::wrap_unwrap_keys
-FAIL cargo:dom_bridge_forms::form_elements_external_inputs_have_correct_names
-FAIL cargo:lib::js::dom_bridge::tests::form_enctype_invalid_falls_back_to_default
-FAIL cargo:lib::tests::test_display_none_reflected_in_snapshot
-FAIL cargo:lib::tests::textarea_default_value_returns_text_content
-FAIL cargo:link_basic::link_appendchild_triggers_maybe_load
-FAIL cargo:link_onload::multiple_css_links_all_fire_onload
-NOT_RUN cargo:security_injection::keyboard_event_code_injection
-NOT_RUN cargo:security_injection::keyboard_event_key_injection
-NOT_RUN cargo:security_injection::keyboard_event_type_injection
-NOT_RUN cargo:security_injection::move_input_cursor_key_injection
-FAIL cargo:smoke_integration::html_element_properties
-FAIL cargo:smoke_integration::select_option_interaction
-FAIL wpt:WebCryptoAPI/historical.any.js alt:cargo:generatekey_alts::historical_crypto_available
-FAIL wpt:WebCryptoAPI/import_export/okp_importKey_X25519.https.any.js alt:cargo:crypto_alts::okp_import_export
-FAIL wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed25519.https.any.js alt:cargo:crypto_alts::okp_import_export
-FAIL wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js alt:cargo:crypto_alts::wrap_unwrap_keys
-FAIL wpt:dom/abort/AbortSignal.any.js
+PASS cargo:cookie_sync::cookie_expiry_uses_virtual_time
+PASS cargo:cookie_sync::secure_cookie_not_sent_over_http
+PASS cargo:create_attribute::append_attr_throws
+PASS cargo:crypto_alts::aes_generatekey_all_variants
+PASS cargo:crypto_alts::argon2_derive
+PASS cargo:crypto_alts::chacha20_generatekey
+PASS cargo:crypto_alts::ec_generatekey
+PASS cargo:crypto_alts::ecdh_derive_bits_and_keys
+PASS cargo:crypto_alts::encrypt_decrypt_round_trips
+PASS cargo:crypto_alts::hkdf_derive
+PASS cargo:crypto_alts::hmac_generatekey
+PASS cargo:crypto_alts::mlkem_encap_decap
+PASS cargo:crypto_alts::mlkem_generatekey
+PASS cargo:crypto_alts::okp_generatekey
+PASS cargo:crypto_alts::okp_import_export
+PASS cargo:crypto_alts::pbkdf2_derive
+PASS cargo:crypto_alts::pqc_import_export
+PASS cargo:crypto_alts::sign_verify_all_algorithms
+PASS cargo:crypto_alts::symmetric_import_export
+PASS cargo:crypto_alts::wrap_unwrap_keys
+PASS cargo:dom_bridge_forms::form_elements_external_inputs_have_correct_names
+PASS cargo:lib::js::dom_bridge::tests::form_enctype_invalid_falls_back_to_default
+PASS cargo:lib::tests::test_display_none_reflected_in_snapshot
+PASS cargo:lib::tests::textarea_default_value_returns_text_content
+PASS cargo:link_basic::link_appendchild_triggers_maybe_load
+PASS cargo:link_onload::multiple_css_links_all_fire_onload
+PASS cargo:security_injection::keyboard_event_code_injection
+PASS cargo:security_injection::keyboard_event_key_injection
+PASS cargo:security_injection::keyboard_event_type_injection
+PASS cargo:security_injection::move_input_cursor_key_injection
+PASS cargo:smoke_integration::html_element_properties
+PASS cargo:smoke_integration::select_option_interaction
+PASS wpt:WebCryptoAPI/historical.any.js alt:cargo:generatekey_alts::historical_crypto_available
+PASS wpt:WebCryptoAPI/import_export/okp_importKey_X25519.https.any.js alt:cargo:crypto_alts::okp_import_export
+PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed25519.https.any.js alt:cargo:crypto_alts::okp_import_export
+PASS wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js alt:cargo:crypto_alts::wrap_unwrap_keys
+PASS wpt:dom/abort/AbortSignal.any.js
 FAIL wpt:dom/abort/abort-signal-timeout.html
 FAIL wpt:dom/nodes/moveBefore/Node-moveBefore.html
 NOT_RUN wpt:dom/nodes/moveBefore/child-style-preserve.html

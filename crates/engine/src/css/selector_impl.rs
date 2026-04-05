@@ -64,12 +64,24 @@ pub struct BrailleSelectorImpl;
 pub enum PseudoClass {
     Hover,
     Focus,
+    FocusVisible,
+    FocusWithin,
     Active,
     Visited,
     Link,
+    AnyLink,
     Checked,
     Disabled,
     Enabled,
+    Required,
+    Optional,
+    PlaceholderShown,
+    ReadOnly,
+    ReadWrite,
+    Default,
+    Indeterminate,
+    InRange,
+    OutOfRange,
     FirstChild,
     LastChild,
     NthChild(i32, i32),
@@ -98,7 +110,10 @@ impl NonTSPseudoClassTrait for PseudoClass {
     }
 
     fn is_user_action_state(&self) -> bool {
-        matches!(self, PseudoClass::Active | PseudoClass::Hover | PseudoClass::Focus)
+        matches!(
+            self,
+            PseudoClass::Active | PseudoClass::Hover | PseudoClass::Focus | PseudoClass::FocusVisible | PseudoClass::FocusWithin
+        )
     }
 }
 
@@ -107,12 +122,24 @@ impl CssparserToCss for PseudoClass {
         match self {
             PseudoClass::Hover => dest.write_str(":hover"),
             PseudoClass::Focus => dest.write_str(":focus"),
+            PseudoClass::FocusVisible => dest.write_str(":focus-visible"),
+            PseudoClass::FocusWithin => dest.write_str(":focus-within"),
             PseudoClass::Active => dest.write_str(":active"),
             PseudoClass::Visited => dest.write_str(":visited"),
             PseudoClass::Link => dest.write_str(":link"),
+            PseudoClass::AnyLink => dest.write_str(":any-link"),
             PseudoClass::Checked => dest.write_str(":checked"),
             PseudoClass::Disabled => dest.write_str(":disabled"),
             PseudoClass::Enabled => dest.write_str(":enabled"),
+            PseudoClass::Required => dest.write_str(":required"),
+            PseudoClass::Optional => dest.write_str(":optional"),
+            PseudoClass::PlaceholderShown => dest.write_str(":placeholder-shown"),
+            PseudoClass::ReadOnly => dest.write_str(":read-only"),
+            PseudoClass::ReadWrite => dest.write_str(":read-write"),
+            PseudoClass::Default => dest.write_str(":default"),
+            PseudoClass::Indeterminate => dest.write_str(":indeterminate"),
+            PseudoClass::InRange => dest.write_str(":in-range"),
+            PseudoClass::OutOfRange => dest.write_str(":out-of-range"),
             PseudoClass::FirstChild => dest.write_str(":first-child"),
             PseudoClass::LastChild => dest.write_str(":last-child"),
             PseudoClass::NthChild(a, b) => write!(dest, ":nth-child({}n+{})", a, b),
@@ -186,12 +213,24 @@ impl<'i> parser::Parser<'i> for BrailleSelectorParser {
         match &*name {
             "hover" => Ok(PseudoClass::Hover),
             "focus" => Ok(PseudoClass::Focus),
+            "focus-visible" => Ok(PseudoClass::FocusVisible),
+            "focus-within" => Ok(PseudoClass::FocusWithin),
             "active" => Ok(PseudoClass::Active),
             "visited" => Ok(PseudoClass::Visited),
             "link" => Ok(PseudoClass::Link),
+            "any-link" => Ok(PseudoClass::AnyLink),
             "checked" => Ok(PseudoClass::Checked),
             "disabled" => Ok(PseudoClass::Disabled),
             "enabled" => Ok(PseudoClass::Enabled),
+            "required" => Ok(PseudoClass::Required),
+            "optional" => Ok(PseudoClass::Optional),
+            "placeholder-shown" => Ok(PseudoClass::PlaceholderShown),
+            "read-only" => Ok(PseudoClass::ReadOnly),
+            "read-write" => Ok(PseudoClass::ReadWrite),
+            "default" => Ok(PseudoClass::Default),
+            "indeterminate" => Ok(PseudoClass::Indeterminate),
+            "in-range" => Ok(PseudoClass::InRange),
+            "out-of-range" => Ok(PseudoClass::OutOfRange),
             "first-child" => Ok(PseudoClass::FirstChild),
             "last-child" => Ok(PseudoClass::LastChild),
             "only-child" => Ok(PseudoClass::OnlyChild),

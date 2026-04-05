@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use crate::css::cascade::{cascade_element, stylesheet_to_rules, CascadeDeclaration, CascadeRule, CascadedValues};
 use crate::css::collection::{collect_inline_styles, ua_stylesheet};
 use crate::css::computed::{
-    ComputedColor, ComputedLength, ComputedStyle, Display, FontStyle, Overflow, Position, TextAlign, TextDecoration,
-    Visibility,
+    BoxSizing, ComputedColor, ComputedLength, ComputedStyle, Display, FontStyle, Overflow, Position, TextAlign,
+    TextDecoration, Visibility, WhiteSpace,
 };
 use crate::css::parser::parse_stylesheet;
 use crate::css::selector_impl::BrailleSelectorParser;
@@ -183,6 +183,23 @@ fn format_overflow(o: Overflow) -> &'static str {
     }
 }
 
+fn format_white_space(ws: WhiteSpace) -> &'static str {
+    match ws {
+        WhiteSpace::Normal => "normal",
+        WhiteSpace::Nowrap => "nowrap",
+        WhiteSpace::Pre => "pre",
+        WhiteSpace::PreWrap => "pre-wrap",
+        WhiteSpace::PreLine => "pre-line",
+    }
+}
+
+fn format_box_sizing(bs: BoxSizing) -> &'static str {
+    match bs {
+        BoxSizing::ContentBox => "content-box",
+        BoxSizing::BorderBox => "border-box",
+    }
+}
+
 fn format_color(c: &ComputedColor) -> String {
     if c.a == 1.0 {
         format!("rgb({}, {}, {})", c.r, c.g, c.b)
@@ -325,6 +342,71 @@ fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
     if !style.justify_self.is_empty() {
         map.insert("justify-self".to_string(), style.justify_self.clone());
     }
+
+    // New Phase 2 properties
+    map.insert("white-space".to_string(), format_white_space(style.white_space).to_string());
+    map.insert("box-sizing".to_string(), format_box_sizing(style.box_sizing).to_string());
+    map.insert("word-break".to_string(), style.word_break.clone());
+    map.insert("overflow-wrap".to_string(), style.overflow_wrap.clone());
+    map.insert("text-overflow".to_string(), style.text_overflow.clone());
+    map.insert("text-indent".to_string(), style.text_indent.clone());
+    map.insert("letter-spacing".to_string(), style.letter_spacing.clone());
+    map.insert("word-spacing".to_string(), style.word_spacing.clone());
+    map.insert("text-transform".to_string(), style.text_transform.clone());
+    map.insert("border-top-width".to_string(), style.border_top_width.clone());
+    map.insert("border-top-style".to_string(), style.border_top_style.clone());
+    map.insert("border-top-color".to_string(), style.border_top_color.clone());
+    map.insert("border-right-width".to_string(), style.border_right_width.clone());
+    map.insert("border-right-style".to_string(), style.border_right_style.clone());
+    map.insert("border-right-color".to_string(), style.border_right_color.clone());
+    map.insert("border-bottom-width".to_string(), style.border_bottom_width.clone());
+    map.insert("border-bottom-style".to_string(), style.border_bottom_style.clone());
+    map.insert("border-bottom-color".to_string(), style.border_bottom_color.clone());
+    map.insert("border-left-width".to_string(), style.border_left_width.clone());
+    map.insert("border-left-style".to_string(), style.border_left_style.clone());
+    map.insert("border-left-color".to_string(), style.border_left_color.clone());
+    map.insert("border-top-left-radius".to_string(), style.border_top_left_radius.clone());
+    map.insert("border-top-right-radius".to_string(), style.border_top_right_radius.clone());
+    map.insert("border-bottom-right-radius".to_string(), style.border_bottom_right_radius.clone());
+    map.insert("border-bottom-left-radius".to_string(), style.border_bottom_left_radius.clone());
+    map.insert("box-shadow".to_string(), style.box_shadow.clone());
+    map.insert("outline-width".to_string(), style.outline_width.clone());
+    map.insert("outline-style".to_string(), style.outline_style.clone());
+    map.insert("outline-color".to_string(), style.outline_color.clone());
+    map.insert("z-index".to_string(), style.z_index.clone());
+    map.insert("transform".to_string(), style.transform.clone());
+    map.insert("transition".to_string(), style.transition.clone());
+    map.insert("filter".to_string(), style.filter.clone());
+    map.insert("aspect-ratio".to_string(), style.aspect_ratio.clone());
+    map.insert("cursor".to_string(), style.cursor.clone());
+    map.insert("flex-direction".to_string(), style.flex_direction.clone());
+    map.insert("flex-wrap".to_string(), style.flex_wrap.clone());
+    map.insert("justify-content".to_string(), style.justify_content.clone());
+    map.insert("align-items".to_string(), style.align_items.clone());
+    map.insert("flex-grow".to_string(), style.flex_grow.clone());
+    map.insert("flex-shrink".to_string(), style.flex_shrink.clone());
+    map.insert("flex-basis".to_string(), style.flex_basis.clone());
+    map.insert("list-style-type".to_string(), style.list_style_type.clone());
+    map.insert("float".to_string(), style.float.clone());
+    map.insert("clear".to_string(), style.clear.clone());
+    map.insert("background-image".to_string(), style.background_image.clone());
+    map.insert("background-position".to_string(), style.background_position.clone());
+    map.insert("background-size".to_string(), style.background_size.clone());
+    map.insert("background-repeat".to_string(), style.background_repeat.clone());
+    // Animation properties
+    map.insert("animation-name".to_string(), style.animation_name.clone());
+    map.insert("animation-duration".to_string(), style.animation_duration.clone());
+    map.insert("animation-timing-function".to_string(), style.animation_timing_function.clone());
+    map.insert("animation-delay".to_string(), style.animation_delay.clone());
+    map.insert("animation-iteration-count".to_string(), style.animation_iteration_count.clone());
+    map.insert("animation-direction".to_string(), style.animation_direction.clone());
+    map.insert("animation-fill-mode".to_string(), style.animation_fill_mode.clone());
+    map.insert("animation-play-state".to_string(), style.animation_play_state.clone());
+    // Transition longhand properties
+    map.insert("transition-property".to_string(), style.transition_property.clone());
+    map.insert("transition-duration".to_string(), style.transition_duration.clone());
+    map.insert("transition-timing-function".to_string(), style.transition_timing_function.clone());
+    map.insert("transition-delay".to_string(), style.transition_delay.clone());
 
     // Custom properties
     for (name, value) in &style.custom_properties {

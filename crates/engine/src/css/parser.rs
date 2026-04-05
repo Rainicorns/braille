@@ -20,11 +20,25 @@ pub struct Stylesheet {
     pub rules: Vec<Rule>,
 }
 
-/// A CSS rule with selectors and declarations.
+/// A CSS rule — either a style rule or a conditional @media group.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Rule {
-    pub selectors: SelectorList<BrailleSelectorImpl>,
-    pub declarations: Vec<Declaration>,
+pub enum Rule {
+    Style {
+        selectors: SelectorList<BrailleSelectorImpl>,
+        declarations: Vec<Declaration>,
+    },
+    Media {
+        query: String,
+        rules: Vec<Rule>,
+    },
+    Keyframes {
+        name: String,
+        keyframes_text: String,
+    },
+    Import {
+        url: String,
+        media: Option<String>,
+    },
 }
 
 /// A CSS property declaration with optional !important flag.
@@ -198,17 +212,104 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for BrailleRuleParser {
             }
         }
 
-        Ok(Rule {
+        Ok(Rule::Style {
             selectors,
             declarations,
         })
     }
 }
 
+/// At-rule prelude types.
+#[derive(Debug)]
+enum AtRulePrelude {
+    Media(String),
+    Keyframes(String),
+    Import(String, Option<String>),
+}
+
 impl<'i> cssparser::AtRuleParser<'i> for BrailleRuleParser {
-    type Prelude = ();
+    type Prelude = AtRulePrelude;
     type AtRule = Rule;
     type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::Prelude, ParseError<'i, ()>> {
+        match &*name {
+            "media" => {
+                let start = input.position();
+                // Consume all tokens until the block
+                while input.next().is_ok() {}
+                let query = input.slice(start..input.position()).trim().to_string();
+                Ok(AtRulePrelude::Media(query))
+            }
+            "keyframes" | "-webkit-keyframes" => {
+                let name = input
+                    .expect_ident_or_string()
+                    .map(|v| v.to_string())
+                    .map_err(|_| input.new_custom_error(()))?;
+                Ok(AtRulePrelude::Keyframes(name))
+            }
+            "import" => {
+                let url = input
+                    .expect_url_or_string()
+                    .map(|v| v.to_string())
+                    .map_err(|_| input.new_custom_error(()))?;
+                // Optional media query after the URL
+                let start = input.position();
+                while input.next().is_ok() {}
+                let media_text = input.slice(start..input.position()).trim().to_string();
+                let media = if media_text.is_empty() { None } else { Some(media_text) };
+                Ok(AtRulePrelude::Import(url, media))
+            }
+            _ => Err(input.new_custom_error(())),
+        }
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        prelude: Self::Prelude,
+        _start: &ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::AtRule, ParseError<'i, ()>> {
+        match prelude {
+            AtRulePrelude::Media(query) => {
+                // Parse nested rules inside the @media block
+                let mut nested_rules = Vec::new();
+                let mut nested_parser = BrailleRuleParser;
+                let iter = cssparser::StyleSheetParser::new(input, &mut nested_parser);
+                for rule in iter.flatten() {
+                    nested_rules.push(rule);
+                }
+                Ok(Rule::Media { query, rules: nested_rules })
+            }
+            AtRulePrelude::Keyframes(name) => {
+                // Consume the block as raw text
+                let start = input.position();
+                while input.next().is_ok() {}
+                let text = input.slice(start..input.position()).to_string();
+                Ok(Rule::Keyframes { name, keyframes_text: text })
+            }
+            AtRulePrelude::Import(..) => {
+                Err(input.new_custom_error(())) // @import shouldn't have a block
+            }
+        }
+    }
+
+    fn rule_without_block(
+        &mut self,
+        prelude: Self::Prelude,
+        _start: &ParserState,
+    ) -> Result<Self::AtRule, ()> {
+        match prelude {
+            AtRulePrelude::Import(url, media) => {
+                Ok(Rule::Import { url, media })
+            }
+            _ => Err(()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -245,15 +346,31 @@ mod tests {
         assert_eq!(decls[0].important, true);
     }
 
+    /// Helper to extract declarations from a Style rule.
+    fn get_style_decls(rule: &Rule) -> &[Declaration] {
+        match rule {
+            Rule::Style { declarations, .. } => declarations,
+            _ => panic!("Expected Style rule"),
+        }
+    }
+
+    /// Helper to get selectors from a Style rule.
+    fn get_style_selectors(rule: &Rule) -> &SelectorList<BrailleSelectorImpl> {
+        match rule {
+            Rule::Style { selectors, .. } => selectors,
+            _ => panic!("Expected Style rule"),
+        }
+    }
+
     #[test]
     fn test_parse_simple_rule() {
         let stylesheet = parse_stylesheet(".foo { color: red; }");
         assert_eq!(stylesheet.rules.len(), 1);
 
-        let rule = &stylesheet.rules[0];
-        assert_eq!(rule.declarations.len(), 1);
-        assert_eq!(rule.declarations[0].property, "color");
-        assert_eq!(rule.declarations[0].value, "red");
+        let decls = get_style_decls(&stylesheet.rules[0]);
+        assert_eq!(decls.len(), 1);
+        assert_eq!(decls[0].property, "color");
+        assert_eq!(decls[0].value, "red");
     }
 
     #[test]
@@ -261,10 +378,10 @@ mod tests {
         let stylesheet = parse_stylesheet(".foo { color: red; font-size: 16px; }");
         assert_eq!(stylesheet.rules.len(), 1);
 
-        let rule = &stylesheet.rules[0];
-        assert_eq!(rule.declarations.len(), 2);
-        assert_eq!(rule.declarations[0].property, "color");
-        assert_eq!(rule.declarations[1].property, "font-size");
+        let decls = get_style_decls(&stylesheet.rules[0]);
+        assert_eq!(decls.len(), 2);
+        assert_eq!(decls[0].property, "color");
+        assert_eq!(decls[1].property, "font-size");
     }
 
     #[test]
@@ -272,11 +389,12 @@ mod tests {
         let stylesheet = parse_stylesheet("h1, h2 { font-weight: bold; }");
         assert_eq!(stylesheet.rules.len(), 1);
 
-        let rule = &stylesheet.rules[0];
-        assert_eq!(rule.selectors.len(), 2);
-        assert_eq!(rule.declarations.len(), 1);
-        assert_eq!(rule.declarations[0].property, "font-weight");
-        assert_eq!(rule.declarations[0].value, "bold");
+        let selectors = get_style_selectors(&stylesheet.rules[0]);
+        assert_eq!(selectors.len(), 2);
+        let decls = get_style_decls(&stylesheet.rules[0]);
+        assert_eq!(decls.len(), 1);
+        assert_eq!(decls[0].property, "font-weight");
+        assert_eq!(decls[0].value, "bold");
     }
 
     #[test]
@@ -321,8 +439,9 @@ mod tests {
     fn test_parse_important_flag() {
         let stylesheet = parse_stylesheet(".foo { color: red !important; }");
         assert_eq!(stylesheet.rules.len(), 1);
-        assert_eq!(stylesheet.rules[0].declarations.len(), 1);
-        assert!(stylesheet.rules[0].declarations[0].important);
+        let decls = get_style_decls(&stylesheet.rules[0]);
+        assert_eq!(decls.len(), 1);
+        assert!(decls[0].important);
     }
 
     #[test]
@@ -339,5 +458,19 @@ mod tests {
         assert_eq!(decls.len(), 1);
         assert_eq!(decls[0].property, "color");
         assert_eq!(decls[0].value, "red");
+    }
+
+    #[test]
+    fn test_parse_media_rule() {
+        let css = "@media screen and (min-width: 768px) { .foo { color: red; } }";
+        let stylesheet = parse_stylesheet(css);
+        assert_eq!(stylesheet.rules.len(), 1);
+        match &stylesheet.rules[0] {
+            Rule::Media { query, rules } => {
+                assert!(query.contains("min-width"));
+                assert_eq!(rules.len(), 1);
+            }
+            _ => panic!("Expected Media rule"),
+        }
     }
 }

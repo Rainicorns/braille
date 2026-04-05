@@ -85,6 +85,75 @@ pub enum PropertyId {
     FlexGrow,
     FlexShrink,
 
+    // White-space + text
+    WhiteSpace,
+    WordBreak,
+    OverflowWrap,
+    TextOverflow,
+    TextIndent,
+
+    // Border longhand
+    BorderTopWidth,
+    BorderTopStyle,
+    BorderTopColor,
+    BorderRightWidth,
+    BorderRightStyle,
+    BorderRightColor,
+    BorderBottomWidth,
+    BorderBottomStyle,
+    BorderBottomColor,
+    BorderLeftWidth,
+    BorderLeftStyle,
+    BorderLeftColor,
+
+    // Border radius
+    BorderTopLeftRadius,
+    BorderTopRightRadius,
+    BorderBottomRightRadius,
+    BorderBottomLeftRadius,
+    BorderRadius,
+
+    // Box effects
+    BoxShadow,
+    OutlineWidth,
+    OutlineStyle,
+    OutlineColor,
+    Outline,
+
+    // Visual
+    Transform,
+    Transition,
+    Filter,
+    AspectRatio,
+
+    // Flex (additional)
+    FlexBasis,
+    Flex,
+    FlexFlow,
+
+    // Background (additional)
+    BackgroundImage,
+    BackgroundPosition,
+    BackgroundSize,
+    BackgroundRepeat,
+
+    // Animation
+    AnimationName,
+    AnimationDuration,
+    AnimationTimingFunction,
+    AnimationDelay,
+    AnimationIterationCount,
+    AnimationDirection,
+    AnimationFillMode,
+    AnimationPlayState,
+    Animation,
+
+    // Transition longhand
+    TransitionProperty,
+    TransitionDuration,
+    TransitionTimingFunction,
+    TransitionDelay,
+
     // Scroll Snap
     ScrollSnapType,
     ScrollSnapAlign,
@@ -197,6 +266,75 @@ impl PropertyId {
             "align-items" => Some(PropertyId::AlignItems),
             "flex-grow" => Some(PropertyId::FlexGrow),
             "flex-shrink" => Some(PropertyId::FlexShrink),
+
+            // White-space + text
+            "white-space" => Some(PropertyId::WhiteSpace),
+            "word-break" => Some(PropertyId::WordBreak),
+            "overflow-wrap" | "word-wrap" => Some(PropertyId::OverflowWrap),
+            "text-overflow" => Some(PropertyId::TextOverflow),
+            "text-indent" => Some(PropertyId::TextIndent),
+
+            // Border longhand
+            "border-top-width" => Some(PropertyId::BorderTopWidth),
+            "border-top-style" => Some(PropertyId::BorderTopStyle),
+            "border-top-color" => Some(PropertyId::BorderTopColor),
+            "border-right-width" => Some(PropertyId::BorderRightWidth),
+            "border-right-style" => Some(PropertyId::BorderRightStyle),
+            "border-right-color" => Some(PropertyId::BorderRightColor),
+            "border-bottom-width" => Some(PropertyId::BorderBottomWidth),
+            "border-bottom-style" => Some(PropertyId::BorderBottomStyle),
+            "border-bottom-color" => Some(PropertyId::BorderBottomColor),
+            "border-left-width" => Some(PropertyId::BorderLeftWidth),
+            "border-left-style" => Some(PropertyId::BorderLeftStyle),
+            "border-left-color" => Some(PropertyId::BorderLeftColor),
+
+            // Border radius
+            "border-top-left-radius" => Some(PropertyId::BorderTopLeftRadius),
+            "border-top-right-radius" => Some(PropertyId::BorderTopRightRadius),
+            "border-bottom-right-radius" => Some(PropertyId::BorderBottomRightRadius),
+            "border-bottom-left-radius" => Some(PropertyId::BorderBottomLeftRadius),
+            "border-radius" => Some(PropertyId::BorderRadius),
+
+            // Box effects
+            "box-shadow" => Some(PropertyId::BoxShadow),
+            "outline-width" => Some(PropertyId::OutlineWidth),
+            "outline-style" => Some(PropertyId::OutlineStyle),
+            "outline-color" => Some(PropertyId::OutlineColor),
+            "outline" => Some(PropertyId::Outline),
+
+            // Visual
+            "transform" => Some(PropertyId::Transform),
+            "transition" => Some(PropertyId::Transition),
+            "filter" => Some(PropertyId::Filter),
+            "aspect-ratio" => Some(PropertyId::AspectRatio),
+
+            // Flex (additional)
+            "flex-basis" => Some(PropertyId::FlexBasis),
+            "flex" => Some(PropertyId::Flex),
+            "flex-flow" => Some(PropertyId::FlexFlow),
+
+            // Background (additional)
+            "background-image" => Some(PropertyId::BackgroundImage),
+            "background-position" => Some(PropertyId::BackgroundPosition),
+            "background-size" => Some(PropertyId::BackgroundSize),
+            "background-repeat" => Some(PropertyId::BackgroundRepeat),
+
+            // Animation
+            "animation-name" => Some(PropertyId::AnimationName),
+            "animation-duration" => Some(PropertyId::AnimationDuration),
+            "animation-timing-function" => Some(PropertyId::AnimationTimingFunction),
+            "animation-delay" => Some(PropertyId::AnimationDelay),
+            "animation-iteration-count" => Some(PropertyId::AnimationIterationCount),
+            "animation-direction" => Some(PropertyId::AnimationDirection),
+            "animation-fill-mode" => Some(PropertyId::AnimationFillMode),
+            "animation-play-state" => Some(PropertyId::AnimationPlayState),
+            "animation" => Some(PropertyId::Animation),
+
+            // Transition longhand
+            "transition-property" => Some(PropertyId::TransitionProperty),
+            "transition-duration" => Some(PropertyId::TransitionDuration),
+            "transition-timing-function" => Some(PropertyId::TransitionTimingFunction),
+            "transition-delay" => Some(PropertyId::TransitionDelay),
 
             // Scroll Snap
             "scroll-snap-type" => Some(PropertyId::ScrollSnapType),
@@ -311,6 +449,75 @@ impl PropertyId {
             PropertyId::FlexGrow => "flex-grow",
             PropertyId::FlexShrink => "flex-shrink",
 
+            // White-space + text
+            PropertyId::WhiteSpace => "white-space",
+            PropertyId::WordBreak => "word-break",
+            PropertyId::OverflowWrap => "overflow-wrap",
+            PropertyId::TextOverflow => "text-overflow",
+            PropertyId::TextIndent => "text-indent",
+
+            // Border longhand
+            PropertyId::BorderTopWidth => "border-top-width",
+            PropertyId::BorderTopStyle => "border-top-style",
+            PropertyId::BorderTopColor => "border-top-color",
+            PropertyId::BorderRightWidth => "border-right-width",
+            PropertyId::BorderRightStyle => "border-right-style",
+            PropertyId::BorderRightColor => "border-right-color",
+            PropertyId::BorderBottomWidth => "border-bottom-width",
+            PropertyId::BorderBottomStyle => "border-bottom-style",
+            PropertyId::BorderBottomColor => "border-bottom-color",
+            PropertyId::BorderLeftWidth => "border-left-width",
+            PropertyId::BorderLeftStyle => "border-left-style",
+            PropertyId::BorderLeftColor => "border-left-color",
+
+            // Border radius
+            PropertyId::BorderTopLeftRadius => "border-top-left-radius",
+            PropertyId::BorderTopRightRadius => "border-top-right-radius",
+            PropertyId::BorderBottomRightRadius => "border-bottom-right-radius",
+            PropertyId::BorderBottomLeftRadius => "border-bottom-left-radius",
+            PropertyId::BorderRadius => "border-radius",
+
+            // Box effects
+            PropertyId::BoxShadow => "box-shadow",
+            PropertyId::OutlineWidth => "outline-width",
+            PropertyId::OutlineStyle => "outline-style",
+            PropertyId::OutlineColor => "outline-color",
+            PropertyId::Outline => "outline",
+
+            // Visual
+            PropertyId::Transform => "transform",
+            PropertyId::Transition => "transition",
+            PropertyId::Filter => "filter",
+            PropertyId::AspectRatio => "aspect-ratio",
+
+            // Flex (additional)
+            PropertyId::FlexBasis => "flex-basis",
+            PropertyId::Flex => "flex",
+            PropertyId::FlexFlow => "flex-flow",
+
+            // Background (additional)
+            PropertyId::BackgroundImage => "background-image",
+            PropertyId::BackgroundPosition => "background-position",
+            PropertyId::BackgroundSize => "background-size",
+            PropertyId::BackgroundRepeat => "background-repeat",
+
+            // Animation
+            PropertyId::AnimationName => "animation-name",
+            PropertyId::AnimationDuration => "animation-duration",
+            PropertyId::AnimationTimingFunction => "animation-timing-function",
+            PropertyId::AnimationDelay => "animation-delay",
+            PropertyId::AnimationIterationCount => "animation-iteration-count",
+            PropertyId::AnimationDirection => "animation-direction",
+            PropertyId::AnimationFillMode => "animation-fill-mode",
+            PropertyId::AnimationPlayState => "animation-play-state",
+            PropertyId::Animation => "animation",
+
+            // Transition longhand
+            PropertyId::TransitionProperty => "transition-property",
+            PropertyId::TransitionDuration => "transition-duration",
+            PropertyId::TransitionTimingFunction => "transition-timing-function",
+            PropertyId::TransitionDelay => "transition-delay",
+
             // Scroll Snap
             PropertyId::ScrollSnapType => "scroll-snap-type",
             PropertyId::ScrollSnapAlign => "scroll-snap-align",
@@ -362,6 +569,13 @@ impl PropertyId {
 
             // Other inheriting properties
             PropertyId::Visibility | PropertyId::Cursor | PropertyId::ListStyleType => true,
+
+            // New inherited properties
+            PropertyId::WhiteSpace
+            | PropertyId::WordBreak
+            | PropertyId::OverflowWrap
+            | PropertyId::TextOverflow
+            | PropertyId::TextIndent => true,
 
             // Box model, layout, and positioning properties do NOT inherit
             _ => false,
@@ -453,6 +667,66 @@ impl PropertyId {
             PropertyId::AlignItems => CssValue::Keyword("stretch".to_string()),
             PropertyId::FlexGrow => CssValue::Number(0.0),
             PropertyId::FlexShrink => CssValue::Number(1.0),
+
+            // White-space + text
+            PropertyId::WhiteSpace => CssValue::Keyword("normal".to_string()),
+            PropertyId::WordBreak => CssValue::Keyword("normal".to_string()),
+            PropertyId::OverflowWrap => CssValue::Keyword("normal".to_string()),
+            PropertyId::TextOverflow => CssValue::Keyword("clip".to_string()),
+            PropertyId::TextIndent => CssValue::Length(0.0, LengthUnit::Px),
+
+            // Border longhand
+            PropertyId::BorderTopWidth | PropertyId::BorderRightWidth
+            | PropertyId::BorderBottomWidth | PropertyId::BorderLeftWidth => CssValue::Keyword("medium".to_string()),
+            PropertyId::BorderTopStyle | PropertyId::BorderRightStyle
+            | PropertyId::BorderBottomStyle | PropertyId::BorderLeftStyle => CssValue::None,
+            PropertyId::BorderTopColor | PropertyId::BorderRightColor
+            | PropertyId::BorderBottomColor | PropertyId::BorderLeftColor => CssValue::Keyword("currentcolor".to_string()),
+
+            // Border radius
+            PropertyId::BorderTopLeftRadius | PropertyId::BorderTopRightRadius
+            | PropertyId::BorderBottomRightRadius | PropertyId::BorderBottomLeftRadius
+            | PropertyId::BorderRadius => CssValue::Length(0.0, LengthUnit::Px),
+
+            // Box effects
+            PropertyId::BoxShadow => CssValue::None,
+            PropertyId::OutlineWidth => CssValue::Keyword("medium".to_string()),
+            PropertyId::OutlineStyle => CssValue::None,
+            PropertyId::OutlineColor => CssValue::Keyword("currentcolor".to_string()),
+            PropertyId::Outline => CssValue::None,
+
+            // Visual
+            PropertyId::Transform => CssValue::None,
+            PropertyId::Transition => CssValue::None,
+            PropertyId::Filter => CssValue::None,
+            PropertyId::AspectRatio => CssValue::Auto,
+
+            // Flex (additional)
+            PropertyId::FlexBasis => CssValue::Auto,
+            PropertyId::Flex | PropertyId::FlexFlow => CssValue::None,
+
+            // Background (additional)
+            PropertyId::BackgroundImage => CssValue::None,
+            PropertyId::BackgroundPosition => CssValue::Length(0.0, LengthUnit::Px),
+            PropertyId::BackgroundSize => CssValue::Auto,
+            PropertyId::BackgroundRepeat => CssValue::Keyword("repeat".to_string()),
+
+            // Animation
+            PropertyId::AnimationName => CssValue::None,
+            PropertyId::AnimationDuration => CssValue::Keyword("0s".to_string()),
+            PropertyId::AnimationTimingFunction => CssValue::Keyword("ease".to_string()),
+            PropertyId::AnimationDelay => CssValue::Keyword("0s".to_string()),
+            PropertyId::AnimationIterationCount => CssValue::Number(1.0),
+            PropertyId::AnimationDirection => CssValue::Keyword("normal".to_string()),
+            PropertyId::AnimationFillMode => CssValue::None,
+            PropertyId::AnimationPlayState => CssValue::Keyword("running".to_string()),
+            PropertyId::Animation => CssValue::None,
+
+            // Transition longhand
+            PropertyId::TransitionProperty => CssValue::Keyword("all".to_string()),
+            PropertyId::TransitionDuration => CssValue::Keyword("0s".to_string()),
+            PropertyId::TransitionTimingFunction => CssValue::Keyword("ease".to_string()),
+            PropertyId::TransitionDelay => CssValue::Keyword("0s".to_string()),
 
             // Scroll Snap
             PropertyId::ScrollSnapType => CssValue::None,

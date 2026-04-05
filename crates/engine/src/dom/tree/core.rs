@@ -12,6 +12,8 @@ pub struct DomTree {
     pub(crate) layout_cache: LayoutCache,
     /// Cached `<meta>` entries keyed by the `name` attribute value.
     pub(crate) meta_cache: HashMap<String, Vec<MetaEntry>>,
+    /// The currently focused element (synced from Engine::focused_element before style computation).
+    pub focused_node: Option<NodeId>,
 }
 
 impl Default for DomTree {
@@ -30,6 +32,7 @@ impl DomTree {
             url_fragment: None,
             layout_cache: LayoutCache::default(),
             meta_cache: HashMap::new(),
+            focused_node: None,
         };
         tree.alloc_node(NodeData::Document);
         tree
@@ -43,6 +46,7 @@ impl DomTree {
             url_fragment: None,
             layout_cache: LayoutCache::default(),
             meta_cache: HashMap::new(),
+            focused_node: None,
         };
         tree.alloc_node(NodeData::Document);
         tree

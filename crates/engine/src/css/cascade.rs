@@ -214,27 +214,50 @@ fn collect_matching_rules(
 
 /// Convert a parsed Stylesheet into CascadeRules.
 ///
-/// Each Rule in the Stylesheet becomes a CascadeRule with incrementing source_order
-/// starting from `start_order`.
+/// Style rules become CascadeRules with incrementing source_order starting from `start_order`.
+/// @media rules are evaluated and their contents flattened if the query matches.
+/// @import rules are collected but not resolved here (handled by the style tree).
 pub fn stylesheet_to_rules(sheet: &Stylesheet, start_order: usize) -> Vec<CascadeRule> {
-    sheet
-        .rules
-        .iter()
-        .enumerate()
-        .map(|(i, rule)| CascadeRule {
-            selector: rule.selectors.clone(),
-            declarations: rule
-                .declarations
-                .iter()
-                .map(|d| CascadeDeclaration {
-                    property: d.property.clone(),
-                    value: d.value.clone(),
-                    important: d.important,
-                })
-                .collect(),
-            source_order: start_order + i,
-        })
-        .collect()
+    let mut rules = Vec::new();
+    let mut order = start_order;
+    flatten_rules(&sheet.rules, &mut rules, &mut order);
+    rules
+}
+
+fn flatten_rules(source_rules: &[crate::css::parser::Rule], out: &mut Vec<CascadeRule>, order: &mut usize) {
+    use crate::css::parser::Rule;
+
+    // Viewport dimensions for media query evaluation (must match computed.rs constants)
+    const VIEWPORT_W: f32 = 1280.0;
+    const VIEWPORT_H: f32 = 800.0;
+
+    for rule in source_rules {
+        match rule {
+            Rule::Style { selectors, declarations } => {
+                out.push(CascadeRule {
+                    selector: selectors.clone(),
+                    declarations: declarations
+                        .iter()
+                        .map(|d| CascadeDeclaration {
+                            property: d.property.clone(),
+                            value: d.value.clone(),
+                            important: d.important,
+                        })
+                        .collect(),
+                    source_order: *order,
+                });
+                *order += 1;
+            }
+            Rule::Media { query, rules } => {
+                if crate::css::media::evaluate_media_query(query, VIEWPORT_W, VIEWPORT_H) {
+                    flatten_rules(rules, out, order);
+                }
+            }
+            Rule::Keyframes { .. } | Rule::Import { .. } => {
+                // Keyframes and imports don't produce cascade rules directly
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -102,6 +102,21 @@ pub enum Overflow {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WhiteSpace {
+    Normal,
+    Nowrap,
+    Pre,
+    PreWrap,
+    PreLine,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BoxSizing {
+    ContentBox,
+    BorderBox,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ComputedLength {
     Px(f32),
     Percent(f32), // 0.0–1.0 (50% stored as 0.5)
@@ -201,6 +216,80 @@ pub struct ComputedStyle {
     pub min_height: Option<ComputedLength>,
     pub max_width: Option<ComputedLength>,
     pub max_height: Option<ComputedLength>,
+    // White-space handling (enum, inherited)
+    pub white_space: WhiteSpace,
+    // Box sizing
+    pub box_sizing: BoxSizing,
+    // Text properties (stored as raw strings, inherited)
+    pub word_break: String,
+    pub overflow_wrap: String,
+    pub text_overflow: String,
+    pub text_indent: String,
+    pub letter_spacing: String,
+    pub word_spacing: String,
+    pub text_transform: String,
+    // Border properties (stored as raw strings)
+    pub border_top_width: String,
+    pub border_top_style: String,
+    pub border_top_color: String,
+    pub border_right_width: String,
+    pub border_right_style: String,
+    pub border_right_color: String,
+    pub border_bottom_width: String,
+    pub border_bottom_style: String,
+    pub border_bottom_color: String,
+    pub border_left_width: String,
+    pub border_left_style: String,
+    pub border_left_color: String,
+    // Border radius
+    pub border_top_left_radius: String,
+    pub border_top_right_radius: String,
+    pub border_bottom_right_radius: String,
+    pub border_bottom_left_radius: String,
+    // Box effects
+    pub box_shadow: String,
+    pub outline_width: String,
+    pub outline_style: String,
+    pub outline_color: String,
+    // Positioning
+    pub z_index: String,
+    // Visual
+    pub transform: String,
+    pub transition: String,
+    pub filter: String,
+    pub aspect_ratio: String,
+    pub cursor: String,
+    // Flex properties (stored as raw strings for getComputedStyle)
+    pub flex_direction: String,
+    pub flex_wrap: String,
+    pub justify_content: String,
+    pub align_items: String,
+    pub flex_grow: String,
+    pub flex_shrink: String,
+    pub flex_basis: String,
+    // List/float
+    pub list_style_type: String,
+    pub float: String,
+    pub clear: String,
+    // Background
+    pub background_image: String,
+    pub background_position: String,
+    pub background_size: String,
+    pub background_repeat: String,
+    // Animation properties (stored as raw strings)
+    pub animation_name: String,
+    pub animation_duration: String,
+    pub animation_timing_function: String,
+    pub animation_delay: String,
+    pub animation_iteration_count: String,
+    pub animation_direction: String,
+    pub animation_fill_mode: String,
+    pub animation_play_state: String,
+    // Transition longhand properties
+    pub transition_property: String,
+    pub transition_duration: String,
+    pub transition_timing_function: String,
+    pub transition_delay: String,
 }
 
 /// Root default font size used for `rem` units.
@@ -266,6 +355,67 @@ impl ComputedStyle {
             min_height: None,
             max_width: None,
             max_height: None,
+            white_space: WhiteSpace::Normal,
+            box_sizing: BoxSizing::ContentBox,
+            word_break: "normal".to_string(),
+            overflow_wrap: "normal".to_string(),
+            text_overflow: "clip".to_string(),
+            text_indent: "0px".to_string(),
+            letter_spacing: "normal".to_string(),
+            word_spacing: "normal".to_string(),
+            text_transform: "none".to_string(),
+            border_top_width: "0px".to_string(),
+            border_top_style: "none".to_string(),
+            border_top_color: "currentcolor".to_string(),
+            border_right_width: "0px".to_string(),
+            border_right_style: "none".to_string(),
+            border_right_color: "currentcolor".to_string(),
+            border_bottom_width: "0px".to_string(),
+            border_bottom_style: "none".to_string(),
+            border_bottom_color: "currentcolor".to_string(),
+            border_left_width: "0px".to_string(),
+            border_left_style: "none".to_string(),
+            border_left_color: "currentcolor".to_string(),
+            border_top_left_radius: "0px".to_string(),
+            border_top_right_radius: "0px".to_string(),
+            border_bottom_right_radius: "0px".to_string(),
+            border_bottom_left_radius: "0px".to_string(),
+            box_shadow: "none".to_string(),
+            outline_width: "0px".to_string(),
+            outline_style: "none".to_string(),
+            outline_color: "currentcolor".to_string(),
+            z_index: "auto".to_string(),
+            transform: "none".to_string(),
+            transition: "none".to_string(),
+            filter: "none".to_string(),
+            aspect_ratio: "auto".to_string(),
+            cursor: "auto".to_string(),
+            flex_direction: "row".to_string(),
+            flex_wrap: "nowrap".to_string(),
+            justify_content: "normal".to_string(),
+            align_items: "normal".to_string(),
+            flex_grow: "0".to_string(),
+            flex_shrink: "1".to_string(),
+            flex_basis: "auto".to_string(),
+            list_style_type: "disc".to_string(),
+            float: "none".to_string(),
+            clear: "none".to_string(),
+            background_image: "none".to_string(),
+            background_position: "0% 0%".to_string(),
+            background_size: "auto".to_string(),
+            background_repeat: "repeat".to_string(),
+            animation_name: "none".to_string(),
+            animation_duration: "0s".to_string(),
+            animation_timing_function: "ease".to_string(),
+            animation_delay: "0s".to_string(),
+            animation_iteration_count: "1".to_string(),
+            animation_direction: "normal".to_string(),
+            animation_fill_mode: "none".to_string(),
+            animation_play_state: "running".to_string(),
+            transition_property: "all".to_string(),
+            transition_duration: "0s".to_string(),
+            transition_timing_function: "ease".to_string(),
+            transition_delay: "0s".to_string(),
         }
     }
 }
@@ -347,6 +497,25 @@ fn parse_overflow(val: &str) -> Overflow {
         "scroll" => Overflow::Scroll,
         "auto" => Overflow::Auto,
         _ => Overflow::Visible,
+    }
+}
+
+fn parse_white_space(val: &str) -> WhiteSpace {
+    match val.trim().to_ascii_lowercase().as_str() {
+        "normal" => WhiteSpace::Normal,
+        "nowrap" => WhiteSpace::Nowrap,
+        "pre" => WhiteSpace::Pre,
+        "pre-wrap" => WhiteSpace::PreWrap,
+        "pre-line" => WhiteSpace::PreLine,
+        _ => WhiteSpace::Normal,
+    }
+}
+
+fn parse_box_sizing(val: &str) -> BoxSizing {
+    match val.trim().to_ascii_lowercase().as_str() {
+        "content-box" => BoxSizing::ContentBox,
+        "border-box" => BoxSizing::BorderBox,
+        _ => BoxSizing::ContentBox,
     }
 }
 
@@ -651,6 +820,35 @@ fn parse_optional_length_or_percent(val: &str, font_size: f32) -> Option<Compute
     }
 }
 
+/// Expand 1-4 values into top/right/bottom/left using CSS shorthand rules.
+fn expand_four_values<F: FnOnce(&str, &str, &str, &str)>(parts: &[&str], f: F) {
+    match parts.len() {
+        1 => f(parts[0], parts[0], parts[0], parts[0]),
+        2 => f(parts[0], parts[1], parts[0], parts[1]),
+        3 => f(parts[0], parts[1], parts[2], parts[1]),
+        4 => f(parts[0], parts[1], parts[2], parts[3]),
+        _ => {}
+    }
+}
+
+/// Parse border shorthand parts ("width style color") into (width, style, color).
+fn parse_border_shorthand_parts(parts: &[&str]) -> (String, String, String) {
+    let mut width = String::new();
+    let mut style = String::new();
+    let mut color = String::new();
+    for part in parts {
+        let p = part.to_ascii_lowercase();
+        if matches!(p.as_str(), "none" | "solid" | "dashed" | "dotted" | "double" | "groove" | "ridge" | "inset" | "outset" | "hidden") {
+            style = p;
+        } else if p.starts_with('#') || p.starts_with("rgb") || matches!(p.as_str(), "black" | "white" | "red" | "green" | "blue" | "transparent" | "currentcolor" | "gray" | "grey" | "orange") {
+            color = part.to_string();
+        } else {
+            width = part.to_string();
+        }
+    }
+    (width, style, color)
+}
+
 /// Parse an opacity value (0.0 to 1.0).
 fn parse_opacity(val: &str) -> f32 {
     val.trim().parse::<f32>().unwrap_or(1.0).clamp(0.0, 1.0)
@@ -703,6 +901,16 @@ fn inherit_property(style: &mut ComputedStyle, property: &str, parent: &Computed
         "text-align" => style.text_align = parent.text_align,
         "text-decoration" => style.text_decoration = parent.text_decoration,
         "visibility" => style.visibility = parent.visibility,
+        "white-space" => style.white_space = parent.white_space,
+        "word-break" => style.word_break = parent.word_break.clone(),
+        "overflow-wrap" => style.overflow_wrap = parent.overflow_wrap.clone(),
+        "text-overflow" => style.text_overflow = parent.text_overflow.clone(),
+        "text-indent" => style.text_indent = parent.text_indent.clone(),
+        "letter-spacing" => style.letter_spacing = parent.letter_spacing.clone(),
+        "word-spacing" => style.word_spacing = parent.word_spacing.clone(),
+        "text-transform" => style.text_transform = parent.text_transform.clone(),
+        "cursor" => style.cursor = parent.cursor.clone(),
+        "list-style-type" => style.list_style_type = parent.list_style_type.clone(),
         _ => {}
     }
 }
@@ -718,6 +926,16 @@ const INHERITED_PROPERTIES: &[&str] = &[
     "text-align",
     "text-decoration",
     "visibility",
+    "white-space",
+    "word-break",
+    "overflow-wrap",
+    "text-overflow",
+    "text-indent",
+    "letter-spacing",
+    "word-spacing",
+    "text-transform",
+    "cursor",
+    "list-style-type",
 ];
 
 // ---------------------------------------------------------------------------
@@ -915,6 +1133,318 @@ fn apply_parsed_value(style: &mut ComputedStyle, property: &str, val: &str, pare
         "justify-items" => style.justify_items = val.trim().to_string(),
         "align-self" => style.align_self = val.trim().to_string(),
         "justify-self" => style.justify_self = val.trim().to_string(),
+        // Phase 2: New CSS properties
+        "white-space" => style.white_space = parse_white_space(val),
+        "box-sizing" => style.box_sizing = parse_box_sizing(val),
+        "word-break" => style.word_break = val.trim().to_ascii_lowercase(),
+        "overflow-wrap" | "word-wrap" => style.overflow_wrap = val.trim().to_ascii_lowercase(),
+        "text-overflow" => style.text_overflow = val.trim().to_ascii_lowercase(),
+        "text-indent" => style.text_indent = val.trim().to_string(),
+        "letter-spacing" => style.letter_spacing = val.trim().to_string(),
+        "word-spacing" => style.word_spacing = val.trim().to_string(),
+        "text-transform" => style.text_transform = val.trim().to_ascii_lowercase(),
+        // Border longhand properties
+        "border-top-width" => style.border_top_width = val.trim().to_string(),
+        "border-top-style" => style.border_top_style = val.trim().to_ascii_lowercase(),
+        "border-top-color" => style.border_top_color = val.trim().to_string(),
+        "border-right-width" => style.border_right_width = val.trim().to_string(),
+        "border-right-style" => style.border_right_style = val.trim().to_ascii_lowercase(),
+        "border-right-color" => style.border_right_color = val.trim().to_string(),
+        "border-bottom-width" => style.border_bottom_width = val.trim().to_string(),
+        "border-bottom-style" => style.border_bottom_style = val.trim().to_ascii_lowercase(),
+        "border-bottom-color" => style.border_bottom_color = val.trim().to_string(),
+        "border-left-width" => style.border_left_width = val.trim().to_string(),
+        "border-left-style" => style.border_left_style = val.trim().to_ascii_lowercase(),
+        "border-left-color" => style.border_left_color = val.trim().to_string(),
+        // Border radius
+        "border-top-left-radius" => style.border_top_left_radius = val.trim().to_string(),
+        "border-top-right-radius" => style.border_top_right_radius = val.trim().to_string(),
+        "border-bottom-right-radius" => style.border_bottom_right_radius = val.trim().to_string(),
+        "border-bottom-left-radius" => style.border_bottom_left_radius = val.trim().to_string(),
+        // Box effects
+        "box-shadow" => style.box_shadow = val.trim().to_string(),
+        "outline-width" => style.outline_width = val.trim().to_string(),
+        "outline-style" => style.outline_style = val.trim().to_ascii_lowercase(),
+        "outline-color" => style.outline_color = val.trim().to_string(),
+        // Positioning
+        "z-index" => style.z_index = val.trim().to_string(),
+        // Visual
+        "transform" => style.transform = val.trim().to_string(),
+        "transition" => style.transition = val.trim().to_string(),
+        "filter" => style.filter = val.trim().to_string(),
+        "aspect-ratio" => style.aspect_ratio = val.trim().to_string(),
+        "cursor" => style.cursor = val.trim().to_ascii_lowercase(),
+        // Flex properties
+        "flex-direction" => style.flex_direction = val.trim().to_ascii_lowercase(),
+        "flex-wrap" => style.flex_wrap = val.trim().to_ascii_lowercase(),
+        "justify-content" => style.justify_content = val.trim().to_ascii_lowercase(),
+        "align-items" => style.align_items = val.trim().to_ascii_lowercase(),
+        "flex-grow" => style.flex_grow = val.trim().to_string(),
+        "flex-shrink" => style.flex_shrink = val.trim().to_string(),
+        "flex-basis" => style.flex_basis = val.trim().to_string(),
+        // List/float
+        "list-style-type" => style.list_style_type = val.trim().to_ascii_lowercase(),
+        "float" => style.float = val.trim().to_ascii_lowercase(),
+        "clear" => style.clear = val.trim().to_ascii_lowercase(),
+        // Background
+        "background-image" => style.background_image = val.trim().to_string(),
+        "background-position" => style.background_position = val.trim().to_string(),
+        "background-size" => style.background_size = val.trim().to_string(),
+        "background-repeat" => style.background_repeat = val.trim().to_ascii_lowercase(),
+        // Phase 3: Shorthand expansion
+        "margin" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            match parts.len() {
+                1 => {
+                    let v = parse_length_or_percent(parts[0], own_font_size);
+                    style.margin_top = v;
+                    style.margin_right = v;
+                    style.margin_bottom = v;
+                    style.margin_left = v;
+                }
+                2 => {
+                    let tb = parse_length_or_percent(parts[0], own_font_size);
+                    let lr = parse_length_or_percent(parts[1], own_font_size);
+                    style.margin_top = tb;
+                    style.margin_bottom = tb;
+                    style.margin_right = lr;
+                    style.margin_left = lr;
+                }
+                3 => {
+                    style.margin_top = parse_length_or_percent(parts[0], own_font_size);
+                    let lr = parse_length_or_percent(parts[1], own_font_size);
+                    style.margin_right = lr;
+                    style.margin_left = lr;
+                    style.margin_bottom = parse_length_or_percent(parts[2], own_font_size);
+                }
+                4 => {
+                    style.margin_top = parse_length_or_percent(parts[0], own_font_size);
+                    style.margin_right = parse_length_or_percent(parts[1], own_font_size);
+                    style.margin_bottom = parse_length_or_percent(parts[2], own_font_size);
+                    style.margin_left = parse_length_or_percent(parts[3], own_font_size);
+                }
+                _ => {}
+            }
+        }
+        "padding" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            match parts.len() {
+                1 => {
+                    let v = parse_length_or_percent(parts[0], own_font_size);
+                    style.padding_top = v;
+                    style.padding_right = v;
+                    style.padding_bottom = v;
+                    style.padding_left = v;
+                }
+                2 => {
+                    let tb = parse_length_or_percent(parts[0], own_font_size);
+                    let lr = parse_length_or_percent(parts[1], own_font_size);
+                    style.padding_top = tb;
+                    style.padding_bottom = tb;
+                    style.padding_right = lr;
+                    style.padding_left = lr;
+                }
+                3 => {
+                    style.padding_top = parse_length_or_percent(parts[0], own_font_size);
+                    let lr = parse_length_or_percent(parts[1], own_font_size);
+                    style.padding_right = lr;
+                    style.padding_left = lr;
+                    style.padding_bottom = parse_length_or_percent(parts[2], own_font_size);
+                }
+                4 => {
+                    style.padding_top = parse_length_or_percent(parts[0], own_font_size);
+                    style.padding_right = parse_length_or_percent(parts[1], own_font_size);
+                    style.padding_bottom = parse_length_or_percent(parts[2], own_font_size);
+                    style.padding_left = parse_length_or_percent(parts[3], own_font_size);
+                }
+                _ => {}
+            }
+        }
+        "border" => {
+            // Parse "width style color" tokens
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            for part in &parts {
+                let p = part.to_ascii_lowercase();
+                if matches!(p.as_str(), "none" | "solid" | "dashed" | "dotted" | "double" | "groove" | "ridge" | "inset" | "outset" | "hidden") {
+                    style.border_top_style = p.clone();
+                    style.border_right_style = p.clone();
+                    style.border_bottom_style = p.clone();
+                    style.border_left_style = p;
+                } else if p.starts_with('#') || p.starts_with("rgb") || matches!(p.as_str(), "black" | "white" | "red" | "green" | "blue" | "transparent" | "currentcolor" | "gray" | "grey" | "orange" | "yellow" | "cyan" | "magenta" | "aqua" | "fuchsia") {
+                    let s = part.to_string();
+                    style.border_top_color = s.clone();
+                    style.border_right_color = s.clone();
+                    style.border_bottom_color = s.clone();
+                    style.border_left_color = s;
+                } else {
+                    let s = part.to_string();
+                    style.border_top_width = s.clone();
+                    style.border_right_width = s.clone();
+                    style.border_bottom_width = s.clone();
+                    style.border_left_width = s;
+                }
+            }
+        }
+        "border-top" | "border-right" | "border-bottom" | "border-left" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            let (w, s, c) = parse_border_shorthand_parts(&parts);
+            match property {
+                "border-top" => { style.border_top_width = w; style.border_top_style = s; style.border_top_color = c; }
+                "border-right" => { style.border_right_width = w; style.border_right_style = s; style.border_right_color = c; }
+                "border-bottom" => { style.border_bottom_width = w; style.border_bottom_style = s; style.border_bottom_color = c; }
+                "border-left" => { style.border_left_width = w; style.border_left_style = s; style.border_left_color = c; }
+                _ => unreachable!()
+            }
+        }
+        "border-width" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            expand_four_values(&parts, |t, r, b, l| {
+                style.border_top_width = t.to_string();
+                style.border_right_width = r.to_string();
+                style.border_bottom_width = b.to_string();
+                style.border_left_width = l.to_string();
+            });
+        }
+        "border-style" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            expand_four_values(&parts, |t, r, b, l| {
+                style.border_top_style = t.to_string();
+                style.border_right_style = r.to_string();
+                style.border_bottom_style = b.to_string();
+                style.border_left_style = l.to_string();
+            });
+        }
+        "border-color" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            expand_four_values(&parts, |t, r, b, l| {
+                style.border_top_color = t.to_string();
+                style.border_right_color = r.to_string();
+                style.border_bottom_color = b.to_string();
+                style.border_left_color = l.to_string();
+            });
+        }
+        "border-radius" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            expand_four_values(&parts, |tl, tr, br, bl| {
+                style.border_top_left_radius = tl.to_string();
+                style.border_top_right_radius = tr.to_string();
+                style.border_bottom_right_radius = br.to_string();
+                style.border_bottom_left_radius = bl.to_string();
+            });
+        }
+        "outline" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            let (w, s, c) = parse_border_shorthand_parts(&parts);
+            style.outline_width = w;
+            style.outline_style = s;
+            style.outline_color = c;
+        }
+        "font" => {
+            // Simplified: try to extract size and family from the font shorthand
+            // Full parsing is complex (style weight size/line-height family)
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            for (i, part) in parts.iter().enumerate() {
+                let p = part.to_ascii_lowercase();
+                if p == "italic" || p == "oblique" {
+                    style.font_style = parse_font_style(part);
+                } else if p == "bold" || p == "bolder" || p == "lighter" || p.parse::<u16>().is_ok() {
+                    style.font_weight = parse_font_weight(part);
+                } else if p.contains("px") || p.contains("em") || p.contains("rem") || p.contains("pt") || p.contains('%')
+                    || matches!(p.as_str(), "xx-small" | "x-small" | "small" | "medium" | "large" | "x-large" | "xx-large")
+                {
+                    // Handle size/line-height
+                    if let Some((size_part, lh_part)) = part.split_once('/') {
+                        style.font_size = parse_font_size(size_part, parent_font_size);
+                        style.line_height = parse_line_height(lh_part, style.font_size, parent_font_size);
+                    } else {
+                        style.font_size = parse_font_size(part, parent_font_size);
+                    }
+                    // Everything after size is family
+                    if i + 1 < parts.len() {
+                        style.font_family = parts[i + 1..].join(" ").trim_matches('"').trim_matches('\'').to_string();
+                    }
+                    break;
+                }
+            }
+        }
+        "flex" => {
+            // flex: grow shrink basis
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            if val.trim() == "none" {
+                style.flex_grow = "0".to_string();
+                style.flex_shrink = "0".to_string();
+                style.flex_basis = "auto".to_string();
+            } else if val.trim() == "auto" {
+                style.flex_grow = "1".to_string();
+                style.flex_shrink = "1".to_string();
+                style.flex_basis = "auto".to_string();
+            } else {
+                if let Some(g) = parts.first() {
+                    style.flex_grow = g.to_string();
+                }
+                if let Some(s) = parts.get(1) {
+                    style.flex_shrink = s.to_string();
+                }
+                if let Some(b) = parts.get(2) {
+                    style.flex_basis = b.to_string();
+                }
+            }
+        }
+        "flex-flow" => {
+            // flex-flow: direction wrap
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            for part in &parts {
+                let p = part.to_ascii_lowercase();
+                if matches!(p.as_str(), "row" | "row-reverse" | "column" | "column-reverse") {
+                    style.flex_direction = p;
+                } else if matches!(p.as_str(), "nowrap" | "wrap" | "wrap-reverse") {
+                    style.flex_wrap = p;
+                }
+            }
+        }
+        "background" => {
+            // Store as raw; extract color if we can identify it
+            let trimmed = val.trim().to_ascii_lowercase();
+            // If it's a single color keyword or hex/rgb, set background-color
+            if !trimmed.contains("url(") && !trimmed.contains("gradient") {
+                style.background_color = parse_color(val);
+            }
+        }
+        "list-style" => {
+            // Extract list-style-type from the shorthand
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            for part in &parts {
+                let p = part.to_ascii_lowercase();
+                if matches!(p.as_str(), "disc" | "circle" | "square" | "decimal" | "decimal-leading-zero"
+                    | "lower-roman" | "upper-roman" | "lower-alpha" | "upper-alpha" | "lower-latin"
+                    | "upper-latin" | "lower-greek" | "none") {
+                    style.list_style_type = p;
+                    break;
+                }
+            }
+        }
+        "overflow-x" | "overflow-y" => {
+            // Also set the overflow enum for the main overflow property
+            style.overflow = parse_overflow(val);
+        }
+        // Animation properties
+        "animation-name" => style.animation_name = val.trim().to_string(),
+        "animation-duration" => style.animation_duration = val.trim().to_string(),
+        "animation-timing-function" => style.animation_timing_function = val.trim().to_string(),
+        "animation-delay" => style.animation_delay = val.trim().to_string(),
+        "animation-iteration-count" => style.animation_iteration_count = val.trim().to_string(),
+        "animation-direction" => style.animation_direction = val.trim().to_ascii_lowercase(),
+        "animation-fill-mode" => style.animation_fill_mode = val.trim().to_ascii_lowercase(),
+        "animation-play-state" => style.animation_play_state = val.trim().to_ascii_lowercase(),
+        "animation" => {
+            // Store raw — animation shorthand is complex
+            style.animation_name = val.trim().to_string();
+        }
+        // Transition longhand properties
+        "transition-property" => style.transition_property = val.trim().to_string(),
+        "transition-duration" => style.transition_duration = val.trim().to_string(),
+        "transition-timing-function" => style.transition_timing_function = val.trim().to_string(),
+        "transition-delay" => style.transition_delay = val.trim().to_string(),
         _ => {
             // Unknown properties are silently ignored.
         }
@@ -968,6 +1498,68 @@ fn apply_inherited_value(style: &mut ComputedStyle, property: &str, parent: &Com
         "justify-items" => style.justify_items = parent.justify_items.clone(),
         "align-self" => style.align_self = parent.align_self.clone(),
         "justify-self" => style.justify_self = parent.justify_self.clone(),
+        // New properties
+        "white-space" => style.white_space = parent.white_space,
+        "box-sizing" => style.box_sizing = parent.box_sizing,
+        "word-break" => style.word_break = parent.word_break.clone(),
+        "overflow-wrap" => style.overflow_wrap = parent.overflow_wrap.clone(),
+        "text-overflow" => style.text_overflow = parent.text_overflow.clone(),
+        "text-indent" => style.text_indent = parent.text_indent.clone(),
+        "letter-spacing" => style.letter_spacing = parent.letter_spacing.clone(),
+        "word-spacing" => style.word_spacing = parent.word_spacing.clone(),
+        "text-transform" => style.text_transform = parent.text_transform.clone(),
+        "border-top-width" => style.border_top_width = parent.border_top_width.clone(),
+        "border-top-style" => style.border_top_style = parent.border_top_style.clone(),
+        "border-top-color" => style.border_top_color = parent.border_top_color.clone(),
+        "border-right-width" => style.border_right_width = parent.border_right_width.clone(),
+        "border-right-style" => style.border_right_style = parent.border_right_style.clone(),
+        "border-right-color" => style.border_right_color = parent.border_right_color.clone(),
+        "border-bottom-width" => style.border_bottom_width = parent.border_bottom_width.clone(),
+        "border-bottom-style" => style.border_bottom_style = parent.border_bottom_style.clone(),
+        "border-bottom-color" => style.border_bottom_color = parent.border_bottom_color.clone(),
+        "border-left-width" => style.border_left_width = parent.border_left_width.clone(),
+        "border-left-style" => style.border_left_style = parent.border_left_style.clone(),
+        "border-left-color" => style.border_left_color = parent.border_left_color.clone(),
+        "border-top-left-radius" => style.border_top_left_radius = parent.border_top_left_radius.clone(),
+        "border-top-right-radius" => style.border_top_right_radius = parent.border_top_right_radius.clone(),
+        "border-bottom-right-radius" => style.border_bottom_right_radius = parent.border_bottom_right_radius.clone(),
+        "border-bottom-left-radius" => style.border_bottom_left_radius = parent.border_bottom_left_radius.clone(),
+        "box-shadow" => style.box_shadow = parent.box_shadow.clone(),
+        "outline-width" => style.outline_width = parent.outline_width.clone(),
+        "outline-style" => style.outline_style = parent.outline_style.clone(),
+        "outline-color" => style.outline_color = parent.outline_color.clone(),
+        "z-index" => style.z_index = parent.z_index.clone(),
+        "transform" => style.transform = parent.transform.clone(),
+        "transition" => style.transition = parent.transition.clone(),
+        "filter" => style.filter = parent.filter.clone(),
+        "aspect-ratio" => style.aspect_ratio = parent.aspect_ratio.clone(),
+        "cursor" => style.cursor = parent.cursor.clone(),
+        "flex-direction" => style.flex_direction = parent.flex_direction.clone(),
+        "flex-wrap" => style.flex_wrap = parent.flex_wrap.clone(),
+        "justify-content" => style.justify_content = parent.justify_content.clone(),
+        "align-items" => style.align_items = parent.align_items.clone(),
+        "flex-grow" => style.flex_grow = parent.flex_grow.clone(),
+        "flex-shrink" => style.flex_shrink = parent.flex_shrink.clone(),
+        "flex-basis" => style.flex_basis = parent.flex_basis.clone(),
+        "list-style-type" => style.list_style_type = parent.list_style_type.clone(),
+        "float" => style.float = parent.float.clone(),
+        "clear" => style.clear = parent.clear.clone(),
+        "background-image" => style.background_image = parent.background_image.clone(),
+        "background-position" => style.background_position = parent.background_position.clone(),
+        "background-size" => style.background_size = parent.background_size.clone(),
+        "background-repeat" => style.background_repeat = parent.background_repeat.clone(),
+        "animation-name" => style.animation_name = parent.animation_name.clone(),
+        "animation-duration" => style.animation_duration = parent.animation_duration.clone(),
+        "animation-timing-function" => style.animation_timing_function = parent.animation_timing_function.clone(),
+        "animation-delay" => style.animation_delay = parent.animation_delay.clone(),
+        "animation-iteration-count" => style.animation_iteration_count = parent.animation_iteration_count.clone(),
+        "animation-direction" => style.animation_direction = parent.animation_direction.clone(),
+        "animation-fill-mode" => style.animation_fill_mode = parent.animation_fill_mode.clone(),
+        "animation-play-state" => style.animation_play_state = parent.animation_play_state.clone(),
+        "transition-property" => style.transition_property = parent.transition_property.clone(),
+        "transition-duration" => style.transition_duration = parent.transition_duration.clone(),
+        "transition-timing-function" => style.transition_timing_function = parent.transition_timing_function.clone(),
+        "transition-delay" => style.transition_delay = parent.transition_delay.clone(),
         _ => {}
     }
 }

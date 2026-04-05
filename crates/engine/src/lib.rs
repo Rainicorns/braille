@@ -145,6 +145,9 @@ impl Engine {
     }
 
     fn settle_inner(&mut self, time_budget_ms: u64) {
+        // Sync focused element to the DOM tree so CSS :focus matching works.
+        self.tree.borrow_mut().focused_node = self.focused_element;
+
         let starting_time = match self.runtime.as_mut() {
             Some(r) => r.current_time_ms(),
             None => {

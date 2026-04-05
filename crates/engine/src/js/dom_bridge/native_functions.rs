@@ -727,6 +727,11 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
+    // __n_matchMedia(query) -> bool — evaluates a media query string
+    g.set("__n_matchMedia", Function::new(ctx.clone(), |query: DomString| -> bool {
+        crate::css::media::evaluate_media_query(&query, 1280.0, 800.0)
+    }).unwrap()).unwrap();
+
     // __n_getComputedStyleAll(nodeId) -> JSON string of all computed styles
     g.set("__n_getComputedStyleAll", Function::new(ctx.clone(), |node_id: u32| -> String {
         with_tree(|tree| {

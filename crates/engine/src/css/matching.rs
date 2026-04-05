@@ -287,11 +287,38 @@ impl<'a> Element for DomElement<'a> {
                     remainder == 0 && (position - b) / a >= 0
                 }
             }
+            // :focus — checks the engine's focused_node state
+            PseudoClass::Focus => self.tree.focused_node == Some(self.node_id),
+            // :focus-visible — same as :focus in text browser (always shows focus ring)
+            PseudoClass::FocusVisible => self.tree.focused_node == Some(self.node_id),
+            // :focus-within — true if this element is an ancestor of the focused node
+            PseudoClass::FocusWithin => {
+                if let Some(focused) = self.tree.focused_node {
+                    if focused == self.node_id {
+                        true
+                    } else {
+                        // Walk ancestors of the focused node
+                        let mut current = self.tree.get_node(focused).parent;
+                        let mut found = false;
+                        while let Some(pid) = current {
+                            if pid == self.node_id {
+                                found = true;
+                                break;
+                            }
+                            current = self.tree.get_node(pid).parent;
+                        }
+                        found
+                    }
+                } else {
+                    false
+                }
+            }
             // Dynamic pseudo-classes (user interaction states)
-            // FLAG: These are not yet implemented in the engine's state tracking
-            PseudoClass::Hover | PseudoClass::Focus | PseudoClass::Active => false,
+            PseudoClass::Hover | PseudoClass::Active => false,
             // Link-related pseudo-classes
             PseudoClass::Visited => false, // We don't track visited state
+            // :any-link — <a> or <area> with href (same as :link but includes visited)
+            PseudoClass::AnyLink => self.is_link(),
             // Form-related pseudo-classes
             // FLAG: These require form state tracking which is not yet implemented
             PseudoClass::Checked => {
@@ -315,6 +342,187 @@ impl<'a> Element for DomElement<'a> {
                 if let Some(tag) = self.tag_name() {
                     matches!(tag, "input" | "button" | "select" | "textarea" | "option")
                         && !self.tree.has_attribute(self.node_id, "disabled")
+                } else {
+                    false
+                }
+            }
+            PseudoClass::Required => {
+                if let Some(tag) = self.tag_name() {
+                    matches!(tag, "input" | "textarea" | "select")
+                        && self.tree.has_attribute(self.node_id, "required")
+                } else {
+                    false
+                }
+            }
+            PseudoClass::Optional => {
+                if let Some(tag) = self.tag_name() {
+                    matches!(tag, "input" | "textarea" | "select")
+                        && !self.tree.has_attribute(self.node_id, "required")
+                } else {
+                    false
+                }
+            }
+            PseudoClass::PlaceholderShown => {
+                if let Some(tag) = self.tag_name() {
+                    if matches!(tag, "input" | "textarea") && self.tree.has_attribute(self.node_id, "placeholder") {
+                        let value = self.tree.get_attribute(self.node_id, "value").unwrap_or_default();
+                        value.is_empty()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            PseudoClass::ReadOnly => {
+                if let Some(tag) = self.tag_name() {
+                    if matches!(tag, "input" | "textarea") {
+                        self.tree.has_attribute(self.node_id, "readonly")
+                            || self.tree.has_attribute(self.node_id, "disabled")
+                    } else {
+                        // Non-editable elements are always read-only
+                        true
+                    }
+                } else {
+                    true
+                }
+            }
+            PseudoClass::ReadWrite => {
+                if let Some(tag) = self.tag_name() {
+                    matches!(tag, "input" | "textarea")
+                        && !self.tree.has_attribute(self.node_id, "readonly")
+                        && !self.tree.has_attribute(self.node_id, "disabled")
+                } else {
+                    false
+                }
+            }
+            PseudoClass::Default => {
+                if let Some(tag) = self.tag_name() {
+                    match tag {
+                        "button" | "input" => {
+                            let input_type = self.tree.get_attribute(self.node_id, "type").unwrap_or_default();
+                            let input_type = input_type.to_ascii_lowercase();
+                            if input_type == "submit" || (tag == "button" && input_type.is_empty()) {
+                                // First submit button in its form is :default
+                                true
+                            } else if matches!(input_type.as_str(), "checkbox" | "radio") {
+                                self.tree.has_attribute(self.node_id, "checked")
+                            } else {
+                                false
+                            }
+                        }
+                        "option" => self.tree.has_attribute(self.node_id, "selected"),
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
+            PseudoClass::Indeterminate => {
+                if let Some(tag) = self.tag_name() {
+                    if tag == "input" {
+                        let input_type = self.tree.get_attribute(self.node_id, "type").unwrap_or_default();
+                        if input_type.eq_ignore_ascii_case("checkbox") {
+                            self.tree.has_attribute(self.node_id, "indeterminate")
+                        } else if input_type.eq_ignore_ascii_case("radio") {
+                            // Radio is indeterminate when no radio in its group is checked
+                            let name = self.tree.get_attribute(self.node_id, "name").unwrap_or_default();
+                            if name.is_empty() {
+                                !self.tree.has_attribute(self.node_id, "checked")
+                            } else {
+                                // Check siblings in same form/parent for checked radio with same name
+                                let parent_id = self.tree.get_node(self.node_id).parent.unwrap_or(0);
+                                let siblings = self.tree.element_children(parent_id);
+                                !siblings.iter().any(|&sid| {
+                                    if let NodeData::Element { ref tag_name, .. } = self.tree.get_node(sid).data {
+                                        if tag_name == "input" {
+                                            let stype = self.tree.get_attribute(sid, "type").unwrap_or_default();
+                                            let sname = self.tree.get_attribute(sid, "name").unwrap_or_default();
+                                            stype.eq_ignore_ascii_case("radio")
+                                                && sname == name
+                                                && self.tree.has_attribute(sid, "checked")
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                })
+                            }
+                        } else {
+                            false
+                        }
+                    } else if tag == "progress" {
+                        !self.tree.has_attribute(self.node_id, "value")
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            PseudoClass::InRange => {
+                if let Some("input") = self.tag_name() {
+                    let input_type = self.tree.get_attribute(self.node_id, "type").unwrap_or_default();
+                    if matches!(input_type.to_ascii_lowercase().as_str(), "number" | "range" | "date" | "month" | "week" | "time" | "datetime-local") {
+                        let has_min = self.tree.has_attribute(self.node_id, "min");
+                        let has_max = self.tree.has_attribute(self.node_id, "max");
+                        if !has_min && !has_max {
+                            return false;
+                        }
+                        // If there are constraints, check if value is within range
+                        let value_str = self.tree.get_attribute(self.node_id, "value").unwrap_or_default();
+                        if let Ok(value) = value_str.parse::<f64>() {
+                            let min_ok = if let Some(min_str) = self.tree.get_attribute(self.node_id, "min") {
+                                min_str.parse::<f64>().map_or(true, |min| value >= min)
+                            } else {
+                                true
+                            };
+                            let max_ok = if let Some(max_str) = self.tree.get_attribute(self.node_id, "max") {
+                                max_str.parse::<f64>().map_or(true, |max| value <= max)
+                            } else {
+                                true
+                            };
+                            min_ok && max_ok
+                        } else {
+                            // No value or non-numeric value — considered in range if constraints exist
+                            true
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            PseudoClass::OutOfRange => {
+                if let Some("input") = self.tag_name() {
+                    let input_type = self.tree.get_attribute(self.node_id, "type").unwrap_or_default();
+                    if matches!(input_type.to_ascii_lowercase().as_str(), "number" | "range" | "date" | "month" | "week" | "time" | "datetime-local") {
+                        let has_min = self.tree.has_attribute(self.node_id, "min");
+                        let has_max = self.tree.has_attribute(self.node_id, "max");
+                        if !has_min && !has_max {
+                            return false;
+                        }
+                        let value_str = self.tree.get_attribute(self.node_id, "value").unwrap_or_default();
+                        if let Ok(value) = value_str.parse::<f64>() {
+                            let below_min = if let Some(min_str) = self.tree.get_attribute(self.node_id, "min") {
+                                min_str.parse::<f64>().is_ok_and(|min| value < min)
+                            } else {
+                                false
+                            };
+                            let above_max = if let Some(max_str) = self.tree.get_attribute(self.node_id, "max") {
+                                max_str.parse::<f64>().is_ok_and(|max| value > max)
+                            } else {
+                                false
+                            };
+                            below_min || above_max
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }

@@ -25,6 +25,7 @@ pub(super) fn register_fetch(ctx: &Ctx<'_>) {
                 body: body_str,
                 resolve_id: 0, // Will be set from JS side
                 reject_id: 0,
+                mode: "cors".to_string(),
             });
 
             id

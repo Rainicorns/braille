@@ -3,6 +3,7 @@ pub mod cascade;
 pub mod collection;
 pub mod computed;
 pub mod matching;
+pub mod media;
 pub mod parser;
 pub mod properties;
 pub mod selector_impl;
