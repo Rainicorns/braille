@@ -60,14 +60,17 @@ impl Engine {
             }
         }
 
-        // 4. Store the runtime
+        // 4. Fire onload for parser-inserted <link> elements
+        Self::fire_link_stylesheet_loads(&mut runtime);
+
+        // 5. Store the runtime
         self.runtime = Some(runtime);
         if self.cookies_pending_js_sync { self.sync_cookies_to_js(); }
 
-        // 5. Reset focus when loading new page
+        // 6. Reset focus when loading new page
         self.focused_element = None;
 
-        // 6. Compute CSS styles after script execution
+        // 7. Compute CSS styles after script execution
         crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
     }
 
@@ -133,6 +136,11 @@ impl Engine {
                 Self::execute_one_descriptor(&mut runtime, descriptor, fetched);
             }
         }
+
+        // Fire onload for parser-inserted <link rel="stylesheet"> elements.
+        // Browsers fire these when stylesheets finish loading. We don't fetch CSS,
+        // but sites gate content visibility on these callbacks (e.g. ifixit's deferCss).
+        Self::fire_link_stylesheet_loads(&mut runtime);
 
         // Fire DOMContentLoaded on document (defer scripts have all run)
         runtime.eval_or_log("document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));");
@@ -333,6 +341,9 @@ impl Engine {
             }
         }
 
+        // Fire onload for parser-inserted <link rel="stylesheet"> elements.
+        Self::fire_link_stylesheet_loads(&mut runtime);
+
         // Fire DOMContentLoaded on document (defer scripts have all run)
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             runtime.eval_or_log("document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));");
@@ -503,6 +514,32 @@ impl Engine {
                 url_json, content_json
             ));
         }
+    }
+
+    /// Fire `onload` on all parser-inserted `<link rel="stylesheet">` elements.
+    /// Browsers fire these when stylesheets finish loading. We don't fetch CSS,
+    /// but many sites gate content visibility on these callbacks.
+    fn fire_link_stylesheet_loads(runtime: &mut JsRuntime) {
+        runtime.eval_or_log(r#"
+            (function() {
+                var links = document.querySelectorAll('link[rel="stylesheet"], link[rel="preload"], link[rel="prefetch"]');
+                for (var i = 0; i < links.length; i++) {
+                    var link = links[i];
+                    // Handle onload as HTML attribute (e.g. onload="deferCss.cssLoaded(this, true)")
+                    if (!link.onload || typeof link.onload !== 'function') {
+                        var attrVal = link.getAttribute('onload');
+                        if (attrVal) {
+                            link.onload = new Function('event', attrVal);
+                        }
+                    }
+                    if (typeof link.onload === 'function') {
+                        try { link.onload({type: 'load', target: link}); } catch(e) {}
+                    }
+                    link.dispatchEvent(new Event('load'));
+                }
+            })();
+        "#);
+        runtime.run_jobs();
     }
 
     /// After scripts have executed, walk the DOM for `<iframe>` elements with a `src`
