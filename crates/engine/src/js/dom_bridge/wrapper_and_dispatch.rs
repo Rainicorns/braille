@@ -623,8 +623,14 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 }
             }
         };
+        var __validScriptTypes = {'': 1, 'text/javascript': 1, 'application/javascript': 1, 'application/x-javascript': 1, 'text/ecmascript': 1, 'application/ecmascript': 1, 'module': 1};
         globalThis.__braille_maybe_load_script = function(node) {
             if (!node || node.tagName !== 'SCRIPT') return;
+            // Per spec: don't execute scripts that were disconnected (e.g., removed by an earlier script in the same batch)
+            if (node.__nid !== undefined && !node.isConnected) return;
+            // Per spec: scripts with invalid type attributes don't execute
+            var scriptType = node.getAttribute('type');
+            if (scriptType !== null && !__validScriptTypes[scriptType.toLowerCase()]) return;
             var src = node.getAttribute('src');
             if (src) {
                 var shortSrc = src.substring(src.lastIndexOf('/') + 1).substring(0, 40);
@@ -1532,6 +1538,18 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                             }
                         }
                         if (p === 'forEach') return function(cb) { for (var i = 0; i < live.length; i++) cb(live[i], i); };
+                        return live[p];
+                    }
+                });
+            }, configurable: true },
+            scripts: { get: function() {
+                return new Proxy([], {
+                    get: function(t, p) {
+                        var live = doc.querySelectorAll('script');
+                        if (p === 'length') return live.length;
+                        if (p === 'item') return function(i) { return live[i] || null; };
+                        if (p === Symbol.iterator) return function() { return live[Symbol.iterator](); };
+                        if (typeof p === 'string' && !isNaN(p)) return live[parseInt(p)];
                         return live[p];
                     }
                 });

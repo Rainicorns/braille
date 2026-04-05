@@ -311,14 +311,16 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 return __makeDocumentLike(htmlEl);
             }
 
-            // Initialize about:blank iframe realm on appendChild
-            globalThis.__braille_maybe_init_iframe = function(node) {
+            function __initSingleIframe(node) {
                 if (!node || node.tagName !== 'IFRAME') return;
                 if (node.__nid === undefined) return;
                 if (iframeRealms[node.__nid]) return;
 
                 var src = node.getAttribute('src');
                 if (src && src !== 'about:blank') return;
+
+                // Only init when connected to the document (not in a disconnected fragment)
+                if (!node.isConnected) return;
 
                 var iframeDoc = buildRealDomDocument(node.__nid);
                 iframeDoc.contentType = 'text/html';
@@ -332,6 +334,28 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     _iframeNodeId: node.__nid
                 };
                 iframeRealms[node.__nid] = realm;
+
+                // Fire load event synchronously for about:blank iframes (per spec)
+                var loadEvent = new Event('load');
+                if (typeof node.onload === 'function') {
+                    node.onload(loadEvent);
+                }
+                if (node.dispatchEvent) {
+                    node.dispatchEvent(loadEvent);
+                }
+            }
+
+            // Initialize about:blank iframe realm on appendChild (+ scan descendants)
+            globalThis.__braille_maybe_init_iframe = function(node) {
+                if (!node || node.__nid === undefined) return;
+                __initSingleIframe(node);
+                // Also init any iframe descendants (e.g., div containing iframes)
+                if (node.querySelectorAll) {
+                    var iframes = node.querySelectorAll('iframe');
+                    for (var i = 0; i < iframes.length; i++) {
+                        __initSingleIframe(iframes[i]);
+                    }
+                }
             };
 
             // Find the iframe realm that owns a given node (walk up parent chain)
@@ -477,7 +501,6 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 get: function() {
                     if (this.__nid === undefined) return undefined;
                     if (__n_getTagName(this.__nid) !== 'IFRAME') return undefined;
-                    if (!iframeRealms[this.__nid]) __braille_maybe_init_iframe(this);
                     var realm = iframeRealms[this.__nid];
                     return realm ? realm.window : null;
                 },
@@ -488,7 +511,6 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 get: function() {
                     if (this.__nid === undefined) return undefined;
                     if (__n_getTagName(this.__nid) !== 'IFRAME') return undefined;
-                    if (!iframeRealms[this.__nid]) __braille_maybe_init_iframe(this);
                     var realm = iframeRealms[this.__nid];
                     return realm ? realm.document : null;
                 },

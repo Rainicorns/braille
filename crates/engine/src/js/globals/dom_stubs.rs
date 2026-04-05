@@ -406,7 +406,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         });
         Object.defineProperty(window, 'length', {
             get: function() {
-                return __braille_find_iframes().length;
+                return window.frames.length;
             },
             configurable: true
         });
@@ -919,6 +919,8 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         // URL
         globalThis.URL = class URL {
             constructor(u, base) {
+                u = String(u);
+                if (base) base = String(base);
                 if (base && !u.match(/^https?:\/\//)) {
                     if (u.startsWith('/')) { var m = base.match(/^(https?:\/\/[^\/]+)/); u = (m?m[1]:'') + u; }
                     else { u = base.replace(/[^\/]*$/, '') + u; }
