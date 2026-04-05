@@ -1,0 +1,12 @@
+[package]
+name = "braille-client"
+version = "0.1.0"
+edition = "2021"
+description = "Shared daemon lifecycle and IPC client for Braille"
+
+[lints]
+workspace = true
+
+[dependencies]
+braille-wire = { path = "../wire" }
+serde_json = "1"

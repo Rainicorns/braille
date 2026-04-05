@@ -222,57 +222,72 @@ fn run_discover(manifest_path: &std::path::Path) {
     let mut added = 0;
     let mut removed = 0;
 
-    // Build new manifest: preserve existing entries in their current order,
-    // then append new entries (non-tentative first, tentative last)
-    let mut new_entries: Vec<ManifestEntry> = Vec::new();
-
-    // Preserve existing entries that are still live (same order)
-    for entry in &existing {
-        if live_set.contains(&entry.path) {
-            new_entries.push(entry.clone());
-        } else {
-            removed += 1;
-            println!("  removed: {}", entry.path);
-        }
-    }
-
     // Scan test files for "// alt_for:" comments
     let alt_map = discover_alt_mappings();
     let mut alt_count = 0;
 
-    // Collect new entries, split into non-tentative and tentative
-    let mut new_regular: Vec<ManifestEntry> = Vec::new();
-    let mut new_tentative: Vec<ManifestEntry> = Vec::new();
-    for path in &live_tests {
-        if !existing_paths.contains(path) {
-            added += 1;
-            let alt = alt_map.get(path).cloned();
-            let entry = ManifestEntry {
-                status: Status::NotRun,
-                path: path.clone(),
-                alt,
-            };
-            if path.contains(".tentative.") {
-                new_tentative.push(entry);
-            } else {
-                new_regular.push(entry);
-            }
+    // Split existing entries into two groups:
+    //   1. PASS — preserve their order exactly (the history)
+    //   2. FAIL / NOT_RUN — will be re-sorted with new tests (the todo list)
+    let mut passed: Vec<ManifestEntry> = Vec::new();
+    let mut existing_todo: Vec<ManifestEntry> = Vec::new();
+    for entry in &existing {
+        if !live_set.contains(&entry.path) {
+            removed += 1;
+            println!("  removed: {}", entry.path);
+            continue;
         }
-    }
-
-    // Update alt mappings for existing entries too
-    for entry in &mut new_entries {
+        let mut entry = entry.clone();
+        // Update alt mappings
         if let Some(alt) = alt_map.get(&entry.path) {
             if entry.alt.as_ref() != Some(alt) {
                 entry.alt = Some(alt.clone());
                 alt_count += 1;
             }
         }
+        if entry.status == Status::Pass {
+            passed.push(entry);
+        } else {
+            existing_todo.push(entry);
+        }
     }
 
-    // Append new non-tentative first, then new tentative
-    new_entries.extend(new_regular);
-    new_entries.extend(new_tentative);
+    // Collect genuinely new tests (not in existing manifest)
+    let mut new_tests: Vec<ManifestEntry> = Vec::new();
+    for path in &live_tests {
+        if !existing_paths.contains(path) {
+            added += 1;
+            let alt = alt_map.get(path).cloned();
+            new_tests.push(ManifestEntry {
+                status: Status::NotRun,
+                path: path.clone(),
+                alt,
+            });
+        }
+    }
+
+    // Merge existing FAIL/NOT_RUN + new tests, then sort:
+    //   - Our own tests (cargo:) first, then WPT non-tentative, then WPT tentative
+    //   - Within each group, alphabetical
+    // This ensures the ratchet always grinds our own tests before WPT.
+    let mut todo: Vec<ManifestEntry> = existing_todo;
+    todo.extend(new_tests);
+    todo.sort_by(|a, b| {
+        fn sort_key(path: &str) -> (u8, &str) {
+            if path.starts_with("cargo:") {
+                (0, path)
+            } else if path.contains(".tentative.") {
+                (2, path)
+            } else {
+                (1, path)
+            }
+        }
+        sort_key(&a.path).cmp(&sort_key(&b.path))
+    });
+
+    // Final manifest: passed (stable order) then todo (our tests first)
+    let mut new_entries = passed;
+    new_entries.extend(todo);
     if alt_count > 0 {
         println!("  updated {} alt mappings", alt_count);
     }

@@ -18,6 +18,37 @@ pub(crate) const BLOCK_ELEMENTS: &[&str] = &[
     "ul", "ol", "dl", "dt", "dd", "form", "fieldset", "details", "summary", "figure", "figcaption",
 ];
 
+/// Returns true if the given element has block-level display.
+/// Checks computed `display` style first; falls back to `BLOCK_ELEMENTS` tag list
+/// when computed styles are unavailable (e.g., in unit tests without `compute_all_styles`).
+pub(crate) fn is_block_level(tree: &DomTree, node_id: NodeId) -> bool {
+    let node = tree.get_node(node_id);
+    if let Some(cs) = &node.computed_style {
+        if let Some(display) = cs.get("display") {
+            return !matches!(
+                display.as_str(),
+                "inline" | "inline-block" | "contents"
+            );
+        }
+    }
+    // Fallback: tag-based classification
+    if let NodeData::Element { tag_name, .. } = &node.data {
+        return BLOCK_ELEMENTS.contains(&tag_name.to_ascii_lowercase().as_str());
+    }
+    false
+}
+
+/// Returns true if a text node's parent has block-level display.
+/// Used to suppress whitespace-only text nodes between block children,
+/// matching browser layout behavior.
+pub(crate) fn is_parent_block_level(tree: &DomTree, text_node_id: NodeId) -> bool {
+    let text_node = tree.get_node(text_node_id);
+    match text_node.parent {
+        Some(parent_id) => is_block_level(tree, parent_id),
+        None => true, // orphan text — treat as block context
+    }
+}
+
 pub(crate) fn trim_trailing_newlines(s: &mut String) {
     while s.ends_with('\n') {
         s.pop();

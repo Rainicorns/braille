@@ -54,10 +54,12 @@ impl<F: FetchProvider> FetchProvider for RecordingFetcher<F> {
     }
 }
 
-/// Replays a previously recorded transcript, serving responses sequentially.
+/// Replays a previously recorded transcript, serving responses matched by URL.
+///
+/// All recorded exchanges are flattened into a URL-keyed map at load time,
+/// so responses are matched by request URL rather than positional order.
 pub struct ReplayFetcher {
-    exchanges: Vec<Exchange>,
-    cursor: usize,
+    responses: std::collections::HashMap<String, braille_wire::FetchOutcome>,
 }
 
 impl ReplayFetcher {
@@ -67,38 +69,42 @@ impl ReplayFetcher {
             .map_err(|e| format!("failed to read transcript {path}: {e}"))?;
         let transcript: Transcript = serde_json::from_str(&data)
             .map_err(|e| format!("failed to parse transcript {path}: {e}"))?;
-        Ok(Self {
-            exchanges: transcript.exchanges,
-            cursor: 0,
-        })
+        Ok(Self::from_transcript(transcript))
     }
 
     /// Create from an in-memory transcript.
     pub fn from_transcript(transcript: Transcript) -> Self {
-        Self {
-            exchanges: transcript.exchanges,
-            cursor: 0,
+        let mut responses = std::collections::HashMap::new();
+        for exchange in &transcript.exchanges {
+            for (req, result) in exchange.requests.iter().zip(exchange.results.iter()) {
+                if let braille_wire::FetchOutcome::Ok(ref data) = result.outcome {
+                    responses.insert(data.url.clone(), result.outcome.clone());
+                    if req.url != data.url {
+                        responses.insert(req.url.clone(), result.outcome.clone());
+                    }
+                }
+            }
         }
+        Self { responses }
     }
 }
 
 impl FetchProvider for ReplayFetcher {
     fn fetch_batch(&mut self, requests: Vec<FetchRequest>) -> Vec<FetchResult> {
-        assert!(
-            self.cursor < self.exchanges.len(),
-            "ReplayFetcher: no more exchanges (cursor={}, total={})",
-            self.cursor,
-            self.exchanges.len()
-        );
-        let exchange = &self.exchanges[self.cursor];
-        self.cursor += 1;
-        // Remap IDs: match by position, use the live request's ID
         requests
-            .iter()
-            .zip(exchange.results.iter())
-            .map(|(req, recorded)| FetchResult {
-                id: req.id,
-                outcome: recorded.outcome.clone(),
+            .into_iter()
+            .map(|r| {
+                let outcome = self
+                    .responses
+                    .get(&r.url)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        braille_wire::FetchOutcome::Err(format!("not recorded: {}", r.url))
+                    });
+                FetchResult {
+                    id: r.id,
+                    outcome,
+                }
             })
             .collect()
     }

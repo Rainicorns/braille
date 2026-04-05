@@ -336,7 +336,7 @@ fn handle_command_inner(
             // then we rely on the host closing stdin (triggering EOF) to stop the loop.
             DaemonResponse::ok("session closed".to_string())
         }
-        DaemonCommand::NewSession | DaemonCommand::DaemonStop => {
+        DaemonCommand::NewSession | DaemonCommand::DaemonStop | DaemonCommand::Ping => {
             DaemonResponse::err("unexpected command for engine process".to_string())
         }
     }

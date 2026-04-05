@@ -17,6 +17,7 @@ workspace = true
 [dependencies]
 braille-wire = { path = "../wire" }
 braille-engine = { path = "../engine" }
+braille-client = { path = "../client" }
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", features = ["blocking"] }
 serde = { version = "1", features = ["derive"] }

@@ -26,10 +26,6 @@ pub fn pid_path() -> PathBuf {
     runtime_dir().join("daemon.pid")
 }
 
-pub fn log_path() -> PathBuf {
-    runtime_dir().join("daemon.log")
-}
-
 pub fn mtime_path() -> PathBuf {
     runtime_dir().join("daemon.mtime")
 }

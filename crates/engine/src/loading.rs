@@ -114,47 +114,23 @@ impl Engine {
         // Register named elements (id → global) per HTML spec
         Self::register_named_elements(&mut runtime);
 
+        // Phase 1: Execute non-deferred scripts in document order.
+        // Per HTML spec, deferred scripts run after parsing completes but before DOMContentLoaded.
+        // Non-deferred inline scripts run immediately during parsing;
+        // non-deferred external scripts block until fetched, then execute in order.
         for descriptor in descriptors {
             match descriptor {
-                ScriptDescriptor::Inline(text, nid) => {
-                    if !text.trim().is_empty() {
-                        if let Some(nid) = nid {
-                            runtime.eval_or_log(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
-                        }
-                        runtime.eval(text).unwrap();
-                        runtime.eval_or_log("document.currentScript = null");
-                        runtime.notify_mutation_observers();
-                    }
+                ScriptDescriptor::External(_, _, true) => {
+                    // Skip deferred scripts — they run in phase 2
                 }
-                ScriptDescriptor::External(url, nid) => {
-                    if let Some(script_content) = fetched.scripts.get(url) {
-                        if !script_content.trim().is_empty() {
-                            if let Some(nid) = nid {
-                                runtime.eval_or_log(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
-                            }
-                            runtime.eval(script_content).unwrap();
-                            runtime.eval_or_log("document.currentScript = null");
-                            runtime.notify_mutation_observers();
-                        }
-                    }
-                }
-                ScriptDescriptor::InlineModule(text) => {
-                    if !text.trim().is_empty() {
-                        runtime.eval_module(text, None).unwrap();
-                        runtime.notify_mutation_observers();
-                    }
-                }
-                ScriptDescriptor::ExternalModule(url) => {
-                    if let Some(script_content) = fetched.scripts.get(url) {
-                        if !script_content.trim().is_empty() {
-                            runtime.eval_module(script_content, Some(url)).unwrap();
-                            runtime.notify_mutation_observers();
-                        }
-                    }
-                }
-                ScriptDescriptor::ImportMap(json) => {
-                    Self::process_import_map(&mut runtime, json, fetched);
-                }
+                _ => Self::execute_one_descriptor(&mut runtime, descriptor, fetched),
+            }
+        }
+
+        // Phase 2: Execute deferred scripts in document order (after all parsing-time scripts).
+        for descriptor in descriptors {
+            if let ScriptDescriptor::External(_, _, true) = descriptor {
+                Self::execute_one_descriptor(&mut runtime, descriptor, fetched);
             }
         }
 
@@ -174,6 +150,120 @@ impl Engine {
 
         // Compute CSS styles after script execution
         crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+    }
+
+    fn execute_one_descriptor_lossy(
+        runtime: &mut JsRuntime,
+        descriptor: &ScriptDescriptor,
+        fetched: &FetchedResources,
+        errors: &mut Vec<String>,
+    ) {
+        if let ScriptDescriptor::ImportMap(json) = descriptor {
+            Self::process_import_map(runtime, json, fetched);
+            return;
+        }
+        let is_module = descriptor.is_module();
+        let script_nid = match descriptor {
+            ScriptDescriptor::Inline(_, nid) | ScriptDescriptor::External(_, nid, _) => *nid,
+            _ => None,
+        };
+        let code = match descriptor {
+            ScriptDescriptor::Inline(text, _) | ScriptDescriptor::InlineModule(text) => {
+                if text.trim().is_empty() {
+                    return;
+                }
+                text.clone()
+            }
+            ScriptDescriptor::External(url, _, _) | ScriptDescriptor::ExternalModule(url) => {
+                match fetched.scripts.get(url) {
+                    Some(content) if !content.trim().is_empty() => content.clone(),
+                    _ => return,
+                }
+            }
+            ScriptDescriptor::ImportMap(_) => unreachable!(),
+        };
+        if !is_module {
+            if let Some(nid) = script_nid {
+                runtime.eval_or_log(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
+            }
+        }
+        let result = if is_module {
+            let specifier = match descriptor {
+                ScriptDescriptor::ExternalModule(url) => Some(url.as_str()),
+                _ => None,
+            };
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                runtime.eval_module(&code, specifier)
+            }))
+        } else {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.eval(&code)))
+        };
+        if !is_module {
+            runtime.eval_or_log("document.currentScript = null");
+        }
+        match result {
+            Ok(Ok(_)) => {
+                runtime.notify_mutation_observers();
+            }
+            Ok(Err(e)) => {
+                runtime.notify_mutation_observers();
+                errors.push(format!("{:?}", e));
+            }
+            Err(panic_err) => {
+                let msg = if let Some(s) = panic_err.downcast_ref::<String>() {
+                    s.clone()
+                } else if let Some(s) = panic_err.downcast_ref::<&str>() {
+                    s.to_string()
+                } else {
+                    "unknown panic".to_string()
+                };
+                errors.push(format!("PANIC: {}", msg));
+            }
+        }
+    }
+
+    fn execute_one_descriptor(runtime: &mut JsRuntime, descriptor: &ScriptDescriptor, fetched: &FetchedResources) {
+        match descriptor {
+            ScriptDescriptor::Inline(text, nid) => {
+                if !text.trim().is_empty() {
+                    if let Some(nid) = nid {
+                        runtime.eval_or_log(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
+                    }
+                    runtime.eval(text).unwrap();
+                    runtime.eval_or_log("document.currentScript = null");
+                    runtime.notify_mutation_observers();
+                }
+            }
+            ScriptDescriptor::External(url, nid, _) => {
+                if let Some(script_content) = fetched.scripts.get(url) {
+                    if !script_content.trim().is_empty() {
+                        if let Some(nid) = nid {
+                            runtime.eval_or_log(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
+                        }
+                        runtime.eval(script_content).unwrap();
+                        runtime.eval_or_log("document.currentScript = null");
+                        runtime.notify_mutation_observers();
+                    }
+                }
+            }
+            ScriptDescriptor::InlineModule(text) => {
+                if !text.trim().is_empty() {
+                    runtime.eval_module(text, None).unwrap();
+                    runtime.notify_mutation_observers();
+                }
+            }
+            ScriptDescriptor::ExternalModule(url) => {
+                if let Some(script_content) = fetched.scripts.get(url) {
+                    if !script_content.trim().is_empty() {
+                        runtime.eval_module(script_content, Some(url)).unwrap();
+                        runtime.notify_mutation_observers();
+                    }
+                }
+            }
+            ScriptDescriptor::ImportMap(json) => {
+                Self::process_import_map(runtime, json, fetched);
+            }
+        }
     }
 
     /// Convenience: load HTML with external script and iframe support.
@@ -228,70 +318,18 @@ impl Engine {
         // Register named elements (id → global) per HTML spec
         Self::register_named_elements(&mut runtime);
 
+        // Phase 1: Execute non-deferred scripts in document order.
         for descriptor in descriptors {
-            if let ScriptDescriptor::ImportMap(json) = descriptor {
-                Self::process_import_map(&mut runtime, json, fetched);
-                continue;
+            if let ScriptDescriptor::External(_, _, true) = descriptor {
+                continue; // deferred — phase 2
             }
-            let is_module = descriptor.is_module();
-            let script_nid = match descriptor {
-                ScriptDescriptor::Inline(_, nid) | ScriptDescriptor::External(_, nid) => *nid,
-                _ => None,
-            };
-            let code = match descriptor {
-                ScriptDescriptor::Inline(text, _) | ScriptDescriptor::InlineModule(text) => {
-                    if text.trim().is_empty() {
-                        continue;
-                    }
-                    text.clone()
-                }
-                ScriptDescriptor::External(url, _) | ScriptDescriptor::ExternalModule(url) => {
-                    match fetched.scripts.get(url) {
-                        Some(content) if !content.trim().is_empty() => content.clone(),
-                        _ => continue,
-                    }
-                }
-                ScriptDescriptor::ImportMap(_) => unreachable!(),
-            };
-            // Set document.currentScript for classic scripts
-            if !is_module {
-                if let Some(nid) = script_nid {
-                    runtime.eval_or_log(&format!("document.currentScript = __braille_get_element_wrapper({nid})"));
-                }
-            }
-            let result = if is_module {
-                let specifier = match descriptor {
-                    ScriptDescriptor::ExternalModule(url) => Some(url.as_str()),
-                    _ => None,
-                };
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    runtime.eval_module(&code, specifier)
-                }))
-            } else {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.eval(&code)))
-            };
-            // Clear document.currentScript
-            if !is_module {
-                runtime.eval_or_log("document.currentScript = null");
-            }
-            match result {
-                Ok(Ok(_)) => {
-                    runtime.notify_mutation_observers();
-                }
-                Ok(Err(e)) => {
-                    runtime.notify_mutation_observers();
-                    errors.push(format!("{:?}", e));
-                }
-                Err(panic_err) => {
-                    let msg = if let Some(s) = panic_err.downcast_ref::<String>() {
-                        s.clone()
-                    } else if let Some(s) = panic_err.downcast_ref::<&str>() {
-                        s.to_string()
-                    } else {
-                        "unknown panic".to_string()
-                    };
-                    errors.push(format!("PANIC: {}", msg));
-                }
+            Self::execute_one_descriptor_lossy(&mut runtime, descriptor, fetched, &mut errors);
+        }
+
+        // Phase 2: Execute deferred scripts in document order.
+        for descriptor in descriptors {
+            if let ScriptDescriptor::External(_, _, true) = descriptor {
+                Self::execute_one_descriptor_lossy(&mut runtime, descriptor, fetched, &mut errors);
             }
         }
 

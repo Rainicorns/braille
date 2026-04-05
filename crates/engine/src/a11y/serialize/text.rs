@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::helpers::{
     collect_deep_text, collect_direct_text, collapse_whitespace, element_role, heading_level,
-    is_display_none, is_visibility_hidden, trim_trailing_newlines, SKIP_ELEMENTS,
+    is_block_level, is_display_none, is_visibility_hidden, trim_trailing_newlines, SKIP_ELEMENTS,
 };
 
 // ---------------------------------------------------------------------------
@@ -81,11 +81,7 @@ fn walk_text(tree: &DomTree, node_id: NodeId, output: &mut String) {
             }
 
             // Block-level elements get newlines for readability
-            let is_block = matches!(
-                tag.as_str(),
-                "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "tr" | "br" | "hr"
-                    | "section" | "article" | "header" | "footer" | "nav" | "main" | "blockquote"
-            );
+            let is_block = is_block_level(tree, node_id);
 
             if is_block {
                 output.push('\n');

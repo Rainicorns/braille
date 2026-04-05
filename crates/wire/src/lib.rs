@@ -185,6 +185,7 @@ pub enum DaemonCommand {
     Eval { code: String },
     Mark { label: String },
     Close,
+    Ping,
     DaemonStop,
 }
 

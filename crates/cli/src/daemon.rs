@@ -126,6 +126,7 @@ fn dispatch(sessions: &mut HashMap<String, SessionHandle>, request: DaemonReques
             );
             DaemonResponse::ok_with_session(session_id, None)
         }
+        DaemonCommand::Ping => DaemonResponse::ok("pong".to_string()),
         DaemonCommand::DaemonStop => {
             sessions.clear();
             DaemonResponse::ok("daemon stopped".to_string())

@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use crate::dom::meta::MetaEntry;
 use crate::dom::node::{Node, NodeData, NodeId};
 use crate::layout::{LayoutCache, LayoutRect};
 
@@ -7,6 +10,8 @@ pub struct DomTree {
     is_html_document: bool,
     pub url_fragment: Option<String>,
     pub(crate) layout_cache: LayoutCache,
+    /// Cached `<meta>` entries keyed by the `name` attribute value.
+    pub(crate) meta_cache: HashMap<String, Vec<MetaEntry>>,
 }
 
 impl Default for DomTree {
@@ -24,6 +29,7 @@ impl DomTree {
             is_html_document: true,
             url_fragment: None,
             layout_cache: LayoutCache::default(),
+            meta_cache: HashMap::new(),
         };
         tree.alloc_node(NodeData::Document);
         tree
@@ -36,6 +42,7 @@ impl DomTree {
             is_html_document: false,
             url_fragment: None,
             layout_cache: LayoutCache::default(),
+            meta_cache: HashMap::new(),
         };
         tree.alloc_node(NodeData::Document);
         tree
@@ -68,6 +75,19 @@ impl DomTree {
 
     pub fn get_node_mut(&mut self, id: NodeId) -> &mut Node {
         &mut self.nodes[id]
+    }
+
+    /// Insert a `<meta>` entry into the cache, keyed by its `name` attribute.
+    pub(crate) fn insert_meta(&mut self, entry: MetaEntry) {
+        self.meta_cache
+            .entry(entry.name.clone())
+            .or_default()
+            .push(entry);
+    }
+
+    /// Look up cached `<meta>` entries by `name` attribute value.
+    pub fn get_meta(&self, name: &str) -> &[MetaEntry] {
+        self.meta_cache.get(name).map_or(&[], |v| v.as_slice())
     }
 
     /// Returns the index of `child` within `parent`'s children list, or None if not found.

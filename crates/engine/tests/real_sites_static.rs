@@ -13,18 +13,20 @@
 //! Tests are expected to be HONEST: if a test fails, the failure represents
 //! a real gap in Braille's ability to extract content from that site.
 
+use std::collections::HashMap;
+
 use braille_engine::navigation::FetchProvider;
 use braille_engine::transcript::Transcript;
 use braille_engine::Engine;
 use braille_wire::{FetchOutcome, FetchRequest, FetchResult, SnapMode};
 
-/// A replay fetcher that serves recorded exchanges for the page and scripts,
-/// then returns network errors for any additional fetch_batch calls during
-/// the JS settlement phase. This mirrors real-world behavior where dynamic
-/// fetches to unrecorded URLs would fail.
+/// A replay fetcher that serves recorded responses matched by URL.
+///
+/// All recorded exchanges are flattened into a URL-keyed map at load time,
+/// so responses are matched by request URL rather than positional order.
+/// This prevents breakage if the engine changes script fetch ordering.
 struct StaticSiteReplayer {
-    exchanges: Vec<braille_engine::transcript::Exchange>,
-    cursor: usize,
+    responses: HashMap<String, FetchOutcome>,
 }
 
 impl StaticSiteReplayer {
@@ -33,34 +35,40 @@ impl StaticSiteReplayer {
             .unwrap_or_else(|e| panic!("failed to read transcript {path}: {e}"));
         let transcript: Transcript = serde_json::from_str(&data)
             .unwrap_or_else(|e| panic!("failed to parse transcript {path}: {e}"));
-        Self {
-            exchanges: transcript.exchanges,
-            cursor: 0,
+
+        let mut responses = HashMap::new();
+        for exchange in &transcript.exchanges {
+            // Index by both the request URL and the response URL, since
+            // the engine may send relative URLs while the response has absolute ones.
+            for (req, result) in exchange.requests.iter().zip(exchange.results.iter()) {
+                if let FetchOutcome::Ok(ref data) = result.outcome {
+                    responses.insert(data.url.clone(), result.outcome.clone());
+                    // Also map the original request URL to handle relative URLs
+                    if req.url != data.url {
+                        responses.insert(req.url.clone(), result.outcome.clone());
+                    }
+                }
+            }
         }
+
+        Self { responses }
     }
 }
 
 impl FetchProvider for StaticSiteReplayer {
     fn fetch_batch(&mut self, requests: Vec<FetchRequest>) -> Vec<FetchResult> {
-        if self.cursor >= self.exchanges.len() {
-            // Settlement phase: JS triggered fetches we didn't record.
-            // Return network errors — same as if those endpoints were unreachable.
-            return requests
-                .into_iter()
-                .map(|r| FetchResult {
-                    id: r.id,
-                    outcome: FetchOutcome::Err(format!("not recorded: {}", r.url)),
-                })
-                .collect();
-        }
-        let exchange = &self.exchanges[self.cursor];
-        self.cursor += 1;
         requests
-            .iter()
-            .zip(exchange.results.iter())
-            .map(|(req, recorded)| FetchResult {
-                id: req.id,
-                outcome: recorded.outcome.clone(),
+            .into_iter()
+            .map(|r| {
+                let outcome = self
+                    .responses
+                    .get(&r.url)
+                    .cloned()
+                    .unwrap_or_else(|| FetchOutcome::Err(format!("not recorded: {}", r.url)));
+                FetchResult {
+                    id: r.id,
+                    outcome,
+                }
             })
             .collect()
     }

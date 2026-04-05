@@ -370,20 +370,11 @@ async fn handle_close(args: serde_json::Value) -> CallToolResult {
 async fn handle_status() -> CallToolResult {
     let req = DaemonRequest {
         session_id: None,
-        command: DaemonCommand::NewSession,
+        command: DaemonCommand::Ping,
     };
-    // We create and immediately close a throwaway session to verify the daemon is alive.
     match client::send_request(&req).await {
         Ok(resp) => {
             if resp.success {
-                // Clean up the probe session.
-                if let Some(sid) = &resp.session_id {
-                    let close_req = DaemonRequest {
-                        session_id: Some(sid.clone()),
-                        command: DaemonCommand::Close,
-                    };
-                    let _ = client::send_request(&close_req).await;
-                }
                 CallToolResult::success(vec![Content::text("Braille daemon is running.")])
             } else {
                 tool_error(resp.error.unwrap_or_else(|| "daemon returned error".into()))

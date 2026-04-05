@@ -7,8 +7,9 @@ use crate::dom::NodeId;
 pub enum ScriptDescriptor {
     /// Classic script text content, ready to execute. Second field is the script element's NodeId.
     Inline(String, Option<NodeId>),
-    /// A classic script src URL that needs to be fetched by the host. Second field is the script element's NodeId.
-    External(String, Option<NodeId>),
+    /// A classic script src URL that needs to be fetched by the host.
+    /// Second field is the script element's NodeId. Third field is true if `defer` attribute is set.
+    External(String, Option<NodeId>, bool),
     /// ES module inline script (`<script type="module">...</script>`).
     InlineModule(String),
     /// ES module external script (`<script type="module" src="...">`).
@@ -26,7 +27,7 @@ impl ScriptDescriptor {
     /// Returns the external URL if this is an External or ExternalModule descriptor.
     pub fn external_url(&self) -> Option<&str> {
         match self {
-            Self::External(url, _) | Self::ExternalModule(url) => Some(url),
+            Self::External(url, _, _) | Self::ExternalModule(url) => Some(url),
             _ => None,
         }
     }
@@ -122,9 +123,11 @@ impl Engine {
 
                     let type_trimmed = type_attr.map(|t| t.trim().to_ascii_lowercase());
 
+                    let has_defer = attributes.iter().any(|a| a.local_name == "defer");
+
                     if let Some(ref t) = type_trimmed {
                         if t == "module" {
-                            // Module script
+                            // Module script (modules are deferred by default per spec)
                             let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.to_string());
                             if let Some(url) = src {
                                 descriptors.push(ScriptDescriptor::ExternalModule(url));
@@ -138,8 +141,9 @@ impl Engine {
                             // Explicit JS MIME type — treat as classic script
                             let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.to_string());
                             if let Some(url) = src {
-                                descriptors.push(ScriptDescriptor::External(url, Some(node_id)));
+                                descriptors.push(ScriptDescriptor::External(url, Some(node_id), has_defer));
                             } else {
+                                // Per spec: defer has no effect on inline scripts
                                 descriptors.push(ScriptDescriptor::Inline(tree.get_text_content(node_id), Some(node_id)));
                             }
                         }
@@ -148,7 +152,7 @@ impl Engine {
                         // No type attribute — classic script
                         let src = attributes.iter().find(|a| a.local_name == "src").map(|a| a.value.to_string());
                         if let Some(url) = src {
-                            descriptors.push(ScriptDescriptor::External(url, Some(node_id)));
+                            descriptors.push(ScriptDescriptor::External(url, Some(node_id), has_defer));
                         } else {
                             descriptors.push(ScriptDescriptor::Inline(tree.get_text_content(node_id), Some(node_id)));
                         }

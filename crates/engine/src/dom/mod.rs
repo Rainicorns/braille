@@ -1,6 +1,7 @@
 pub mod attributes;
 pub mod css_support;
 pub mod find;
+pub mod meta;
 pub mod node;
 pub mod traversal;
 pub mod tree;

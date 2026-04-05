@@ -2,7 +2,7 @@ use crate::dom::node::{NodeData, NodeId};
 use crate::dom::DomTree;
 
 use super::helpers::{
-    collect_deep_text, is_display_none, is_visibility_hidden, SKIP_ELEMENTS,
+    collect_deep_text, is_display_none, is_parent_block_level, is_visibility_hidden, SKIP_ELEMENTS,
 };
 
 /// Context passed through the recursive walk to track list nesting, etc.
@@ -56,10 +56,19 @@ fn walk_md(tree: &DomTree, node_id: NodeId, output: &mut String, ctx: &mut MdCon
             if ctx.in_pre {
                 output.push_str(content);
             } else {
-                // Collapse whitespace in normal text
                 let collapsed = collapse_inline_whitespace(content);
                 if !collapsed.is_empty() {
-                    output.push_str(&collapsed);
+                    // In block-level parents, whitespace-only text nodes are
+                    // inter-block spacing and should be suppressed — just like
+                    // browsers strip them during layout. In inline parents,
+                    // they're inter-element spacing (e.g., between two <span>s)
+                    // and must be preserved as a single space.
+                    let is_whitespace_only = collapsed.trim().is_empty();
+                    if is_whitespace_only && is_parent_block_level(tree, node_id) {
+                        // Suppress: whitespace between block children
+                    } else {
+                        output.push_str(&collapsed);
+                    }
                 }
             }
         }
@@ -82,9 +91,15 @@ fn walk_md(tree: &DomTree, node_id: NodeId, output: &mut String, ctx: &mut MdCon
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                     let level: usize = tag[1..].parse().unwrap_or(1);
                     let hashes = "#".repeat(level);
-                    let text = collect_deep_text(tree, node_id).trim().to_string();
                     ensure_blank_line(output);
-                    output.push_str(&format!("{} {}", hashes, text));
+                    output.push_str(&hashes);
+                    output.push(' ');
+                    for child_id in children {
+                        walk_md(tree, child_id, output, ctx);
+                    }
+                    // Trim trailing whitespace from the heading line
+                    let trimmed_len = output.trim_end().len();
+                    output.truncate(trimmed_len);
                     output.push_str("\n\n");
                 }
                 "p" => {
@@ -156,7 +171,10 @@ fn walk_md(tree: &DomTree, node_id: NodeId, output: &mut String, ctx: &mut MdCon
                 }
                 "pre" => {
                     ensure_blank_line(output);
-                    output.push_str("```\n");
+                    let lang = detect_code_language(tree, &children);
+                    output.push_str("```");
+                    output.push_str(&lang);
+                    output.push('\n');
                     ctx.in_pre = true;
                     for child_id in children {
                         walk_md(tree, child_id, output, ctx);
@@ -356,15 +374,45 @@ fn collect_row_cells(tree: &DomTree, tr_id: NodeId) -> Vec<String> {
     let tr_node = tree.get_node(tr_id);
     for &child_id in &tr_node.children {
         let child = tree.get_node(child_id);
-        if let NodeData::Element { tag_name, .. } = &child.data {
+        if let NodeData::Element { tag_name, attributes, .. } = &child.data {
             let tag = tag_name.to_ascii_lowercase();
             if tag == "td" || tag == "th" {
                 let text = collect_deep_text(tree, child_id).trim().to_string();
-                cells.push(text);
+                let colspan: usize = attributes
+                    .iter()
+                    .find(|a| a.local_name == "colspan")
+                    .and_then(|a| a.value.parse().ok())
+                    .unwrap_or(1)
+                    .max(1);
+                for _ in 0..colspan {
+                    cells.push(text.clone());
+                }
             }
         }
     }
     cells
+}
+
+/// Check if a `<pre>` element's first `<code>` child has a `language-*` or `lang-*` class.
+fn detect_code_language(tree: &DomTree, children: &[NodeId]) -> String {
+    for &child_id in children {
+        let child = tree.get_node(child_id);
+        if let NodeData::Element { tag_name, attributes, .. } = &child.data {
+            if tag_name.eq_ignore_ascii_case("code") {
+                if let Some(class_attr) = attributes.iter().find(|a| a.local_name == "class") {
+                    for cls in class_attr.value.split_whitespace() {
+                        if let Some(lang) = cls.strip_prefix("language-").or_else(|| cls.strip_prefix("lang-")) {
+                            if !lang.is_empty() {
+                                return lang.to_string();
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+    String::new()
 }
 
 fn ensure_blank_line(output: &mut String) {
@@ -391,7 +439,7 @@ fn collapse_inline_whitespace(s: &str) -> String {
     let mut prev_ws = false;
     for c in s.chars() {
         if c.is_ascii_whitespace() {
-            if !prev_ws && !result.is_empty() {
+            if !prev_ws {
                 result.push(' ');
             }
             prev_ws = true;

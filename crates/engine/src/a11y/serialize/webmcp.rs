@@ -1,37 +1,17 @@
-use crate::dom::node::NodeData;
 use crate::dom::DomTree;
 
-/// Scan the DOM tree for `<meta name="webmcp:tool">` tags and return a formatted
+/// Read cached `<meta name="webmcp:tool">` entries and return a formatted
 /// section string. Returns an empty string if no valid WebMCP tool declarations found.
 pub fn collect_webmcp_section(tree: &DomTree) -> String {
+    let entries = tree.get_meta("webmcp:tool");
+    if entries.is_empty() {
+        return String::new();
+    }
+
     let mut tools: Vec<WebMcpTool> = Vec::new();
-
-    for nid in 0..tree.node_count() {
-        let node = tree.get_node(nid);
-        if let NodeData::Element {
-            tag_name,
-            attributes,
-            ..
-        } = &node.data
-        {
-            if !tag_name.eq_ignore_ascii_case("meta") {
-                continue;
-            }
-
-            let name_attr = attributes
-                .iter()
-                .find(|a| a.local_name.eq_ignore_ascii_case("name"));
-            let content_attr = attributes
-                .iter()
-                .find(|a| a.local_name.eq_ignore_ascii_case("content"));
-
-            if let (Some(name), Some(content)) = (name_attr, content_attr) {
-                if *name.value == *"webmcp:tool" {
-                    if let Some(tool) = parse_webmcp_tool(&content.value) {
-                        tools.push(tool);
-                    }
-                }
-            }
+    for entry in entries {
+        if let Some(tool) = parse_webmcp_tool(&entry.content) {
+            tools.push(tool);
         }
     }
 

@@ -116,6 +116,23 @@ impl TreeSink for BrailleSink {
         let mut tree = self.tree.borrow_mut();
         let id = tree.create_element_ns_with_prefix(&tag_name, attributes, namespace, elem_prefix.as_deref());
 
+        // Populate meta cache for <meta> elements.
+        if tag_name.eq_ignore_ascii_case("meta") {
+            let node = tree.get_node(id);
+            if let NodeData::Element { attributes: attrs, .. } = &node.data {
+                let name_val = attrs.iter().find(|a| a.local_name == "name").map(|a| a.value.to_string());
+                let content_val = attrs.iter().find(|a| a.local_name == "content").map(|a| a.value.to_string());
+                let http_equiv_val = attrs.iter().find(|a| a.local_name == "http-equiv").map(|a| a.value.to_string());
+                if let (Some(name), Some(content)) = (name_val, content_val) {
+                    tree.insert_meta(crate::dom::meta::MetaEntry {
+                        name,
+                        content,
+                        http_equiv: http_equiv_val,
+                    });
+                }
+            }
+        }
+
         // For <template> elements, create an associated content fragment.
         if flags.template {
             let content_id = tree.create_template_contents();
