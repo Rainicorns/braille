@@ -49,6 +49,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
         r#"
         (function() {
             var iframeRealms = {};
+            var __iframeDocMap = {};
 
             function buildIframeWindow(iframeEl, iframeDoc) {
                 var iframeWindow;
@@ -320,6 +321,8 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 if (src && src !== 'about:blank') return;
 
                 var iframeDoc = buildRealDomDocument(node.__nid);
+                iframeDoc.contentType = 'text/html';
+                __iframeDocMap[iframeDoc.__nid] = node.__nid;
                 var built = buildIframeWindow(node, iframeDoc);
 
                 var realm = {
@@ -339,6 +342,10 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 while (cur >= 0) {
                     if (__n_getTagName(cur) === 'IFRAME') {
                         return iframeRealms[cur] || null;
+                    }
+                    // Check if we hit an iframe's document node
+                    if (__n_getNodeType(cur) === 9 && __iframeDocMap[cur] !== undefined) {
+                        return iframeRealms[__iframeDocMap[cur]] || null;
                     }
                     cur = __n_getParent(cur);
                 }
@@ -400,6 +407,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 } else {
                     iframeDoc = buildRealDomDocument(iframeNodeId);
                 }
+                iframeDoc.contentType = 'text/html';
 
                 var built = buildIframeWindow(iframeEl, iframeDoc);
 
@@ -410,6 +418,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     _iframeNodeId: iframeNodeId
                 };
                 iframeRealms[iframeNodeId] = realm;
+                __iframeDocMap[iframeDoc.__nid] = iframeNodeId;
 
                 // Execute inline scripts from the HTML content
                 var scripts = extractScripts(html || '');
@@ -490,6 +499,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
             globalThis.__braille_reset_dom_cache = function() {
                 if (origReset) origReset();
                 for (var k in iframeRealms) delete iframeRealms[k];
+                for (var k in __iframeDocMap) delete __iframeDocMap[k];
             };
         })();
     "#,
