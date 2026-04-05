@@ -321,12 +321,16 @@
                     if (jwk.ext === false && extractable) {
                         return Promise.reject(new DOMException('JWK ext is false but extractable requested', 'DataError'));
                     }
-                    // Validate alg: must be algorithm name or EdDSA (for Ed curves)
+                    // Validate alg: X25519/X448 have no registered JOSE alg — ignore any value.
+                    // Ed25519/Ed448 use "EdDSA". Other algorithms must match their name.
                     if (jwk.alg !== undefined) {
-                        var validAlgs = [name];
-                        if (name === 'Ed25519' || name === 'Ed448') validAlgs.push('EdDSA');
-                        if (validAlgs.indexOf(jwk.alg) === -1) {
-                            return Promise.reject(new DOMException("Invalid JWK alg: '" + jwk.alg + "'", 'DataError'));
+                        var isXdh = (name === 'X25519' || name === 'X448');
+                        if (!isXdh) {
+                            var validAlgs = [name];
+                            if (name === 'Ed25519' || name === 'Ed448') validAlgs = ['EdDSA'];
+                            if (validAlgs.indexOf(jwk.alg) === -1) {
+                                return Promise.reject(new DOMException("Invalid JWK alg: '" + jwk.alg + "'", 'DataError'));
+                            }
                         }
                     }
                     // Validate use

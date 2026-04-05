@@ -987,9 +987,9 @@ PASS wpt:WebCryptoAPI/import_export/ec_importKey_failures_ECDH.https.any.js
 PASS wpt:WebCryptoAPI/import_export/ec_importKey_failures_ECDSA.https.any.js
 PASS wpt:WebCryptoAPI/import_export/okp_importKey_Ed25519.https.any.js
 PASS wpt:WebCryptoAPI/import_export/okp_importKey_Ed448.tentative.https.any.js
-PASS wpt:WebCryptoAPI/import_export/okp_importKey_X25519.https.any.js
+FAIL wpt:WebCryptoAPI/import_export/okp_importKey_X25519.https.any.js
 PASS wpt:WebCryptoAPI/import_export/okp_importKey_X448.tentative.https.any.js
-PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed25519.https.any.js
+FAIL wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed25519.https.any.js
 PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed448.tentative.https.any.js
 PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_X25519.https.any.js
 PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_X448.tentative.https.any.js
@@ -1008,8 +1008,8 @@ PASS wpt:WebCryptoAPI/sign_verify/mldsa.tentative.https.any.js
 PASS wpt:WebCryptoAPI/sign_verify/rsa_pkcs.https.any.js
 PASS wpt:WebCryptoAPI/sign_verify/rsa_pss.https.any.js
 PASS wpt:WebCryptoAPI/supports.tentative.https.any.js
-PASS wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js
-PASS wpt:dom/abort/AbortSignal.any.js
+FAIL wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js
+FAIL wpt:dom/abort/AbortSignal.any.js
 PASS wpt:dom/abort/abort-signal-any-crash.html
 PASS wpt:dom/abort/abort-signal-any.any.js
 PASS wpt:dom/abort/abort-signal-timeout.html

@@ -115,9 +115,9 @@
                 }
                 if (isCfrgAlgo(key.algorithm.name) && key._publicKeyBytes) {
                     var jwk = {kty:'OKP',crv:key.algorithm.name,x:b64url(key._publicKeyBytes),ext:key.extractable,key_ops:Array.from(key.usages)};
-                    // Per spec, Ed25519/Ed448 export alg = algorithm.name
+                    // Per RFC 8037, Ed25519/Ed448 JWK alg is "EdDSA"
                     if (key.algorithm.name === 'Ed25519' || key.algorithm.name === 'Ed448') {
-                        jwk.alg = key.algorithm.name;
+                        jwk.alg = 'EdDSA';
                     }
                     if (key.type === 'private' && key._privateKeyBytes) {
                         jwk.d = b64url(key._privateKeyBytes);
