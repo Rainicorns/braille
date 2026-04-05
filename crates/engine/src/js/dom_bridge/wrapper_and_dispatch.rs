@@ -610,6 +610,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         // Dynamic script loading: fetch and eval <script src="..."> on insertion
         globalThis.__braille_script_log = [];
+        globalThis.__braille_maybe_load_scripts_in_subtree = function(node) {
+            if (!node) return;
+            if (node.tagName === 'SCRIPT') {
+                __braille_maybe_load_script(node);
+                return;
+            }
+            if (node.querySelectorAll) {
+                var scripts = node.querySelectorAll('script');
+                for (var si = 0; si < scripts.length; si++) {
+                    __braille_maybe_load_script(scripts[si]);
+                }
+            }
+        };
         globalThis.__braille_maybe_load_script = function(node) {
             if (!node || node.tagName !== 'SCRIPT') return;
             var src = node.getAttribute('src');
@@ -710,8 +723,13 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 }
             }
             // Adopt: update ownerDocument for child (and descendants) if parent is in a different document
+            // Per spec, when child is a DocumentFragment, adopt the moved children, not the fragment itself
             if (childDoc && parentDoc !== childDoc) {
-                __adoptSubtree(child, parentDoc);
+                if (child.nodeType === 11) {
+                    for (var ai = 0; ai < added.length; ai++) __adoptSubtree(added[ai], parentDoc);
+                } else {
+                    __adoptSubtree(child, parentDoc);
+                }
             }
             // CE lifecycle: connectedCallback for inserted nodes
             if (typeof __ceConnected === 'function' && __isConnected(this.__nid)) {
@@ -721,9 +739,18 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (typeof __ceUpgradeTree === 'function' && child && child.__nid !== undefined) {
                 __ceUpgradeTree(child);
             }
-            __braille_maybe_load_script(child);
-            __braille_maybe_load_link(child);
-            if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(child);
+            var parentConnected = __isConnected(this.__nid);
+            if (child.nodeType === 11 && added && added.length) {
+                for (var fi = 0; fi < added.length; fi++) {
+                    if (parentConnected) __braille_maybe_load_scripts_in_subtree(added[fi]);
+                    __braille_maybe_load_link(added[fi]);
+                    if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(added[fi]);
+                }
+            } else {
+                if (parentConnected) __braille_maybe_load_scripts_in_subtree(child);
+                __braille_maybe_load_link(child);
+                if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(child);
+            }
             __ceFlushReactions();
             return child;
         };
@@ -783,9 +810,18 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (typeof __ceUpgradeTree === 'function' && newChild && newChild.__nid !== undefined) {
                 __ceUpgradeTree(newChild);
             }
-            __braille_maybe_load_script(newChild);
-            __braille_maybe_load_link(newChild);
-            if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(newChild);
+            var parentConnected = __isConnected(this.__nid);
+            if (newChild.nodeType === 11 && added && added.length) {
+                for (var fi = 0; fi < added.length; fi++) {
+                    if (parentConnected) __braille_maybe_load_scripts_in_subtree(added[fi]);
+                    __braille_maybe_load_link(added[fi]);
+                    if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(added[fi]);
+                }
+            } else {
+                if (parentConnected) __braille_maybe_load_scripts_in_subtree(newChild);
+                __braille_maybe_load_link(newChild);
+                if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(newChild);
+            }
             __ceFlushReactions();
             return newChild;
         };
@@ -878,7 +914,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             newDoc.querySelectorAll = function(sel) { var de = this.documentElement; return de ? de.querySelectorAll(sel) : __makeStaticNodeList([]); };
             newDoc.getElementById = function(id) { var de = this.documentElement; return de ? (de.querySelector('#' + id) || null) : null; };
             newDoc.getElementsByTagName = function(tag) { var de = this.documentElement; return de ? de.querySelectorAll(tag) : []; };
-            newDoc.getElementsByClassName = function(cls) { var de = this.documentElement; return de ? de.querySelectorAll('.' + cls) : []; };
+            newDoc.getElementsByClassName = function(cls) { var de = this.documentElement; return de ? __makeHTMLCollection(function() { return __getElemsByClassName(de, cls); }) : __makeHTMLCollection(function() { return []; }); };
             newDoc.createElement = function(tag) { var el = document.createElement(tag); el.__ownerDoc = newDoc; return el; };
             newDoc.createElementNS = function(ns, tag) { var el = document.createElementNS(ns, tag); el.__ownerDoc = newDoc; return el; };
             newDoc.createTextNode = function(text) { var n = document.createTextNode(text); n.__ownerDoc = newDoc; return n; };
@@ -979,6 +1015,16 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             var nid = __n_createElement(tag);
             var el = __w(nid);
             el.namespaceURI = 'http://www.w3.org/1999/xhtml';
+            if (tag.toLowerCase() === 'template') {
+                var contentId = __n_createTemplateContent(nid);
+                var contentFrag = __w(contentId);
+                // Per spec, template content belongs to an "associated inert document", not the template's own document
+                if (!doc.__templateDoc) {
+                    doc.__templateDoc = new Document();
+                }
+                contentFrag.__ownerDoc = doc.__templateDoc;
+                contentFrag.__host = el;  // Mark as hosted fragment (per spec: "host" concept)
+            }
             return el;
         };
         doc.createElementNS = function(ns, tag) {
@@ -1031,7 +1077,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return __makeHTMLCollection(function() { return __n_getElementsByTagNameNS(0, nsStr, lnStr).map(__w); });
         };
         doc.getElementsByClassName = function(cls) {
-            return __makeHTMLCollection(function() { return doc.querySelectorAll('.' + cls); });
+            return __makeHTMLCollection(function() { return __getElemsByClassName(doc.documentElement, cls); });
         };
         doc.addEventListener = function(type, cb, opts) {
             var capture, once, passive, passiveExplicit;
@@ -1280,6 +1326,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             if (!node || typeof node !== 'object') throw new TypeError("Failed to execute 'adoptNode' on 'Document': parameter 1 is not of type 'Node'.");
             if (node.nodeType === 9) throw new DOMException("Failed to execute 'adoptNode' on 'Document': A Document node cannot be adopted.", "NotSupportedError");
             if (node.nodeType === 2) throw new DOMException("Cannot adopt an Attr node", "NotSupportedError");
+            // ShadowRoot cannot be adopted per spec
+            if (node.__nid !== undefined && __n_isShadowRoot(node.__nid)) throw new DOMException("Failed to execute 'adoptNode' on 'Document': ShadowRoot cannot be adopted.", "HierarchyRequestError");
+            // DocumentFragment with host (template content, shadow root) — per spec, just return
+            if (node.__host) return node;
             // Remove from old parent
             if (node.parentNode) {
                 if (node.nodeType === 10) {
@@ -2005,6 +2055,55 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         };
         globalThis.Attr = Attr;
 
+        // NamedNodeMap constructor and prototype
+        function NamedNodeMap() {}
+        NamedNodeMap.prototype.item = function(i) {
+            var attrs = this.__getAttrs ? this.__getAttrs() : [];
+            return attrs[i] || null;
+        };
+        NamedNodeMap.prototype.getNamedItem = function(n) {
+            var attrs = this.__getAttrs ? this.__getAttrs() : [];
+            for (var i = 0; i < attrs.length; i++) if (attrs[i].name === n) return attrs[i];
+            return null;
+        };
+        NamedNodeMap.prototype.getNamedItemNS = function(ns, n) {
+            var attrs = this.__getAttrs ? this.__getAttrs() : [];
+            for (var i = 0; i < attrs.length; i++) if (attrs[i].localName === n) return attrs[i];
+            return null;
+        };
+        NamedNodeMap.prototype.setNamedItem = function(a) {
+            if (!a || !(a instanceof Attr)) throw new TypeError("Failed to execute 'setNamedItem' on 'NamedNodeMap': parameter 1 is not of type 'Attr'.");
+            var el = this.__el;
+            if (!el) return null;
+            var inUse = a.ownerElement && a.ownerElement !== el && a.ownerElement.hasAttribute && a.ownerElement.hasAttribute(a.name);
+            if (inUse) throw new DOMException("The attribute is in use.", "InUseAttributeError");
+            el.setAttribute(a.name, a.value);
+            a.ownerElement = el;
+            a.__ownerDoc = el.ownerDocument || document;
+            if (!el.__attrCache) el.__attrCache = {};
+            el.__attrCache['\0' + a.name] = a;
+            return a;
+        };
+        NamedNodeMap.prototype.setNamedItemNS = function(a) { return NamedNodeMap.prototype.setNamedItem.call(this, a); };
+        NamedNodeMap.prototype.removeNamedItem = function(n) {
+            var el = this.__el;
+            if (!el) return null;
+            if (!el.hasAttribute(n)) throw new DOMException("The attribute '" + n + "' was not found.", "NotFoundError");
+            var ck = '\0' + n;
+            var removed = (el.__attrCache && el.__attrCache[ck]) || null;
+            if (!removed && this.__getAttrs) {
+                var attrs = this.__getAttrs();
+                for (var i = 0; i < attrs.length; i++) if (attrs[i].name === n) { removed = attrs[i]; break; }
+            }
+            el.removeAttribute(n);
+            if (el.__attrCache) delete el.__attrCache[ck];
+            if (removed) removed.ownerElement = null;
+            return removed || null;
+        };
+        NamedNodeMap.prototype.removeNamedItemNS = function(ns, n) { return NamedNodeMap.prototype.removeNamedItem.call(this, n); };
+        NamedNodeMap.prototype[Symbol.toStringTag] = 'NamedNodeMap';
+        globalThis.NamedNodeMap = NamedNodeMap;
+
         // Document constructor is defined earlier (line ~898) as a factory function.
         // Set Document.prototype to inherit from EP so wrapped document nodes get element methods.
         var DocCtor = globalThis.Document;
@@ -2113,7 +2212,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         Document.prototype.getElementsByClassName = function(cls) {
             var de = this.documentElement;
             if (!de || !de.querySelectorAll) return __makeHTMLCollection(function() { return []; });
-            return __makeHTMLCollection(function() { return de.querySelectorAll('.' + cls); });
+            return __makeHTMLCollection(function() { return __getElemsByClassName(de, cls); });
         };
 
         Document.prototype.adoptNode = function(node) { return doc.adoptNode.call(this, node); };
@@ -2202,6 +2301,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             Object.setPrototypeOf(el, ctor.prototype);
             el.constructor = ctor;
             _cache[el.__nid] = el;
+            // Call the constructor via the upgrade target mechanism
+            __ceUpgradeTarget = el;
+            try { new ctor(); } catch(e) { __ceUpgradeTarget = null; }
+            __ceUpgradeTarget = null;
             // Fire attributeChangedCallback for existing attributes
             if (typeof el.attributeChangedCallback === 'function' && observedAttrs.length > 0) {
                 for (var j = 0; j < observedAttrs.length; j++) {

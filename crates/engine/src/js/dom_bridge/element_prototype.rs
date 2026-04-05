@@ -5,13 +5,32 @@ pub(crate) fn element_prototype_js() -> &'static str {
         var ElemProto = Object.create(EP);
         globalThis.__ElemProto = ElemProto;
 
+        // Cache key for __attrCache: includes namespace to avoid collisions
+        function __attrCK(name, ns) { return (ns || '') + '\0' + name; }
+
+        // Per spec: HTML elements in HTML documents ASCII-lowercase attribute names
+        function __asciiLower(s) {
+            for (var i = 0, r = ''; i < s.length; i++) {
+                var c = s.charCodeAt(i);
+                r += (c >= 65 && c <= 90) ? String.fromCharCode(c + 32) : s[i];
+            }
+            return r;
+        }
+        function __attrName(el, name) {
+            var n = String(name);
+            if (!el.namespaceURI || el.namespaceURI === 'http://www.w3.org/1999/xhtml') n = __asciiLower(n);
+            return n;
+        }
+
         ElemProto.getAttribute = function(name) {
-            name = String(name).toLowerCase();
+            name = __attrName(this, name);
             var v = __n_getAttribute(this.__nid, name);
             return __n_hasAttrValue(this.__nid, name) ? v : null;
         };
         ElemProto.setAttribute = function(name, value) {
-            name = String(name).toLowerCase();
+            name = String(name);
+            if (name === '') throw new DOMException("The string contains invalid characters.", "InvalidCharacterError");
+            name = __attrName(this, name);
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
             __n_setAttribute(this.__nid, name, String(value));
             if (name === 'id' && value && !(value in globalThis)) globalThis[value] = this;
@@ -25,8 +44,23 @@ pub(crate) fn element_prototype_js() -> &'static str {
             }
         };
         ElemProto.removeAttribute = function(name) {
-            name = String(name).toLowerCase();
+            name = __attrName(this, name);
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
+            // Clear ownerElement on cached Attr — find the actual attr being removed
+            if (this.__attrCache) {
+                // Look up full attr info to get correct cache key (name may match across namespaces)
+                var full = JSON.parse(__n_getAttributesFull(this.__nid));
+                for (var fi = 0; fi < full.length; fi++) {
+                    if (full[fi].name === name || full[fi].localName === name) {
+                        var fck = __attrCK(full[fi].name, full[fi].ns);
+                        if (this.__attrCache[fck]) {
+                            this.__attrCache[fck].ownerElement = null;
+                            delete this.__attrCache[fck];
+                        }
+                        break;
+                    }
+                }
+            }
             __n_removeAttribute(this.__nid, name);
             if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
             // CE attributeChangedCallback
@@ -37,7 +71,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 }
             }
         };
-        ElemProto.hasAttribute = function(name) { return __n_hasAttribute(this.__nid, String(name).toLowerCase()); };
+        ElemProto.hasAttribute = function(name) { return __n_hasAttribute(this.__nid, __attrName(this, name)); };
         ElemProto.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
 
         // Event types that are passive by default on scroll-blocking targets
@@ -255,53 +289,81 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         ElemProto.getElementsByClassName = function(cls) {
             var self = this;
-            return __makeHTMLCollection(function() { return self.querySelectorAll('.' + cls); });
+            return __makeHTMLCollection(function() { return __getElemsByClassName(self, cls); });
         };
         Object.defineProperty(ElemProto, 'attributes', {
             get: function() {
                 if (this.__nid === undefined) return undefined;
+                if (this.__cachedAttrsProxy) return this.__cachedAttrsProxy;
                 var el = this;
+                if (!el.__attrCache) el.__attrCache = {};
                 function getAttrs() {
                     var full = JSON.parse(__n_getAttributesFull(el.__nid));
                     var attrs = [];
                     for (var i = 0; i < full.length; i++) {
                         var a = full[i];
-                        var attr = new Attr(a.name, a.value, a.ns, a.prefix);
-                        attr.ownerElement = el;
-                        attr.__ownerDoc = el.__ownerDoc;
-                        attrs.push(attr);
+                        var ck = __attrCK(a.name, a.ns);
+                        // Reuse cached Attr if available (preserves identity from setNamedItem)
+                        if (el.__attrCache[ck]) {
+                            var cached = el.__attrCache[ck];
+                            cached._value = a.value;
+                            attrs.push(cached);
+                        } else {
+                            var attr = new Attr(a.name, a.value, a.ns, a.prefix);
+                            attr.localName = a.localName;
+                            attr.ownerElement = el;
+                            attr.__ownerDoc = el.__ownerDoc;
+                            el.__attrCache[ck] = attr;
+                            attrs.push(attr);
+                        }
                     }
                     return attrs;
                 }
-                return new Proxy(Object.create(null), {
+                var target = Object.create(NamedNodeMap.prototype);
+                target.__el = el;
+                target.__getAttrs = getAttrs;
+                var proxy = new Proxy(target, {
                     get: function(t, p) {
-                        var attrs = getAttrs();
-                        if (p === 'length') return attrs.length;
-                        if (p === 'item') return function(i) { return attrs[i] || null; };
-                        if (p === 'getNamedItem') return function(n) {
-                            for (var i = 0; i < attrs.length; i++) if (attrs[i].name === n) return attrs[i];
-                            return null;
-                        };
-                        if (p === 'getNamedItemNS') return function(ns, n) {
-                            for (var i = 0; i < attrs.length; i++) if (attrs[i].localName === n) return attrs[i];
-                            return null;
-                        };
-                        if (p === 'setNamedItem') return function(a) { if (a && a.ownerElement) a.ownerElement.setAttribute(a.name, a.value); };
-                        if (p === 'removeNamedItem') return function(n) { el.removeAttribute(n); };
-                        if (p === Symbol.iterator) return function() { return attrs[Symbol.iterator](); };
-                        if (__isArrayIndex(p)) return attrs[p >>> 0];
-                        // Named access
+                        // Internal properties needed by prototype methods
+                        if (p === '__el' || p === '__getAttrs') return t[p];
+                        if (p === 'length') return t.__getAttrs().length;
+                        if (p === Symbol.iterator) { var a = t.__getAttrs(); return function() { return a[Symbol.iterator](); }; }
+                        if (__isArrayIndex(p)) return t.__getAttrs()[p >>> 0];
+                        // Prototype methods take priority over named attr access
+                        var proto = NamedNodeMap.prototype[p];
+                        if (proto !== undefined) return proto;
+                        // Inherited methods (toString etc.) take priority
+                        if (typeof p === 'string' && p in Object.prototype) return Object.prototype[p];
+                        // Named access by attribute name
                         if (typeof p === 'string') {
+                            var attrs = t.__getAttrs();
                             for (var i = 0; i < attrs.length; i++) if (attrs[i].name === p) return attrs[i];
                         }
                         return undefined;
                     },
-                    ownKeys: function() {
-                        var attrs = getAttrs();
+                    ownKeys: function(t) {
+                        var attrs = t.__getAttrs();
                         var keys = [];
                         for (var i = 0; i < attrs.length; i++) keys.push(String(i));
-                        for (var i = 0; i < attrs.length; i++) keys.push(attrs[i].name);
+                        var elNs = el.namespaceURI;
+                        var docCt = (el.ownerDocument || document).contentType;
+                        var htmlFilter = elNs === 'http://www.w3.org/1999/xhtml' && docCt === 'text/html';
+                        var seen = {};
+                        for (var i = 0; i < attrs.length; i++) {
+                            var n = attrs[i].name;
+                            if (htmlFilter && n !== n.toLowerCase()) continue;
+                            if (!seen[n]) { keys.push(n); seen[n] = true; }
+                        }
                         return keys;
+                    },
+                    has: function(t, p) {
+                        if (__isArrayIndex(p)) return (p >>> 0) < t.__getAttrs().length;
+                        if (p === 'length' || p in NamedNodeMap.prototype) return true;
+                        if (typeof p === 'string') {
+                            var attrs = t.__getAttrs();
+                            for (var i = 0; i < attrs.length; i++) if (attrs[i].name === p) return true;
+                        }
+                        return p in Object.prototype;
                     },
                     getOwnPropertyDescriptor: function(t, p) {
                         var attrs = getAttrs();
@@ -318,6 +380,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
                         return undefined;
                     }
                 });
+                this.__cachedAttrsProxy = proxy;
+                return proxy;
             },
             enumerable: true, configurable: true
         });
@@ -707,24 +771,38 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return JSON.parse(__n_getAttributeNames(this.__nid));
         };
         EP.append = function() {
-            __ceBatchDepth++;
+            var frag = document.createDocumentFragment();
             for (var i = 0; i < arguments.length; i++) {
                 var arg = arguments[i];
                 if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
-                this.appendChild(arg);
+                frag.appendChild(arg);
             }
+            var err = __n_validatePreInsert(this.__nid, frag.__nid, -1);
+            if (err) {
+                var parts = err.split(':');
+                throw new DOMException(parts.slice(1).join(':'), parts[0]);
+            }
+            __ceBatchDepth++;
+            this.appendChild(frag);
             __ceBatchDepth--;
             __ceFlushReactions();
         };
         EP.prepend = function() {
-            __ceBatchDepth++;
-            var first = this.firstChild;
+            var frag = document.createDocumentFragment();
             for (var i = 0; i < arguments.length; i++) {
                 var arg = arguments[i];
                 if (arg === null || arg === undefined || typeof arg !== 'object' || arg.__nid === undefined) arg = document.createTextNode(String(arg));
-                if (first) this.insertBefore(arg, first);
-                else this.appendChild(arg);
+                frag.appendChild(arg);
             }
+            var first = this.firstChild;
+            var err = __n_validatePreInsert(this.__nid, frag.__nid, first ? first.__nid : -1);
+            if (err) {
+                var parts = err.split(':');
+                throw new DOMException(parts.slice(1).join(':'), parts[0]);
+            }
+            __ceBatchDepth++;
+            if (first) this.insertBefore(frag, first);
+            else this.appendChild(frag);
             __ceBatchDepth--;
             __ceFlushReactions();
         };
@@ -802,6 +880,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
             else parent.appendChild(frag);
         };
         ElemProto.toggleAttribute = function(name, force) {
+            name = String(name);
+            if (name === '') throw new DOMException("The string contains invalid characters.", "InvalidCharacterError");
+            name = __attrName(this, name);
             if (force !== undefined) {
                 if (force) { this.setAttribute(name, ''); return true; }
                 else { this.removeAttribute(name); return false; }
@@ -811,7 +892,13 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         ElemProto.setAttributeNS = function(ns, qualifiedName, value) {
             ns = (ns === null || ns === undefined) ? '' : String(ns);
-            __n_setAttributeNS(this.__nid, ns, String(qualifiedName), String(value));
+            qualifiedName = String(qualifiedName);
+            var result = JSON.parse(__n_validateAndExtract(ns, qualifiedName));
+            if (result.err) {
+                var eName = result.err;
+                throw new DOMException("Failed to execute 'setAttributeNS' on 'Element': " + (eName === 'InvalidCharacterError' ? "'" + qualifiedName + "' is not a valid attribute name." : "The namespace provided has an error."), eName);
+            }
+            __n_setAttributeNS(this.__nid, ns, qualifiedName, String(value));
         };
         ElemProto.getAttributeNS = function(ns, localName) {
             ns = (ns === null || ns === undefined) ? '' : String(ns);
@@ -834,27 +921,42 @@ pub(crate) fn element_prototype_js() -> &'static str {
             __n_setInnerHTML(temp.__nid, html);
             var frag = document.createDocumentFragment();
             while (temp.firstChild) frag.appendChild(temp.firstChild);
-            if (p === 'beforebegin') this.before(frag);
-            else if (p === 'afterbegin') this.prepend(frag);
+            if (p === 'beforebegin') {
+                if (!this.parentNode) throw new DOMException("The element has no parent.", "NoModificationAllowedError");
+                this.before(frag);
+            } else if (p === 'afterbegin') this.prepend(frag);
             else if (p === 'beforeend') this.append(frag);
-            else if (p === 'afterend') this.after(frag);
+            else if (p === 'afterend') {
+                if (!this.parentNode) throw new DOMException("The element has no parent.", "NoModificationAllowedError");
+                this.after(frag);
+            }
             else throw new DOMException("Failed to execute 'insertAdjacentHTML' on 'Element': The value provided ('" + position + "') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.", "SyntaxError");
         };
         ElemProto.insertAdjacentText = function(position, text) {
             var p = String(position).toLowerCase();
             var node = document.createTextNode(text);
-            if (p === 'beforebegin') this.before(node);
-            else if (p === 'afterbegin') this.prepend(node);
+            if (p === 'beforebegin') {
+                if (!this.parentNode) throw new DOMException("The element has no parent.", "HierarchyRequestError");
+                this.before(node);
+            } else if (p === 'afterbegin') this.prepend(node);
             else if (p === 'beforeend') this.append(node);
-            else if (p === 'afterend') this.after(node);
+            else if (p === 'afterend') {
+                if (!this.parentNode) throw new DOMException("The element has no parent.", "HierarchyRequestError");
+                this.after(node);
+            }
             else throw new DOMException("Failed to execute 'insertAdjacentText' on 'Element': The value provided ('" + position + "') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.", "SyntaxError");
         };
         ElemProto.insertAdjacentElement = function(position, el) {
             var p = String(position).toLowerCase();
-            if (p === 'beforebegin') this.before(el);
-            else if (p === 'afterbegin') this.prepend(el);
+            if (p === 'beforebegin') {
+                if (!this.parentNode) return null;
+                this.before(el);
+            } else if (p === 'afterbegin') this.prepend(el);
             else if (p === 'beforeend') this.append(el);
-            else if (p === 'afterend') this.after(el);
+            else if (p === 'afterend') {
+                if (!this.parentNode) return null;
+                this.after(el);
+            }
             else throw new DOMException("Failed to execute 'insertAdjacentElement' on 'Element': The value provided ('" + position + "') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.", "SyntaxError");
             return el;
         };
@@ -871,33 +973,126 @@ pub(crate) fn element_prototype_js() -> &'static str {
             if (__n_hasShadowRoot(this.__nid)) {
                 throw new DOMException("Failed to execute 'attachShadow' on 'Element': Shadow root cannot be created on a host which already hosts a shadow tree.", "NotSupportedError");
             }
-            var tag = this.tagName;
+            var tag = this.localName;
             // Valid shadow hosts: custom elements (hyphen in name) or specific built-in elements
-            var validHosts = ['ARTICLE','ASIDE','BLOCKQUOTE','BODY','DIV','FOOTER','H1','H2','H3','H4','H5','H6','HEADER','MAIN','NAV','P','SECTION','SPAN'];
+            var validHosts = ['article','aside','blockquote','body','div','footer','h1','h2','h3','h4','h5','h6','header','main','nav','p','section','span'];
             if (tag.indexOf('-') === -1 && validHosts.indexOf(tag) === -1) {
                 throw new DOMException("Failed to execute 'attachShadow' on 'Element': This element does not support attachShadow", "NotSupportedError");
             }
             var shadowId = __n_createShadowRoot(this.__nid, opts.mode);
             var shadow = __w(shadowId);
             shadow._shadowHost = this;
+            shadow.__ownerDoc = this.ownerDocument || (this.nodeType === 9 ? this : document);
             return shadow;
         };
+        // Ensure __attrCache exists and return cached or fresh Attr for a given qualified name
+        function __getOrCacheAttr(el, name) {
+            if (!el.__attrCache) el.__attrCache = {};
+            // For non-namespaced lookup, use null ns
+            var ck = __attrCK(name, null);
+            if (el.__attrCache[ck]) {
+                var cached = el.__attrCache[ck];
+                cached._value = el.getAttribute(name);
+                return cached;
+            }
+            // Build from attributes list to get full ns/prefix/localName info
+            var full = JSON.parse(__n_getAttributesFull(el.__nid));
+            for (var i = 0; i < full.length; i++) {
+                if (full[i].name === name) {
+                    var a = full[i];
+                    var ack = __attrCK(a.name, a.ns);
+                    if (el.__attrCache[ack]) return el.__attrCache[ack];
+                    var attr = new Attr(a.name, a.value, a.ns, a.prefix);
+                    attr.localName = a.localName;
+                    attr.ownerElement = el;
+                    attr.__ownerDoc = el.__ownerDoc;
+                    el.__attrCache[ack] = attr;
+                    return attr;
+                }
+            }
+            return null;
+        }
         ElemProto.getAttributeNode = function(name) {
+            name = __attrName(this, name);
             if (!this.hasAttribute(name)) return null;
-            var val = this.getAttribute(name);
-            var attr = new Attr(name, val);
-            attr.ownerElement = this;
-            return attr;
+            return __getOrCacheAttr(this, name);
         };
         ElemProto.getAttributeNodeNS = function(ns, localName) {
             ns = (ns === null || ns === undefined) ? '' : String(ns);
-            var json = __n_getAttributeNodeNS(this.__nid, ns, String(localName));
+            localName = String(localName);
+            var json = __n_getAttributeNodeNS(this.__nid, ns, localName);
             if (!json) return null;
             var info = JSON.parse(json);
             var qualName = info.prefix ? (info.prefix + ':' + info.localName) : info.localName;
+            if (!this.__attrCache) this.__attrCache = {};
+            var ck = __attrCK(qualName, info.namespace || null);
+            if (this.__attrCache[ck]) {
+                var cached = this.__attrCache[ck];
+                cached._value = info.value;
+                return cached;
+            }
             var attr = new Attr(qualName, info.value, info.namespace || null, info.prefix || null);
             attr.localName = info.localName;
             attr.ownerElement = this;
+            attr.__ownerDoc = this.__ownerDoc;
+            this.__attrCache[ck] = attr;
+            return attr;
+        };
+        ElemProto.setAttributeNode = function(attr) {
+            if (!attr || !(attr instanceof Attr)) throw new TypeError("Failed to execute 'setAttributeNode' on 'Element': parameter 1 is not of type 'Attr'.");
+            if (attr.ownerElement && attr.ownerElement !== this) throw new DOMException("The attribute is in use.", "InUseAttributeError");
+            // If attr has namespace, delegate to setAttributeNodeNS
+            if (attr.namespaceURI) return this.setAttributeNodeNS(attr);
+            if (!this.__attrCache) this.__attrCache = {};
+            var name = __attrName(this, attr.name);
+            var ck = __attrCK(name, null);
+            // Check for existing attr with same name
+            var oldAttr = null;
+            if (this.hasAttribute(name)) {
+                oldAttr = this.__attrCache[ck] || null;
+                if (!oldAttr) oldAttr = __getOrCacheAttr(this, name);
+                if (oldAttr === attr) return attr; // replacing by itself
+                oldAttr.ownerElement = null;
+                delete this.__attrCache[ck];
+            }
+            __n_setAttribute(this.__nid, name, attr.value);
+            attr.ownerElement = this;
+            attr.__ownerDoc = this.ownerDocument || document;
+            this.__attrCache[ck] = attr;
+            return oldAttr;
+        };
+        ElemProto.setAttributeNodeNS = function(attr) {
+            if (!attr || !(attr instanceof Attr)) throw new TypeError("Failed to execute 'setAttributeNodeNS' on 'Element': parameter 1 is not of type 'Attr'.");
+            if (attr.ownerElement && attr.ownerElement !== this) throw new DOMException("The attribute is in use.", "InUseAttributeError");
+            if (!this.__attrCache) this.__attrCache = {};
+            var ns = attr.namespaceURI || '';
+            var localName = attr.localName;
+            var qualName = attr.name;
+            var ck = __attrCK(qualName, attr.namespaceURI);
+            // Check for existing attr with same ns+localName
+            var oldAttr = null;
+            if (__n_hasAttributeNS(this.__nid, ns, localName)) {
+                oldAttr = this.__attrCache[ck] || null;
+                if (oldAttr === attr) return attr;
+                if (oldAttr) { oldAttr.ownerElement = null; delete this.__attrCache[ck]; }
+            }
+            __n_setAttributeNS(this.__nid, ns, qualName, attr.value);
+            attr.ownerElement = this;
+            attr.__ownerDoc = this.ownerDocument || document;
+            this.__attrCache[ck] = attr;
+            return oldAttr;
+        };
+        ElemProto.removeAttributeNode = function(attr) {
+            if (!attr || !(attr instanceof Attr)) throw new TypeError("Failed to execute 'removeAttributeNode' on 'Element': parameter 1 is not of type 'Attr'.");
+            if (attr.ownerElement !== this) throw new DOMException("The node to be removed is not an attribute of this element.", "NotFoundError");
+            var name = attr.name;
+            if (attr.namespaceURI) {
+                __n_removeAttributeNS(this.__nid, attr.namespaceURI, attr.localName);
+            } else {
+                __n_removeAttribute(this.__nid, name);
+            }
+            attr.ownerElement = null;
+            if (this.__attrCache) delete this.__attrCache[__attrCK(name, attr.namespaceURI)];
             return attr;
         };
         EP.remove = function() {

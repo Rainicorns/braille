@@ -179,6 +179,30 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             return proxy;
         };
 
+        globalThis.__getElemsByClassName = function(root, classNames) {
+            var s = String(classNames);
+            var tokens = s.split(/[\t\n\f\r ]+/);
+            var filtered = [];
+            for (var i = 0; i < tokens.length; i++) {
+                if (tokens[i] !== '') filtered.push(tokens[i]);
+            }
+            if (filtered.length === 0) return [];
+            var all = root.querySelectorAll('*');
+            var result = [];
+            for (var i = 0; i < all.length; i++) {
+                var el = all[i];
+                var cls = el.getAttribute('class');
+                if (!cls) continue;
+                var elTokens = cls.split(/[\t\n\f\r ]+/);
+                var match = true;
+                for (var j = 0; j < filtered.length; j++) {
+                    if (elTokens.indexOf(filtered[j]) === -1) { match = false; break; }
+                }
+                if (match) result.push(el);
+            }
+            return result;
+        };
+
         // Shared getter for Event.isTrusted (unforgeable, same function on all instances per spec)
         var __isTrustedGetter = function() { return this._isTrusted; };
 
@@ -1299,10 +1323,21 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         // HTMLElement constructor supports Custom Elements:
         // When called via `new MyElement()` where MyElement extends HTMLElement,
         // new.target is the CE constructor. We look up the tag from the registry
-        // and create the backing DOM node.
+        // and create the backing DOM node. During upgrades, __ceUpgradeTarget is set
+        // to the existing element so super() returns it instead of creating a new one.
+        globalThis.__ceUpgradeTarget = null;
         globalThis.HTMLElement = class HTMLElement extends Element {
             constructor() {
                 super();
+                var upgradeTarget = __ceUpgradeTarget;
+                if (upgradeTarget) {
+                    __ceUpgradeTarget = null;
+                    this.__nid = upgradeTarget.__nid;
+                    this.__props = upgradeTarget.__props || {};
+                    this.__ce_upgraded = true;
+                    if (typeof __cache !== 'undefined') __cache[this.__nid] = this;
+                    return upgradeTarget;
+                }
                 if (typeof customElements !== 'undefined' && customElements._ctorToName) {
                     var name = customElements._ctorToName.get(new.target);
                     if (name) {

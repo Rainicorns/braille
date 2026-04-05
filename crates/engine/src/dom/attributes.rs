@@ -115,7 +115,6 @@ impl DomTree {
                 .find(|a| a.matches_ns(namespace, local_name))
             {
                 existing.value = DomString::from(value);
-                existing.prefix = prefix.to_string();
             } else {
                 attributes.push(DomAttribute {
                     local_name: local_name.to_string(),

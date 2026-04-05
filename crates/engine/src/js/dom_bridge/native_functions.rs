@@ -698,6 +698,7 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
                 let entries: Vec<_> = attributes.iter().map(|a| {
                     serde_json::json!({
                         "name": a.qualified_name(),
+                        "localName": a.local_name,
                         "value": a.value,
                         "ns": if a.namespace.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(a.namespace.clone()) },
                         "prefix": if a.prefix.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(a.prefix.clone()) }
@@ -783,6 +784,19 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
                 .template_contents
                 .map(|nid| nid as i32)
                 .unwrap_or(-1)
+        })
+    }).unwrap()).unwrap();
+
+    // __n_createTemplateContent(nodeId) -> creates template_contents fragment, returns its nodeId
+    g.set("__n_createTemplateContent", Function::new(ctx.clone(), |node_id: u32| -> i32 {
+        with_tree_mut(|tree| {
+            let nid = node_id as NodeId;
+            if tree.get_node(nid).template_contents.is_some() {
+                return tree.get_node(nid).template_contents.unwrap() as i32;
+            }
+            let frag_id = tree.create_template_contents();
+            tree.get_node_mut(nid).template_contents = Some(frag_id);
+            frag_id as i32
         })
     }).unwrap()).unwrap();
 
