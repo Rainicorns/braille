@@ -14,11 +14,64 @@ mod session_store;
 mod worker_manager;
 
 #[derive(Parser)]
-#[command(name = "braille", about = "A text browser for LLM agents")]
+#[command(
+    name = "braille",
+    about = "A text browser for LLM agents",
+    long_about = LONG_HELP,
+    after_help = EXAMPLES,
+)]
 struct Cli {
     #[command(subcommand)]
     command: TopLevel,
 }
+
+const LONG_HELP: &str = "\
+Braille is a text-mode browser engine. It loads web pages, runs JavaScript, \
+and outputs structured text snapshots instead of pixels.
+
+The workflow is session-based:
+  1. Create a session:    braille new           → prints a session ID (e.g. sess_abc123)
+  2. Use the session:     braille <ID> goto <URL>
+  3. Interact:            braille <ID> click \"button.submit\"
+  4. Read the page:       braille <ID> snap --mode markdown
+  5. Close when done:     braille <ID> close
+
+The daemon starts automatically on first use. All sessions share one daemon process.";
+
+const EXAMPLES: &str = "\
+EXAMPLES:
+  # Browse a page and get a compact text snapshot
+  braille new
+  braille sess_abc123 goto https://news.ycombinator.com/
+  braille sess_abc123 snap --mode accessibility
+
+  # Fill out a form
+  braille sess_abc123 type \"input#search\" \"rust language\"
+  braille sess_abc123 click \"button[type=submit]\"
+
+  # Record a network transcript for test fixtures
+  braille sess_abc123 goto --record https://example.com
+
+  # Evaluate JavaScript in the page
+  braille sess_abc123 eval \"document.title\"
+
+SESSION COMMANDS:
+  goto <URL>              Navigate to a URL (returns page snapshot)
+    --mode <MODE>         compact|accessibility|interactive|links|forms|headings|text|selector|region|dom|markdown
+    --query <CSS>         CSS selector (for --mode selector)
+    --target <REF>        Element ref or selector (for --mode region)
+    --record              Record network transcript for replay
+    --clean               Use a fresh JS runtime
+  click <SELECTOR>        Click an element
+  type <SELECTOR> <TEXT>  Type into an input element
+  select <SELECTOR> <VAL> Select a dropdown option
+  snap                    Take a page snapshot (same --mode options as goto)
+  back / forward          Navigate history
+  eval <CODE>             Evaluate JavaScript, return result
+  console                 Show JS console output (log/warn/error)
+  transcript              Show the last recorded network transcript
+  mark <LABEL>            Insert a labeled marker into the transcript
+  close                   Close the session";
 
 #[derive(Subcommand)]
 enum TopLevel {
@@ -256,13 +309,29 @@ fn run(cli: Cli) -> String {
         }
         TopLevel::Session(args) => {
             if args.is_empty() {
-                return "error: session ID required".to_string();
+                return format!("error: session ID required\n\n{LONG_HELP}\n\n{EXAMPLES}");
             }
             let sid = &args[0];
+
+            // Catch common mistake: `braille goto <url>` instead of `braille <session_id> goto <url>`
+            let session_commands = ["goto", "click", "type", "select", "snap", "back", "forward", "close", "eval", "console", "transcript", "mark"];
+            if session_commands.contains(&sid.as_str()) {
+                return format!(
+                    "error: '{sid}' is a session command, not a session ID\n\n\
+                    Session commands require a session ID first:\n  \
+                    braille new                          # create a session\n  \
+                    braille <SESSION_ID> {sid} ...       # then use it\n\n\
+                    {EXAMPLES}"
+                );
+            }
+
             let action_args = &args[1..];
             if action_args.is_empty() {
-                return "error: session command required (goto, click, type, select, snap, back, forward, close)"
-                    .to_string();
+                return format!(
+                    "error: no command for session {sid}\n\n\
+                    Usage: braille {sid} <COMMAND> [ARGS]\n\n\
+                    {EXAMPLES}"
+                );
             }
             let action = parse_session_action(action_args);
 
