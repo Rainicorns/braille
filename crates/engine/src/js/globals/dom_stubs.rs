@@ -548,7 +548,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             Object.defineProperty(loc, 'href', {
                 get: function() { return loc._href; },
                 set: function(v) {
-                    loc._href = v;
+                    loc._href = String(v);
                     // Parse URL components
                     var m = String(v).match(/^(https?:)\/\/([^/:]+)(?::(\d+))?(\/[^?#]*)?(\?[^#]*)?(#.*)?$/);
                     if (m) {
@@ -1653,6 +1653,237 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             },
             configurable: true,
         });
+        // --- Attribute reflection helper ---
+        function __reflectAttr(proto, prop, attr) {
+            Object.defineProperty(proto, prop, {
+                get: function() { return this.getAttribute(attr || prop) || ''; },
+                set: function(v) { this.setAttribute(attr || prop, String(v)); },
+                configurable: true, enumerable: true,
+            });
+        }
+        function __reflectBool(proto, prop, attr) {
+            Object.defineProperty(proto, prop, {
+                get: function() { return this.hasAttribute(attr || prop); },
+                set: function(v) { if (v) this.setAttribute(attr || prop, ''); else this.removeAttribute(attr || prop); },
+                configurable: true, enumerable: true,
+            });
+        }
+
+        // --- HTMLAnchorElement ---
+        __reflectAttr(HTMLAnchorElement.prototype, 'href', 'href');
+        __reflectAttr(HTMLAnchorElement.prototype, 'target', 'target');
+        __reflectAttr(HTMLAnchorElement.prototype, 'rel', 'rel');
+        __reflectAttr(HTMLAnchorElement.prototype, 'download', 'download');
+        Object.defineProperty(HTMLAnchorElement.prototype, 'text', {
+            get: function() { return this.textContent || ''; },
+            set: function(v) { this.textContent = v; },
+            configurable: true, enumerable: true,
+        });
+        // URL decomposition properties for anchor elements
+        (function() {
+            function anchorURL(el) {
+                var h = el.getAttribute('href') || '';
+                var m = String(h).match(/^(https?:)\/\/([^/:]+)(?::(\d+))?(\/[^?#]*)?(\?[^#]*)?(#.*)?$/);
+                if (!m) return null;
+                return { protocol: m[1], hostname: m[2], port: m[3] || '', pathname: m[4] || '/', search: m[5] || '', hash: m[6] || '' };
+            }
+            var urlProps = {
+                protocol: function(u) { return u ? u.protocol : ''; },
+                hostname: function(u) { return u ? u.hostname : ''; },
+                port: function(u) { return u ? u.port : ''; },
+                pathname: function(u) { return u ? u.pathname : ''; },
+                search: function(u) { return u ? u.search : ''; },
+                hash: function(u) { return u ? u.hash : ''; },
+                host: function(u) { return u ? (u.port ? u.hostname + ':' + u.port : u.hostname) : ''; },
+                origin: function(u) { return u ? u.protocol + '//' + (u.port ? u.hostname + ':' + u.port : u.hostname) : ''; },
+            };
+            var keys = Object.keys(urlProps);
+            for (var i = 0; i < keys.length; i++) {
+                (function(k, fn) {
+                    Object.defineProperty(HTMLAnchorElement.prototype, k, {
+                        get: function() { return fn(anchorURL(this)); },
+                        configurable: true, enumerable: true,
+                    });
+                })(keys[i], urlProps[keys[i]]);
+            }
+        })();
+
+        // --- HTMLImageElement ---
+        __reflectAttr(HTMLImageElement.prototype, 'src', 'src');
+        __reflectAttr(HTMLImageElement.prototype, 'alt', 'alt');
+        Object.defineProperty(HTMLImageElement.prototype, 'width', {
+            get: function() { return parseInt(this.getAttribute('width'), 10) || 0; },
+            set: function(v) { this.setAttribute('width', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLImageElement.prototype, 'height', {
+            get: function() { return parseInt(this.getAttribute('height'), 10) || 0; },
+            set: function(v) { this.setAttribute('height', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', {
+            get: function() { return 0; },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', {
+            get: function() { return 0; },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLImageElement.prototype, 'complete', {
+            get: function() { return true; },
+            configurable: true, enumerable: true,
+        });
+
+        // --- HTMLButtonElement ---
+        Object.defineProperty(HTMLButtonElement.prototype, 'type', {
+            get: function() { return this.getAttribute('type') || 'submit'; },
+            set: function(v) { this.setAttribute('type', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        __reflectBool(HTMLButtonElement.prototype, 'disabled', 'disabled');
+        __reflectAttr(HTMLButtonElement.prototype, 'name', 'name');
+        __reflectAttr(HTMLButtonElement.prototype, 'value', 'value');
+        Object.defineProperty(HTMLButtonElement.prototype, 'form', {
+            get: function() { return this.closest ? this.closest('form') : null; },
+            configurable: true, enumerable: true,
+        });
+
+        // --- HTMLFormElement ---
+        __reflectAttr(HTMLFormElement.prototype, 'action', 'action');
+        Object.defineProperty(HTMLFormElement.prototype, 'method', {
+            get: function() { return (this.getAttribute('method') || 'get').toLowerCase(); },
+            set: function(v) { this.setAttribute('method', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        __reflectAttr(HTMLFormElement.prototype, 'target', 'target');
+        Object.defineProperty(HTMLFormElement.prototype, 'enctype', {
+            get: function() { return this.getAttribute('enctype') || 'application/x-www-form-urlencoded'; },
+            set: function(v) { this.setAttribute('enctype', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLFormElement.prototype, 'elements', {
+            get: function() { return this.querySelectorAll('input,select,textarea,button,fieldset,output'); },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLFormElement.prototype, 'length', {
+            get: function() { return this.querySelectorAll('input,select,textarea,button,fieldset,output').length; },
+            configurable: true, enumerable: true,
+        });
+        HTMLFormElement.prototype.submit = function() {};
+        HTMLFormElement.prototype.reset = function() {};
+
+        // --- HTMLLabelElement ---
+        Object.defineProperty(HTMLLabelElement.prototype, 'htmlFor', {
+            get: function() { return this.getAttribute('for') || ''; },
+            set: function(v) { this.setAttribute('for', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLLabelElement.prototype, 'control', {
+            get: function() {
+                var forId = this.getAttribute('for');
+                if (forId) {
+                    var owner = this.ownerDocument || document;
+                    return owner.getElementById(forId);
+                }
+                return this.querySelector('input,select,textarea,button');
+            },
+            configurable: true, enumerable: true,
+        });
+
+        // --- HTMLInputElement (additional properties — value/checked already defined) ---
+        Object.defineProperty(HTMLInputElement.prototype, 'type', {
+            get: function() { return this.getAttribute('type') || 'text'; },
+            set: function(v) { this.setAttribute('type', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        __reflectAttr(HTMLInputElement.prototype, 'name', 'name');
+        __reflectBool(HTMLInputElement.prototype, 'disabled', 'disabled');
+        __reflectAttr(HTMLInputElement.prototype, 'placeholder', 'placeholder');
+        __reflectBool(HTMLInputElement.prototype, 'required', 'required');
+        Object.defineProperty(HTMLInputElement.prototype, 'form', {
+            get: function() { return this.closest ? this.closest('form') : null; },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLInputElement.prototype, 'defaultValue', {
+            get: function() { return this.getAttribute('value') || ''; },
+            set: function(v) { this.setAttribute('value', String(v)); },
+            configurable: true, enumerable: true,
+        });
+
+        // --- HTMLTextAreaElement (value already defined) ---
+        __reflectAttr(HTMLTextAreaElement.prototype, 'name', 'name');
+        __reflectBool(HTMLTextAreaElement.prototype, 'disabled', 'disabled');
+        __reflectAttr(HTMLTextAreaElement.prototype, 'placeholder', 'placeholder');
+        __reflectBool(HTMLTextAreaElement.prototype, 'required', 'required');
+        Object.defineProperty(HTMLTextAreaElement.prototype, 'rows', {
+            get: function() { return parseInt(this.getAttribute('rows'), 10) || 2; },
+            set: function(v) { this.setAttribute('rows', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLTextAreaElement.prototype, 'cols', {
+            get: function() { return parseInt(this.getAttribute('cols'), 10) || 20; },
+            set: function(v) { this.setAttribute('cols', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLTextAreaElement.prototype, 'defaultValue', {
+            get: function() { return this.getAttribute('value') || ''; },
+            set: function(v) { this.setAttribute('value', String(v)); },
+            configurable: true, enumerable: true,
+        });
+
+        // --- HTMLCanvasElement ---
+        Object.defineProperty(HTMLCanvasElement.prototype, 'width', {
+            get: function() { return parseInt(this.getAttribute('width'), 10) || 300; },
+            set: function(v) { this.setAttribute('width', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        Object.defineProperty(HTMLCanvasElement.prototype, 'height', {
+            get: function() { return parseInt(this.getAttribute('height'), 10) || 150; },
+            set: function(v) { this.setAttribute('height', String(v)); },
+            configurable: true, enumerable: true,
+        });
+        HTMLCanvasElement.prototype.getContext = function(type) {
+            if (type === '2d') {
+                return {
+                    canvas: this,
+                    fillRect: function() {}, clearRect: function() {}, strokeRect: function() {},
+                    fillText: function() {}, strokeText: function() {}, measureText: function(t) { return { width: 0 }; },
+                    beginPath: function() {}, closePath: function() {}, moveTo: function() {},
+                    lineTo: function() {}, arc: function() {}, arcTo: function() {},
+                    bezierCurveTo: function() {}, quadraticCurveTo: function() {},
+                    rect: function() {}, fill: function() {}, stroke: function() {},
+                    clip: function() {}, save: function() {}, restore: function() {},
+                    translate: function() {}, rotate: function() {}, scale: function() {},
+                    setTransform: function() {}, resetTransform: function() {},
+                    drawImage: function() {}, createLinearGradient: function() { return { addColorStop: function() {} }; },
+                    createRadialGradient: function() { return { addColorStop: function() {} }; },
+                    createPattern: function() { return {}; },
+                    getImageData: function(x, y, w, h) { return { data: new Uint8ClampedArray(w * h * 4), width: w, height: h }; },
+                    putImageData: function() {},
+                    fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, font: '10px sans-serif',
+                    textAlign: 'start', textBaseline: 'alphabetic', globalAlpha: 1,
+                    globalCompositeOperation: 'source-over',
+                };
+            }
+            return null;
+        };
+        HTMLCanvasElement.prototype.toDataURL = function() { return 'data:image/png;base64,'; };
+        HTMLCanvasElement.prototype.toBlob = function(cb) { if (cb) cb(new Blob([])); };
+
+        // --- HTMLTemplateElement ---
+        Object.defineProperty(HTMLTemplateElement.prototype, 'content', {
+            get: function() {
+                if (this.__nid !== undefined && typeof __n_getTemplateContent === 'function') {
+                    return __n_getTemplateContent(this.__nid);
+                }
+                if (!this._content) {
+                    this._content = document.createDocumentFragment();
+                }
+                return this._content;
+            },
+            configurable: true, enumerable: true,
+        });
+
         globalThis.DocumentFragment = class DocumentFragment {};
         globalThis.ShadowRoot = class ShadowRoot extends DocumentFragment {
             get mode() { return this._mode || 'open'; }

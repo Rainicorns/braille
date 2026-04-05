@@ -69,6 +69,29 @@ fn select_add_with_before_parameter() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn location_href_coerces_to_string() {
+    let mut e = engine_with_html("<html><body></body></html>");
+    let result = e.eval_js(r#"
+        // Regex assigned to location.href should be coerced to string
+        location.href = /[^\/]*$/;
+        var r1 = typeof location.href === 'string';
+        // Number
+        location.href = 42;
+        var r2 = location.href === '42';
+        // Object
+        location.href = {toString: function() { return 'http://example.com'; }};
+        var r3 = location.href === 'http://example.com';
+        r1 + ',' + r2 + ',' + r3;
+    "#).unwrap();
+    assert_eq!(result, "true,true,true");
+}
+
+// ---------------------------------------------------------------------------
+// getComputedStyle returns correct defaults
+// Found via: WPT test 1416 expects getComputedStyle(div).display === "block"
+// ---------------------------------------------------------------------------
+
+#[test]
 fn get_computed_style_display_block_for_div() {
     let mut e = engine_with_html("<html><body><div id='d'>hello</div></body></html>");
     let result = e.eval_js(r#"
