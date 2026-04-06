@@ -369,13 +369,9 @@ git commit -m "test: feature-gated live Airbnb extraction with deep link verific
 
 ## Phase 2: SnapMode::Data — Generalizable SPA Data Extraction
 
-<!-- GATING: user-approval-required -->
+<!-- RESOLVED: CTO review 2026-04-06 -->
 
-> **Gating question 1:** Should this be a new `SnapMode::Data` variant in the Braille wire protocol (upstream PR to Rainicorns), or a standalone `browse_extract` MCP tool that runs the JS extraction without a new snapshot mode?
->
-> - **Option A: SnapMode::Data** — cleaner architecture, auto-detects embedded JSON on any site. Adds a variant to the wire protocol + a serializer in the engine.
-> - **Option B: browse_extract MCP tool** — ships faster, doesn't require upstream changes. Wraps `eval_js` with site-specific extraction scripts.
-> - **Recommended: Option A** — it's the right abstraction for Braille as a browser engine. Every modern SPA embeds data this way (Next.js, Nuxt, Remix, Gatsby). A `Data` mode that extracts all `<script type="application/json">` blocks and `__NEXT_DATA__` would be universally useful, not Airbnb-specific.
+> **Resolved — Option B (eval_js with site-specific extractors).** CTO judgment: SnapMode::Data is architecturally sound but premature. eval_js with a JS extraction function already works perfectly. If we find ourselves writing the same "find embedded JSON" pattern for 5+ sites, then generalize into a SnapMode. Ship what works.
 
 ### Task 4: Add SnapMode::Data variant (if Option A)
 
@@ -408,20 +404,11 @@ Returns JSON:
 
 ## Phase 3: Agent Integration via Braille MCP
 
-<!-- GATING: user-approval-required -->
+<!-- RESOLVED: CTO review 2026-04-06 -->
 
-> **Gating question 2:** Where should accommodation search live in the agent ecosystem?
->
-> - **Option A: New "Travel" agent** (L5 Advisor, `~/travel/`, reports to null)
-> - **Option B: Extend Q** to cover services/accommodations (broadens Q's current "products only" scope)
-> - **Option C: No dedicated agent** — the CTO or user invokes Braille MCP directly for ad-hoc searches
-> - **Recommended: Option C for now, Option A later.** Accommodation search doesn't yet need a persistent agent personality. The immediate value is: user says "find me an Airbnb in SF this weekend" → CTO uses Braille MCP → runs extraction → presents decision matrix → provides deep links. When the pattern stabilizes, birth a Travel agent via `/birth`.
+> **Resolved — Option C (no dedicated agent).** CTO judgment: Don't create infrastructure for a pattern that hasn't proven recurring. Any session can browse_goto + browse_eval with the extraction script. If weekly use emerges, birth a Travel agent then.
 
-> **Gating question 3:** Should the extraction script live in the Braille MCP server (as a `browse_extract_airbnb` tool), or stay as a JS file that any agent can load and pass to `browse_eval`?
->
-> - **Option A: Dedicated MCP tool** — `browse_extract_airbnb(session, url)` that handles goto + extract in one call
-> - **Option B: JS file in tf-ais** — agents load from `~/tf-ais/scripts/extractors/airbnb.js` and pass to `browse_eval`
-> - **Recommended: Option B** — site-specific extractors shouldn't be baked into the engine. They change when sites update. A `tf-ais/scripts/extractors/` directory with per-site JS files is more maintainable and doesn't require engine rebuilds.
+> **Resolved — Option B (tf-ais/scripts/extractors/).** Shipped to `~/tf-ais/scripts/extractors/airbnb.js`.
 
 ### Task 5: Ship the extractor to tf-ais (if Option B)
 
