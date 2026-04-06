@@ -16,12 +16,17 @@ use crate::dom::NodeId;
 use super::state::EngineState;
 
 mod dom_mutation;
+mod element_events;
+mod element_properties;
 mod element_prototype;
+mod element_scroll;
 mod event_dispatch;
 mod form_bindings;
 mod global_document;
 mod label_bindings;
+mod native_attributes;
 mod native_functions;
+mod native_tree_ops;
 mod wrapper_and_dispatch;
 
 #[cfg(test)]
@@ -117,6 +122,9 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         "var _docCapture = {};\n",
         "var EP = {};\n",
         element_prototype::element_prototype_js(),
+        element_events::element_events_js(),
+        element_scroll::element_scroll_js(),
+        element_properties::element_properties_js(),
         form_bindings::form_bindings_js(),
         label_bindings::label_bindings_js(),
         wrapper_and_dispatch::wrapper_factory_js(),
