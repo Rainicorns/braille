@@ -64,8 +64,13 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 }
             }
             // CE lifecycle: connectedCallback for inserted nodes
+            // For fragments, walk the already-moved children (fragment is now empty)
             if (typeof __ceConnected === 'function' && __isConnected(this.__nid)) {
-                __ceConnected(child);
+                if (child.nodeType === 11 && added && added.length) {
+                    for (var ci = 0; ci < added.length; ci++) __ceConnected(added[ci]);
+                } else {
+                    __ceConnected(child);
+                }
             }
             // Upgrade custom elements in inserted subtree
             if (typeof __ceUpgradeTree === 'function' && child && child.__nid !== undefined) {

@@ -108,7 +108,15 @@ pub(super) fn global_document_js() -> &'static str {
             newDoc.createComment = function(text) { var n = document.createComment(text); n.__ownerDoc = newDoc; return n; };
             newDoc.createDocumentFragment = function() { var n = document.createDocumentFragment(); n.__ownerDoc = newDoc; return n; };
             newDoc.createProcessingInstruction = function(t, d) { var n = document.createProcessingInstruction(t, d); n.__ownerDoc = newDoc; return n; };
-            newDoc.createCDATASection = function(data) { var n = document.createCDATASection(data); n.__ownerDoc = newDoc; return n; };
+            newDoc.createCDATASection = function(data) {
+                if (arguments.length < 1) throw new TypeError("Failed to execute 'createCDATASection' on 'Document': 1 argument required.");
+                var ct = newDoc.contentType || 'application/xml';
+                if (ct === 'text/html') throw new DOMException("Failed to execute 'createCDATASection' on 'Document': This document is an HTML document.", "NotSupportedError");
+                var nid = __n_createCDATASection(String(data));
+                var n = __w(nid);
+                n.__ownerDoc = newDoc;
+                return n;
+            };
             newDoc.createAttribute = function(n) { return document.createAttribute(n); };
             newDoc.createAttributeNS = function(ns, qn) { return document.createAttributeNS(ns, qn); };
             newDoc.createEvent = function(type) { var e = new Event(''); e._initialized = false; e.type = ''; return e; };

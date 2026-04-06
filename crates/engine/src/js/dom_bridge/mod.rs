@@ -1,8 +1,25 @@
-//! Native DOM bindings connecting JS objects to the Rust DomTree.
+//! The DOM bridge: Rust-backed DOM tree with JS wrappers.
+//! Everything here runs inside a single IIFE with shared closure scope (_cache, EP, etc.).
+//! Loading order matters — see the concatenation order in register_js_wrappers().
 //!
 //! Architecture: native Rust functions accept simple types (u32 nodeIds, Strings).
 //! JS wrapper code on prototypes calls these native functions.
 //! A node cache (JS-side Map) ensures identity: same NodeId → same JS object.
+//!
+//! Module responsibilities:
+//!   element_prototype   — EP (the shared Node prototype) + element attribute methods
+//!   element_events      — addEventListener, removeEventListener, dispatchEvent
+//!   element_scroll      — getBoundingClientRect, scroll methods, geometry
+//!   element_properties  — tagName, id, className, style, innerHTML, etc.
+//!   form_bindings       — form property, submit(), validation
+//!   label_bindings      — htmlFor, control, labels
+//!   wrapper_and_dispatch — __w() wrapper factory, constructors, prototype wiring, CE lifecycle
+//!   event_dispatch      — __dispatch() with capture/bubble, __adoptSubtree
+//!   dom_mutation         — appendChild, removeChild, insertBefore
+//!   global_document     — __makeDocumentLike, document methods, Range, DOMRect
+//!   native_functions    — __n_* Rust functions for tree operations
+//!   native_tree_ops     — __n_appendChild, __n_removeChild, etc.
+//!   native_attributes   — __n_getAttribute, __n_setAttribute, etc.
 
 use std::cell::RefCell;
 use std::rc::Rc;

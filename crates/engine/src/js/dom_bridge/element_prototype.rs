@@ -316,11 +316,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
         EP.lookupNamespaceURI = function(prefix) {
             if (prefix === '') prefix = null;
             if (prefix !== undefined && prefix !== null) prefix = String(prefix);
+            // Built-in prefix mappings per spec (apply to all node types)
+            if (prefix === 'xml') return 'http://www.w3.org/XML/1998/namespace';
+            if (prefix === 'xmlns') return 'http://www.w3.org/2000/xmlns/';
             var nt = this.nodeType;
             if (nt === 1) {
-                // Built-in prefix mappings per spec (only for elements)
-                if (prefix === 'xml') return 'http://www.w3.org/XML/1998/namespace';
-                if (prefix === 'xmlns') return 'http://www.w3.org/2000/xmlns/';
                 var ns = this.namespaceURI;
                 if (ns && this.prefix === prefix) return ns;
                 // Check xmlns attributes
@@ -751,6 +751,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 configurable: true
             },
             ownerDocument: { get: function() {
+                // Attr nodes: delegate to ownerElement so adoption updates propagate
+                if (this.nodeType === 2 && this.ownerElement) return this.ownerElement.ownerDocument;
                 if (this.__ownerDoc) return this.__ownerDoc;
                 if (this.__nid === undefined) return document;
                 var cur = __n_getParent(this.__nid);

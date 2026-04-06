@@ -148,7 +148,12 @@ pub(super) fn element_events_js() -> &'static str {
             var p = __n_getParent(rootNid);
             while (p >= 0) { rootNid = p; p = __n_getParent(rootNid); }
             var rootEl = __w(rootNid);
-            if (rootEl.__ownerDoc) ownerDoc = rootEl.__ownerDoc;
+            if (rootEl.__ownerDoc) {
+                ownerDoc = rootEl.__ownerDoc;
+            } else if (rootEl.nodeType === 9 && rootEl !== document) {
+                // Root is a standalone document node (new Document(), cloneNode, createHTMLDocument)
+                ownerDoc = rootEl;
+            }
             __dispatch(this.__nid, event, ownerDoc);
             return !event.defaultPrevented;
         };
