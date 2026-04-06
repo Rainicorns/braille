@@ -130,6 +130,122 @@ fn cookie_expiry_uses_virtual_time() {
 }
 
 #[test]
+fn export_cookies_returns_http_jar_contents() {
+    let mut e = Engine::new();
+    e.inject_response_cookies("https://example.com/", &[
+        ("Set-Cookie".to_string(), "session=abc123; Path=/; HttpOnly; Secure".to_string()),
+        ("Set-Cookie".to_string(), "theme=dark; Path=/".to_string()),
+    ]);
+    e.load_html("<html><body></body></html>");
+
+    let exported = e.export_cookies();
+    assert_eq!(exported.len(), 2);
+
+    let session_cookie = exported.iter().find(|c| c.name == "session").unwrap();
+    assert_eq!(session_cookie.value, "abc123");
+    assert_eq!(session_cookie.domain, "example.com");
+    assert_eq!(session_cookie.path, "/");
+    assert!(session_cookie.http_only);
+    assert!(session_cookie.secure);
+
+    let theme_cookie = exported.iter().find(|c| c.name == "theme").unwrap();
+    assert_eq!(theme_cookie.value, "dark");
+    assert!(!theme_cookie.http_only);
+    assert!(!theme_cookie.secure);
+}
+
+#[test]
+fn import_cookies_populates_jar_and_syncs_to_js() {
+    let mut e = Engine::new();
+    e.load_html("<html><body></body></html>");
+
+    let cookies = vec![
+        braille_wire::SerializableCookie {
+            name: "auth".into(),
+            value: "jwt_token".into(),
+            domain: "example.com".into(),
+            path: "/".into(),
+            http_only: true,
+            secure: true,
+            expires_ms: None,
+        },
+        braille_wire::SerializableCookie {
+            name: "pref".into(),
+            value: "en-US".into(),
+            domain: "example.com".into(),
+            path: "/".into(),
+            http_only: false,
+            secure: false,
+            expires_ms: None,
+        },
+    ];
+    e.import_cookies(cookies);
+
+    // HttpOnly cookie should be in HTTP requests
+    let http = e.get_cookies_for_url("https://example.com/api");
+    assert!(http.contains("auth=jwt_token"), "HTTP should have HttpOnly cookie: {}", http);
+    assert!(http.contains("pref=en-US"), "HTTP should have non-HttpOnly cookie: {}", http);
+
+    // Non-HttpOnly should be visible in JS
+    let js = e.eval_js("document.cookie").unwrap();
+    assert!(js.contains("pref=en-US"), "JS should see non-HttpOnly cookie: {}", js);
+    assert!(!js.contains("auth"), "JS should NOT see HttpOnly cookie: {}", js);
+}
+
+#[test]
+fn export_import_roundtrip_preserves_cookies() {
+    let mut e1 = Engine::new();
+    e1.inject_response_cookies("https://example.com/", &[
+        ("Set-Cookie".to_string(), "a=1; Path=/; HttpOnly".to_string()),
+        ("Set-Cookie".to_string(), "b=2; Path=/; Secure".to_string()),
+        ("Set-Cookie".to_string(), "c=3; Path=/app; Domain=sub.example.com".to_string()),
+    ]);
+
+    let exported = e1.export_cookies();
+    assert_eq!(exported.len(), 3);
+
+    // Import into a fresh engine
+    let mut e2 = Engine::new();
+    e2.load_html("<html><body></body></html>");
+    e2.import_cookies(exported);
+
+    let http = e2.get_cookies_for_url("https://example.com/");
+    assert!(http.contains("a=1"), "should have cookie a: {}", http);
+    assert!(http.contains("b=2"), "should have cookie b: {}", http);
+}
+
+#[test]
+fn import_cookies_replaces_existing_same_identity() {
+    let mut e = Engine::new();
+    e.inject_response_cookies("https://example.com/", &[
+        ("Set-Cookie".to_string(), "token=old_value; Path=/".to_string()),
+    ]);
+
+    let cookies = vec![braille_wire::SerializableCookie {
+        name: "token".into(),
+        value: "new_value".into(),
+        domain: "example.com".into(),
+        path: "/".into(),
+        http_only: false,
+        secure: false,
+        expires_ms: None,
+    }];
+    e.import_cookies(cookies);
+
+    let exported = e.export_cookies();
+    let token_cookies: Vec<_> = exported.iter().filter(|c| c.name == "token").collect();
+    assert_eq!(token_cookies.len(), 1, "should have exactly one token cookie");
+    assert_eq!(token_cookies[0].value, "new_value");
+}
+
+#[test]
+fn export_cookies_empty_jar() {
+    let e = Engine::new();
+    let exported = e.export_cookies();
+    assert!(exported.is_empty());
+}
+
+#[test]
 fn document_cookie_delete_via_max_age_zero() {
     let mut e = engine_with_html("<html><body></body></html>");
     e.eval_js(r#"document.cookie = "temp=value""#).unwrap();

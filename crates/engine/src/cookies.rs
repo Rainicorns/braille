@@ -213,6 +213,49 @@ fn parse_set_cookie(header: &str, default_domain: &str, default_path: &str, now_
     })
 }
 
+impl Engine {
+    /// Export all cookies from the HTTP cookie jar as serializable structs.
+    /// Returns the HTTP-level cookies (including HttpOnly). JS-only cookies
+    /// (set via document.cookie but not originating from Set-Cookie headers)
+    /// are not included — they lack domain/path/flags metadata.
+    pub fn export_cookies(&self) -> Vec<braille_wire::SerializableCookie> {
+        self.http_cookie_jar
+            .iter()
+            .map(|c| braille_wire::SerializableCookie {
+                name: c.name.clone(),
+                value: c.value.clone(),
+                domain: c.domain.clone(),
+                path: c.path.clone(),
+                http_only: c.http_only,
+                secure: c.secure,
+                expires_ms: c.expires_ms,
+            })
+            .collect()
+    }
+
+    /// Import cookies into the HTTP cookie jar, replacing any existing
+    /// cookies with the same name+domain+path. Non-HttpOnly cookies
+    /// are synced to the JS runtime's document.cookie.
+    pub fn import_cookies(&mut self, cookies: Vec<braille_wire::SerializableCookie>) {
+        for sc in cookies {
+            // Remove existing cookie with same identity
+            self.http_cookie_jar.retain(|c| {
+                !(c.name == sc.name && c.domain == sc.domain && c.path == sc.path)
+            });
+            self.http_cookie_jar.push(StoredCookie {
+                name: sc.name,
+                value: sc.value,
+                domain: sc.domain,
+                path: sc.path,
+                http_only: sc.http_only,
+                secure: sc.secure,
+                expires_ms: sc.expires_ms,
+            });
+        }
+        self.sync_cookies_to_js();
+    }
+}
+
 /// Check if a request domain matches a cookie domain.
 fn domain_matches(request_domain: &str, cookie_domain: &str) -> bool {
     if request_domain == cookie_domain {

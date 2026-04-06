@@ -236,6 +236,24 @@ pub enum DaemonCommand {
     Deny { permission: String },
     /// Dismiss an info-only browser event.
     DismissEvent { id: u64 },
+    /// Export all cookies from the session's cookie jar as JSON.
+    ExportCookies,
+    /// Import cookies into the session's cookie jar.
+    ImportCookies { cookies: Vec<SerializableCookie> },
+}
+
+/// A cookie that can be serialized/deserialized over the wire protocol.
+/// Mirrors the engine's internal StoredCookie but is serde-friendly for IPC.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SerializableCookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub http_only: bool,
+    pub secure: bool,
+    /// Expiry as milliseconds since epoch, or None for session cookies.
+    pub expires_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -614,6 +632,56 @@ mod tests {
         assert_roundtrip!(
             WorkerDescriptor { id: 42, url: "https://example.com/worker.js".into() },
             WorkerDescriptor
+        );
+    }
+
+    #[test]
+    fn daemon_command_export_cookies_roundtrip() {
+        assert_roundtrip!(DaemonCommand::ExportCookies, DaemonCommand);
+    }
+
+    #[test]
+    fn daemon_command_import_cookies_roundtrip() {
+        assert_roundtrip!(
+            DaemonCommand::ImportCookies {
+                cookies: vec![
+                    SerializableCookie {
+                        name: "session".into(),
+                        value: "abc123".into(),
+                        domain: "example.com".into(),
+                        path: "/".into(),
+                        http_only: true,
+                        secure: true,
+                        expires_ms: Some(1700000000000.0),
+                    },
+                    SerializableCookie {
+                        name: "theme".into(),
+                        value: "dark".into(),
+                        domain: "example.com".into(),
+                        path: "/".into(),
+                        http_only: false,
+                        secure: false,
+                        expires_ms: None,
+                    },
+                ],
+            },
+            DaemonCommand
+        );
+    }
+
+    #[test]
+    fn serializable_cookie_roundtrip() {
+        assert_roundtrip!(
+            SerializableCookie {
+                name: "auth".into(),
+                value: "jwt_token_here".into(),
+                domain: ".example.com".into(),
+                path: "/api".into(),
+                http_only: true,
+                secure: true,
+                expires_ms: Some(1700000000000.0),
+            },
+            SerializableCookie
         );
     }
 }

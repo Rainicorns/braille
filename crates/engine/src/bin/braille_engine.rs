@@ -376,6 +376,16 @@ fn handle_command_inner(
             session.engine.dismiss_event(id);
             DaemonResponse::ok("dismissed".to_string())
         }
+        DaemonCommand::ExportCookies => {
+            let cookies = session.engine.export_cookies();
+            let json = serde_json::to_string(&cookies).unwrap_or_else(|_| "[]".to_string());
+            DaemonResponse::ok(json)
+        }
+        DaemonCommand::ImportCookies { cookies } => {
+            let count = cookies.len();
+            session.engine.import_cookies(cookies);
+            DaemonResponse::ok(format!("imported {count} cookies"))
+        }
         DaemonCommand::NewSession | DaemonCommand::DaemonStop | DaemonCommand::Ping => {
             DaemonResponse::err("unexpected command for engine process".to_string())
         }

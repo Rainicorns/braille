@@ -159,6 +159,13 @@ enum SessionAction {
     DenyPerm { permission: String },
     /// Dismiss an info-only browser event
     Dismiss { id: u64 },
+    /// Export all cookies from the session as JSON
+    ExportCookies,
+    /// Import cookies from a JSON file into the session
+    ImportCookies {
+        /// Path to JSON file containing cookie array
+        file: String,
+    },
     /// Close the session
     Close,
 }
@@ -250,6 +257,14 @@ fn session_action_to_daemon_command(action: SessionAction, session_id: &str) -> 
         SessionAction::Permit { permission } => DaemonCommand::Permit { permission },
         SessionAction::DenyPerm { permission } => DaemonCommand::Deny { permission },
         SessionAction::Dismiss { id } => DaemonCommand::DismissEvent { id },
+        SessionAction::ExportCookies => DaemonCommand::ExportCookies,
+        SessionAction::ImportCookies { file } => {
+            let json = std::fs::read_to_string(&file)
+                .unwrap_or_else(|e| panic!("failed to read cookie file {file}: {e}"));
+            let cookies: Vec<braille_wire::SerializableCookie> = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("invalid cookie JSON in {file}: {e}"));
+            DaemonCommand::ImportCookies { cookies }
+        }
         SessionAction::Close => DaemonCommand::Close,
     }
 }
