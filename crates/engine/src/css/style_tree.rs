@@ -269,9 +269,47 @@ fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
     map.insert("bottom".to_string(), format_optional_computed_length(style.bottom));
     map.insert("left".to_string(), format_optional_computed_length(style.left));
     map.insert("opacity".to_string(), format!("{}", style.opacity));
-    map.insert("overflow".to_string(), format_overflow(style.overflow).to_string());
+    map.insert("overflow-x".to_string(), format_overflow(style.overflow_x).to_string());
+    map.insert("overflow-y".to_string(), format_overflow(style.overflow_y).to_string());
+    // Emit "overflow" shorthand for getComputedStyle compat
+    if style.overflow_x == style.overflow_y {
+        map.insert("overflow".to_string(), format_overflow(style.overflow_x).to_string());
+    } else {
+        map.insert(
+            "overflow".to_string(),
+            format!("{} {}", format_overflow(style.overflow_x), format_overflow(style.overflow_y)),
+        );
+    }
     map.insert("scroll-snap-type".to_string(), style.scroll_snap_type.clone());
     map.insert("scroll-snap-align".to_string(), style.scroll_snap_align.clone());
+
+    // Flexbox
+    map.insert("flex-direction".to_string(), style.flex_direction.clone());
+    map.insert("flex-wrap".to_string(), style.flex_wrap.clone());
+    map.insert("justify-content".to_string(), style.justify_content.clone());
+    map.insert("align-items".to_string(), style.align_items.clone());
+    map.insert("align-content".to_string(), style.align_content.clone());
+    map.insert("flex-grow".to_string(), format!("{}", style.flex_grow));
+    map.insert("flex-shrink".to_string(), format!("{}", style.flex_shrink));
+    map.insert(
+        "flex-basis".to_string(),
+        format_optional_computed_length(style.flex_basis),
+    );
+    if let Some(g) = style.gap {
+        map.insert("gap".to_string(), format_computed_length(g));
+    }
+
+    // Min/max sizing
+    map.insert("min-width".to_string(), format_optional_computed_length(style.min_width));
+    map.insert("max-width".to_string(), match style.max_width {
+        None => "none".to_string(),
+        Some(cl) => format_computed_length(cl),
+    });
+    map.insert("min-height".to_string(), format_optional_computed_length(style.min_height));
+    map.insert("max-height".to_string(), match style.max_height {
+        None => "none".to_string(),
+        Some(cl) => format_computed_length(cl),
+    });
 
     map
 }

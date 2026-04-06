@@ -175,9 +175,25 @@ pub struct ComputedStyle {
     pub bottom: Option<ComputedLength>,
     pub left: Option<ComputedLength>,
     pub opacity: f32,
-    pub overflow: Overflow,
+    pub overflow_x: Overflow,
+    pub overflow_y: Overflow,
     pub scroll_snap_type: String,
     pub scroll_snap_align: String,
+    // Flexbox
+    pub flex_direction: String,
+    pub flex_wrap: String,
+    pub justify_content: String,
+    pub align_items: String,
+    pub align_content: String,
+    pub flex_grow: f32,
+    pub flex_shrink: f32,
+    pub flex_basis: Option<ComputedLength>,
+    pub gap: Option<ComputedLength>,
+    // Min/max sizing
+    pub min_width: Option<ComputedLength>,
+    pub max_width: Option<ComputedLength>,
+    pub min_height: Option<ComputedLength>,
+    pub max_height: Option<ComputedLength>,
 }
 
 /// Root default font size used for `rem` units.
@@ -220,9 +236,23 @@ impl ComputedStyle {
             bottom: None,
             left: None,
             opacity: 1.0,
-            overflow: Overflow::Visible,
+            overflow_x: Overflow::Visible,
+            overflow_y: Overflow::Visible,
             scroll_snap_type: "none".to_string(),
             scroll_snap_align: "none".to_string(),
+            flex_direction: "row".to_string(),
+            flex_wrap: "nowrap".to_string(),
+            justify_content: "flex-start".to_string(),
+            align_items: "stretch".to_string(),
+            align_content: "stretch".to_string(),
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: None,
+            gap: None,
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
         }
     }
 }
@@ -715,9 +745,68 @@ fn apply_parsed_value(style: &mut ComputedStyle, property: &str, val: &str, pare
         "bottom" => style.bottom = parse_optional_length_or_percent(val, own_font_size),
         "left" => style.left = parse_optional_length_or_percent(val, own_font_size),
         "opacity" => style.opacity = parse_opacity(val),
-        "overflow" => style.overflow = parse_overflow(val),
+        "overflow" => {
+            let o = parse_overflow(val);
+            style.overflow_x = o;
+            style.overflow_y = o;
+        }
+        "overflow-x" => style.overflow_x = parse_overflow(val),
+        "overflow-y" => style.overflow_y = parse_overflow(val),
         "scroll-snap-type" => style.scroll_snap_type = val.trim().to_ascii_lowercase(),
         "scroll-snap-align" => style.scroll_snap_align = val.trim().to_ascii_lowercase(),
+        // Flexbox
+        "flex-direction" => style.flex_direction = val.trim().to_ascii_lowercase(),
+        "flex-wrap" => style.flex_wrap = val.trim().to_ascii_lowercase(),
+        "justify-content" => style.justify_content = val.trim().to_ascii_lowercase(),
+        "align-items" => style.align_items = val.trim().to_ascii_lowercase(),
+        "align-content" => style.align_content = val.trim().to_ascii_lowercase(),
+        "flex-grow" => style.flex_grow = val.trim().parse::<f32>().unwrap_or(0.0),
+        "flex-shrink" => style.flex_shrink = val.trim().parse::<f32>().unwrap_or(1.0),
+        "flex-basis" => style.flex_basis = parse_optional_length_or_percent(val, own_font_size),
+        "gap" => style.gap = Some(parse_length_or_percent(val, own_font_size)),
+        "flex" => {
+            // Shorthand: flex: none | auto | <number> | <grow> <shrink> <basis>
+            let trimmed = val.trim().to_ascii_lowercase();
+            match trimmed.as_str() {
+                "none" => {
+                    style.flex_grow = 0.0;
+                    style.flex_shrink = 0.0;
+                    style.flex_basis = None; // auto
+                }
+                "auto" => {
+                    style.flex_grow = 1.0;
+                    style.flex_shrink = 1.0;
+                    style.flex_basis = None; // auto
+                }
+                _ => {
+                    // flex: <number> → grow=<number>, shrink=1, basis=0
+                    if let Ok(n) = trimmed.parse::<f32>() {
+                        style.flex_grow = n;
+                        style.flex_shrink = 1.0;
+                        style.flex_basis = Some(ComputedLength::Px(0.0));
+                    }
+                }
+            }
+        }
+        // Min/max sizing
+        "min-width" => style.min_width = parse_optional_length_or_percent(val, own_font_size),
+        "max-width" => {
+            let trimmed = val.trim().to_ascii_lowercase();
+            if trimmed == "none" {
+                style.max_width = None;
+            } else {
+                style.max_width = Some(parse_length_or_percent(val, own_font_size));
+            }
+        }
+        "min-height" => style.min_height = parse_optional_length_or_percent(val, own_font_size),
+        "max-height" => {
+            let trimmed = val.trim().to_ascii_lowercase();
+            if trimmed == "none" {
+                style.max_height = None;
+            } else {
+                style.max_height = Some(parse_length_or_percent(val, own_font_size));
+            }
+        }
         _ => {
             // Unknown properties are silently ignored.
         }
@@ -749,9 +838,27 @@ fn apply_inherited_value(style: &mut ComputedStyle, property: &str, parent: &Com
         "height" => style.height = parent.height,
         "position" => style.position = parent.position,
         "opacity" => style.opacity = parent.opacity,
-        "overflow" => style.overflow = parent.overflow,
+        "overflow" => {
+            style.overflow_x = parent.overflow_x;
+            style.overflow_y = parent.overflow_y;
+        }
+        "overflow-x" => style.overflow_x = parent.overflow_x,
+        "overflow-y" => style.overflow_y = parent.overflow_y,
         "scroll-snap-type" => style.scroll_snap_type = parent.scroll_snap_type.clone(),
         "scroll-snap-align" => style.scroll_snap_align = parent.scroll_snap_align.clone(),
+        "flex-direction" => style.flex_direction = parent.flex_direction.clone(),
+        "flex-wrap" => style.flex_wrap = parent.flex_wrap.clone(),
+        "justify-content" => style.justify_content = parent.justify_content.clone(),
+        "align-items" => style.align_items = parent.align_items.clone(),
+        "align-content" => style.align_content = parent.align_content.clone(),
+        "flex-grow" => style.flex_grow = parent.flex_grow,
+        "flex-shrink" => style.flex_shrink = parent.flex_shrink,
+        "flex-basis" => style.flex_basis = parent.flex_basis,
+        "gap" => style.gap = parent.gap,
+        "min-width" => style.min_width = parent.min_width,
+        "max-width" => style.max_width = parent.max_width,
+        "min-height" => style.min_height = parent.min_height,
+        "max-height" => style.max_height = parent.max_height,
         _ => {}
     }
 }
@@ -820,7 +927,8 @@ mod tests {
         assert_eq!(style.height, None);
         assert_eq!(style.position, Position::Static);
         assert_eq!(style.opacity, 1.0);
-        assert_eq!(style.overflow, Overflow::Visible);
+        assert_eq!(style.overflow_x, Overflow::Visible);
+        assert_eq!(style.overflow_y, Overflow::Visible);
     }
 
     // --- 2. Inherited property passes from parent ---
@@ -1091,7 +1199,8 @@ mod tests {
     fn test_overflow_hidden() {
         let cascaded = cascaded_with(&[("overflow", "hidden")]);
         let style = resolve_style(&cascaded, None);
-        assert_eq!(style.overflow, Overflow::Hidden);
+        assert_eq!(style.overflow_x, Overflow::Hidden);
+        assert_eq!(style.overflow_y, Overflow::Hidden);
     }
 
     #[test]
