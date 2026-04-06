@@ -1708,10 +1708,6 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 var upgradeTarget = __ceUpgradeTarget;
                 if (upgradeTarget) {
                     __ceUpgradeTarget = null;
-                    this.__nid = upgradeTarget.__nid;
-                    this.__props = upgradeTarget.__props || {};
-                    this.__ce_upgraded = true;
-                    if (typeof __cache !== 'undefined') __cache[this.__nid] = this;
                     return upgradeTarget;
                 }
                 if (typeof customElements !== 'undefined' && customElements._ctorToName) {

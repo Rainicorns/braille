@@ -1071,7 +1071,7 @@ PASS wpt:dom/events/EventListener-incumbent-global-subframe-2.sub.html
 PASS wpt:dom/events/EventListener-incumbent-global-subsubframe.sub.html
 PASS wpt:dom/events/EventListener-invoke-legacy.html
 PASS wpt:dom/events/EventListenerOptions-capture.html
-FAIL wpt:dom/events/EventTarget-add-listener-platform-object.html
+PASS wpt:dom/events/EventTarget-add-listener-platform-object.html
 PASS wpt:dom/events/EventTarget-add-remove-listener.any.js
 PASS wpt:dom/events/EventTarget-addEventListener.any.js
 PASS wpt:dom/events/EventTarget-constructible.any.js
@@ -1238,7 +1238,7 @@ PASS wpt:dom/nodes/Document-contentType/contentType/createDocument.html
 PASS wpt:dom/nodes/Document-contentType/contentType/createHTMLDocument.html
 PASS wpt:dom/nodes/Document-contentType/contentType/xhr_responseType_document.html
 FAIL wpt:dom/nodes/Document-createAttribute.html
-PASS wpt:dom/nodes/Document-createCDATASection.html
+FAIL wpt:dom/nodes/Document-createCDATASection.html
 PASS wpt:dom/nodes/Document-createComment.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/bare_mathml.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/bare_svg.html
