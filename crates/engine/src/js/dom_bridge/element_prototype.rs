@@ -326,11 +326,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
         EP.lookupNamespaceURI = function(prefix) {
             if (prefix === '') prefix = null;
             if (prefix !== undefined && prefix !== null) prefix = String(prefix);
-            // Built-in prefix mappings per spec (apply to all node types)
-            if (prefix === 'xml') return 'http://www.w3.org/XML/1998/namespace';
-            if (prefix === 'xmlns') return 'http://www.w3.org/2000/xmlns/';
             var nt = this.nodeType;
             if (nt === 1) {
+                // Built-in prefix mappings per spec (only for Element nodes)
+                if (prefix === 'xml') return 'http://www.w3.org/XML/1998/namespace';
+                if (prefix === 'xmlns') return 'http://www.w3.org/2000/xmlns/';
                 var ns = this.namespaceURI;
                 if (ns && this.prefix === prefix) return ns;
                 // Check xmlns attributes
@@ -352,6 +352,11 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 return de ? de.lookupNamespaceURI(prefix) : null;
             }
             if (nt === 10 || nt === 11) return null;
+            // Attr nodes delegate to ownerElement per spec
+            if (nt === 2) {
+                var oe = this.ownerElement;
+                return oe ? oe.lookupNamespaceURI(prefix) : null;
+            }
             var pe = this.parentElement;
             return pe ? pe.lookupNamespaceURI(prefix) : null;
         };

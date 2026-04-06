@@ -328,7 +328,12 @@ pub(super) fn global_document_js() -> &'static str {
             if (arguments.length === 0) throw new TypeError("Failed to execute 'createAttribute' on 'Document': 1 argument required, but only 0 present.");
             var name = String(localName);
             if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'createAttribute' on 'Document': The string contains invalid characters.", "InvalidCharacterError");
-            return new Attr(name.toLowerCase(), '', null, null);
+            var ln = name.toLowerCase();
+            var attr = new Attr(ln, '', null, null);
+            // createAttribute does NOT split on colon — the full name is the localName
+            attr.localName = ln;
+            attr.prefix = null;
+            return attr;
         };
 
         doc.createAttributeNS = function(ns, qualifiedName) {
@@ -955,7 +960,10 @@ pub(super) fn global_document_js() -> &'static str {
                         if (arguments.length === 0) throw new TypeError("Failed to execute 'createAttribute' on 'Document': 1 argument required, but only 0 present.");
                         var name = String(localName);
                         if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'createAttribute' on 'Document': The string contains invalid characters.", "InvalidCharacterError");
-                        return new Attr(name, '', null, null);
+                        var attr = new Attr(name, '', null, null);
+                        attr.localName = name;
+                        attr.prefix = null;
+                        return attr;
                     };
                     return newDoc;
                 },

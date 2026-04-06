@@ -1156,7 +1156,7 @@ PASS wpt:dom/events/scrolling/scroll-event-fired-to-element.html
 PASS wpt:dom/events/scrolling/scroll-event-fired-to-iframe.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-after-sequence-of-scrolls.tentative.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-after-snap.html
-FAIL wpt:dom/events/scrolling/scrollend-event-fired-for-mandatory-snap-point-after-load.html
+PASS wpt:dom/events/scrolling/scrollend-event-fired-for-mandatory-snap-point-after-load.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-for-scrollIntoView.html
@@ -1166,7 +1166,7 @@ PASS wpt:dom/events/scrolling/scrollend-event-fired-to-window.html
 PASS wpt:dom/events/scrolling/scrollend-event-fires-for-repeat-key-ending-after-scroll-container-end-is-reached.html
 PASS wpt:dom/events/scrolling/scrollend-event-fires-on-visual-viewport.html
 PASS wpt:dom/events/scrolling/scrollend-event-fires-to-iframe-inner-frame.html
-FAIL wpt:dom/events/scrolling/scrollend-event-fires-to-iframe-window.html
+PASS wpt:dom/events/scrolling/scrollend-event-fires-to-iframe-window.html
 PASS wpt:dom/events/scrolling/scrollend-event-for-user-scroll.html
 PASS wpt:dom/events/scrolling/scrollend-event-handler-content-attributes.html
 PASS wpt:dom/events/scrolling/scrollend-event-not-fired-after-removing-scroller.tentative.html
@@ -1178,7 +1178,7 @@ PASS wpt:dom/events/scrolling/wheel-event-transactions-basic.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-multiple-action-chains.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-display-change.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-elements.html
-FAIL wpt:dom/events/scrolling/wheel-event-transactions-target-move.html
+PASS wpt:dom/events/scrolling/wheel-event-transactions-target-move.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-removal.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-resize.html
 PASS wpt:dom/events/shadow-relatedTarget.html
@@ -1193,7 +1193,7 @@ PASS wpt:dom/idlharness.any.js
 PASS wpt:dom/idlharness.window.js
 PASS wpt:dom/interface-objects.html
 PASS wpt:dom/lists/DOMTokenList-Iterable.html
-FAIL wpt:dom/lists/DOMTokenList-coverage-for-attributes.html
+PASS wpt:dom/lists/DOMTokenList-coverage-for-attributes.html
 PASS wpt:dom/lists/DOMTokenList-iteration.html
 PASS wpt:dom/lists/DOMTokenList-stringifier.html
 PASS wpt:dom/lists/DOMTokenList-value.html
@@ -1215,13 +1215,13 @@ PASS wpt:dom/nodes/DOMImplementation-createDocument.html
 PASS wpt:dom/nodes/DOMImplementation-createDocumentType.html
 PASS wpt:dom/nodes/DOMImplementation-createHTMLDocument-with-null-browsing-context-crash.html
 PASS wpt:dom/nodes/DOMImplementation-createHTMLDocument-with-saved-implementation.html
-FAIL wpt:dom/nodes/DOMImplementation-createHTMLDocument.html
+PASS wpt:dom/nodes/DOMImplementation-createHTMLDocument.html
 PASS wpt:dom/nodes/DOMImplementation-hasFeature.html
 PASS wpt:dom/nodes/Document-URL.html
-FAIL wpt:dom/nodes/Document-adoptNode.html
+PASS wpt:dom/nodes/Document-adoptNode.html
 PASS wpt:dom/nodes/Document-characterSet-normalization-1.html
 PASS wpt:dom/nodes/Document-characterSet-normalization-2.html
-FAIL wpt:dom/nodes/Document-constructor.html
+PASS wpt:dom/nodes/Document-constructor.html
 PASS wpt:dom/nodes/Document-contentType/contentType/contenttype_bmp.html
 PASS wpt:dom/nodes/Document-contentType/contentType/contenttype_css.html
 PASS wpt:dom/nodes/Document-contentType/contentType/contenttype_datauri_02.html
@@ -1237,8 +1237,8 @@ PASS wpt:dom/nodes/Document-contentType/contentType/contenttype_xml.html
 PASS wpt:dom/nodes/Document-contentType/contentType/createDocument.html
 PASS wpt:dom/nodes/Document-contentType/contentType/createHTMLDocument.html
 PASS wpt:dom/nodes/Document-contentType/contentType/xhr_responseType_document.html
-FAIL wpt:dom/nodes/Document-createAttribute.html
-FAIL wpt:dom/nodes/Document-createCDATASection.html
+PASS wpt:dom/nodes/Document-createAttribute.html
+PASS wpt:dom/nodes/Document-createCDATASection.html
 PASS wpt:dom/nodes/Document-createComment.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/bare_mathml.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/bare_svg.html
@@ -1250,7 +1250,7 @@ PASS wpt:dom/nodes/Document-createElement-namespace-tests/svg.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/xhtml.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/xhtml_ns_changed.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/xhtml_ns_removed.html
-FAIL wpt:dom/nodes/Document-createElement-namespace.html
+PASS wpt:dom/nodes/Document-createElement-namespace.html
 PASS wpt:dom/nodes/Document-createElement.html
 PASS wpt:dom/nodes/Document-createElementNS.html
 PASS wpt:dom/nodes/Document-createEvent-touchevent.window.js
@@ -1463,7 +1463,7 @@ PASS cargo:lib::commands::send_keys::tests::send_keys_updates_scroll_left_on_ove
 PASS cargo:lib::commands::send_keys::tests::set_selection_range_works
 PASS cargo:lib::html::parser::tests::declarative_shadow_dom_fragment
 PASS cargo:lib::html::parser::tests::declarative_shadow_dom_full_document
-PASS cargo:link_css_onload::link_js_onload_property_fires
+FAIL cargo:link_css_onload::link_js_onload_property_fires
 PASS cargo:link_css_onload::link_onload_removes_hiding_style
 PASS cargo:link_css_onload::link_preload_onload_fires
 PASS cargo:link_css_onload::link_stylesheet_onload_fires
@@ -1498,8 +1498,8 @@ PASS cargo:pbkdf2_debug::pbkdf2_alt
 PASS cargo:real_sites_static::hackernews_front_page_loads
 PASS cargo:real_sites_static::hackernews_has_score_indicators
 PASS cargo:real_sites_static::hackernews_has_story_links
-PASS cargo:real_sites_static::ifixit_has_device_listings
-PASS cargo:real_sites_static::ifixit_teardown_index_loads
+FAIL cargo:real_sites_static::ifixit_has_device_listings
+FAIL cargo:real_sites_static::ifixit_teardown_index_loads
 PASS cargo:real_sites_static::justonecookbook_has_recipe_content
 PASS cargo:real_sites_static::justonecookbook_sushi_rice_loads
 PASS cargo:real_sites_static::python_docs_has_api_content
@@ -1527,7 +1527,7 @@ PASS wpt:common/domain-setter.sub.html
 PASS wpt:common/window-name-setter.html
 PASS wpt:dom/nodes/insertion-removing-steps/Node-appendChild-script-with-mutation-observer-takeRecords.html
 PASS wpt:dom/nodes/insertion-removing-steps/blur-event.window.js
-PASS wpt:dom/nodes/insertion-removing-steps/insertion-removing-steps-iframe.window.js
+FAIL wpt:dom/nodes/insertion-removing-steps/insertion-removing-steps-iframe.window.js
 PASS wpt:dom/nodes/insertion-removing-steps/insertion-removing-steps-script.window.js
 PASS wpt:dom/nodes/insertion-removing-steps/later-script-removed-by-earlier-script.html
 PASS wpt:dom/nodes/insertion-removing-steps/script-does-not-run-on-child-removal.window.js
@@ -1569,7 +1569,7 @@ PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed25519.https.any.js 
 PASS wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js alt:cargo:crypto_alts::wrap_unwrap_keys
 PASS wpt:dom/abort/AbortSignal.any.js
 PASS wpt:dom/abort/abort-signal-timeout.html
-PASS wpt:dom/nodes/moveBefore/Node-moveBefore.html
+FAIL wpt:dom/nodes/moveBefore/Node-moveBefore.html
 PASS wpt:dom/nodes/moveBefore/child-style-preserve.html
 PASS wpt:dom/nodes/moveBefore/chrome-338071841-crash.html
 PASS wpt:dom/nodes/moveBefore/chrome-433696404-crash.html

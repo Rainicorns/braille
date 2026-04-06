@@ -81,6 +81,8 @@ pub(super) fn element_scroll_js() -> &'static str {
             }
             return { x: resultX, y: resultY };
         }
+        // Expose for Rust-side fire_scroll_snap_events
+        globalThis.__computeSnapOffset = __computeSnapOffset;
 
         ElemProto.scrollTo = function(xOrOpts, y) {
             var nx, ny, behavior;

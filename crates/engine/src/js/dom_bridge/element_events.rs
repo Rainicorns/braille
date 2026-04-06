@@ -143,16 +143,32 @@ pub(super) fn element_events_js() -> &'static str {
             }
 
             // Find the owning document by walking up to the root element
+            // For iframe content, stop at the IFRAME boundary to prevent
+            // events from propagating into the outer document/window.
             var ownerDoc = undefined;
             var rootNid = this.__nid;
             var p = __n_getParent(rootNid);
-            while (p >= 0) { rootNid = p; p = __n_getParent(rootNid); }
-            var rootEl = __w(rootNid);
-            if (rootEl.__ownerDoc) {
-                ownerDoc = rootEl.__ownerDoc;
-            } else if (rootEl.nodeType === 9 && rootEl !== document) {
-                // Root is a standalone document node (new Document(), cloneNode, createHTMLDocument)
-                ownerDoc = rootEl;
+            while (p >= 0) {
+                var pTag = (__n_getNodeType(p) === 1) ? __n_getTagName(p) : '';
+                if (pTag === 'IFRAME') {
+                    // Element is inside an iframe — use the iframe's document as owner
+                    var realm = typeof __braille_get_iframe_realm === 'function' ? __braille_get_iframe_realm(p) : null;
+                    if (realm && realm.document) {
+                        ownerDoc = realm.document;
+                    }
+                    break;
+                }
+                rootNid = p;
+                p = __n_getParent(rootNid);
+            }
+            if (!ownerDoc) {
+                var rootEl = __w(rootNid);
+                if (rootEl.__ownerDoc) {
+                    ownerDoc = rootEl.__ownerDoc;
+                } else if (rootEl.nodeType === 9 && rootEl !== document) {
+                    // Root is a standalone document node (new Document(), cloneNode, createHTMLDocument)
+                    ownerDoc = rootEl;
+                }
             }
             __dispatch(this.__nid, event, ownerDoc);
             return !event.defaultPrevented;

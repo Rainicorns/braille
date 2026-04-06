@@ -224,7 +224,10 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
                 if (arguments.length === 0) throw new TypeError("Failed to execute 'createAttribute' on 'Document': 1 argument required, but only 0 present.");
                 var name = String(localName);
                 if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'createAttribute' on 'Document': The string contains invalid characters.", "InvalidCharacterError");
-                return new Attr(name, '', null, null);
+                var attr = new Attr(name, '', null, null);
+                attr.localName = name;
+                attr.prefix = null;
+                return attr;
             };
             return newDoc;
         };

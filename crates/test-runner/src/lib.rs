@@ -560,6 +560,13 @@ pub fn resolve_script_src(
                     }
                     return null;
                 }
+                // Check if we're inside an iframe (content under a standalone document node,
+                // not directly under an IFRAME element in the DOM tree).
+                // Detect by checking if the root document node is NOT the main document.
+                if (cur && cur.nodeType === 9 && cur !== document) {
+                    // Inside an iframe's document — don't fall back to main scrollingElement
+                    return null;
+                }
                 // Fall back to outer document.scrollingElement
                 var se = document.scrollingElement;
                 if (se) return se;

@@ -239,7 +239,8 @@ pub(super) fn element_properties_js() -> &'static str {
                     var raw = this.getAttribute('href');
                     if (raw === null) return '';
                     // <a> and <area> resolve href to absolute URL per spec
-                    if (this.tagName === 'A' || this.tagName === 'AREA') {
+                    var tn = this.tagName;
+                    if (tn === 'A' || tn === 'AREA' || tn === 'a' || tn === 'area') {
                         var resolved;
                         if (/^https?:\/\//.test(raw)) resolved = raw;
                         else if (raw.charAt(0) === '#') resolved = location.origin + location.pathname + location.search + raw;
@@ -454,7 +455,16 @@ pub(super) fn element_properties_js() -> &'static str {
             relList: {
                 get: function() {
                     var t = this.tagName;
-                    if (t !== 'A' && t !== 'AREA' && t !== 'LINK') return undefined;
+                    var ns = this.namespaceURI;
+                    // HTML namespace: A, AREA, LINK
+                    if (!ns || ns === 'http://www.w3.org/1999/xhtml') {
+                        if (t !== 'A' && t !== 'AREA' && t !== 'LINK') return undefined;
+                    } else if (ns === 'http://www.w3.org/2000/svg') {
+                        // SVG namespace: only <a> has relList
+                        if (t !== 'a') return undefined;
+                    } else {
+                        return undefined;
+                    }
                     var supported = ['alternate','author','dns-prefetch','help','icon','license','modulepreload','nofollow','noopener','noreferrer','opener','prefetch','preconnect','preload','prerender','stylesheet','tag'];
                     return __makeDOMTokenList(this, 'rel', supported);
                 },

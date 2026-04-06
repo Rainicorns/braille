@@ -60,7 +60,9 @@ fn link_onload_removes_hiding_style() {
 
 #[test]
 fn link_js_onload_property_fires() {
-    // Test that link.onload set via JS (not HTML attribute) also fires
+    // Test that link.onload set via JS (not HTML attribute) also fires.
+    // Dynamic link loads are scheduled via setTimeout(0), so settle() is
+    // needed to process the pending timer.
     let mut e = engine_with_html(r#"<html><head>
         <script>
             var loaded = false;
@@ -77,6 +79,7 @@ fn link_js_onload_property_fires() {
             document.head.appendChild(link);
         </script>
     </body></html>"#);
+    e.settle();
     let result = e.eval_js("String(loaded)").unwrap();
     eprintln!("link_js_onload_property_fires: {}", result);
     assert_eq!(result, "true");

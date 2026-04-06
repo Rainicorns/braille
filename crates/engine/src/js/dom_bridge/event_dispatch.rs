@@ -7,6 +7,7 @@ pub(super) fn event_dispatch_js() -> &'static str {
         function __dispatch(nodeId, event, ownerDoc) {
             // Build path: target -> parent -> ... -> root
             // For composed events, follow shadow host links across shadow boundaries
+            // For iframe content, stop at the IFRAME boundary to prevent leaking
             var path = [];
             var _shadowNodes = {};  // nodeIds that are inside a shadow tree
             var _inShadow = false;
@@ -15,6 +16,10 @@ pub(super) fn event_dispatch_js() -> &'static str {
                 path.push(cur);
                 if (_inShadow) _shadowNodes[cur] = true;
                 var parent = __n_getParent(cur);
+                // Stop at IFRAME boundary — events inside iframe don't propagate to outer document
+                if (parent >= 0 && __n_getNodeType(parent) === 1 && __n_getTagName(parent) === 'IFRAME') {
+                    break;
+                }
                 if (parent < 0 && event.composed) {
                     // Check if this is a shadow root with a host — use native functions
                     if (__n_isShadowRoot(cur)) {

@@ -2,14 +2,17 @@
 pub(super) fn label_bindings_js() -> &'static str {
     r#"
         // --- Label association properties ---
-        // label.htmlFor — reflects the `for` attribute
+        // label.htmlFor — string reflecting the `for` attribute (HTMLLabelElement)
+        // output.htmlFor — DOMTokenList reflecting the `for` attribute (HTMLOutputElement)
         Object.defineProperty(ElemProto, 'htmlFor', {
             get: function() {
+                if (this.tagName === 'OUTPUT') return __makeDOMTokenList(this, 'for');
                 if (this.tagName !== 'LABEL') return undefined;
                 return this.getAttribute('for') || '';
             },
             set: function(v) {
                 if (this.tagName === 'LABEL') this.setAttribute('for', String(v));
+                else if (this.tagName === 'OUTPUT') this.setAttribute('for', String(v));
             },
             configurable: true
         });
