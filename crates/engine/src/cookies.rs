@@ -78,6 +78,11 @@ impl Engine {
         }
     }
 
+    /// Number of cookies in the HTTP cookie jar.
+    pub fn cookie_count(&self) -> usize {
+        self.http_cookie_jar.len()
+    }
+
     /// Get all cookies (including HttpOnly) that should be sent with an HTTP
     /// request to the given URL. Returns the value for a `Cookie` header.
     pub fn get_cookies_for_url(&mut self, request_url: &str) -> String {
