@@ -161,8 +161,10 @@ fn run_regression(manifest_path: &std::path::Path, from: usize) {
 
     for (check_num, &idx) in pass_entries.iter().enumerate().skip(skip_count) {
         let test_path = entries[idx].path.clone();
+        let alt_path = entries[idx].alt.clone();
+        let run_path = alt_path.as_deref().unwrap_or(&test_path);
 
-        let result = run_single_test(&test_path);
+        let result = run_single_test(run_path);
 
         if result {
             println!("[{}/{}] ok {}", check_num + 1, total_pass, test_path);
