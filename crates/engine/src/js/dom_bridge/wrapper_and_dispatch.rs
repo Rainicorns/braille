@@ -699,10 +699,11 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Helper: when a node is implicitly removed (moved) by appendChild/insertBefore,
         // blur the focused element if it's inside the moving subtree
         function __loseFocusIfRemoving(node) {
-            if (__focusedElement && node && node.__nid !== undefined && __focusedElement.__nid !== undefined) {
-                if (__focusedElement === node || (node.contains && node.contains(__focusedElement))) {
-                    var prev = __focusedElement;
-                    __focusedElement = null;
+            if (__bfc.el && node && node.__nid !== undefined && __bfc.el.__nid !== undefined) {
+                if (__bfc.el === node || (node.contains && node.contains(__bfc.el))) {
+                    var prev = __bfc.el;
+                    __bfc.el = null;
+                    __n_setFocusedNode(-1);
                     prev.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
                     prev.dispatchEvent(new FocusEvent('blur', { bubbles: false, relatedTarget: null }));
                 }
@@ -1669,12 +1670,16 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
 
         // window.dispatchEvent assigned after EventTarget is defined (below)
 
-        // Track focused element for document.activeElement
-        var __focusedElement = null;
+        // Track focused element for document.activeElement.
+        // Context object so Rust-side validate_focus_after_styles can reach
+        // it via runtime.eval through the globalThis reference.
+        var __bfc = { el: null };
+        globalThis.__bfc = __bfc;
         EP.focus = function() {
-            var prev = __focusedElement;
+            var prev = __bfc.el;
             if (prev === this) return;
-            __focusedElement = this;
+            __bfc.el = this;
+            __n_setFocusedNode(this.__nid !== undefined ? this.__nid : -1);
             if (prev) {
                 prev.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: this }));
             }
@@ -1685,8 +1690,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             this.dispatchEvent(new FocusEvent('focus', { bubbles: false, relatedTarget: prev }));
         };
         EP.blur = function() {
-            if (__focusedElement !== this) return;
-            __focusedElement = null;
+            if (__bfc.el !== this) return;
+            __bfc.el = null;
+            __n_setFocusedNode(-1);
             this.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
             this.dispatchEvent(new FocusEvent('blur', { bubbles: false, relatedTarget: null }));
         };
@@ -1698,7 +1704,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             head: { get: function() { return doc.querySelector('head'); }, configurable: true },
             documentElement: { get: function() { return doc.querySelector('html'); }, configurable: true },
             scrollingElement: { get: function() { return doc.documentElement; }, configurable: true },
-            activeElement: { get: function() { return __focusedElement || doc.querySelector('body'); }, configurable: true },
+            activeElement: { get: function() { return __bfc.el || doc.querySelector('body'); }, configurable: true },
             styleSheets: { get: function() {
                 var sheets = [];
                 var styles = doc.querySelectorAll('style');

@@ -1047,4 +1047,12 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
             }
         }
     }).unwrap()).unwrap();
+
+    // Set focused node on the tree so CSS :focus / :focus-within matching works.
+    // Called from EP.focus and EP.blur.
+    g.set("__n_setFocusedNode", Function::new(ctx.clone(), |node_id: i32| {
+        with_tree_mut(|tree| {
+            tree.focused_node = if node_id >= 0 { Some(node_id as NodeId) } else { None };
+        });
+    }).unwrap()).unwrap();
 }

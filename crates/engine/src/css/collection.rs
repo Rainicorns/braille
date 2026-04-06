@@ -96,7 +96,7 @@ pub fn ua_stylesheet() -> Vec<CollectedRule> {
     // Hidden elements
     rules.push(CollectedRule {
         origin: StyleOrigin::UserAgent,
-        selector_text: "head, script, style, meta, link, title".to_string(),
+        selector_text: "head, script, style, meta, link, title, [hidden]".to_string(),
         declarations: vec![("display".to_string(), "none".to_string(), false)],
         source_order,
     });
