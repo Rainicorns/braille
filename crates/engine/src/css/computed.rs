@@ -1216,8 +1216,10 @@ fn apply_parsed_value(style: &mut ComputedStyle, property: &str, val: &str, pare
         "gap" => {
             // Shorthand: gap sets both row-gap and column-gap
             let parts: Vec<&str> = val.split_whitespace().collect();
-            style.row_gap = parts[0].to_string();
-            style.column_gap = if parts.len() > 1 { parts[1].to_string() } else { parts[0].to_string() };
+            if !parts.is_empty() {
+                style.row_gap = parts[0].to_string();
+                style.column_gap = if parts.len() > 1 { parts[1].to_string() } else { parts[0].to_string() };
+            }
         }
         "grid-auto-flow" => style.grid_auto_flow = val.trim().to_string(),
         "grid-auto-columns" => style.grid_auto_columns = val.trim().to_string(),

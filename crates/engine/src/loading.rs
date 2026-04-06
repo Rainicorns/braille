@@ -63,6 +63,10 @@ impl Engine {
         // 4. Fire onload for parser-inserted <link> elements
         Self::fire_link_stylesheet_loads(&mut runtime);
 
+        // 4b. Fire pending timers (dynamic <link> elements schedule onload via setTimeout(0))
+        runtime.fire_ready_timers();
+        runtime.run_jobs();
+
         // 5. Store the runtime
         self.runtime = Some(runtime);
         if self.cookies_pending_js_sync { self.sync_cookies_to_js(); }

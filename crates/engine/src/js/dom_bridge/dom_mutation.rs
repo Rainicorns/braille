@@ -76,10 +76,14 @@ pub(super) fn dom_mutation_js() -> &'static str {
             if (typeof __ceUpgradeTree === 'function' && child && child.__nid !== undefined) {
                 __ceUpgradeTree(child);
             }
-            // Only auto-execute scripts/iframes/links when inserting into the MAIN document tree (nid 0).
-            // Standalone documents (new Document(), createHTMLDocument, etc.) should not auto-execute
-            // cloned scripts — per spec, cloned scripts don't run, and standalone docs aren't "browsing contexts".
+            // Auto-execute scripts when inserting into a browsing context:
+            // - The main document tree (nid 0)
+            // - Iframe documents (their iframe element is in the main document)
+            // Standalone documents (new Document(), createHTMLDocument) are NOT browsing contexts.
             var parentInMainDoc = __isConnectedToMainDoc(this.__nid);
+            if (!parentInMainDoc && typeof __braille_find_owning_iframe_realm === 'function') {
+                parentInMainDoc = !!__braille_find_owning_iframe_realm(this);
+            }
             if (child.nodeType === 11 && added && added.length) {
                 for (var fi = 0; fi < added.length; fi++) {
                     if (parentInMainDoc) __braille_maybe_load_scripts_in_subtree(added[fi]);
@@ -160,6 +164,9 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 __ceUpgradeTree(newChild);
             }
             var parentInMainDoc = __isConnectedToMainDoc(this.__nid);
+            if (!parentInMainDoc && typeof __braille_find_owning_iframe_realm === 'function') {
+                parentInMainDoc = !!__braille_find_owning_iframe_realm(this);
+            }
             if (newChild.nodeType === 11 && added && added.length) {
                 for (var fi = 0; fi < added.length; fi++) {
                     if (parentInMainDoc) __braille_maybe_load_scripts_in_subtree(added[fi]);
