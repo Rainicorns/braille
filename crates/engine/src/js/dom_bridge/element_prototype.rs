@@ -25,6 +25,28 @@ pub(crate) fn element_prototype_js() -> &'static str {
             return n;
         }
 
+        // Generic DOMTokenList factory for attribute-backed token lists (sizes, relList, sandbox)
+        function __makeDOMTokenList(el, attrName) {
+            var cacheKey = '__dtl_' + attrName;
+            if (el[cacheKey]) { el[cacheKey]._sync(); return el[cacheKey]; }
+            function _tokens() { var raw=(el.getAttribute(attrName)||'').split(/\s+/).filter(Boolean),seen={},out=[]; for(var i=0;i<raw.length;i++){if(!seen[raw[i]]){seen[raw[i]]=true;out.push(raw[i]);}} return out; }
+            function _validateToken(t) { if(t==='') throw new DOMException("The token provided must not be empty.","SyntaxError"); if(/\s/.test(t)) throw new DOMException("The token provided ('"+t+"') contains HTML space characters, which are not valid in tokens.","InvalidCharacterError"); }
+            var obj = Object.create(DOMTokenList.prototype);
+            function _update(c) { if(el.hasAttribute(attrName)||c.length>0) el.setAttribute(attrName,c.join(' ')); obj._sync(); }
+            obj.add = function() { for(var i=0;i<arguments.length;i++) _validateToken(String(arguments[i])); var c=_tokens(); for(var i=0;i<arguments.length;i++){var s=String(arguments[i]);if(c.indexOf(s)<0) c.push(s);} _update(c); };
+            obj.remove = function() { for(var i=0;i<arguments.length;i++) _validateToken(String(arguments[i])); var c=_tokens(); for(var i=0;i<arguments.length;i++){var s=String(arguments[i]);var idx=c.indexOf(s);if(idx>=0)c.splice(idx,1);} _update(c); };
+            obj.contains = function(cls) { return _tokens().indexOf(String(cls))>=0; };
+            obj.toggle = function(cls,force) { _validateToken(String(cls)); if(force!==undefined){if(force){var c=_tokens();if(c.indexOf(String(cls))<0){c.push(String(cls));_update(c);}return true;}else{var c=_tokens();var idx=c.indexOf(String(cls));if(idx>=0){c.splice(idx,1);_update(c);}return false;}} var c=_tokens();var idx=c.indexOf(String(cls));if(idx>=0){c.splice(idx,1);_update(c);return false;}c.push(String(cls));_update(c);return true; };
+            obj.replace = function(o, n) { var os=String(o),ns=String(n); _validateToken(os); _validateToken(ns); var c=_tokens(); if(c.indexOf(os)<0) return false; var first=-1; for(var i=0;i<c.length;i++){if(c[i]===os||c[i]===ns){first=i;break;}} c[first]=ns; for(var i=c.length-1;i>=0;i--){if(i!==first&&(c[i]===os||c[i]===ns))c.splice(i,1);} _update(c); return true; };
+            obj.item = function(i) { var c=_tokens(); return (i>=0&&i<c.length)?c[i]:null; };
+            obj.toString = function() { return el.getAttribute(attrName)||''; };
+            Object.defineProperty(obj, 'value', { get: function() { return el.getAttribute(attrName)||''; }, set: function(v) { el.setAttribute(attrName, v); obj._sync(); }, configurable: true });
+            obj._sync = function() { var c = _tokens(); for (var i = c.length; i < (obj.length || 0); i++) delete obj[i]; obj.length = c.length; for (var i = 0; i < c.length; i++) obj[i] = c[i]; };
+            obj._sync();
+            el[cacheKey] = obj;
+            return obj;
+        }
+
         ElemProto.getAttribute = function(name) {
             name = __attrName(this, name);
             var v = __n_getAttribute(this.__nid, name);

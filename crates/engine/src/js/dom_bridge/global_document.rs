@@ -667,6 +667,8 @@ pub(super) fn global_document_js() -> &'static str {
 
         doc.createCDATASection = function(data) {
             if (arguments.length < 1) throw new TypeError("Failed to execute 'createCDATASection' on 'Document': 1 argument required.");
+            var ct = (this && this.contentType) || 'text/html';
+            if (ct === 'text/html') throw new DOMException("Failed to execute 'createCDATASection' on 'Document': This document is an HTML document.", "NotSupportedError");
             var nid = __n_createCDATASection(String(data));
             return __w(nid);
         };

@@ -444,6 +444,28 @@ pub(super) fn element_properties_js() -> &'static str {
                 },
                 configurable: true
             },
+            sizes: {
+                get: function() {
+                    if (this.tagName !== 'LINK') return undefined;
+                    return __makeDOMTokenList(this, 'sizes');
+                },
+                configurable: true
+            },
+            relList: {
+                get: function() {
+                    var t = this.tagName;
+                    if (t !== 'A' && t !== 'AREA' && t !== 'LINK') return undefined;
+                    return __makeDOMTokenList(this, 'rel');
+                },
+                configurable: true
+            },
+            sandbox: {
+                get: function() {
+                    if (this.tagName !== 'IFRAME') return undefined;
+                    return __makeDOMTokenList(this, 'sandbox');
+                },
+                configurable: true
+            },
             dataset: {
                 get: function() {
                     var el = this;
