@@ -71,15 +71,18 @@ pub(super) fn dom_mutation_js() -> &'static str {
             if (typeof __ceUpgradeTree === 'function' && child && child.__nid !== undefined) {
                 __ceUpgradeTree(child);
             }
-            var parentConnected = __isConnected(this.__nid);
+            // Only auto-execute scripts/iframes/links when inserting into the MAIN document tree (nid 0).
+            // Standalone documents (new Document(), createHTMLDocument, etc.) should not auto-execute
+            // cloned scripts — per spec, cloned scripts don't run, and standalone docs aren't "browsing contexts".
+            var parentInMainDoc = __isConnectedToMainDoc(this.__nid);
             if (child.nodeType === 11 && added && added.length) {
                 for (var fi = 0; fi < added.length; fi++) {
-                    if (parentConnected) __braille_maybe_load_scripts_in_subtree(added[fi]);
+                    if (parentInMainDoc) __braille_maybe_load_scripts_in_subtree(added[fi]);
                     __braille_maybe_load_link(added[fi]);
                     if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(added[fi]);
                 }
             } else {
-                if (parentConnected) __braille_maybe_load_scripts_in_subtree(child);
+                if (parentInMainDoc) __braille_maybe_load_scripts_in_subtree(child);
                 __braille_maybe_load_link(child);
                 if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(child);
             }
@@ -151,15 +154,15 @@ pub(super) fn dom_mutation_js() -> &'static str {
             if (typeof __ceUpgradeTree === 'function' && newChild && newChild.__nid !== undefined) {
                 __ceUpgradeTree(newChild);
             }
-            var parentConnected = __isConnected(this.__nid);
+            var parentInMainDoc = __isConnectedToMainDoc(this.__nid);
             if (newChild.nodeType === 11 && added && added.length) {
                 for (var fi = 0; fi < added.length; fi++) {
-                    if (parentConnected) __braille_maybe_load_scripts_in_subtree(added[fi]);
+                    if (parentInMainDoc) __braille_maybe_load_scripts_in_subtree(added[fi]);
                     __braille_maybe_load_link(added[fi]);
                     if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(added[fi]);
                 }
             } else {
-                if (parentConnected) __braille_maybe_load_scripts_in_subtree(newChild);
+                if (parentInMainDoc) __braille_maybe_load_scripts_in_subtree(newChild);
                 __braille_maybe_load_link(newChild);
                 if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(newChild);
             }

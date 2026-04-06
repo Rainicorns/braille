@@ -87,7 +87,22 @@ pub(super) fn global_document_js() -> &'static str {
             newDoc.getElementById = function(id) { var de = this.documentElement; return de ? (de.querySelector('#' + id) || null) : null; };
             newDoc.getElementsByTagName = function(tag) { var de = this.documentElement; return de ? de.querySelectorAll(tag) : []; };
             newDoc.getElementsByClassName = function(cls) { var de = this.documentElement; return de ? __makeHTMLCollection(function() { return __getElemsByClassName(de, cls); }) : __makeHTMLCollection(function() { return []; }); };
-            newDoc.createElement = function(tag) { var el = document.createElement(tag); el.__ownerDoc = newDoc; return el; };
+            newDoc.createElement = function(tag) {
+                var ct = newDoc.contentType;
+                if (ct && ct !== 'text/html') {
+                    // Non-HTML documents preserve case
+                    var nid = __n_createElement(tag);
+                    var el = __w(nid);
+                    el.__localName = String(tag);
+                    el.__ownerDoc = newDoc;
+                    if (ct === 'application/xhtml+xml') el.namespaceURI = 'http://www.w3.org/1999/xhtml';
+                    else el.namespaceURI = null;
+                    return el;
+                }
+                var el = document.createElement(tag);
+                el.__ownerDoc = newDoc;
+                return el;
+            };
             newDoc.createElementNS = function(ns, tag) { var el = document.createElementNS(ns, tag); el.__ownerDoc = newDoc; return el; };
             newDoc.createTextNode = function(text) { var n = document.createTextNode(text); n.__ownerDoc = newDoc; return n; };
             newDoc.createComment = function(text) { var n = document.createComment(text); n.__ownerDoc = newDoc; return n; };

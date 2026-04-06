@@ -543,11 +543,26 @@ pub fn resolve_script_src(
                     if (parent && parent.tagName === 'IFRAME') { hitIframeBoundary = true; break; }
                     cur = parent;
                 }
-                // Fall back to document.scrollingElement only if NOT inside an iframe
-                if (!hitIframeBoundary) {
-                    var se = document.scrollingElement;
-                    if (se) return se;
+                if (hitIframeBoundary) {
+                    // Inside an iframe — fall back to iframe's scrollingElement
+                    // Walk back up to find the iframe element, then get its document's scrollingElement
+                    var iframeCur = el;
+                    while (iframeCur) {
+                        var p = iframeCur.parentNode;
+                        if (p && p.tagName === 'IFRAME') {
+                            var realm = typeof __braille_get_iframe_realm === 'function' ? __braille_get_iframe_realm(p.__nid !== undefined ? p.__nid : -1) : null;
+                            if (realm && realm.document && realm.document.scrollingElement) {
+                                return realm.document.scrollingElement;
+                            }
+                            break;
+                        }
+                        iframeCur = p;
+                    }
+                    return null;
                 }
+                // Fall back to outer document.scrollingElement
+                var se = document.scrollingElement;
+                if (se) return se;
                 return null;
             }
             // Helper: apply scroll delta to nearest scrollable ancestor.
@@ -688,13 +703,18 @@ pub fn resolve_script_src(
                                             }
                                             var target = transactionTarget;
                                             if (target) {
-                                                var cancelable = !__hasPassiveListener(target, "wheel");
+                                                // Re-resolve event target at cursor position (element may have moved)
+                                                var eventTarget = (typeof document !== 'undefined' && document.elementFromPoint)
+                                                    ? document.elementFromPoint(ax, ay)
+                                                    : target;
+                                                if (!eventTarget) eventTarget = target;
+                                                var cancelable = !__hasPassiveListener(eventTarget, "wheel");
                                                 var wev = new WheelEvent("wheel", {
                                                     bubbles: true, cancelable: cancelable,
                                                     deltaX: action.deltaX || 0, deltaY: action.deltaY || 0,
                                                     clientX: ax, clientY: ay, view: window
                                                 });
-                                                target.dispatchEvent(wev);
+                                                eventTarget.dispatchEvent(wev);
                                                 // Retarget if transaction target became non-hittable
                                                 if (transactionTarget) {
                                                     var tRect = transactionTarget.getBoundingClientRect();

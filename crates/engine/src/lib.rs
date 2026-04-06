@@ -369,6 +369,11 @@ impl Engine {
                         var snapped = __computeSnapOffset(el, el.scrollLeft, el.scrollTop);
                         if (snapped.x !== el.scrollLeft || snapped.y !== el.scrollTop) {{
                             el.scrollTo({{ left: snapped.x, top: snapped.y }});
+                        }} else {{
+                            // Already at snap point — still fire scrollend for mandatory snap resolution
+                            var isRoot = (el === document.scrollingElement);
+                            var evTarget = isRoot ? document : el;
+                            evTarget.dispatchEvent(new Event('scrollend', {{bubbles: isRoot}}));
                         }}
                     }})()"#,
                     nid

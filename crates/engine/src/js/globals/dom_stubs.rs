@@ -1689,6 +1689,19 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                     if (rootEl && rootEl.parentNode) rootEl.parentNode.removeChild(rootEl);
                     var newDoc = __makeDocumentLike(rootEl);
                     newDoc.contentType = ct;
+                    // XML documents: createElement preserves case and sets namespace based on contentType
+                    newDoc.createElement = function(tag) {
+                        var nid = __n_createElement(tag);
+                        var el = __w(nid);
+                        el.__localName = String(tag);
+                        el.__ownerDoc = newDoc;
+                        if (ct === 'text/html' || ct === 'application/xhtml+xml') {
+                            el.namespaceURI = 'http://www.w3.org/1999/xhtml';
+                        } else {
+                            el.namespaceURI = null;
+                        }
+                        return el;
+                    };
                     if (rootEl) __adoptSubtree(rootEl, newDoc);
                     return newDoc;
                 }
@@ -1797,6 +1810,8 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.HTMLTrackElement = class HTMLTrackElement extends HTMLElement {};
         globalThis.SVGElement = class SVGElement extends Element {};
         globalThis.Window = class Window {};
+        // Note: this class is overwritten by wrapper_and_dispatch.rs (globalThis.Document = function Document() {...})
+        // It exists here only as a placeholder for the class hierarchy setup.
         globalThis.Document = class Document extends Node {
             constructor() {
                 super();
@@ -1806,6 +1821,15 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this.__listeners = {};
                 this.__captureListeners = {};
                 this.__et_listeners = {};
+                this.contentType = 'application/xml';
+                this.URL = 'about:blank';
+                this.documentURI = 'about:blank';
+                this.characterSet = 'UTF-8';
+                this.charset = 'UTF-8';
+                this.inputEncoding = 'UTF-8';
+                this.compatMode = 'CSS1Compat';
+                this.location = null;
+                this.__isXML = true;
             }
             get documentElement() {
                 for (var i = 0; i < this.childNodes.length; i++) {
@@ -1833,7 +1857,17 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 if (child) child.parentNode = null;
                 return child;
             }
-            createElement(tag) { return document.createElement(tag); }
+            createElement(tag) {
+                // XML documents preserve case and don't assign HTML namespace
+                var nid = __n_createElement(String(tag));
+                var el = __w(nid);
+                el.__localName = String(tag);
+                el.__ownerDoc = this;
+                el.namespaceURI = null;
+                el.constructor = Element;
+                return el;
+            }
+            createElementNS(ns, qn) { var el = document.createElementNS(ns, qn); el.__ownerDoc = this; return el; }
             createTextNode(t) { return document.createTextNode(t); }
             createEvent(type) { return document.createEvent(type); }
         };
@@ -2194,6 +2228,23 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             return false;
         }
         globalThis.__isConnected = __isConnected;
+        // Like __isConnected, but only returns true if the node is in the MAIN document (nid 0).
+        // Standalone documents (new Document(), createHTMLDocument) return false.
+        globalThis.__isConnectedToMainDoc = function(nid) {
+            var cur = nid;
+            while (cur >= 0) {
+                if (cur === 0) return true;
+                var parent = __n_getParent(cur);
+                if (parent < 0) {
+                    if (typeof __n_isShadowRoot === 'function' && __n_isShadowRoot(cur)) {
+                        cur = __n_getShadowHost(cur);
+                        continue;
+                    }
+                }
+                cur = parent;
+            }
+            return false;
+        };
 
         // CE reaction queue — batches connectedCallback/disconnectedCallback
         globalThis.__ceReactionQueue = [];
