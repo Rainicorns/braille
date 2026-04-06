@@ -305,7 +305,7 @@ pub(super) fn global_document_js() -> &'static str {
             if (arguments.length === 0) throw new TypeError("Failed to execute 'createAttribute' on 'Document': 1 argument required, but only 0 present.");
             var name = String(localName);
             if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'createAttribute' on 'Document': The string contains invalid characters.", "InvalidCharacterError");
-            return new Attr(name.toLowerCase());
+            return new Attr(name.toLowerCase(), '', null, null);
         };
 
         doc.createAttributeNS = function(ns, qualifiedName) {
@@ -635,13 +635,7 @@ pub(super) fn global_document_js() -> &'static str {
             if (node.__host) return node;
             // Remove from old parent
             if (node.parentNode) {
-                if (node.nodeType === 10) {
-                    // DocumentType: just detach by clearing parentNode
-                    // (doctype nodes may not be real DOM nodes with __nid)
-                    node.parentNode = null;
-                } else {
-                    node.parentNode.removeChild(node);
-                }
+                node.parentNode.removeChild(node);
             }
             // Recursively set ownerDocument
             function setOwnerDoc(n, doc) {
@@ -865,7 +859,8 @@ pub(super) fn global_document_js() -> &'static str {
                     htmlEl.appendChild(bodyEl);
                     if (title !== undefined) {
                         var titleEl = document.createElement('title');
-                        titleEl.textContent = String(title);
+                        var titleText = document.createTextNode(String(title));
+                        titleEl.appendChild(titleText);
                         headEl.appendChild(titleEl);
                     }
                     var newDoc = __makeDocumentLike(htmlEl);
@@ -946,7 +941,7 @@ pub(super) fn global_document_js() -> &'static str {
                         if (arguments.length === 0) throw new TypeError("Failed to execute 'createAttribute' on 'Document': 1 argument required, but only 0 present.");
                         var name = String(localName);
                         if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'createAttribute' on 'Document': The string contains invalid characters.", "InvalidCharacterError");
-                        return new Attr(name);
+                        return new Attr(name, '', null, null);
                     };
                     return newDoc;
                 },

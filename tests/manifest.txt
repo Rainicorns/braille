@@ -1071,7 +1071,7 @@ PASS wpt:dom/events/EventListener-incumbent-global-subframe-2.sub.html
 PASS wpt:dom/events/EventListener-incumbent-global-subsubframe.sub.html
 PASS wpt:dom/events/EventListener-invoke-legacy.html
 PASS wpt:dom/events/EventListenerOptions-capture.html
-PASS wpt:dom/events/EventTarget-add-listener-platform-object.html
+FAIL wpt:dom/events/EventTarget-add-listener-platform-object.html
 PASS wpt:dom/events/EventTarget-add-remove-listener.any.js
 PASS wpt:dom/events/EventTarget-addEventListener.any.js
 PASS wpt:dom/events/EventTarget-constructible.any.js
@@ -1156,7 +1156,7 @@ PASS wpt:dom/events/scrolling/scroll-event-fired-to-element.html
 PASS wpt:dom/events/scrolling/scroll-event-fired-to-iframe.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-after-sequence-of-scrolls.tentative.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-after-snap.html
-PASS wpt:dom/events/scrolling/scrollend-event-fired-for-mandatory-snap-point-after-load.html
+FAIL wpt:dom/events/scrolling/scrollend-event-fired-for-mandatory-snap-point-after-load.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html
 PASS wpt:dom/events/scrolling/scrollend-event-fired-for-scrollIntoView.html
@@ -1166,7 +1166,7 @@ PASS wpt:dom/events/scrolling/scrollend-event-fired-to-window.html
 PASS wpt:dom/events/scrolling/scrollend-event-fires-for-repeat-key-ending-after-scroll-container-end-is-reached.html
 PASS wpt:dom/events/scrolling/scrollend-event-fires-on-visual-viewport.html
 PASS wpt:dom/events/scrolling/scrollend-event-fires-to-iframe-inner-frame.html
-PASS wpt:dom/events/scrolling/scrollend-event-fires-to-iframe-window.html
+FAIL wpt:dom/events/scrolling/scrollend-event-fires-to-iframe-window.html
 PASS wpt:dom/events/scrolling/scrollend-event-for-user-scroll.html
 PASS wpt:dom/events/scrolling/scrollend-event-handler-content-attributes.html
 PASS wpt:dom/events/scrolling/scrollend-event-not-fired-after-removing-scroller.tentative.html
@@ -1178,7 +1178,7 @@ PASS wpt:dom/events/scrolling/wheel-event-transactions-basic.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-multiple-action-chains.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-display-change.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-elements.html
-PASS wpt:dom/events/scrolling/wheel-event-transactions-target-move.html
+FAIL wpt:dom/events/scrolling/wheel-event-transactions-target-move.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-removal.html
 PASS wpt:dom/events/scrolling/wheel-event-transactions-target-resize.html
 PASS wpt:dom/events/shadow-relatedTarget.html
@@ -1193,7 +1193,7 @@ PASS wpt:dom/idlharness.any.js
 PASS wpt:dom/idlharness.window.js
 PASS wpt:dom/interface-objects.html
 PASS wpt:dom/lists/DOMTokenList-Iterable.html
-PASS wpt:dom/lists/DOMTokenList-coverage-for-attributes.html
+FAIL wpt:dom/lists/DOMTokenList-coverage-for-attributes.html
 PASS wpt:dom/lists/DOMTokenList-iteration.html
 PASS wpt:dom/lists/DOMTokenList-stringifier.html
 PASS wpt:dom/lists/DOMTokenList-value.html
@@ -1215,13 +1215,13 @@ PASS wpt:dom/nodes/DOMImplementation-createDocument.html
 PASS wpt:dom/nodes/DOMImplementation-createDocumentType.html
 PASS wpt:dom/nodes/DOMImplementation-createHTMLDocument-with-null-browsing-context-crash.html
 PASS wpt:dom/nodes/DOMImplementation-createHTMLDocument-with-saved-implementation.html
-PASS wpt:dom/nodes/DOMImplementation-createHTMLDocument.html
+FAIL wpt:dom/nodes/DOMImplementation-createHTMLDocument.html
 PASS wpt:dom/nodes/DOMImplementation-hasFeature.html
 PASS wpt:dom/nodes/Document-URL.html
-PASS wpt:dom/nodes/Document-adoptNode.html
+FAIL wpt:dom/nodes/Document-adoptNode.html
 PASS wpt:dom/nodes/Document-characterSet-normalization-1.html
 PASS wpt:dom/nodes/Document-characterSet-normalization-2.html
-PASS wpt:dom/nodes/Document-constructor.html
+FAIL wpt:dom/nodes/Document-constructor.html
 PASS wpt:dom/nodes/Document-contentType/contentType/contenttype_bmp.html
 PASS wpt:dom/nodes/Document-contentType/contentType/contenttype_css.html
 PASS wpt:dom/nodes/Document-contentType/contentType/contenttype_datauri_02.html
@@ -1237,7 +1237,7 @@ PASS wpt:dom/nodes/Document-contentType/contentType/contenttype_xml.html
 PASS wpt:dom/nodes/Document-contentType/contentType/createDocument.html
 PASS wpt:dom/nodes/Document-contentType/contentType/createHTMLDocument.html
 PASS wpt:dom/nodes/Document-contentType/contentType/xhr_responseType_document.html
-PASS wpt:dom/nodes/Document-createAttribute.html
+FAIL wpt:dom/nodes/Document-createAttribute.html
 PASS wpt:dom/nodes/Document-createCDATASection.html
 PASS wpt:dom/nodes/Document-createComment.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/bare_mathml.html
@@ -1250,7 +1250,7 @@ PASS wpt:dom/nodes/Document-createElement-namespace-tests/svg.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/xhtml.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/xhtml_ns_changed.html
 PASS wpt:dom/nodes/Document-createElement-namespace-tests/xhtml_ns_removed.html
-PASS wpt:dom/nodes/Document-createElement-namespace.html
+FAIL wpt:dom/nodes/Document-createElement-namespace.html
 PASS wpt:dom/nodes/Document-createElement.html
 PASS wpt:dom/nodes/Document-createElementNS.html
 PASS wpt:dom/nodes/Document-createEvent-touchevent.window.js
