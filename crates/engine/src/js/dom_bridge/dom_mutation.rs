@@ -112,6 +112,10 @@ pub(super) fn dom_mutation_js() -> &'static str {
             if (arguments.length < 2) {
                 throw new TypeError("Failed to execute 'insertBefore' on 'Node': 2 arguments required, but only 1 present.");
             }
+            // Attr nodes (nodeType 2) cannot be inserted as children per DOM spec
+            if (newChild && newChild.nodeType === 2) {
+                throw new DOMException("Cannot insert an Attr node", "HierarchyRequestError");
+            }
             if (refChild !== null && refChild !== undefined && (typeof refChild !== 'object' || refChild.__nid === undefined)) {
                 throw new TypeError("Failed to execute 'insertBefore' on 'Node': parameter 2 is not of type 'Node'.");
             }

@@ -198,8 +198,13 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                     }
                     return undefined;
                 },
-                set: function(t, p, value) {
-                    // Array indices: always reject
+                set: function(t, p, value, receiver) {
+                    // Derived objects (Object.create(collection)) can set own properties freely
+                    if (receiver !== proxy) {
+                        Object.defineProperty(receiver, p, {value: value, writable: true, enumerable: true, configurable: true});
+                        return true;
+                    }
+                    // Array indices: always reject on the collection itself
                     if (__isArrayIndex(p)) return false;
                     // Named properties: reject if matching element exists
                     if (typeof p === 'string') {

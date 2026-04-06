@@ -1110,9 +1110,9 @@ pub fn wrap_js_in_html(js_path: &Path) -> String {
     let js_content = std::fs::read_to_string(js_path).unwrap();
     let title = js_path.file_stem().unwrap().to_str().unwrap();
 
-    // Detect META: global=shadowrealm
+    // Detect META: global=shadowrealm (only if window is NOT listed — prefer window mode)
     let is_shadowrealm = js_content.lines().any(|l| {
-        l.starts_with("// META: global=") && l.contains("shadowrealm")
+        l.starts_with("// META: global=") && l.contains("shadowrealm") && !l.contains("window")
     });
 
     let mut meta_scripts = String::new();
