@@ -1282,7 +1282,10 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
                 this._buffer = [];
                 return buf;
             };
-            PerformanceObserver.supportedEntryTypes = ['mark', 'measure'];
+            PerformanceObserver.supportedEntryTypes = [
+                'element','event','first-input','largest-contentful-paint',
+                'layout-shift','longtask','mark','measure','navigation','paint','resource'
+            ];
         })();
 
         // URL

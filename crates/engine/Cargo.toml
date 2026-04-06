@@ -42,6 +42,9 @@ ml-dsa = "0.1.0-rc.8"
 aes-kw = "0.3.0-rc.2"
 taffy = "0.7"
 
+[features]
+real-sites = []
+
 [lints]
 workspace = true
 
