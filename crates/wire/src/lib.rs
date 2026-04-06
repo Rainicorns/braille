@@ -236,6 +236,10 @@ pub enum DaemonCommand {
     Deny { permission: String },
     /// Dismiss an info-only browser event.
     DismissEvent { id: u64 },
+    /// Explicit keepalive — resets the session's idle timer without performing any action.
+    Heartbeat,
+    /// Set the per-session idle timeout in seconds. Overrides the daemon's default.
+    SetSessionTtl { ttl_secs: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -614,6 +618,30 @@ mod tests {
         assert_roundtrip!(
             WorkerDescriptor { id: 42, url: "https://example.com/worker.js".into() },
             WorkerDescriptor
+        );
+    }
+
+    #[test]
+    fn daemon_command_heartbeat_roundtrip() {
+        assert_roundtrip!(DaemonCommand::Heartbeat, DaemonCommand);
+    }
+
+    #[test]
+    fn daemon_command_set_session_ttl_roundtrip() {
+        assert_roundtrip!(
+            DaemonCommand::SetSessionTtl { ttl_secs: 7200 },
+            DaemonCommand
+        );
+    }
+
+    #[test]
+    fn daemon_request_heartbeat_roundtrip() {
+        assert_roundtrip!(
+            DaemonRequest {
+                session_id: Some("sess_abc12345".into()),
+                command: DaemonCommand::Heartbeat,
+            },
+            DaemonRequest
         );
     }
 }

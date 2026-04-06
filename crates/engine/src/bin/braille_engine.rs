@@ -376,7 +376,11 @@ fn handle_command_inner(
             session.engine.dismiss_event(id);
             DaemonResponse::ok("dismissed".to_string())
         }
-        DaemonCommand::NewSession | DaemonCommand::DaemonStop | DaemonCommand::Ping => {
+        DaemonCommand::NewSession
+        | DaemonCommand::DaemonStop
+        | DaemonCommand::Ping
+        | DaemonCommand::Heartbeat
+        | DaemonCommand::SetSessionTtl { .. } => {
             DaemonResponse::err("unexpected command for engine process".to_string())
         }
     }

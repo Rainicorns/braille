@@ -30,6 +30,10 @@ pub fn mtime_path() -> PathBuf {
     runtime_dir().join("daemon.mtime")
 }
 
+pub fn reaped_dir() -> PathBuf {
+    runtime_dir().join("reaped")
+}
+
 fn home_dir() -> PathBuf {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
