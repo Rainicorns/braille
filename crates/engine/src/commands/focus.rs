@@ -40,8 +40,16 @@ impl Engine {
         drop(tree);
         let old_focused = self.focused_element;
         self.focused_element = Some(node_id);
+        self.tree.borrow_mut().focused_node = Some(node_id);
 
         if let Some(runtime) = self.runtime.as_mut() {
+            // Sync JS-side focus state
+            let js_sync = format!(
+                "__focusCtx.el = __braille_get_element_wrapper({}); __n_setFocusedNode({});",
+                node_id, node_id
+            );
+            let _ = runtime.eval(&js_sync);
+
             // Fire blur events on the old element
             if let Some(old_nid) = old_focused {
                 let js = format!(
@@ -79,6 +87,10 @@ impl Engine {
     /// Clear focus
     pub fn handle_blur(&mut self) {
         self.focused_element = None;
+        self.tree.borrow_mut().focused_node = None;
+        if let Some(runtime) = self.runtime.as_mut() {
+            let _ = runtime.eval("__focusCtx.el = null; __n_setFocusedNode(-1);");
+        }
     }
 }
 

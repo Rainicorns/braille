@@ -150,16 +150,13 @@ impl DomTree {
         self.layout_cache.get_rect(node_id).copied()
     }
 
-    /// Check if node_id or any ancestor has the `inert` or `hidden` HTML attribute.
+    /// Check if node_id or any ancestor has the `inert` HTML attribute.
     pub fn is_in_inert_subtree(&self, node_id: NodeId) -> bool {
         let mut cur = Some(node_id);
         while let Some(id) = cur {
             let node = self.get_node(id);
             if let NodeData::Element { attributes, .. } = &node.data {
-                if attributes
-                    .iter()
-                    .any(|a| a.local_name == "inert" || a.local_name == "hidden")
-                {
+                if attributes.iter().any(|a| a.local_name == "inert") {
                     return true;
                 }
             }

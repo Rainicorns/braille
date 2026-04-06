@@ -699,10 +699,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Helper: when a node is implicitly removed (moved) by appendChild/insertBefore,
         // blur the focused element if it's inside the moving subtree
         function __loseFocusIfRemoving(node) {
-            if (__bfc.el && node && node.__nid !== undefined && __bfc.el.__nid !== undefined) {
-                if (__bfc.el === node || (node.contains && node.contains(__bfc.el))) {
-                    var prev = __bfc.el;
-                    __bfc.el = null;
+            if (__focusCtx.el && node && node.__nid !== undefined && __focusCtx.el.__nid !== undefined) {
+                if (__focusCtx.el === node || (node.contains && node.contains(__focusCtx.el))) {
+                    var prev = __focusCtx.el;
+                    __focusCtx.el = null;
                     __n_setFocusedNode(-1);
                     prev.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
                     prev.dispatchEvent(new FocusEvent('blur', { bubbles: false, relatedTarget: null }));
@@ -787,6 +787,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 if (__n_getParent(child.__nid) !== this.__nid) {
                     throw new DOMException("The node to be removed is not a child of this node.", "NotFoundError");
                 }
+                __loseFocusIfRemoving(child);
                 // CE lifecycle: disconnectedCallback before removal
                 if (typeof __ceDisconnected === 'function' && __isConnected(this.__nid)) {
                     __ceDisconnected(child);
@@ -1673,12 +1674,12 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         // Track focused element for document.activeElement.
         // Context object so Rust-side validate_focus_after_styles can reach
         // it via runtime.eval through the globalThis reference.
-        var __bfc = { el: null };
-        globalThis.__bfc = __bfc;
+        var __focusCtx = { el: null };
+        globalThis.__focusCtx = __focusCtx;
         EP.focus = function() {
-            var prev = __bfc.el;
+            var prev = __focusCtx.el;
             if (prev === this) return;
-            __bfc.el = this;
+            __focusCtx.el = this;
             __n_setFocusedNode(this.__nid !== undefined ? this.__nid : -1);
             if (prev) {
                 prev.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: this }));
@@ -1690,8 +1691,8 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             this.dispatchEvent(new FocusEvent('focus', { bubbles: false, relatedTarget: prev }));
         };
         EP.blur = function() {
-            if (__bfc.el !== this) return;
-            __bfc.el = null;
+            if (__focusCtx.el !== this) return;
+            __focusCtx.el = null;
             __n_setFocusedNode(-1);
             this.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
             this.dispatchEvent(new FocusEvent('blur', { bubbles: false, relatedTarget: null }));
@@ -1704,7 +1705,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             head: { get: function() { return doc.querySelector('head'); }, configurable: true },
             documentElement: { get: function() { return doc.querySelector('html'); }, configurable: true },
             scrollingElement: { get: function() { return doc.documentElement; }, configurable: true },
-            activeElement: { get: function() { return __bfc.el || doc.querySelector('body'); }, configurable: true },
+            activeElement: { get: function() { return __focusCtx.el || doc.querySelector('body'); }, configurable: true },
             styleSheets: { get: function() {
                 var sheets = [];
                 var styles = doc.querySelectorAll('style');

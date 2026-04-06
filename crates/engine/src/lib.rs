@@ -262,12 +262,12 @@ impl Engine {
         self.validate_focus_after_styles();
     }
 
-    /// Sync the JS-side focused element (__bfc.el.__nid) to tree.focused_node
+    /// Sync the JS-side focused element (__focusCtx.el.__nid) to tree.focused_node
     /// so CSS :focus and :focus-within matching works correctly.
     fn sync_focus_from_js(&mut self) {
         let js_nid = if let Some(runtime) = self.runtime.as_mut() {
             runtime
-                .eval_to_string("(__bfc && __bfc.el && __bfc.el.__nid !== undefined) ? String(__bfc.el.__nid) : '-1'")
+                .eval_to_string("(__focusCtx && __focusCtx.el && __focusCtx.el.__nid !== undefined) ? String(__focusCtx.el.__nid) : '-1'")
                 .ok()
                 .and_then(|s| s.parse::<i64>().ok())
                 .filter(|&n| n >= 0)
@@ -282,66 +282,48 @@ impl Engine {
     }
 
     /// After style recomputation, check if the focused element ended up in an
-    /// unfocusable context (inert subtree, hidden subtree, or display:none subtree).
-    /// If so, clear focus and fire blur/focusout events. Returns true if focus
-    /// was invalidated (caller should re-loop to process resulting microtasks).
+    /// unfocusable context (inert subtree or display:none subtree). If so, clear
+    /// focus and fire blur/focusout events. Returns true if focus was invalidated
+    /// (caller should re-loop to process resulting microtasks).
     ///
-    /// Implements the HTML spec's "focus fixup rule".
+    /// Implements the HTML spec's "focus fixup rule". Checks are done in Rust
+    /// (cheap ancestor walks); JS is only used for event dispatch.
     fn validate_focus_after_styles(&mut self) -> bool {
-        // 1. Check Rust-side focused element
-        if let Some(focused) = self.focused_element {
-            let tree = self.tree.borrow();
-            let should_blur =
-                tree.is_in_inert_subtree(focused) || tree.is_in_display_none_subtree(focused);
-            drop(tree);
+        // Use tree.focused_node as the single source of truth (already synced
+        // from both Rust-side focused_element and JS-side __focusCtx.el).
+        let focused = match self.tree.borrow().focused_node {
+            Some(id) => id,
+            None => return false,
+        };
 
-            if should_blur {
-                self.focused_element = None;
-                self.tree.borrow_mut().focused_node = None;
-            }
+        let tree = self.tree.borrow();
+        let should_blur =
+            tree.is_in_inert_subtree(focused) || tree.is_in_display_none_subtree(focused);
+        drop(tree);
+
+        if !should_blur {
+            return false;
         }
 
-        // 2. Check JS-side focused element (__bfc.el) — this is the
-        //    primary focus tracker used by element.focus() and document.activeElement.
+        // Clear focus on all three trackers
+        self.focused_element = None;
+        self.tree.borrow_mut().focused_node = None;
+
         if let Some(runtime) = self.runtime.as_mut() {
-            let result = runtime.eval_to_string(
-                r#"(function(){
-                    if (!__bfc || !__bfc.el) return 'false';
-                    var el = __bfc.el;
-                    // Check inert/hidden: walk ancestors for inert or hidden attribute
-                    var cur = el;
-                    while (cur && cur.nodeType === 1) {
-                        if (cur.hasAttribute && (cur.hasAttribute('inert') || cur.hasAttribute('hidden'))) {
-                            __bfc.el = null;
-                            __n_setFocusedNode(-1);
-                            el.dispatchEvent(new FocusEvent('focusout', {bubbles:true, relatedTarget:null}));
-                            el.dispatchEvent(new FocusEvent('blur', {bubbles:false, relatedTarget:null}));
-                            return 'true';
-                        }
-                        cur = cur.parentNode;
-                    }
-                    // Check display:none: walk ancestors for display:none
-                    cur = el;
-                    while (cur && cur.nodeType === 1) {
-                        var style = window.getComputedStyle(cur);
-                        if (style && style.display === 'none') {
-                            __bfc.el = null;
-                            __n_setFocusedNode(-1);
-                            el.dispatchEvent(new FocusEvent('focusout', {bubbles:true, relatedTarget:null}));
-                            el.dispatchEvent(new FocusEvent('blur', {bubbles:false, relatedTarget:null}));
-                            return 'true';
-                        }
-                        cur = cur.parentNode;
-                    }
-                    return 'false';
-                })()"#,
+            let js = format!(
+                r#"(function(){{
+                    var el = __braille_get_element_wrapper({});
+                    __focusCtx.el = null;
+                    if (!el) return;
+                    el.dispatchEvent(new FocusEvent('focusout', {{bubbles:true, relatedTarget:null}}));
+                    el.dispatchEvent(new FocusEvent('blur', {{bubbles:false, relatedTarget:null}}));
+                }})()"#,
+                focused
             );
-            if result.as_deref() == Ok("true") {
-                runtime.run_jobs();
-                return true;
-            }
+            let _ = runtime.eval(&js);
+            runtime.run_jobs();
         }
-        false
+        true
     }
 
     /// Check for mandatory scroll-snap containers that are newly visible and
