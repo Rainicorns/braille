@@ -59,6 +59,31 @@ When testing against an external system (e.g., Anubis), read their source code a
 - **New tests go in `crates/engine/tests/`**, not inline in source files and never in `/tmp`. Use the public API (`eval_js`, `handle_click`, `handle_type`, `snapshot`, etc.) from external test files. Even quick debug/experiment tests go in the repo — every test is an opportunity to grow the test library.
 - **Don't grow big files.** `lib.rs` and `dom_bridge.rs` are already too large. New Engine functionality goes in its own module. New JS bindings go in `js/bindings/` (one file per API surface).
 
+## JS Architecture — Where Code Goes
+
+Three layers, strict boundaries:
+
+1. **`js/globals/web_apis.rs`** — Standalone Web API polyfills (Event, URL, FormData, etc.)
+   Rule: NO `__n_*` calls, NO `__w()`, NO dom_bridge interaction.
+
+2. **`js/globals/dom_helpers.rs`** — Shared DOM helpers called by dom_bridge AND user code
+   Rule: Must be globals (not IIFE-scoped). Loaded BEFORE dom_bridge.
+
+3. **`js/dom_bridge/`** — Rust-backed DOM tree with JS wrappers (IIFE)
+   Rule: Anything that touches the tree or needs `_cache`/`EP` goes here.
+
+Supporting modules in `js/globals/`:
+- `native_hooks.rs` — Rust `Function::new` registrations only (alert, confirm, clipboard, etc.)
+- `class_hierarchy.rs` — Node/Element/HTMLElement subclasses, CE registry, event handler setup
+- `collections.rs` — NodeFilter, NodeList, HTMLCollection, DOMTokenList, Attr
+- `tree_traversal.rs` — TreeWalker, NodeIterator
+
+When adding a new Web API: if it doesn't touch the DOM tree → `web_apis.rs`.
+When adding a DOM method: → appropriate `dom_bridge/` module.
+When adding a helper used by dom_bridge: → `dom_helpers.rs`.
+
+NEVER create a catch-all file. Every module has one responsibility.
+
 ## Code Style
 
 - Zero clippy warnings. Workspace lints enforce `warnings = "deny"`.

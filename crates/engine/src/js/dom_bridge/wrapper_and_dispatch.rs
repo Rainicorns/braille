@@ -634,6 +634,21 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
         var DocCtor = globalThis.Document;
         DocCtor.prototype = Object.create(EP);
         DocCtor.prototype.constructor = DocCtor;
+        // Document.prototype.write/writeln — defined here (not in global_document.rs)
+        // because Document.prototype must be wired to EP first.
+        Document.prototype.write = function() {
+            var html = Array.prototype.join.call(arguments, '');
+            if (!html) return;
+            var body = this.body;
+            if (!body) return;
+            var temp = document.createElement('div');
+            __n_setInnerHTML(temp.__nid, html);
+            while (temp.firstChild) body.appendChild(temp.firstChild);
+        };
+        Document.prototype.writeln = function() {
+            this.write.apply(this, arguments);
+            this.write('\n');
+        };
 
         // DOMImplementation constructor (for instanceof checks)
         function DOMImplementation() {}

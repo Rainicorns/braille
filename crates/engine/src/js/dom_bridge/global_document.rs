@@ -701,19 +701,8 @@ pub(super) fn global_document_js() -> &'static str {
             doc.write.apply(doc, arguments);
             doc.write('\n');
         };
-        Document.prototype.write = function() {
-            var html = Array.prototype.join.call(arguments, '');
-            if (!html) return;
-            var body = this.body;
-            if (!body) return;
-            var temp = document.createElement('div');
-            __n_setInnerHTML(temp.__nid, html);
-            while (temp.firstChild) body.appendChild(temp.firstChild);
-        };
-        Document.prototype.writeln = function() {
-            this.write.apply(this, arguments);
-            this.write('\n');
-        };
+        // Document.prototype.write/writeln are defined in constructors_and_wiring
+        // (after Document.prototype is set up to inherit from EP).
 
         // window.dispatchEvent assigned after EventTarget is defined (below)
 
