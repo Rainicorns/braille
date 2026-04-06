@@ -571,9 +571,9 @@ impl<'a> Element for DomElement<'a> {
         _pseudo: &<Self::Impl as selectors::SelectorImpl>::PseudoElement,
         _context: &mut MatchingContext<Self::Impl>,
     ) -> bool {
-        // Return true so ::before/::after selectors can match.
-        // The actual content generation happens in the a11y serializer.
-        true
+        // Real DOM elements are not pseudo-elements. Returning true here causes the
+        // selectors crate to panic (it asserts is_pseudo_element() on the match).
+        false
     }
 
     fn apply_selector_flags(&self, _flags: selectors::matching::ElementSelectorFlags) {

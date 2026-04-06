@@ -696,6 +696,19 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
         }
 
         // Element mutation methods that operate on the real DomTree
+        // Helper: when a node is implicitly removed (moved) by appendChild/insertBefore,
+        // blur the focused element if it's inside the moving subtree
+        function __loseFocusIfRemoving(node) {
+            if (__focusedElement && node && node.__nid !== undefined && __focusedElement.__nid !== undefined) {
+                if (__focusedElement === node || (node.contains && node.contains(__focusedElement))) {
+                    var prev = __focusedElement;
+                    __focusedElement = null;
+                    prev.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+                    prev.dispatchEvent(new FocusEvent('blur', { bubbles: false, relatedTarget: null }));
+                }
+            }
+        }
+
         EP.appendChild = function(child) {
             if (child === null || child === undefined || (typeof child === 'object' && child.__nid === undefined && child.nodeType === undefined)) {
                 throw new TypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.");
@@ -710,6 +723,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 throw new DOMException("CharacterData type " + this.nodeName + " must not have children", "HierarchyRequestError");
             }
             if (this.__nid === undefined) return child;
+            // Blur focused element if it's in the subtree being moved
+            if (child && child.__nid !== undefined && child.nodeType !== 11 && __n_getParent(child.__nid) >= 0) {
+                __loseFocusIfRemoving(child);
+            }
             // Capture ownerDocument BEFORE mutation (tree walk changes after append)
             var parentDoc = this.ownerDocument || (this.nodeType === 9 ? this : document);
             var childDoc = (child && child.__nid !== undefined) ? (child.ownerDocument || document) : null;
@@ -790,6 +807,10 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 throw new TypeError("Failed to execute 'insertBefore' on 'Node': parameter 2 is not of type 'Node'.");
             }
             if (this.__nid === undefined) return newChild;
+            // Blur focused element if it's in the subtree being moved
+            if (newChild && newChild.__nid !== undefined && newChild.nodeType !== 11 && __n_getParent(newChild.__nid) >= 0) {
+                __loseFocusIfRemoving(newChild);
+            }
             if (newChild && newChild.__nid !== undefined) {
                 var refId = (refChild && refChild.__nid !== undefined) ? refChild.__nid : -1;
                 var err = __n_validatePreInsert(this.__nid, newChild.__nid, refId);
@@ -833,18 +854,9 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             return newChild;
         };
 
-        // moveBefore() — atomic move without disconnect/connect lifecycle
-        // NOTE: This is defined on the shared EP prototype, so it's available on all nodes
-        // including non-ParentNode types (Text, DocumentType, etc.). The proper fix is to
-        // split EP into a Node → ParentNode → Element hierarchy so moveBefore only exists
-        // on ParentNode types. Until then, we validate nodeType at runtime.
+        // moveBefore() — atomic move with CE lifecycle (ParentNode mixin)
         EP.moveBefore = function(node, child) {
-            // ParentNode gate — should only be on Element(1), Document(9), DocumentFragment(11)
-            // TODO: proper fix is Node → ParentNode → Element prototype hierarchy
             var pt = this.nodeType;
-            if (pt !== 1 && pt !== 9 && pt !== 11) {
-                throw new TypeError("moveBefore is not a function");
-            }
             // Type checks per spec
             if (arguments.length < 2) {
                 throw new TypeError("Failed to execute 'moveBefore' on 'Node': 2 arguments required, but only " + arguments.length + " present.");
@@ -918,10 +930,35 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 }
                 if (node.__nid === child.__nid) return;
             }
+            // Collect upgraded custom elements in the subtree (tree order) for lifecycle
+            var ceNodes = [];
+            function __collectCE(n) {
+                if (n.__ce_upgraded) ceNodes.push(n);
+                if (n.__nid !== undefined) {
+                    var kids = __n_getAllChildIds(n.__nid);
+                    for (var ci = 0; ci < kids.length; ci++) {
+                        var ck = _cache[kids[ci]];
+                        if (ck) __collectCE(ck);
+                    }
+                }
+            }
+            __collectCE(node);
+
             // Perform atomic move
             var refId = (child && child.__nid !== undefined) ? child.__nid : -1;
             __n_insertBefore(this.__nid, node.__nid, refId);
             if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [node]});
+
+            // Fire CE lifecycle: per spec, element stays connected during move
+            for (var cei = 0; cei < ceNodes.length; cei++) {
+                var ceEl = ceNodes[cei];
+                if (typeof ceEl.connectedMoveCallback === 'function') {
+                    ceEl.connectedMoveCallback();
+                } else {
+                    if (typeof ceEl.disconnectedCallback === 'function') ceEl.disconnectedCallback();
+                    if (typeof ceEl.connectedCallback === 'function') ceEl.connectedCallback();
+                }
+            }
         };
 
         // Fullscreen tracking
@@ -952,7 +989,7 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             var ownProps = {
                 readyState: 'complete',
                 ownerDocument: null,
-                isConnected: false,
+                isConnected: true,
                 location: null,
                 title: '',
                 contentType: 'application/xml',
@@ -1122,6 +1159,13 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
                 }
                 contentFrag.__ownerDoc = doc.__templateDoc;
                 contentFrag.__host = el;  // Mark as hosted fragment (per spec: "host" concept)
+            }
+            // Per spec, synchronously upgrade if tag matches a registered custom element
+            if (typeof customElements !== 'undefined' && customElements._registry) {
+                var entry = customElements._registry.get(tag.toLowerCase());
+                if (entry) {
+                    __ceUpgradeElement(el, entry.ctor, entry.observedAttrs);
+                }
             }
             return el;
         };
@@ -2503,15 +2547,73 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             configurable: true
         });
 
+        // === Split EP into DOM interface mixins ===
+        // Per spec, Node is the base. Mixins (ParentNode, ChildNode,
+        // NonDocumentTypeChildNode) are applied only to the correct interfaces.
+
+        // --- ParentNode mixin ---
+        var __parentNodeMixin = {
+            append: EP.append,
+            prepend: EP.prepend,
+            replaceChildren: EP.replaceChildren,
+            moveBefore: EP.moveBefore,
+        };
+        ['children', 'firstElementChild', 'lastElementChild', 'childElementCount'].forEach(function(p) {
+            Object.defineProperty(__parentNodeMixin, p, Object.getOwnPropertyDescriptor(EP, p));
+            delete EP[p];
+        });
+        delete EP.append; delete EP.prepend; delete EP.replaceChildren; delete EP.moveBefore;
+
+        // --- ChildNode mixin ---
+        var __childNodeMixin = {
+            before: EP.before,
+            after: EP.after,
+            replaceWith: EP.replaceWith,
+            remove: EP.remove,
+        };
+        delete EP.before; delete EP.after; delete EP.replaceWith; delete EP.remove;
+
+        // --- NonDocumentTypeChildNode mixin ---
+        var __nonDocTypeChildNodeMixin = {};
+        ['nextElementSibling', 'previousElementSibling'].forEach(function(p) {
+            Object.defineProperty(__nonDocTypeChildNodeMixin, p, Object.getOwnPropertyDescriptor(EP, p));
+            delete EP[p];
+        });
+
+        // --- CharacterData-only methods (already on CharacterData.prototype) ---
+        delete EP.substringData; delete EP.appendData; delete EP.insertData;
+        delete EP.deleteData; delete EP.replaceData;
+
+        // --- Element-only methods ---
+        __ElemProto.focus = EP.focus; delete EP.focus;
+        __ElemProto.blur = EP.blur; delete EP.blur;
+        __ElemProto.requestFullscreen = EP.requestFullscreen; delete EP.requestFullscreen;
+
         // === Unify DOM prototype chains ===
-        // Copy Node methods (EP) onto the real Node.prototype from dom_stubs
+        // Copy remaining EP (now Node-only) onto Node.prototype
         Object.defineProperties(globalThis.Node.prototype, Object.getOwnPropertyDescriptors(EP));
-        // Wire: Element.prototype → __ElemProto → Node.prototype
+        // Wire prototype chains per DOM spec hierarchy
         Object.setPrototypeOf(__ElemProto, globalThis.Node.prototype);
         Object.setPrototypeOf(globalThis.Element.prototype, __ElemProto);
         Object.setPrototypeOf(Document.prototype, globalThis.Node.prototype);
         Object.setPrototypeOf(DocumentType.prototype, globalThis.Node.prototype);
         Object.setPrototypeOf(DocumentFragment.prototype, globalThis.Node.prototype);
+        // Fix CharacterData: was Object.create(EP), now re-parent to Node.prototype
+        Object.setPrototypeOf(CharacterData.prototype, globalThis.Node.prototype);
+
+        // === Apply mixins to correct prototypes ===
+        // ParentNode → Element, Document, DocumentFragment
+        [__ElemProto, Document.prototype, DocumentFragment.prototype].forEach(function(proto) {
+            Object.defineProperties(proto, Object.getOwnPropertyDescriptors(__parentNodeMixin));
+        });
+        // ChildNode → Element, CharacterData, DocumentType
+        [__ElemProto, CharacterData.prototype, DocumentType.prototype].forEach(function(proto) {
+            Object.defineProperties(proto, Object.getOwnPropertyDescriptors(__childNodeMixin));
+        });
+        // NonDocumentTypeChildNode → Element, CharacterData
+        [__ElemProto, CharacterData.prototype].forEach(function(proto) {
+            Object.defineProperties(proto, Object.getOwnPropertyDescriptors(__nonDocTypeChildNodeMixin));
+        });
 
         // DocumentFragment also gets querySelector/querySelectorAll
         DocumentFragment.prototype.querySelector = function(sel) {

@@ -2108,7 +2108,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             configurable: true, enumerable: true,
         });
 
-        globalThis.DocumentFragment = class DocumentFragment {};
+        globalThis.DocumentFragment = class DocumentFragment extends Node {};
         globalThis.ShadowRoot = class ShadowRoot extends DocumentFragment {
             get mode() { return this._mode || 'open'; }
             get host() { return this._host || null; }
