@@ -892,6 +892,19 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             timing: { navigationStart: __perf_start },
         };
 
+        // PerformanceObserver — no-op stub (prevents crashes on sites like Airbnb
+        // that use PerformanceObserver for paint/LCP/layout-shift metrics)
+        globalThis.PerformanceObserver = class {
+            constructor(cb) { this._cb = cb; }
+            observe(opts) {}
+            disconnect() {}
+            takeRecords() { return []; }
+        };
+        PerformanceObserver.supportedEntryTypes = [
+            'element','event','first-input','largest-contentful-paint',
+            'layout-shift','longtask','mark','measure','navigation','paint','resource'
+        ];
+
         // URL
         globalThis.URL = class URL {
             constructor(u, base) {
