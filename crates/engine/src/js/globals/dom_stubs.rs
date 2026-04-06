@@ -1969,7 +1969,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         // --- HTMLAnchorElement ---
         // href is properly defined in element_prototype.rs with URL resolution — do not duplicate
         __reflectAttr(HTMLAnchorElement.prototype, 'target', 'target');
-        __reflectAttr(HTMLAnchorElement.prototype, 'rel', 'rel');
+        // rel is properly defined in element_prototype.rs (ElemProto) — do not duplicate
         __reflectAttr(HTMLAnchorElement.prototype, 'download', 'download');
         Object.defineProperty(HTMLAnchorElement.prototype, 'text', {
             get: function() { return this.textContent || ''; },
@@ -2006,7 +2006,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         })();
 
         // --- HTMLImageElement ---
-        __reflectAttr(HTMLImageElement.prototype, 'src', 'src');
+        // src is properly defined in element_prototype.rs (ElemProto) — do not duplicate
         __reflectAttr(HTMLImageElement.prototype, 'alt', 'alt');
         Object.defineProperty(HTMLImageElement.prototype, 'width', {
             get: function() { return parseInt(this.getAttribute('width'), 10) || 0; },
@@ -2032,9 +2032,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         });
 
         // --- HTMLButtonElement ---
-        // type, value, form are properly defined in element_prototype.rs/form_bindings.rs — do not duplicate
-        __reflectBool(HTMLButtonElement.prototype, 'disabled', 'disabled');
-        __reflectAttr(HTMLButtonElement.prototype, 'name', 'name');
+        // type, value, form, disabled, name are properly defined in element_prototype.rs/form_bindings.rs — do not duplicate
 
         // --- HTMLFormElement ---
         // action, method, target, enctype, elements, length, submit, reset are all
@@ -2044,15 +2042,11 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         // htmlFor and control are properly defined in label_bindings.rs (uses native __n_findLabelControl) — do not duplicate here
 
         // --- HTMLInputElement ---
-        // type, disabled, placeholder, form, value, defaultValue, checked are in element_prototype.rs / form_bindings.rs
-        // name and required have no ElemProto equivalent — keep these:
-        __reflectAttr(HTMLInputElement.prototype, 'name', 'name');
+        // type, disabled, placeholder, form, value, defaultValue, checked, name are in element_prototype.rs / form_bindings.rs
         __reflectBool(HTMLInputElement.prototype, 'required', 'required');
 
         // --- HTMLTextAreaElement ---
-        // value, disabled, placeholder, rows, cols, defaultValue are in element_prototype.rs
-        // name and required have no ElemProto equivalent — keep these:
-        __reflectAttr(HTMLTextAreaElement.prototype, 'name', 'name');
+        // value, disabled, placeholder, rows, cols, defaultValue, name are in element_prototype.rs
         __reflectBool(HTMLTextAreaElement.prototype, 'required', 'required');
 
         // --- HTMLCanvasElement ---
@@ -2094,19 +2088,7 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         HTMLCanvasElement.prototype.toDataURL = function() { return 'data:image/png;base64,'; };
         HTMLCanvasElement.prototype.toBlob = function(cb) { if (cb) cb(new Blob([])); };
 
-        // --- HTMLTemplateElement ---
-        Object.defineProperty(HTMLTemplateElement.prototype, 'content', {
-            get: function() {
-                if (this.__nid !== undefined && typeof __n_getTemplateContent === 'function') {
-                    return __n_getTemplateContent(this.__nid);
-                }
-                if (!this._content) {
-                    this._content = document.createDocumentFragment();
-                }
-                return this._content;
-            },
-            configurable: true, enumerable: true,
-        });
+        // HTMLTemplateElement.prototype.content is defined in element_prototype.rs (ElemProto)
 
         globalThis.DocumentFragment = class DocumentFragment extends Node {};
         globalThis.ShadowRoot = class ShadowRoot extends DocumentFragment {
@@ -2911,34 +2893,6 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         // Standalone EventTarget constructor (new EventTarget() should work)
         // Already defined in wrapper_and_dispatch.rs
 
-        // structuredClone — enhanced with Date, RegExp, Map, Set support
-        globalThis.structuredClone = function(value) {
-            if (value === null || value === undefined || typeof value !== 'object') return value;
-            if (value instanceof Date) return new Date(value.getTime());
-            if (value instanceof RegExp) return new RegExp(value.source, value.flags);
-            if (value instanceof Map) {
-                var m = new Map();
-                value.forEach(function(v, k) { m.set(structuredClone(k), structuredClone(v)); });
-                return m;
-            }
-            if (value instanceof Set) {
-                var s = new Set();
-                value.forEach(function(v) { s.add(structuredClone(v)); });
-                return s;
-            }
-            if (value instanceof ArrayBuffer) return value.slice(0);
-            if (ArrayBuffer.isView(value)) {
-                return new value.constructor(value.buffer.slice(0), value.byteOffset, value.length);
-            }
-            if (Array.isArray(value)) return value.map(function(v) { return structuredClone(v); });
-            var clone = {};
-            var keys = Object.keys(value);
-            for (var i = 0; i < keys.length; i++) {
-                clone[keys[i]] = structuredClone(value[keys[i]]);
-            }
-            return clone;
-        };
-
         // Notification
         globalThis.Notification = function Notification(title, opts) {
             this.title = title;
@@ -3233,41 +3187,5 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             globalThis.IDBVersionChangeEvent = Event;
         })();
 
-    "#).unwrap();
-}
-
-// register_dom_stubs already includes document stub; dom_bridge::install overrides with real bindings.
-// This function is kept for reference but unused.
-#[allow(dead_code)]
-fn _register_document_stub(ctx: &Ctx<'_>) {
-    ctx.eval::<(), _>(r#"
-        globalThis.document = {
-            createElement: function(tag) { return { nodeName: tag.toUpperCase(), nodeType: 1, tagName: tag.toUpperCase(), children: [], childNodes: [], parentNode: null, style: {}, className: '', classList: { add:function(){}, remove:function(){}, contains:function(){return false;}, toggle:function(){} }, dataset: {}, attributes: [], setAttribute: function(){}, getAttribute: function(){return null;}, removeAttribute: function(){}, hasAttribute: function(){return false;}, addEventListener: function(){}, removeEventListener: function(){}, appendChild: function(c){this.childNodes.push(c);this.children.push(c);c.parentNode=this;return c;}, removeChild: function(c){var i=this.childNodes.indexOf(c);if(i>=0)this.childNodes.splice(i,1);i=this.children.indexOf(c);if(i>=0)this.children.splice(i,1);c.parentNode=null;return c;}, insertBefore: function(n,r){var i=this.childNodes.indexOf(r);if(i>=0){this.childNodes.splice(i,0,n);this.children.splice(i,0,n);}else{this.childNodes.push(n);this.children.push(n);}n.parentNode=this;return n;}, cloneNode: function(){return document.createElement(this.tagName||'div');}, contains: function(){return false;}, querySelector: function(){return null;}, querySelectorAll: function(){return [];}, getElementsByTagName: function(){return [];}, getElementsByClassName: function(){return [];}, innerHTML: '', textContent: '', outerHTML: '', getBoundingClientRect: function(){return{top:0,left:0,width:0,height:0,right:0,bottom:0};}, dispatchEvent: function(){return true;}, ownerDocument: null, id: '', }; },
-            createElementNS: function(ns, tag) { var el = document.createElement(tag); el.namespaceURI = ns; return el; },
-            createTextNode: function(t) { return { nodeType: 3, textContent: t, nodeName: '#text', parentNode: null, data: t }; },
-            createComment: function(t) { return { nodeType: 8, textContent: t, nodeName: '#comment', parentNode: null, data: t }; },
-            createDocumentFragment: function() { return { nodeType: 11, childNodes: [], children: [], appendChild: function(c){this.childNodes.push(c);this.children.push(c);c.parentNode=this;return c;}, querySelector: function(){return null;}, querySelectorAll: function(){return [];} }; },
-            createRange: function() { return { setStart:function(){}, setEnd:function(){}, commonAncestorContainer: null, collapsed: true, selectNodeContents: function(){} }; },
-            createTreeWalker: function() { return { nextNode: function(){return null;}, currentNode: null }; },
-            getElementById: function() { return null; },
-            getElementsByTagName: function() { return []; },
-            getElementsByClassName: function() { return []; },
-            querySelector: function() { return null; },
-            querySelectorAll: function() { return []; },
-            addEventListener: function() {},
-            removeEventListener: function() {},
-            head: { appendChild: function(c){return c;}, children: [], querySelectorAll: function(){return [];}, style: {} },
-            body: { appendChild: function(c){return c;}, children: [], classList: {add:function(){},remove:function(){},contains:function(){return false;}}, style: {}, setAttribute: function(){}, getAttribute: function(){return null;}, addEventListener: function(){}, removeEventListener: function(){} },
-            documentElement: { appendChild: function(c){return c;}, style: {}, setAttribute: function(){}, getAttribute: function(){return null;}, classList: {add:function(){},remove:function(){},contains:function(){return false;}} },
-            title: '',
-            cookie: '',
-            readyState: 'complete',
-            location: location,
-            defaultView: globalThis,
-            implementation: { createHTMLDocument: function(t) { return document; } },
-            createEvent: function(t) { return new Event(t); },
-            nodeType: 9,
-            nodeName: '#document',
-        };
     "#).unwrap();
 }
