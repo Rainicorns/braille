@@ -39,6 +39,19 @@ pub enum Rule {
         url: String,
         media: Option<String>,
     },
+    Supports {
+        condition: String,
+        rules: Vec<Rule>,
+    },
+    Layer {
+        name: Option<String>,
+        rules: Vec<Rule>,
+    },
+    Container {
+        name: Option<String>,
+        condition: String,
+        rules: Vec<Rule>,
+    },
 }
 
 /// A CSS property declaration with optional !important flag.
@@ -225,6 +238,9 @@ enum AtRulePrelude {
     Media(String),
     Keyframes(String),
     Import(String, Option<String>),
+    Supports(String),
+    Layer(Option<String>),
+    Container(Option<String>, String),
 }
 
 impl<'i> cssparser::AtRuleParser<'i> for BrailleRuleParser {
@@ -264,6 +280,36 @@ impl<'i> cssparser::AtRuleParser<'i> for BrailleRuleParser {
                 let media = if media_text.is_empty() { None } else { Some(media_text) };
                 Ok(AtRulePrelude::Import(url, media))
             }
+            "supports" => {
+                let start = input.position();
+                while input.next().is_ok() {}
+                let condition = input.slice(start..input.position()).trim().to_string();
+                Ok(AtRulePrelude::Supports(condition))
+            }
+            "layer" => {
+                let start = input.position();
+                while input.next().is_ok() {}
+                let name_text = input.slice(start..input.position()).trim().to_string();
+                let name = if name_text.is_empty() { None } else { Some(name_text) };
+                Ok(AtRulePrelude::Layer(name))
+            }
+            "container" => {
+                let start = input.position();
+                while input.next().is_ok() {}
+                let raw = input.slice(start..input.position()).trim().to_string();
+                // Parse: optional name then condition in parens
+                // e.g., "sidebar (min-width: 400px)" or "(min-width: 400px)"
+                let (name, condition) = if raw.starts_with('(') {
+                    (None, raw)
+                } else if let Some(paren_pos) = raw.find('(') {
+                    let n = raw[..paren_pos].trim().to_string();
+                    let c = raw[paren_pos..].trim().to_string();
+                    (Some(n), c)
+                } else {
+                    (None, raw)
+                };
+                Ok(AtRulePrelude::Container(name, condition))
+            }
             _ => Err(input.new_custom_error(())),
         }
     }
@@ -294,6 +340,33 @@ impl<'i> cssparser::AtRuleParser<'i> for BrailleRuleParser {
             }
             AtRulePrelude::Import(..) => {
                 Err(input.new_custom_error(())) // @import shouldn't have a block
+            }
+            AtRulePrelude::Supports(condition) => {
+                let mut nested_rules = Vec::new();
+                let mut nested_parser = BrailleRuleParser;
+                let iter = cssparser::StyleSheetParser::new(input, &mut nested_parser);
+                for rule in iter.flatten() {
+                    nested_rules.push(rule);
+                }
+                Ok(Rule::Supports { condition, rules: nested_rules })
+            }
+            AtRulePrelude::Layer(name) => {
+                let mut nested_rules = Vec::new();
+                let mut nested_parser = BrailleRuleParser;
+                let iter = cssparser::StyleSheetParser::new(input, &mut nested_parser);
+                for rule in iter.flatten() {
+                    nested_rules.push(rule);
+                }
+                Ok(Rule::Layer { name, rules: nested_rules })
+            }
+            AtRulePrelude::Container(name, condition) => {
+                let mut nested_rules = Vec::new();
+                let mut nested_parser = BrailleRuleParser;
+                let iter = cssparser::StyleSheetParser::new(input, &mut nested_parser);
+                for rule in iter.flatten() {
+                    nested_rules.push(rule);
+                }
+                Ok(Rule::Container { name, condition, rules: nested_rules })
             }
         }
     }

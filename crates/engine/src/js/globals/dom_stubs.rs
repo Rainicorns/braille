@@ -8,6 +8,69 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         with_state_mut(|s| s.pending_navigation = Some(url));
     }).unwrap();
     ctx.globals().set("__braille_navigate", navigate_fn).unwrap();
+
+    // alert() — queues a blocking Alert browser event, returns undefined
+    let alert_fn = Function::new(ctx.clone(), |msg: Option<String>| {
+        let message = msg.unwrap_or_default();
+        with_state_mut(|s| {
+            let id = s.browser_events.push(braille_wire::BrowserEventKind::Alert { message });
+            s.blocking_event_id = Some(id);
+        });
+    }).unwrap();
+    ctx.globals().set("alert", alert_fn).unwrap();
+
+    // confirm() — queues a blocking Confirm browser event, returns false by default
+    let confirm_fn = Function::new(ctx.clone(), |msg: Option<String>| -> bool {
+        let message = msg.unwrap_or_default();
+        with_state_mut(|s| {
+            let id = s.browser_events.push(braille_wire::BrowserEventKind::Confirm { message });
+            s.blocking_event_id = Some(id);
+            // Default: return false (agent can override by responding before next settle)
+            if let Some(resp) = s.blocking_event_response.take() {
+                s.blocking_event_id = None;
+                resp == "true" || resp == "yes" || resp == "ok"
+            } else {
+                false
+            }
+        })
+    }).unwrap();
+    ctx.globals().set("confirm", confirm_fn).unwrap();
+
+    // prompt() — queues a blocking Prompt browser event, returns null by default
+    let prompt_fn = Function::new(ctx.clone(), |msg: Option<String>, default: Option<String>| -> rquickjs::Null {
+        let message = msg.unwrap_or_default();
+        with_state_mut(|s| {
+            let id = s.browser_events.push(braille_wire::BrowserEventKind::Prompt { message, default_value: default });
+            s.blocking_event_id = Some(id);
+        });
+        // Return null (spec default when user cancels)
+        rquickjs::Null
+    }).unwrap();
+    ctx.globals().set("prompt", prompt_fn).unwrap();
+
+    // __braille_clipboard_write — native hook for clipboard.writeText
+    let clipboard_write_fn = Function::new(ctx.clone(), |text: String| {
+        with_state_mut(|s| {
+            s.clipboard_buffer = text;
+        });
+    }).unwrap();
+    ctx.globals().set("__braille_clipboard_write", clipboard_write_fn).unwrap();
+
+    // __braille_clipboard_read — native hook for clipboard.readText
+    let clipboard_read_fn = Function::new(ctx.clone(), || -> String {
+        with_state_mut(|s| s.clipboard_buffer.clone())
+    }).unwrap();
+    ctx.globals().set("__braille_clipboard_read", clipboard_read_fn).unwrap();
+
+    // __braille_form_submit — native hook for form POST submission
+    let form_submit_fn = Function::new(ctx.clone(), |url: String, method: String, body: String, content_type: String| {
+        with_state_mut(|s| {
+            s.pending_form_submit = Some(crate::js::state::PendingFormSubmit {
+                url, method, body, content_type,
+            });
+        });
+    }).unwrap();
+    ctx.globals().set("__braille_form_submit", form_submit_fn).unwrap();
     // Comprehensive DOM/Web API stubs so real-world JS doesn't crash on missing globals.
     // These are JS-level stubs that provide the right shape but no real DOM integration.
     // Critical DOM operations (createElement, appendChild, etc.) are backed by native
@@ -519,19 +582,64 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
             maxTouchPoints: 0,
             hardwareConcurrency: 1,
             vendor: 'Google Inc.',
-            clipboard: (function() {
-                var _buf = '';
-                return {
-                    writeText: function(text) { _buf = String(text); return Promise.resolve(); },
-                    readText: function() { return Promise.resolve(_buf); },
-                    read: function() { return Promise.resolve([]); },
-                    write: function() { return Promise.resolve(); },
-                };
-            })(),
-            mediaDevices: {},
-            serviceWorker: { register: function() { return Promise.resolve(); } },
-            permissions: { query: function() { return Promise.resolve({state:'granted'}); } },
+            clipboard: {
+                writeText: function(text) {
+                    __braille_clipboard_write(String(text));
+                    return Promise.resolve();
+                },
+                readText: function() {
+                    return Promise.resolve(__braille_clipboard_read());
+                },
+                read: function() { return Promise.resolve([]); },
+                write: function() { return Promise.resolve(); },
+            },
+            mediaDevices: {
+                getUserMedia: function() { return Promise.reject(new DOMException('Not allowed', 'NotAllowedError')); },
+                enumerateDevices: function() { return Promise.resolve([]); },
+                getDisplayMedia: function() { return Promise.reject(new DOMException('Not allowed', 'NotAllowedError')); },
+            },
+            serviceWorker: {
+                register: function(url) { return Promise.resolve({ installing: null, waiting: null, active: null, scope: '/', unregister: function() { return Promise.resolve(true); } }); },
+                ready: Promise.resolve({ active: null }),
+                controller: null,
+                addEventListener: function() {},
+                removeEventListener: function() {},
+            },
+            permissions: {
+                query: function(desc) {
+                    var name = desc && desc.name || '';
+                    // Default: granted for most things (permissive browser)
+                    var state = 'granted';
+                    return Promise.resolve({
+                        state: state,
+                        name: name,
+                        addEventListener: function() {},
+                        removeEventListener: function() {},
+                        onchange: null,
+                    });
+                }
+            },
+            geolocation: {
+                getCurrentPosition: function(success, error) {
+                    if (typeof error === 'function') {
+                        error({ code: 1, message: 'Permission denied', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 });
+                    }
+                },
+                watchPosition: function(success, error) {
+                    if (typeof error === 'function') {
+                        error({ code: 1, message: 'Permission denied', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 });
+                    }
+                    return 0;
+                },
+                clearWatch: function() {},
+            },
             sendBeacon: function() { return true; },
+            bluetooth: { requestDevice: function() { return Promise.reject(new DOMException('Not found', 'NotFoundError')); } },
+            serial: { requestPort: function() { return Promise.reject(new DOMException('Not found', 'NotFoundError')); } },
+            usb: { requestDevice: function() { return Promise.reject(new DOMException('Not found', 'NotFoundError')); } },
+            hid: { requestDevice: function() { return Promise.reject(new DOMException('Not found', 'NotFoundError')); } },
+            locks: { request: function(name, cb) { return Promise.resolve(cb({ mode: 'exclusive', name: name })); } },
+            credentials: { get: function() { return Promise.resolve(null); }, create: function() { return Promise.resolve(null); }, store: function() { return Promise.resolve(); } },
         };
 
         // Location — setting href parses the URL and updates all components
@@ -2636,7 +2744,13 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
          'XMLHttpRequest', 'DOMParser', 'FormData',
          'URL', 'URLSearchParams', 'TextEncoder', 'TextDecoder',
          'Blob', 'File', 'FileReader', 'ReadableStream',
-         'AbortController', 'AbortSignal'].forEach(function(name) {
+         'AbortController', 'AbortSignal',
+         'DOMRect', 'DOMRectReadOnly', 'DOMPoint', 'DOMPointReadOnly',
+         'DOMMatrix', 'DOMMatrixReadOnly',
+         'BroadcastChannel', 'Notification', 'OffscreenCanvas',
+         'ImageBitmap', 'ImageData', 'CanvasRenderingContext2D', 'CanvasGradient', 'CanvasPattern', 'Path2D',
+         'IDBRequest', 'IDBDatabase', 'IDBTransaction', 'IDBObjectStore', 'IDBCursor', 'IDBIndex',
+         'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange'].forEach(function(name) {
             if (globalThis[name] !== undefined) {
                 Object.defineProperty(globalThis, name, {
                     value: globalThis[name], writable: true, configurable: true, enumerable: false
@@ -2688,6 +2802,437 @@ pub(super) fn register_dom_stubs(ctx: &Ctx<'_>) {
         globalThis.dataLayer = [];
         globalThis.ga = function(){};
         globalThis.gtag = function(){};
+
+        // Phase 6: Form submission — requestSubmit fires submit event,
+        // form data collection is handled in the element prototype.
+
+        // Phase 12: Window/Dialog stubs
+        globalThis.open = function(url, target) { return null; };
+        globalThis.close = function() {};
+        globalThis.print = function() {};
+        globalThis.stop = function() {};
+
+        // Phase 14: Media elements — HTMLMediaElement prototype
+        (function() {
+            var MediaProto = {
+                play: function() { return Promise.reject(new DOMException('Not allowed', 'NotAllowedError')); },
+                pause: function() {},
+                load: function() {},
+                canPlayType: function() { return ''; },
+                addTextTrack: function() { return { kind:'subtitles', label:'', language:'', mode:'disabled', cues:null, addCue:function(){}, removeCue:function(){} }; },
+                paused: true, ended: false, currentTime: 0, duration: NaN,
+                readyState: 0, networkState: 0, seeking: false,
+                volume: 1, muted: false, defaultMuted: false,
+                playbackRate: 1, defaultPlaybackRate: 1,
+                buffered: { length: 0, start: function() { return 0; }, end: function() { return 0; } },
+                played: { length: 0, start: function() { return 0; }, end: function() { return 0; } },
+                seekable: { length: 0, start: function() { return 0; }, end: function() { return 0; } },
+                textTracks: { length: 0, addEventListener: function() {}, removeEventListener: function() {} },
+                videoWidth: 0, videoHeight: 0, poster: '',
+                crossOrigin: null, preload: 'auto', autoplay: false, loop: false, controls: false,
+                addEventListener: function() {}, removeEventListener: function() {},
+                dispatchEvent: function() { return true; },
+            };
+            if (typeof HTMLVideoElement !== 'undefined') Object.assign(HTMLVideoElement.prototype, MediaProto);
+            if (typeof HTMLAudioElement !== 'undefined') Object.assign(HTMLAudioElement.prototype, MediaProto);
+        })();
+
+        // Phase 18: ValidityState + File/Blob completeness
+        if (typeof FileReader !== 'undefined') {
+            FileReader.EMPTY = 0; FileReader.LOADING = 1; FileReader.DONE = 2;
+            if (!FileReader.prototype.readAsBinaryString) {
+                FileReader.prototype.readAsBinaryString = function(blob) {
+                    var reader = this;
+                    reader.readyState = 1;
+                    blob.text().then(function(text) {
+                        reader.readyState = 2;
+                        reader.result = text;
+                        if (reader.onload) reader.onload({target: reader});
+                    });
+                };
+            }
+        }
+
+        // Phase 19: Service Worker lifecycle stubs
+        if (navigator.serviceWorker) {
+            navigator.serviceWorker.getRegistrations = function() { return Promise.resolve([]); };
+            navigator.serviceWorker.getRegistration = function() { return Promise.resolve(undefined); };
+        }
+
+        // Phase 20: Remaining stubs (don't-crash layer)
+
+        // BroadcastChannel
+        globalThis.BroadcastChannel = function BroadcastChannel(name) {
+            this.name = name;
+            this.onmessage = null;
+            this.onmessageerror = null;
+        };
+        BroadcastChannel.prototype.postMessage = function() {};
+        BroadcastChannel.prototype.close = function() {};
+        BroadcastChannel.prototype.addEventListener = function() {};
+        BroadcastChannel.prototype.removeEventListener = function() {};
+
+        // screen.orientation
+        if (typeof screen !== 'undefined') {
+            screen.orientation = {
+                type: 'landscape-primary', angle: 0,
+                lock: function() { return Promise.resolve(); },
+                unlock: function() {},
+                addEventListener: function() {},
+                removeEventListener: function() {},
+                onchange: null,
+            };
+        }
+
+        // OffscreenCanvas
+        globalThis.OffscreenCanvas = function OffscreenCanvas(width, height) {
+            this.width = width || 0;
+            this.height = height || 0;
+        };
+        OffscreenCanvas.prototype.getContext = function() { return null; };
+        OffscreenCanvas.prototype.convertToBlob = function() { return Promise.resolve(new Blob([])); };
+        OffscreenCanvas.prototype.transferToImageBitmap = function() { return { width: this.width, height: this.height, close: function() {} }; };
+
+        // ImageBitmap / createImageBitmap
+        globalThis.ImageBitmap = function ImageBitmap() { this.width = 0; this.height = 0; };
+        ImageBitmap.prototype.close = function() {};
+        globalThis.createImageBitmap = function() {
+            return Promise.resolve(new ImageBitmap());
+        };
+
+        // IntersectionObserverEntry / ResizeObserverEntry class prototypes
+        if (typeof IntersectionObserverEntry === 'undefined') {
+            globalThis.IntersectionObserverEntry = function IntersectionObserverEntry() {};
+        }
+        if (typeof ResizeObserverEntry === 'undefined') {
+            globalThis.ResizeObserverEntry = function ResizeObserverEntry() {};
+        }
+
+        // Standalone EventTarget constructor (new EventTarget() should work)
+        // Already defined in wrapper_and_dispatch.rs
+
+        // structuredClone — enhanced with Date, RegExp, Map, Set support
+        globalThis.structuredClone = function(value) {
+            if (value === null || value === undefined || typeof value !== 'object') return value;
+            if (value instanceof Date) return new Date(value.getTime());
+            if (value instanceof RegExp) return new RegExp(value.source, value.flags);
+            if (value instanceof Map) {
+                var m = new Map();
+                value.forEach(function(v, k) { m.set(structuredClone(k), structuredClone(v)); });
+                return m;
+            }
+            if (value instanceof Set) {
+                var s = new Set();
+                value.forEach(function(v) { s.add(structuredClone(v)); });
+                return s;
+            }
+            if (value instanceof ArrayBuffer) return value.slice(0);
+            if (ArrayBuffer.isView(value)) {
+                return new value.constructor(value.buffer.slice(0), value.byteOffset, value.length);
+            }
+            if (Array.isArray(value)) return value.map(function(v) { return structuredClone(v); });
+            var clone = {};
+            var keys = Object.keys(value);
+            for (var i = 0; i < keys.length; i++) {
+                clone[keys[i]] = structuredClone(value[keys[i]]);
+            }
+            return clone;
+        };
+
+        // Notification
+        globalThis.Notification = function Notification(title, opts) {
+            this.title = title;
+            this.body = (opts && opts.body) || '';
+            this.icon = (opts && opts.icon) || '';
+            this.tag = (opts && opts.tag) || '';
+            this.onclick = null;
+            this.onclose = null;
+            this.onerror = null;
+            this.onshow = null;
+        };
+        Notification.permission = 'default';
+        Notification.requestPermission = function(cb) {
+            var result = 'denied';
+            if (cb) cb(result);
+            return Promise.resolve(result);
+        };
+        Notification.prototype.close = function() {};
+        Notification.prototype.addEventListener = function() {};
+        Notification.prototype.removeEventListener = function() {};
+
+        // Canvas 2D — command journal stub (Phase 7)
+        // Full canvas implementation registers native functions separately.
+        // This provides a basic CanvasRenderingContext2D so sites don't crash.
+        (function() {
+            var CanvasProto = {
+                fillRect: function() {},
+                strokeRect: function() {},
+                clearRect: function() {},
+                beginPath: function() {},
+                closePath: function() {},
+                moveTo: function() {},
+                lineTo: function() {},
+                bezierCurveTo: function() {},
+                quadraticCurveTo: function() {},
+                arc: function() {},
+                arcTo: function() {},
+                ellipse: function() {},
+                rect: function() {},
+                fill: function() {},
+                stroke: function() {},
+                clip: function() {},
+                isPointInPath: function() { return false; },
+                isPointInStroke: function() { return false; },
+                fillText: function() {},
+                strokeText: function() {},
+                measureText: function(text) {
+                    var fontSize = parseFloat(this.font) || 10;
+                    var width = fontSize * 0.6 * (text || '').length;
+                    return {
+                        width: width,
+                        actualBoundingBoxAscent: fontSize * 0.8,
+                        actualBoundingBoxDescent: fontSize * 0.2,
+                        fontBoundingBoxAscent: fontSize * 0.8,
+                        fontBoundingBoxDescent: fontSize * 0.2,
+                        actualBoundingBoxLeft: 0,
+                        actualBoundingBoxRight: width,
+                        emHeightAscent: fontSize * 0.8,
+                        emHeightDescent: fontSize * 0.2,
+                    };
+                },
+                drawImage: function() {},
+                createImageData: function(w, h) {
+                    if (typeof w === 'object') { h = w.height; w = w.width; }
+                    return { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) };
+                },
+                getImageData: function(x, y, w, h) {
+                    return { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) };
+                },
+                putImageData: function() {},
+                createLinearGradient: function(x0, y0, x1, y1) {
+                    return { addColorStop: function() {} };
+                },
+                createRadialGradient: function(x0, y0, r0, x1, y1, r1) {
+                    return { addColorStop: function() {} };
+                },
+                createConicGradient: function(startAngle, cx, cy) {
+                    return { addColorStop: function() {} };
+                },
+                createPattern: function() { return {}; },
+                save: function() {},
+                restore: function() {},
+                scale: function() {},
+                rotate: function() {},
+                translate: function() {},
+                transform: function() {},
+                setTransform: function() {},
+                resetTransform: function() {},
+                getTransform: function() { return new DOMMatrix(); },
+                setLineDash: function() {},
+                getLineDash: function() { return []; },
+                drawFocusIfNeeded: function() {},
+                toDataURL: function() { return 'data:image/png;base64,'; },
+                canvas: null,
+                fillStyle: '#000000',
+                strokeStyle: '#000000',
+                lineWidth: 1,
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                miterLimit: 10,
+                lineDashOffset: 0,
+                font: '10px sans-serif',
+                textAlign: 'start',
+                textBaseline: 'alphabetic',
+                direction: 'ltr',
+                globalAlpha: 1,
+                globalCompositeOperation: 'source-over',
+                imageSmoothingEnabled: true,
+                imageSmoothingQuality: 'low',
+                shadowBlur: 0,
+                shadowColor: 'rgba(0,0,0,0)',
+                shadowOffsetX: 0,
+                shadowOffsetY: 0,
+                filter: 'none',
+                letterSpacing: '0px',
+                wordSpacing: '0px',
+                fontKerning: 'auto',
+                textRendering: 'auto',
+            };
+            globalThis.__CanvasRenderingContext2D = CanvasProto;
+            globalThis.CanvasRenderingContext2D = function CanvasRenderingContext2D() {};
+            Object.assign(CanvasRenderingContext2D.prototype, CanvasProto);
+            globalThis.CanvasGradient = function CanvasGradient() {};
+            CanvasGradient.prototype.addColorStop = function() {};
+            globalThis.CanvasPattern = function CanvasPattern() {};
+            CanvasPattern.prototype.setTransform = function() {};
+            globalThis.Path2D = function Path2D() {};
+            var p2d = Path2D.prototype;
+            p2d.addPath = function() {}; p2d.closePath = function() {};
+            p2d.moveTo = function() {}; p2d.lineTo = function() {};
+            p2d.bezierCurveTo = function() {}; p2d.quadraticCurveTo = function() {};
+            p2d.arc = function() {}; p2d.arcTo = function() {};
+            p2d.ellipse = function() {}; p2d.rect = function() {};
+            p2d.roundRect = function() {};
+            globalThis.ImageData = function ImageData(w, h) {
+                if (typeof w === 'object') { h = w.height; w = w.width; }
+                this.width = w || 0; this.height = h || 0;
+                this.data = new Uint8ClampedArray((this.width) * (this.height) * 4);
+            };
+        })();
+
+        // IndexedDB (Phase 8) — in-memory stub
+        (function() {
+            var _dbs = {};
+            function IDBRequest() { this.result = undefined; this.error = null; this.readyState = 'pending'; this.onsuccess = null; this.onerror = null; this.source = null; this.transaction = null; }
+            function fireSuccess(req, result) { req.result = result; req.readyState = 'done'; setTimeout(function() { if (req.onsuccess) req.onsuccess({target: req}); }, 0); }
+            function fireError(req, error) { req.error = error; req.readyState = 'done'; setTimeout(function() { if (req.onerror) req.onerror({target: req}); }, 0); }
+            function IDBObjectStore(name, keyPath, db, txn) {
+                this.name = name; this.keyPath = keyPath; this.autoIncrement = true;
+                this._data = new Map(); this._nextKey = 1; this._db = db; this.transaction = txn;
+                this.indexNames = []; this._indexes = {};
+            }
+            IDBObjectStore.prototype.put = function(value, key) {
+                var req = new IDBRequest();
+                var k = key !== undefined ? key : (this.keyPath && value ? value[this.keyPath] : this._nextKey++);
+                this._data.set(k, structuredClone(value));
+                fireSuccess(req, k);
+                return req;
+            };
+            IDBObjectStore.prototype.add = function(value, key) { return this.put(value, key); };
+            IDBObjectStore.prototype.get = function(key) {
+                var req = new IDBRequest();
+                var val = this._data.has(key) ? structuredClone(this._data.get(key)) : undefined;
+                fireSuccess(req, val);
+                return req;
+            };
+            IDBObjectStore.prototype.getAll = function() {
+                var req = new IDBRequest();
+                var arr = []; this._data.forEach(function(v) { arr.push(structuredClone(v)); });
+                fireSuccess(req, arr);
+                return req;
+            };
+            IDBObjectStore.prototype.delete = function(key) {
+                var req = new IDBRequest();
+                this._data.delete(key);
+                fireSuccess(req, undefined);
+                return req;
+            };
+            IDBObjectStore.prototype.clear = function() {
+                var req = new IDBRequest();
+                this._data.clear();
+                fireSuccess(req, undefined);
+                return req;
+            };
+            IDBObjectStore.prototype.count = function() {
+                var req = new IDBRequest();
+                fireSuccess(req, this._data.size);
+                return req;
+            };
+            IDBObjectStore.prototype.openCursor = function() {
+                var req = new IDBRequest();
+                var entries = []; this._data.forEach(function(v, k) { entries.push({key:k, value:structuredClone(v)}); });
+                var idx = 0;
+                function makeCursor() {
+                    if (idx >= entries.length) { fireSuccess(req, null); return; }
+                    var e = entries[idx];
+                    var cursor = { key: e.key, primaryKey: e.key, value: e.value,
+                        continue: function() { idx++; makeCursor(); },
+                        advance: function(n) { idx += n; makeCursor(); },
+                        delete: function() { return new IDBRequest(); },
+                        update: function() { return new IDBRequest(); }
+                    };
+                    fireSuccess(req, cursor);
+                }
+                makeCursor();
+                return req;
+            };
+            IDBObjectStore.prototype.createIndex = function(name) {
+                this._indexes[name] = true;
+                this.indexNames.push(name);
+                return { get: function() { return new IDBRequest(); }, getAll: function() { var r = new IDBRequest(); fireSuccess(r,[]); return r; }, openCursor: function() { var r = new IDBRequest(); fireSuccess(r,null); return r; }, count: function() { var r = new IDBRequest(); fireSuccess(r,0); return r; } };
+            };
+            IDBObjectStore.prototype.index = function(name) { return this.createIndex(name); };
+            IDBObjectStore.prototype.getAllKeys = function() { var req = new IDBRequest(); var arr = []; this._data.forEach(function(_,k) { arr.push(k); }); fireSuccess(req, arr); return req; };
+            IDBObjectStore.prototype.getKey = function(key) { var req = new IDBRequest(); fireSuccess(req, this._data.has(key) ? key : undefined); return req; };
+
+            function IDBTransaction(db, storeNames, mode) {
+                this.db = db; this.mode = mode || 'readonly'; this.objectStoreNames = storeNames;
+                this.oncomplete = null; this.onerror = null; this.onabort = null; this.error = null;
+                var self = this;
+                setTimeout(function() { if (self.oncomplete) self.oncomplete({target: self}); }, 0);
+            }
+            IDBTransaction.prototype.objectStore = function(name) {
+                if (!this.db._stores[name]) this.db._stores[name] = new IDBObjectStore(name, null, this.db, this);
+                return this.db._stores[name];
+            };
+            IDBTransaction.prototype.abort = function() { if (this.onabort) this.onabort({target: this}); };
+            IDBTransaction.prototype.commit = function() { if (this.oncomplete) this.oncomplete({target: this}); };
+            IDBTransaction.prototype.addEventListener = function(type, cb) { this['on'+type] = cb; };
+            IDBTransaction.prototype.removeEventListener = function() {};
+
+            function IDBDatabase(name, version) {
+                this.name = name; this.version = version; this._stores = {};
+                this.objectStoreNames = [];
+                this.onclose = null; this.onerror = null; this.onversionchange = null;
+            }
+            IDBDatabase.prototype.createObjectStore = function(name, opts) {
+                var store = new IDBObjectStore(name, opts && opts.keyPath, this, null);
+                this._stores[name] = store;
+                if (this.objectStoreNames.indexOf(name) < 0) this.objectStoreNames.push(name);
+                return store;
+            };
+            IDBDatabase.prototype.deleteObjectStore = function(name) { delete this._stores[name]; var i = this.objectStoreNames.indexOf(name); if (i >= 0) this.objectStoreNames.splice(i,1); };
+            IDBDatabase.prototype.transaction = function(storeNames, mode) { return new IDBTransaction(this, Array.isArray(storeNames) ? storeNames : [storeNames], mode); };
+            IDBDatabase.prototype.close = function() {};
+            IDBDatabase.prototype.addEventListener = function() {};
+            IDBDatabase.prototype.removeEventListener = function() {};
+
+            globalThis.indexedDB = {
+                open: function(name, version) {
+                    var req = new IDBRequest();
+                    version = version || 1;
+                    var isNew = !_dbs[name];
+                    var needsUpgrade = isNew || (_dbs[name] && _dbs[name].version < version);
+                    if (isNew) _dbs[name] = new IDBDatabase(name, version);
+                    var db = _dbs[name];
+                    db.version = version;
+                    req.result = db;
+                    if (needsUpgrade) {
+                        req.transaction = new IDBTransaction(db, [], 'versionchange');
+                        setTimeout(function() {
+                            if (req.onupgradeneeded) req.onupgradeneeded({target: req, oldVersion: isNew ? 0 : db.version - 1, newVersion: version});
+                            setTimeout(function() { fireSuccess(req, db); }, 0);
+                        }, 0);
+                    } else {
+                        fireSuccess(req, db);
+                    }
+                    return req;
+                },
+                deleteDatabase: function(name) {
+                    var req = new IDBRequest();
+                    delete _dbs[name];
+                    fireSuccess(req, undefined);
+                    return req;
+                },
+                databases: function() { return Promise.resolve(Object.keys(_dbs).map(function(n) { return {name:n, version:_dbs[n].version}; })); },
+                cmp: function(a, b) { return a < b ? -1 : a > b ? 1 : 0; },
+            };
+            globalThis.IDBKeyRange = {
+                only: function(val) { return {lower:val,upper:val,lowerOpen:false,upperOpen:false,includes:function(v){return v===val;}}; },
+                bound: function(l,u,lo,uo) { return {lower:l,upper:u,lowerOpen:!!lo,upperOpen:!!uo,includes:function(v){return (lo?v>l:v>=l)&&(uo?v<u:v<=u);}}; },
+                lowerBound: function(l,o) { return {lower:l,upper:undefined,lowerOpen:!!o,upperOpen:true,includes:function(v){return o?v>l:v>=l;}}; },
+                upperBound: function(u,o) { return {lower:undefined,upper:u,lowerOpen:true,upperOpen:!!o,includes:function(v){return o?v<u:v<=u;}}; },
+            };
+            globalThis.IDBRequest = IDBRequest;
+            globalThis.IDBDatabase = IDBDatabase;
+            globalThis.IDBTransaction = IDBTransaction;
+            globalThis.IDBObjectStore = IDBObjectStore;
+            globalThis.IDBCursor = function IDBCursor() {};
+            globalThis.IDBIndex = function IDBIndex() {};
+            globalThis.IDBOpenDBRequest = IDBRequest;
+            globalThis.IDBVersionChangeEvent = Event;
+        })();
+
     "#).unwrap();
 }
 

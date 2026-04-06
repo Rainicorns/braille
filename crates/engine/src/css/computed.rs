@@ -290,6 +290,11 @@ pub struct ComputedStyle {
     pub transition_duration: String,
     pub transition_timing_function: String,
     pub transition_delay: String,
+    // Content (for ::before/::after pseudo-elements)
+    pub content: String,
+    // Container queries
+    pub container_type: String,
+    pub container_name: String,
 }
 
 /// Root default font size used for `rem` units.
@@ -416,6 +421,9 @@ impl ComputedStyle {
             transition_duration: "0s".to_string(),
             transition_timing_function: "ease".to_string(),
             transition_delay: "0s".to_string(),
+            content: String::new(),
+            container_type: "normal".to_string(),
+            container_name: String::new(),
         }
     }
 }
@@ -1056,8 +1064,93 @@ pub fn resolve_style(cascaded: &HashMap<String, CascadedEntry>, parent_style: Op
     style
 }
 
+/// Resolve logical CSS properties to their physical equivalents (assuming LTR horizontal-tb).
+fn resolve_logical_property(property: &str) -> &str {
+    match property {
+        "inline-size" | "min-inline-size" | "max-inline-size" => {
+            match property {
+                "inline-size" => "width",
+                "min-inline-size" => "min-width",
+                "max-inline-size" => "max-width",
+                _ => unreachable!(),
+            }
+        }
+        "block-size" | "min-block-size" | "max-block-size" => {
+            match property {
+                "block-size" => "height",
+                "min-block-size" => "min-height",
+                "max-block-size" => "max-height",
+                _ => unreachable!(),
+            }
+        }
+        "margin-inline-start" | "padding-inline-start" | "border-inline-start-width" => {
+            if property.starts_with("margin") { "margin-left" }
+            else if property.starts_with("padding") { "padding-left" }
+            else { "border-left-width" }
+        }
+        "margin-inline-end" | "padding-inline-end" | "border-inline-end-width" => {
+            if property.starts_with("margin") { "margin-right" }
+            else if property.starts_with("padding") { "padding-right" }
+            else { "border-right-width" }
+        }
+        "margin-block-start" | "padding-block-start" | "border-block-start-width" => {
+            if property.starts_with("margin") { "margin-top" }
+            else if property.starts_with("padding") { "padding-top" }
+            else { "border-top-width" }
+        }
+        "margin-block-end" | "padding-block-end" | "border-block-end-width" => {
+            if property.starts_with("margin") { "margin-bottom" }
+            else if property.starts_with("padding") { "padding-bottom" }
+            else { "border-bottom-width" }
+        }
+        "inset-inline-start" => "left",
+        "inset-inline-end" => "right",
+        "inset-block-start" => "top",
+        "inset-block-end" => "bottom",
+        other => other,
+    }
+}
+
 /// Apply a parsed (non-keyword) value to a computed style.
 fn apply_parsed_value(style: &mut ComputedStyle, property: &str, val: &str, parent_font_size: f32, own_font_size: f32) {
+    // Resolve logical properties to physical before the main match
+    let property = resolve_logical_property(property);
+
+    // Handle logical shorthand properties that expand to two physical properties
+    match property {
+        p if p == "margin-inline" || p == "padding-inline" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            let (start, end) = if parts.len() >= 2 { (parts[0], parts[1]) } else { (val, val) };
+            let prefix = if p == "margin-inline" { "margin" } else { "padding" };
+            apply_parsed_value(style, &format!("{prefix}-left"), start, parent_font_size, own_font_size);
+            apply_parsed_value(style, &format!("{prefix}-right"), end, parent_font_size, own_font_size);
+            return;
+        }
+        p if p == "margin-block" || p == "padding-block" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            let (start, end) = if parts.len() >= 2 { (parts[0], parts[1]) } else { (val, val) };
+            let prefix = if p == "margin-block" { "margin" } else { "padding" };
+            apply_parsed_value(style, &format!("{prefix}-top"), start, parent_font_size, own_font_size);
+            apply_parsed_value(style, &format!("{prefix}-bottom"), end, parent_font_size, own_font_size);
+            return;
+        }
+        "inset" => {
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            let (t, r, b, l) = match parts.len() {
+                1 => (parts[0], parts[0], parts[0], parts[0]),
+                2 => (parts[0], parts[1], parts[0], parts[1]),
+                3 => (parts[0], parts[1], parts[2], parts[1]),
+                _ => (parts[0], parts[1], parts[2], parts.get(3).copied().unwrap_or(parts[1])),
+            };
+            apply_parsed_value(style, "top", t, parent_font_size, own_font_size);
+            apply_parsed_value(style, "right", r, parent_font_size, own_font_size);
+            apply_parsed_value(style, "bottom", b, parent_font_size, own_font_size);
+            apply_parsed_value(style, "left", l, parent_font_size, own_font_size);
+            return;
+        }
+        _ => {}
+    }
+
     match property {
         "display" => style.display = parse_display(val),
         "visibility" => style.visibility = parse_visibility(val),
@@ -1445,6 +1538,18 @@ fn apply_parsed_value(style: &mut ComputedStyle, property: &str, val: &str, pare
         "transition-duration" => style.transition_duration = val.trim().to_string(),
         "transition-timing-function" => style.transition_timing_function = val.trim().to_string(),
         "transition-delay" => style.transition_delay = val.trim().to_string(),
+        "content" => {
+            let trimmed = val.trim();
+            if trimmed == "none" || trimmed == "normal" || trimmed == "\"\"" || trimmed == "''" {
+                style.content = String::new();
+            } else {
+                // Strip surrounding quotes
+                let unquoted = trimmed.trim_matches('"').trim_matches('\'');
+                style.content = unquoted.to_string();
+            }
+        }
+        "container-type" => style.container_type = val.trim().to_string(),
+        "container-name" => style.container_name = val.trim().to_string(),
         _ => {
             // Unknown properties are silently ignored.
         }

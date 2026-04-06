@@ -253,11 +253,98 @@ fn flatten_rules(source_rules: &[crate::css::parser::Rule], out: &mut Vec<Cascad
                     flatten_rules(rules, out, order);
                 }
             }
+            Rule::Supports { condition, rules } => {
+                if evaluate_supports_condition(condition) {
+                    flatten_rules(rules, out, order);
+                }
+            }
+            Rule::Layer { rules, .. } => {
+                // Flatten layer rules — layer ordering not yet implemented,
+                // but rules inside layers should still apply.
+                flatten_rules(rules, out, order);
+            }
+            Rule::Container { rules, .. } => {
+                // Flatten container query rules unconditionally for now.
+                // Proper container query evaluation requires a two-pass layout.
+                flatten_rules(rules, out, order);
+            }
             Rule::Keyframes { .. } | Rule::Import { .. } => {
                 // Keyframes and imports don't produce cascade rules directly
             }
         }
     }
+}
+
+/// Evaluate a @supports condition. Returns true if the condition is supported.
+fn evaluate_supports_condition(condition: &str) -> bool {
+    let trimmed = condition.trim();
+    // Handle `not (...)` — negate inner
+    if let Some(inner) = trimmed.strip_prefix("not ") {
+        return !evaluate_supports_condition(inner.trim());
+    }
+    // Handle `(...) and (...)` and `(...) or (...)`
+    // Simple approach: strip outer parens and check for property: value
+    let stripped = trimmed.strip_prefix('(').and_then(|s| s.strip_suffix(')'));
+    if let Some(inner) = stripped {
+        // Check for combinators inside
+        if inner.contains(") and (") {
+            return inner.split(") and (").all(|part| {
+                let p = part.trim().trim_matches(|c| c == '(' || c == ')');
+                evaluate_supports_condition(&format!("({p})"))
+            });
+        }
+        if inner.contains(") or (") {
+            return inner.split(") or (").any(|part| {
+                let p = part.trim().trim_matches(|c| c == '(' || c == ')');
+                evaluate_supports_condition(&format!("({p})"))
+            });
+        }
+        // Check for property: value — we support most common properties
+        if let Some((prop, _val)) = inner.split_once(':') {
+            let prop = prop.trim();
+            // Check if it's a known CSS property
+            return is_supported_css_property(prop);
+        }
+        // Nested supports condition
+        return evaluate_supports_condition(inner);
+    }
+    // Default: assume supported
+    true
+}
+
+/// Check if a CSS property name is one we support.
+fn is_supported_css_property(prop: &str) -> bool {
+    matches!(prop,
+        "display" | "position" | "float" | "clear" | "visibility" | "opacity" |
+        "color" | "background" | "background-color" | "background-image" |
+        "font" | "font-family" | "font-size" | "font-weight" | "font-style" |
+        "text-align" | "text-decoration" | "text-transform" | "text-indent" |
+        "line-height" | "letter-spacing" | "word-spacing" | "white-space" |
+        "margin" | "margin-top" | "margin-right" | "margin-bottom" | "margin-left" |
+        "padding" | "padding-top" | "padding-right" | "padding-bottom" | "padding-left" |
+        "border" | "border-top" | "border-right" | "border-bottom" | "border-left" |
+        "border-width" | "border-style" | "border-color" | "border-radius" |
+        "width" | "height" | "min-width" | "min-height" | "max-width" | "max-height" |
+        "overflow" | "overflow-x" | "overflow-y" | "z-index" |
+        "flex" | "flex-direction" | "flex-wrap" | "flex-grow" | "flex-shrink" | "flex-basis" |
+        "justify-content" | "align-items" | "align-self" | "align-content" |
+        "grid" | "grid-template-columns" | "grid-template-rows" | "grid-column" | "grid-row" | "gap" |
+        "transform" | "transition" | "animation" | "cursor" | "pointer-events" |
+        "box-sizing" | "outline" | "list-style" | "vertical-align" |
+        "top" | "right" | "bottom" | "left" | "inset" |
+        "container-type" | "container-name" | "container" |
+        "aspect-ratio" | "object-fit" | "object-position" |
+        "scroll-snap-type" | "scroll-snap-align" | "scroll-behavior" |
+        "content" | "counter-reset" | "counter-increment" |
+        "appearance" | "resize" | "user-select" | "touch-action" |
+        "accent-color" | "caret-color" | "color-scheme" |
+        "inline-size" | "block-size" | "min-inline-size" | "min-block-size" |
+        "margin-inline" | "margin-block" | "padding-inline" | "padding-block" |
+        "margin-inline-start" | "margin-inline-end" | "margin-block-start" | "margin-block-end" |
+        "padding-inline-start" | "padding-inline-end" | "padding-block-start" | "padding-block-end" |
+        "border-inline" | "border-block" |
+        "--*" // custom properties
+    ) || prop.starts_with("--")
 }
 
 #[cfg(test)]

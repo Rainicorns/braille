@@ -148,6 +148,17 @@ enum SessionAction {
     Mark { label: String },
     /// Show the last recorded network transcript
     Transcript,
+    /// List pending browser events (dialogs, downloads, etc.)
+    Events,
+    /// Respond to a blocking browser event (alert/confirm/prompt)
+    Respond { id: u64, value: String },
+    /// Grant a permission (geolocation, clipboard-read, clipboard-write, notifications, camera, microphone, cors, csp)
+    Permit { permission: String },
+    /// Deny a permission
+    #[command(name = "deny")]
+    DenyPerm { permission: String },
+    /// Dismiss an info-only browser event
+    Dismiss { id: u64 },
     /// Close the session
     Close,
 }
@@ -234,6 +245,11 @@ fn session_action_to_daemon_command(action: SessionAction, session_id: &str) -> 
         SessionAction::Eval { code } => DaemonCommand::Eval { code },
         SessionAction::Mark { label } => DaemonCommand::Mark { label },
         SessionAction::Transcript => unreachable!("transcript handled before daemon dispatch"),
+        SessionAction::Events => DaemonCommand::Events,
+        SessionAction::Respond { id, value } => DaemonCommand::RespondEvent { id, value },
+        SessionAction::Permit { permission } => DaemonCommand::Permit { permission },
+        SessionAction::DenyPerm { permission } => DaemonCommand::Deny { permission },
+        SessionAction::Dismiss { id } => DaemonCommand::DismissEvent { id },
         SessionAction::Close => DaemonCommand::Close,
     }
 }

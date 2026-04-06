@@ -34,7 +34,33 @@ impl Engine {
         // 3b. Settle: flush microtasks, MO records, recompute CSS
         self.settle();
 
-        // 4. After event dispatch, check if this is a navigable <a> element
+        // 4. Check for pending form submission (POST)
+        if let Some(runtime) = &self.runtime {
+            let form_submit = runtime.state.borrow_mut().pending_form_submit.take();
+            if let Some(fs) = form_submit {
+                return EngineAction::Navigate(NavigateRequest {
+                    url: fs.url,
+                    method: if fs.method == "POST" { HttpMethod::Post } else { HttpMethod::Get },
+                    body: if fs.body.is_empty() { None } else { Some(fs.body) },
+                    content_type: Some(fs.content_type),
+                });
+            }
+        }
+
+        // 5. Check for pending navigation (location.href set by JS)
+        if let Some(runtime) = &self.runtime {
+            let nav = runtime.state.borrow_mut().pending_navigation.take();
+            if let Some(url) = nav {
+                return EngineAction::Navigate(NavigateRequest {
+                    url,
+                    method: HttpMethod::Get,
+                    body: None,
+                    content_type: None,
+                });
+            }
+        }
+
+        // 6. After event dispatch, check if this is a navigable <a> element
         let tree = self.tree.borrow();
         let node = tree.get_node(node_id);
         if let NodeData::Element { tag_name, .. } = &node.data {

@@ -156,6 +156,31 @@ pub fn to_taffy_style(node: &Node) -> Style {
         height: parse_dimension(cs.get("max-height")),
     };
 
+    // Float approximation: floated elements become block-level.
+    // float:left → margin-right:auto (pushes left)
+    // float:right → margin-left:auto (pushes right)
+    if let Some(float_val) = cs.get("float") {
+        match float_val.as_str() {
+            "left" => {
+                if style.display == taffy::Display::Flex || style.display == taffy::Display::Grid {
+                    // Already block-level, keep as-is
+                } else {
+                    style.display = taffy::Display::Block;
+                }
+                style.margin.right = LengthPercentageAuto::Auto;
+            }
+            "right" => {
+                if style.display == taffy::Display::Flex || style.display == taffy::Display::Grid {
+                    // Already block-level, keep as-is
+                } else {
+                    style.display = taffy::Display::Block;
+                }
+                style.margin.left = LengthPercentageAuto::Auto;
+            }
+            _ => {}
+        }
+    }
+
     style
 }
 

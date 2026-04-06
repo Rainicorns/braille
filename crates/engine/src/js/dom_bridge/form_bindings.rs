@@ -57,6 +57,44 @@ pub(crate) fn form_bindings_js() -> &'static str {
             var dispatched = this.dispatchEvent(evt);
             // If preventDefault was called, do not submit
             if (!dispatched) return;
+            // Collect form data and trigger navigation
+            var action = this.getAttribute('action') || location.href;
+            var method = (this.getAttribute('method') || 'GET').toUpperCase();
+            var controls = this.querySelectorAll('input, select, textarea');
+            var pairs = [];
+            for (var j = 0; j < controls.length; j++) {
+                var ctrl = controls[j];
+                var name = ctrl.getAttribute('name');
+                if (!name) continue;
+                if (ctrl.disabled) continue;
+                var tag = ctrl.tagName;
+                if (tag === 'INPUT') {
+                    var type = (ctrl.getAttribute('type') || 'text').toLowerCase();
+                    if (type === 'checkbox' || type === 'radio') {
+                        if (!ctrl.checked) continue;
+                        pairs.push(encodeURIComponent(name) + '=' + encodeURIComponent(ctrl.value || 'on'));
+                    } else if (type === 'file' || type === 'image' || type === 'reset' || type === 'button') {
+                        continue;
+                    } else {
+                        pairs.push(encodeURIComponent(name) + '=' + encodeURIComponent(ctrl.value || ''));
+                    }
+                } else {
+                    pairs.push(encodeURIComponent(name) + '=' + encodeURIComponent(ctrl.value || ''));
+                }
+            }
+            var qs = pairs.join('&');
+            if (method === 'GET') {
+                var sep = action.indexOf('?') >= 0 ? '&' : '?';
+                location.href = action + (qs ? sep + qs : '');
+            } else {
+                // POST: signal to engine via native function
+                if (typeof __braille_form_submit === 'function') {
+                    __braille_form_submit(action, method, qs, 'application/x-www-form-urlencoded');
+                } else {
+                    // Fallback: navigate with GET
+                    location.href = action;
+                }
+            }
         };
         ElemProto.reset = function() {
             if (this.tagName !== 'FORM') return;

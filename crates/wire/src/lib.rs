@@ -2,6 +2,41 @@ pub mod worker_protocol;
 
 use serde::{Deserialize, Serialize};
 
+// --- Browser Events ---
+
+/// A browser event that needs agent attention.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BrowserEvent {
+    pub id: u64,
+    pub kind: BrowserEventKind,
+    pub timestamp_ms: u64,
+}
+
+/// The kind of browser event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum BrowserEventKind {
+    // Blocking — JS execution is paused until agent responds
+    Alert { message: String },
+    Confirm { message: String },
+    Prompt { message: String, default_value: Option<String> },
+
+    // Actionable — agent can choose to act on these
+    Download { url: String, filename: String, mime_type: Option<String> },
+    WindowOpen { url: String, target: String },
+    GeolocationRequest,
+    ClipboardWrite { text: String },
+    NotificationRequest { title: String, body: Option<String> },
+    FullscreenRequest,
+    PrintRequest,
+    MediaPlayAttempt { src: String },
+
+    // Info-only — logged for agent visibility
+    CspViolation { directive: String, blocked_uri: String },
+    CorsViolation { url: String, origin: String },
+    CertWarning { url: String, reason: String },
+    ServiceWorkerRegister { url: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Command {
     Goto { url: String },
@@ -116,6 +151,8 @@ pub enum HostMessage {
     PrepareCheckpoint,
     /// A worker has been restored after checkpoint (on session restore).
     WorkerRestored { worker_id: u64, url: String },
+    /// Response to a blocking browser event from the host/agent.
+    EventResponse { id: u64, value: String },
 }
 
 /// Message sent from the engine process to the host (CLI) over stdout.
@@ -133,6 +170,8 @@ pub enum EngineMessage {
     TerminateWorker { worker_id: u64 },
     /// Engine is ready for checkpointing; here are the active workers.
     CheckpointReady { active_workers: Vec<WorkerDescriptor> },
+    /// Pending browser events for the agent.
+    BrowserEvents(Vec<BrowserEvent>),
 }
 
 /// Descriptor for an active worker (used during checkpoint/restore).
@@ -187,6 +226,16 @@ pub enum DaemonCommand {
     Close,
     Ping,
     DaemonStop,
+    /// List pending browser events.
+    Events,
+    /// Respond to a blocking browser event (alert/confirm/prompt).
+    RespondEvent { id: u64, value: String },
+    /// Grant a permission.
+    Permit { permission: String },
+    /// Deny a permission.
+    Deny { permission: String },
+    /// Dismiss an info-only browser event.
+    DismissEvent { id: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

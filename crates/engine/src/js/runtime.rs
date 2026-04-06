@@ -489,6 +489,27 @@ impl JsRuntime {
                     safeDispatch(el, new FocusEvent('focusin', {{bubbles: true}}));
                     safeDispatch(el, new FocusEvent('focus', {{bubbles: false}}));
 
+                    // Keyboard events per character of the typed text
+                    var val = el.value || '';
+                    for (var ci = 0; ci < val.length; ci++) {{
+                        var ch = val.charAt(ci);
+                        var code = ch >= 'a' && ch <= 'z' ? 'Key' + ch.toUpperCase()
+                                 : ch >= 'A' && ch <= 'Z' ? 'Key' + ch
+                                 : ch >= '0' && ch <= '9' ? 'Digit' + ch
+                                 : '';
+                        var kInit = {{key: ch, code: code, bubbles: true, cancelable: true}};
+                        safeDispatch(el, new KeyboardEvent('keydown', kInit));
+                        safeDispatch(el, new KeyboardEvent('keypress', kInit));
+                    }}
+                    if (val.length > 0) {{
+                        var lastCh = val.charAt(val.length - 1);
+                        var lastCode = lastCh >= 'a' && lastCh <= 'z' ? 'Key' + lastCh.toUpperCase()
+                                     : lastCh >= 'A' && lastCh <= 'Z' ? 'Key' + lastCh
+                                     : lastCh >= '0' && lastCh <= '9' ? 'Digit' + lastCh
+                                     : '';
+                        safeDispatch(el, new KeyboardEvent('keyup', {{key: lastCh, code: lastCode, bubbles: true, cancelable: true}}));
+                    }}
+
                     // Input/change events (for non-React frameworks and generic listeners)
                     safeDispatch(el, new Event('input', {{bubbles: true}}));
                     safeDispatch(el, new Event('change', {{bubbles: true}}));

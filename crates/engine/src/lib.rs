@@ -1,4 +1,5 @@
 pub mod a11y;
+pub mod browser_events;
 pub mod commands;
 pub mod cookies;
 pub mod css;
@@ -10,6 +11,7 @@ pub mod layout;
 mod loading;
 mod meta_refresh;
 pub mod navigation;
+pub mod permissions;
 mod scripts;
 pub mod transcript;
 
@@ -23,7 +25,8 @@ use std::rc::Rc;
 use crate::dom::tree::DomTree;
 use crate::dom::NodeId;
 use crate::js::JsRuntime;
-use braille_wire::SnapMode;
+use crate::permissions::{PermissionState, Permissions};
+use braille_wire::{BrowserEvent, SnapMode};
 
 // Re-export types that moved to sub-modules so the public API doesn't change.
 pub use crate::meta_refresh::{check_refresh_header, MetaRefresh};
@@ -105,6 +108,8 @@ pub struct Engine {
     /// Tracks elements that have already fired their initial scroll-snap scrollend.
     /// Reset when an element goes back to display:none so it fires again on re-show.
     snap_fired: HashSet<NodeId>,
+    /// Permission states (persists across page loads within session).
+    pub permissions: Permissions,
 }
 
 impl Default for Engine {
@@ -126,6 +131,7 @@ impl Engine {
             runtime_mode: RuntimeMode::default(),
             include_hidden_content: false,
             snap_fired: HashSet::new(),
+            permissions: Permissions::default(),
         }
     }
 
@@ -392,6 +398,15 @@ impl Engine {
         // Restore original attribute values
         self.restore_patched_values(patched);
 
+        // Append browser events footer if any are pending
+        let event_count = self.browser_event_count();
+        if event_count > 0 {
+            result.push_str(&format!(
+                "\n[Browser Events: {} pending. Use 'events' to view.]",
+                event_count
+            ));
+        }
+
         result
     }
 
@@ -537,6 +552,59 @@ impl Engine {
             runtime.set_url(url);
         }
         self.pending_url = Some(url.to_string());
+    }
+
+    // --- Browser Events API ---
+
+    /// Take all pending browser events, clearing the queue.
+    pub fn take_browser_events(&mut self) -> Vec<BrowserEvent> {
+        if let Some(runtime) = &self.runtime {
+            runtime.state.borrow_mut().browser_events.drain()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Number of pending browser events.
+    pub fn browser_event_count(&self) -> usize {
+        if let Some(runtime) = &self.runtime {
+            runtime.state.borrow().browser_events.len()
+        } else {
+            0
+        }
+    }
+
+    /// Respond to a blocking browser event (alert/confirm/prompt).
+    /// Clears the blocking state so JS can resume on next settle().
+    pub fn respond_to_event(&mut self, id: u64, value: String) {
+        if let Some(runtime) = &self.runtime {
+            let mut state = runtime.state.borrow_mut();
+            if state.blocking_event_id == Some(id) {
+                state.blocking_event_response = Some(value);
+                state.blocking_event_id = None;
+            }
+        }
+    }
+
+    /// Dismiss an info-only browser event by ID.
+    pub fn dismiss_event(&mut self, id: u64) {
+        if let Some(runtime) = &self.runtime {
+            runtime.state.borrow_mut().browser_events.remove(id);
+        }
+    }
+
+    /// Set a permission by name.
+    pub fn set_permission(&mut self, name: &str, state: PermissionState) -> bool {
+        self.permissions.set(name, state)
+    }
+
+    /// Check if JS execution is blocked waiting for an event response.
+    pub fn is_blocked_on_event(&self) -> bool {
+        if let Some(runtime) = &self.runtime {
+            runtime.state.borrow().blocking_event_id.is_some()
+        } else {
+            false
+        }
     }
 }
 

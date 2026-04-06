@@ -70,6 +70,12 @@ impl EngineProcess {
                     // TODO: Phase 7 — checkpoint container
                     let _ = active_workers;
                 }
+                Some(EngineMessage::BrowserEvents(events)) => {
+                    // Log browser events to stderr for agent visibility
+                    for event in &events {
+                        eprintln!("[browser-event] id={} {:?}", event.id, event.kind);
+                    }
+                }
                 Some(EngineMessage::NeedFetch(requests)) => {
                     // Resolve URLs and prepare requests before spawning threads
                     #[allow(clippy::type_complexity)]

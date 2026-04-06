@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::browser_events::BrowserEventQueue;
+
 /// A pending fetch request from JS fetch() API.
 pub struct PendingFetch {
     pub id: u64,
@@ -100,6 +102,24 @@ pub struct EngineState {
     pub pending_stylesheet_fetches: Vec<String>,
     /// Pending SSE (EventSource) connections.
     pub pending_sse_connects: Vec<PendingSseConnect>,
+    /// Browser events queue (dialogs, downloads, security violations, etc.).
+    pub browser_events: BrowserEventQueue,
+    /// When a blocking event (alert/confirm/prompt) is active, JS is paused.
+    pub blocking_event_id: Option<u64>,
+    /// Response from the host for the current blocking event.
+    pub blocking_event_response: Option<String>,
+    /// Clipboard buffer (for navigator.clipboard read/write).
+    pub clipboard_buffer: String,
+    /// Pending form submission (POST form data).
+    pub pending_form_submit: Option<PendingFormSubmit>,
+}
+
+/// A pending form POST submission.
+pub struct PendingFormSubmit {
+    pub url: String,
+    pub method: String,
+    pub body: String,
+    pub content_type: String,
 }
 
 pub struct PendingWsConnect {
@@ -152,6 +172,11 @@ impl EngineState {
             pending_module_fetches: Vec::new(),
             pending_stylesheet_fetches: Vec::new(),
             pending_sse_connects: Vec::new(),
+            browser_events: BrowserEventQueue::new(),
+            blocking_event_id: None,
+            blocking_event_response: None,
+            clipboard_buffer: String::new(),
+            pending_form_submit: None,
         }
     }
 }

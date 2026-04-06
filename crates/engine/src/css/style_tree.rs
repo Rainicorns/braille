@@ -407,6 +407,15 @@ fn computed_style_to_map(style: &ComputedStyle) -> HashMap<String, String> {
     map.insert("transition-duration".to_string(), style.transition_duration.clone());
     map.insert("transition-timing-function".to_string(), style.transition_timing_function.clone());
     map.insert("transition-delay".to_string(), style.transition_delay.clone());
+    if !style.content.is_empty() {
+        map.insert("content".to_string(), style.content.clone());
+    }
+    if style.container_type != "normal" {
+        map.insert("container-type".to_string(), style.container_type.clone());
+    }
+    if !style.container_name.is_empty() {
+        map.insert("container-name".to_string(), style.container_name.clone());
+    }
 
     // Custom properties
     for (name, value) in &style.custom_properties {

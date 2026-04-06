@@ -36,9 +36,42 @@ impl Engine {
             ));
         }
 
-        // 3. Set focus
+        // 3. Set focus and fire focus events
         drop(tree);
+        let old_focused = self.focused_element;
         self.focused_element = Some(node_id);
+
+        if let Some(runtime) = self.runtime.as_mut() {
+            // Fire blur events on the old element
+            if let Some(old_nid) = old_focused {
+                let js = format!(
+                    r#"(function(){{
+                        var el = __braille_get_element_wrapper({old});
+                        var related = __braille_get_element_wrapper({new});
+                        if (!el) return;
+                        el.dispatchEvent(new FocusEvent('focusout', {{bubbles:true, relatedTarget:related}}));
+                        el.dispatchEvent(new FocusEvent('blur', {{bubbles:false, relatedTarget:related}}));
+                    }})()"#,
+                    old = old_nid,
+                    new = node_id,
+                );
+                let _ = runtime.eval(&js);
+            }
+            // Fire focus events on the new element
+            let js = format!(
+                r#"(function(){{
+                    var el = __braille_get_element_wrapper({new});
+                    var related = {old_expr};
+                    if (!el) return;
+                    el.dispatchEvent(new FocusEvent('focusin', {{bubbles:true, relatedTarget:related}}));
+                    el.dispatchEvent(new FocusEvent('focus', {{bubbles:false, relatedTarget:related}}));
+                }})()"#,
+                new = node_id,
+                old_expr = old_focused.map_or("null".to_string(), |id| format!("__braille_get_element_wrapper({})", id)),
+            );
+            let _ = runtime.eval(&js);
+            runtime.run_jobs();
+        }
 
         Ok(())
     }

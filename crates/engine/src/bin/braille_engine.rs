@@ -161,6 +161,9 @@ fn main() {
                     },
                 );
             }
+            HostMessage::EventResponse { id, value } => {
+                session.engine.respond_to_event(id, value);
+            }
         }
     }
 }
@@ -206,6 +209,12 @@ fn handle_command(
 
     // Emit any pending worker operations before returning the result
     drain_pending_workers(session, writer);
+
+    // Emit any pending browser events
+    let browser_events = session.engine.take_browser_events();
+    if !browser_events.is_empty() {
+        send(writer, &EngineMessage::BrowserEvents(browser_events));
+    }
 
     // Attach any console output produced during this command.
     let console = session.engine.drain_console();
@@ -337,6 +346,35 @@ fn handle_command_inner(
             // The main loop will send this via EngineMessage::CommandResult,
             // then we rely on the host closing stdin (triggering EOF) to stop the loop.
             DaemonResponse::ok("session closed".to_string())
+        }
+        DaemonCommand::Events => {
+            let events = session.engine.take_browser_events();
+            let json = serde_json::to_string_pretty(&events).unwrap_or_else(|_| "[]".to_string());
+            DaemonResponse::ok(json)
+        }
+        DaemonCommand::RespondEvent { id, value } => {
+            session.engine.respond_to_event(id, value);
+            session.engine.settle();
+            resolve_pending_fetches(session, reader, writer, "respond-event");
+            DaemonResponse::ok("ok".to_string())
+        }
+        DaemonCommand::Permit { permission } => {
+            if session.engine.set_permission(&permission, braille_engine::permissions::PermissionState::Allow) {
+                DaemonResponse::ok(format!("{permission}: allowed"))
+            } else {
+                DaemonResponse::err(format!("unknown permission: {permission}"))
+            }
+        }
+        DaemonCommand::Deny { permission } => {
+            if session.engine.set_permission(&permission, braille_engine::permissions::PermissionState::Deny) {
+                DaemonResponse::ok(format!("{permission}: denied"))
+            } else {
+                DaemonResponse::err(format!("unknown permission: {permission}"))
+            }
+        }
+        DaemonCommand::DismissEvent { id } => {
+            session.engine.dismiss_event(id);
+            DaemonResponse::ok("dismissed".to_string())
         }
         DaemonCommand::NewSession | DaemonCommand::DaemonStop | DaemonCommand::Ping => {
             DaemonResponse::err("unexpected command for engine process".to_string())

@@ -243,6 +243,55 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     iframeWindow.scrollTo(iframeWindow.__scrollX + dx, iframeWindow.__scrollY + dy);
                 };
 
+                // Auto-copy all Web API constructors from parent window to iframe window.
+                // This ensures AbortSignal, URLSearchParams, DOMParser, Blob, File,
+                // FileReader, Headers, Request, Response, FormData, ReadableStream,
+                // PerformanceObserver, MutationObserver, ResizeObserver, IntersectionObserver,
+                // EventSource, etc. are all available in the iframe context.
+                var IFRAME_GLOBALS = [
+                    'URL', 'URLSearchParams', 'DOMParser', 'Blob', 'File', 'FileReader',
+                    'Headers', 'Request', 'Response', 'FormData', 'ReadableStream',
+                    'PerformanceObserver', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver',
+                    'EventSource', 'Worker', 'SharedWorker',
+                    'Proxy', 'Reflect', 'WeakMap', 'WeakSet', 'WeakRef',
+                    'Float32Array', 'Float64Array', 'Int8Array', 'Int16Array', 'Int32Array',
+                    'Uint16Array', 'Uint32Array', 'Uint8ClampedArray',
+                    'SharedArrayBuffer', 'Atomics',
+                    'fetch', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame',
+                    'requestIdleCallback', 'cancelIdleCallback',
+                    'getComputedStyle', 'getSelection', 'matchMedia',
+                    'structuredClone', 'reportError',
+                    'UIEvent', 'FocusEvent', 'MouseEvent', 'KeyboardEvent', 'PointerEvent',
+                    'InputEvent', 'WheelEvent', 'TouchEvent', 'AnimationEvent', 'TransitionEvent',
+                    'ClipboardEvent', 'PopStateEvent', 'HashChangeEvent', 'StorageEvent',
+                    'PromiseRejectionEvent', 'ErrorEvent',
+                    'CSSStyleSheet', 'DOMRect', 'DOMRectReadOnly', 'DOMPoint', 'DOMPointReadOnly',
+                    'DOMMatrix', 'DOMMatrixReadOnly', 'Range',
+                    'NodeFilter', 'NodeIterator', 'TreeWalker', 'NodeList', 'HTMLCollection',
+                    'MessageChannel', 'BroadcastChannel',
+                    'Notification', 'OffscreenCanvas', 'ImageBitmap', 'createImageBitmap', 'ImageData',
+                    'CanvasRenderingContext2D', 'Path2D', 'CanvasGradient', 'CanvasPattern',
+                    'indexedDB', 'IDBKeyRange',
+                    'DOMTokenList', 'DOMImplementation',
+                    'alert', 'confirm', 'prompt',
+                    'localStorage', 'sessionStorage',
+                    'screen', 'visualViewport',
+                    'CharacterData', 'Text', 'Comment', 'Document', 'XMLDocument',
+                    'HTMLInputElement', 'HTMLTextAreaElement', 'HTMLSelectElement',
+                    'HTMLFormElement', 'HTMLAnchorElement', 'HTMLImageElement',
+                    'HTMLButtonElement', 'HTMLOptionElement', 'HTMLCanvasElement',
+                    'HTMLVideoElement', 'HTMLAudioElement', 'HTMLIFrameElement',
+                    'HTMLTemplateElement', 'HTMLScriptElement', 'HTMLStyleElement',
+                    'SVGElement', 'Window',
+                    'CustomElementRegistry', 'ShadowRoot',
+                ];
+                for (var gi = 0; gi < IFRAME_GLOBALS.length; gi++) {
+                    var gname = IFRAME_GLOBALS[gi];
+                    if (!(gname in iframeWindow) && typeof globalThis[gname] !== 'undefined') {
+                        iframeWindow[gname] = globalThis[gname];
+                    }
+                }
+
                 return { window: iframeWindow, parentProxy: parentProxy };
             }
 
@@ -447,10 +496,14 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     if (iframeRealms[nid]) continue;
 
                     var src = __braille_iframe_get_src(nid);
-                    if (!src) continue;
-
-                    var content = __braille_iframe_lookup_content(src);
-                    if (!content) continue;
+                    var content;
+                    if (src) {
+                        content = __braille_iframe_lookup_content(src);
+                        if (!content) continue;
+                    } else {
+                        // No src — create an about:blank iframe realm
+                        content = '<html><head></head><body></body></html>';
+                    }
 
                     var realm = __braille_create_iframe_realm(nid, content);
 
@@ -479,6 +532,10 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     if (this.__nid === undefined) return undefined;
                     if (__n_getTagName(this.__nid) !== 'IFRAME') return undefined;
                     var realm = iframeRealms[this.__nid];
+                    if (!realm) {
+                        // Lazily create about:blank realm for iframes not yet processed
+                        realm = __braille_create_iframe_realm(this.__nid, '<html><head></head><body></body></html>');
+                    }
                     return realm ? realm.window : null;
                 },
                 configurable: true

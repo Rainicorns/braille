@@ -575,9 +575,20 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             __currentEvent = __prevEvent;
         }
 
-        // __braille_click(nodeId) — called from Rust
+        // __braille_click(nodeId) — called from Rust with full pointer/mouse event sequence
         globalThis.__braille_click = function(nodeId) {
             var el = __w(nodeId);
+            // Compute approximate center coordinates
+            var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {left:0,top:0,width:0,height:0};
+            var cx = Math.round(rect.left + rect.width / 2);
+            var cy = Math.round(rect.top + rect.height / 2);
+            var commonInit = {bubbles:true, cancelable:true, clientX:cx, clientY:cy, screenX:cx, screenY:cy, button:0, buttons:1};
+            // Full event sequence: pointerdown → mousedown → pointerup → mouseup → click
+            el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({pointerId:1, pointerType:'mouse'}, commonInit)));
+            el.dispatchEvent(new MouseEvent('mousedown', commonInit));
+            commonInit.buttons = 0;
+            el.dispatchEvent(new PointerEvent('pointerup', Object.assign({pointerId:1, pointerType:'mouse'}, commonInit)));
+            el.dispatchEvent(new MouseEvent('mouseup', commonInit));
             el.click();
         };
 
@@ -820,6 +831,97 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
             __ceFlushReactions();
             return newChild;
+        };
+
+        // moveBefore() — atomic move without disconnect/connect lifecycle
+        // NOTE: This is defined on the shared EP prototype, so it's available on all nodes
+        // including non-ParentNode types (Text, DocumentType, etc.). The proper fix is to
+        // split EP into a Node → ParentNode → Element hierarchy so moveBefore only exists
+        // on ParentNode types. Until then, we validate nodeType at runtime.
+        EP.moveBefore = function(node, child) {
+            // ParentNode gate — should only be on Element(1), Document(9), DocumentFragment(11)
+            // TODO: proper fix is Node → ParentNode → Element prototype hierarchy
+            var pt = this.nodeType;
+            if (pt !== 1 && pt !== 9 && pt !== 11) {
+                throw new TypeError("moveBefore is not a function");
+            }
+            // Type checks per spec
+            if (arguments.length < 2) {
+                throw new TypeError("Failed to execute 'moveBefore' on 'Node': 2 arguments required, but only " + arguments.length + " present.");
+            }
+            if (node === null || node === undefined || typeof node !== 'object' || node.nodeType === undefined) {
+                throw new TypeError("Failed to execute 'moveBefore' on 'Node': parameter 1 is not of type 'Node'.");
+            }
+            if (child !== null && child !== undefined && (typeof child !== 'object' || child.nodeType === undefined)) {
+                throw new TypeError("Failed to execute 'moveBefore' on 'Node': parameter 2 is not of type 'Node'.");
+            }
+            // Only Element (1) and CharacterData (3, 7, 8) nodes can be moved
+            var nt = node.nodeType;
+            if (nt !== 1 && nt !== 3 && nt !== 7 && nt !== 8) {
+                throw new DOMException("The node to be moved is not an Element or CharacterData node.", "HierarchyRequestError");
+            }
+            if (this.__nid === undefined || node.__nid === undefined) return;
+            // node must have a parent (i.e., be in a tree)
+            var nodeParent = __n_getParent(node.__nid);
+            if (nodeParent < 0) {
+                throw new DOMException("The node to be moved must have a parent.", "HierarchyRequestError");
+            }
+            // node's parent must be connected iff this is connected (same connectivity)
+            var thisConnected = __isConnected(this.__nid);
+            var nodeConnected = __isConnected(node.__nid);
+            if (thisConnected !== nodeConnected) {
+                throw new DOMException("Cannot move between connected and disconnected trees.", "HierarchyRequestError");
+            }
+            // If both disconnected, they must share a root (traversing shadow hosts)
+            if (!thisConnected && !nodeConnected) {
+                function findRoot(nid) {
+                    var cur = nid;
+                    while (true) {
+                        var p = __n_getParent(cur);
+                        if (p >= 0) { cur = p; continue; }
+                        // Check for shadow root → host relationship
+                        var w = __w(cur);
+                        if (w && w.host && w.host.__nid !== undefined) { cur = w.host.__nid; continue; }
+                        break;
+                    }
+                    return cur;
+                }
+                if (findRoot(this.__nid) !== findRoot(node.__nid)) {
+                    throw new DOMException("Cannot move between different disconnected trees.", "HierarchyRequestError");
+                }
+            }
+            // Ancestor check: node must not be an ancestor of parent
+            var anc = this.__nid;
+            while (anc >= 0) {
+                if (anc === node.__nid) {
+                    throw new DOMException("The new parent is a descendant of the node to be moved.", "HierarchyRequestError");
+                }
+                anc = __n_getParent(anc);
+            }
+            // Document parent: Text not allowed, only one Element allowed
+            if (pt === 9) {
+                if (nt === 3) throw new DOMException("Cannot insert a Text node under a Document.", "HierarchyRequestError");
+                if (nt === 1) {
+                    var docKids = __n_getAllChildIds(this.__nid);
+                    for (var di = 0; di < docKids.length; di++) {
+                        var dkw = __w(docKids[di]);
+                        if (dkw.nodeType === 1 && dkw.__nid !== node.__nid) {
+                            throw new DOMException("Only one element child is allowed in a Document.", "HierarchyRequestError");
+                        }
+                    }
+                }
+            }
+            // If child is specified and not null, it must be a child of this node
+            if (child !== null && child !== undefined) {
+                if (child.__nid === undefined || __n_getParent(child.__nid) !== this.__nid) {
+                    throw new DOMException("The child to insert before is not a child of this node.", "NotFoundError");
+                }
+                if (node.__nid === child.__nid) return;
+            }
+            // Perform atomic move
+            var refId = (child && child.__nid !== undefined) ? child.__nid : -1;
+            __n_insertBefore(this.__nid, node.__nid, refId);
+            if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [node]});
         };
 
         // Fullscreen tracking
@@ -1185,8 +1287,132 @@ pub(super) fn wrapper_and_dispatch_js() -> &'static str {
             }
             this.commonAncestorContainer = null;
         };
+        BrailleRange.prototype.deleteContents = function() {
+            if (!this.startContainer) return;
+            if (this.startContainer === this.endContainer && this.startContainer.nodeType === 3) {
+                var t = this.startContainer.textContent || '';
+                this.startContainer.textContent = t.substring(0, this.startOffset) + t.substring(this.endOffset);
+            }
+        };
+        BrailleRange.prototype.extractContents = function() {
+            var frag = document.createDocumentFragment();
+            if (this.startContainer && this.startContainer.nodeType === 3) {
+                var t = this.startContainer.textContent || '';
+                var extracted = t.substring(this.startOffset, this.endOffset);
+                this.startContainer.textContent = t.substring(0, this.startOffset) + t.substring(this.endOffset);
+                frag.appendChild(document.createTextNode(extracted));
+            }
+            return frag;
+        };
+        BrailleRange.prototype.cloneContents = function() {
+            var frag = document.createDocumentFragment();
+            if (this.startContainer && this.startContainer.nodeType === 3) {
+                var t = this.startContainer.textContent || '';
+                frag.appendChild(document.createTextNode(t.substring(this.startOffset, this.endOffset)));
+            }
+            return frag;
+        };
+        BrailleRange.prototype.insertNode = function(node) {
+            if (!this.startContainer) return;
+            if (this.startContainer.nodeType === 3) {
+                var parent = this.startContainer.parentNode;
+                if (parent) {
+                    var t = this.startContainer.textContent || '';
+                    var before = document.createTextNode(t.substring(0, this.startOffset));
+                    var after = document.createTextNode(t.substring(this.startOffset));
+                    parent.insertBefore(before, this.startContainer);
+                    parent.insertBefore(node, this.startContainer);
+                    parent.insertBefore(after, this.startContainer);
+                    parent.removeChild(this.startContainer);
+                }
+            } else if (this.startContainer.childNodes) {
+                var ref = this.startContainer.childNodes[this.startOffset] || null;
+                this.startContainer.insertBefore(node, ref);
+            }
+        };
+        BrailleRange.prototype.surroundContents = function(newParent) {
+            var contents = this.extractContents();
+            this.insertNode(newParent);
+            newParent.appendChild(contents);
+            this.selectNode(newParent);
+        };
+        BrailleRange.prototype.compareBoundaryPoints = function(how, sourceRange) {
+            function pos(container, offset) { return {c: container, o: offset}; }
+            var thisStart = pos(this.startContainer, this.startOffset);
+            var thisEnd = pos(this.endContainer, this.endOffset);
+            var srcStart = pos(sourceRange.startContainer, sourceRange.startOffset);
+            var srcEnd = pos(sourceRange.endContainer, sourceRange.endOffset);
+            var a, b;
+            if (how === 0) { a = thisStart; b = srcStart; }       // START_TO_START
+            else if (how === 1) { a = thisStart; b = srcEnd; }    // START_TO_END
+            else if (how === 2) { a = thisEnd; b = srcEnd; }      // END_TO_END
+            else { a = thisEnd; b = srcStart; }                    // END_TO_START
+            if (a.c === b.c) return a.o < b.o ? -1 : a.o > b.o ? 1 : 0;
+            return 0; // simplified: can't reliably compare different containers without tree walk
+        };
+        BrailleRange.prototype.isPointInRange = function(node, offset) {
+            return this.startContainer === node && offset >= this.startOffset && offset <= this.endOffset;
+        };
         globalThis.Range = BrailleRange;
         doc.createRange = function() { return new BrailleRange(); };
+
+        // DOMRect / DOMRectReadOnly
+        function DOMRectReadOnly(x, y, width, height) {
+            this.x = x || 0; this.y = y || 0; this.width = width || 0; this.height = height || 0;
+        }
+        Object.defineProperties(DOMRectReadOnly.prototype, {
+            top: { get: function() { return Math.min(this.y, this.y + this.height); } },
+            bottom: { get: function() { return Math.max(this.y, this.y + this.height); } },
+            left: { get: function() { return Math.min(this.x, this.x + this.width); } },
+            right: { get: function() { return Math.max(this.x, this.x + this.width); } },
+        });
+        DOMRectReadOnly.prototype.toJSON = function() {
+            return {x:this.x,y:this.y,width:this.width,height:this.height,top:this.top,bottom:this.bottom,left:this.left,right:this.right};
+        };
+        DOMRectReadOnly.fromRect = function(o) { o = o || {}; return new DOMRectReadOnly(o.x, o.y, o.width, o.height); };
+        function DOMRect(x, y, width, height) { DOMRectReadOnly.call(this, x, y, width, height); }
+        DOMRect.prototype = Object.create(DOMRectReadOnly.prototype);
+        DOMRect.prototype.constructor = DOMRect;
+        DOMRect.fromRect = function(o) { o = o || {}; return new DOMRect(o.x, o.y, o.width, o.height); };
+        globalThis.DOMRect = DOMRect;
+        globalThis.DOMRectReadOnly = DOMRectReadOnly;
+
+        // DOMPoint / DOMPointReadOnly
+        function DOMPointReadOnly(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; this.w = w === undefined ? 1 : w; }
+        DOMPointReadOnly.fromPoint = function(o) { o = o || {}; return new DOMPointReadOnly(o.x, o.y, o.z, o.w); };
+        DOMPointReadOnly.prototype.toJSON = function() { return {x:this.x,y:this.y,z:this.z,w:this.w}; };
+        function DOMPoint(x, y, z, w) { DOMPointReadOnly.call(this, x, y, z, w); }
+        DOMPoint.prototype = Object.create(DOMPointReadOnly.prototype);
+        DOMPoint.prototype.constructor = DOMPoint;
+        DOMPoint.fromPoint = function(o) { o = o || {}; return new DOMPoint(o.x, o.y, o.z, o.w); };
+        globalThis.DOMPoint = DOMPoint;
+        globalThis.DOMPointReadOnly = DOMPointReadOnly;
+
+        // DOMMatrix / DOMMatrixReadOnly (2D affine)
+        function DOMMatrixReadOnly(init) {
+            this.a = 1; this.b = 0; this.c = 0; this.d = 1; this.e = 0; this.f = 0;
+            this.is2D = true; this.isIdentity = true;
+            if (Array.isArray(init) && init.length >= 6) {
+                this.a = init[0]; this.b = init[1]; this.c = init[2]; this.d = init[3]; this.e = init[4]; this.f = init[5];
+                this.isIdentity = (this.a===1&&this.b===0&&this.c===0&&this.d===1&&this.e===0&&this.f===0);
+            }
+        }
+        Object.defineProperties(DOMMatrixReadOnly.prototype, {
+            m11:{get:function(){return this.a}}, m12:{get:function(){return this.b}},
+            m21:{get:function(){return this.c}}, m22:{get:function(){return this.d}},
+            m41:{get:function(){return this.e}}, m42:{get:function(){return this.f}},
+        });
+        DOMMatrixReadOnly.prototype.toFloat64Array = function() { return new Float64Array([this.a,this.b,this.c,this.d,this.e,this.f]); };
+        function DOMMatrix(init) { DOMMatrixReadOnly.call(this, init); }
+        DOMMatrix.prototype = Object.create(DOMMatrixReadOnly.prototype);
+        DOMMatrix.prototype.constructor = DOMMatrix;
+        DOMMatrix.prototype.translateSelf = function(tx, ty) { this.e += tx; this.f += (ty||0); this.isIdentity = false; return this; };
+        DOMMatrix.prototype.scaleSelf = function(sx, sy) { sy = sy === undefined ? sx : sy; this.a *= sx; this.d *= sy; this.isIdentity = false; return this; };
+        DOMMatrix.prototype.rotateSelf = function(angle) { var rad = angle * Math.PI / 180; var cos = Math.cos(rad); var sin = Math.sin(rad); var a = this.a; var b = this.b; this.a = a*cos+this.c*sin; this.b = b*cos+this.d*sin; this.c = -a*sin+this.c*cos; this.d = -b*sin+this.d*cos; this.isIdentity = false; return this; };
+        DOMMatrix.prototype.invertSelf = function() { var det = this.a*this.d - this.b*this.c; if (det === 0) { this.a=NaN;this.b=NaN;this.c=NaN;this.d=NaN;this.e=NaN;this.f=NaN; return this; } var a=this.d/det,b=-this.b/det,c=-this.c/det,d=this.a/det,e=(this.c*this.f-this.d*this.e)/det,f=(this.b*this.e-this.a*this.f)/det; this.a=a;this.b=b;this.c=c;this.d=d;this.e=e;this.f=f; this.isIdentity = false; return this; };
+        DOMMatrix.fromMatrix = function(o) { o = o || {}; return new DOMMatrix([o.a||1,o.b||0,o.c||0,o.d||1,o.e||0,o.f||0]); };
+        globalThis.DOMMatrix = DOMMatrix;
+        globalThis.DOMMatrixReadOnly = DOMMatrixReadOnly;
 
         // window.__et_listeners initialized here; methods assigned after EventTarget is defined (below)
         window.__et_listeners = {};

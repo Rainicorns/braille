@@ -571,8 +571,9 @@ impl<'a> Element for DomElement<'a> {
         _pseudo: &<Self::Impl as selectors::SelectorImpl>::PseudoElement,
         _context: &mut MatchingContext<Self::Impl>,
     ) -> bool {
-        // FLAG: Pseudo-elements (::before, ::after) are not yet implemented
-        false
+        // Return true so ::before/::after selectors can match.
+        // The actual content generation happens in the a11y serializer.
+        true
     }
 
     fn apply_selector_flags(&self, _flags: selectors::matching::ElementSelectorFlags) {

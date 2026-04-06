@@ -1568,7 +1568,7 @@ PASS wpt:WebCryptoAPI/import_export/okp_importKey_X25519.https.any.js alt:cargo:
 PASS wpt:WebCryptoAPI/import_export/okp_importKey_failures_Ed25519.https.any.js alt:cargo:crypto_alts::okp_import_export
 PASS wpt:WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js alt:cargo:crypto_alts::wrap_unwrap_keys
 PASS wpt:dom/abort/AbortSignal.any.js
-FAIL wpt:dom/abort/abort-signal-timeout.html
+PASS wpt:dom/abort/abort-signal-timeout.html
 FAIL wpt:dom/nodes/moveBefore/Node-moveBefore.html
 NOT_RUN wpt:dom/nodes/moveBefore/child-style-preserve.html
 NOT_RUN wpt:dom/nodes/moveBefore/chrome-338071841-crash.html
