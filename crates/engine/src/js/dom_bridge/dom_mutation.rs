@@ -277,14 +277,16 @@ pub(super) fn dom_mutation_js() -> &'static str {
             __n_insertBefore(this.__nid, node.__nid, refId);
             if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [node]});
 
-            // Fire CE lifecycle: per spec, element stays connected during move
-            for (var cei = 0; cei < ceNodes.length; cei++) {
-                var ceEl = ceNodes[cei];
-                if (typeof ceEl.connectedMoveCallback === 'function') {
-                    ceEl.connectedMoveCallback();
-                } else {
-                    if (typeof ceEl.disconnectedCallback === 'function') ceEl.disconnectedCallback();
-                    if (typeof ceEl.connectedCallback === 'function') ceEl.connectedCallback();
+            // Fire CE lifecycle: per spec, only when connected (element stays connected during move)
+            if (thisConnected) {
+                for (var cei = 0; cei < ceNodes.length; cei++) {
+                    var ceEl = ceNodes[cei];
+                    if (typeof ceEl.connectedMoveCallback === 'function') {
+                        ceEl.connectedMoveCallback();
+                    } else {
+                        if (typeof ceEl.disconnectedCallback === 'function') ceEl.disconnectedCallback();
+                        if (typeof ceEl.connectedCallback === 'function') ceEl.connectedCallback();
+                    }
                 }
             }
         };

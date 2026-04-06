@@ -455,14 +455,16 @@ pub(super) fn element_properties_js() -> &'static str {
                 get: function() {
                     var t = this.tagName;
                     if (t !== 'A' && t !== 'AREA' && t !== 'LINK') return undefined;
-                    return __makeDOMTokenList(this, 'rel');
+                    var supported = ['alternate','author','dns-prefetch','help','icon','license','modulepreload','nofollow','noopener','noreferrer','opener','prefetch','preconnect','preload','prerender','stylesheet','tag'];
+                    return __makeDOMTokenList(this, 'rel', supported);
                 },
                 configurable: true
             },
             sandbox: {
                 get: function() {
                     if (this.tagName !== 'IFRAME') return undefined;
-                    return __makeDOMTokenList(this, 'sandbox');
+                    var supported = ['allow-downloads','allow-forms','allow-modals','allow-orientation-lock','allow-pointer-lock','allow-popups','allow-popups-to-escape-sandbox','allow-presentation','allow-same-origin','allow-scripts','allow-top-navigation','allow-top-navigation-by-user-activation','allow-top-navigation-to-custom-protocols'];
+                    return __makeDOMTokenList(this, 'sandbox', supported);
                 },
                 configurable: true
             },

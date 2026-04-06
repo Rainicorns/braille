@@ -26,7 +26,8 @@ pub(crate) fn element_prototype_js() -> &'static str {
         }
 
         // Generic DOMTokenList factory for attribute-backed token lists (sizes, relList, sandbox)
-        function __makeDOMTokenList(el, attrName) {
+        // supportedTokens: optional array of lowercase tokens for supports() method
+        function __makeDOMTokenList(el, attrName, supportedTokens) {
             var cacheKey = '__dtl_' + attrName;
             if (el[cacheKey]) { el[cacheKey]._sync(); return el[cacheKey]; }
             function _tokens() { var raw=(el.getAttribute(attrName)||'').split(/\s+/).filter(Boolean),seen={},out=[]; for(var i=0;i<raw.length;i++){if(!seen[raw[i]]){seen[raw[i]]=true;out.push(raw[i]);}} return out; }
@@ -42,6 +43,15 @@ pub(crate) fn element_prototype_js() -> &'static str {
             obj.toString = function() { return el.getAttribute(attrName)||''; };
             Object.defineProperty(obj, 'value', { get: function() { return el.getAttribute(attrName)||''; }, set: function(v) { el.setAttribute(attrName, v); obj._sync(); }, configurable: true });
             obj._sync = function() { var c = _tokens(); for (var i = c.length; i < (obj.length || 0); i++) delete obj[i]; obj.length = c.length; for (var i = 0; i < c.length; i++) obj[i] = c[i]; };
+            if (supportedTokens) {
+                obj.supports = function(token) {
+                    return supportedTokens.indexOf(String(token).toLowerCase()) !== -1;
+                };
+            } else {
+                obj.supports = function() {
+                    throw new TypeError("DOMTokenList has no supported tokens defined");
+                };
+            }
             obj._sync();
             el[cacheKey] = obj;
             return obj;

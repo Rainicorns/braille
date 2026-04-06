@@ -35,7 +35,11 @@ impl DomTree {
             .iter()
             .filter_map(|node| {
                 if let NodeData::Element { ref tag_name, .. } = node.data {
-                    if tag_name.to_ascii_lowercase() == tag_lower {
+                    // Only return nodes that are connected (have a parent).
+                    // Removed nodes stay in the arena but have parent = None.
+                    if node.parent.is_some()
+                        && tag_name.to_ascii_lowercase() == tag_lower
+                    {
                         return Some(node.id);
                     }
                 }

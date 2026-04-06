@@ -489,6 +489,19 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
             };
 
             // Process all iframes: called from Rust process_iframe_loads
+            // Create about:blank realms for parser-inserted iframes (no onload).
+            // Called before scripts so contentWindow is available per spec.
+            globalThis.__braille_init_iframe_realms = function() {
+                var iframeIds = __braille_find_iframes();
+                for (var i = 0; i < iframeIds.length; i++) {
+                    var nid = iframeIds[i];
+                    if (iframeRealms[nid]) continue;
+                    var src = __braille_iframe_get_src(nid);
+                    if (src) continue; // src iframes handled later by process_iframes
+                    __braille_create_iframe_realm(nid, '<html><head></head><body></body></html>');
+                }
+            };
+
             globalThis.__braille_process_iframes = function() {
                 var iframeIds = __braille_find_iframes();
                 for (var i = 0; i < iframeIds.length; i++) {
@@ -532,10 +545,6 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     if (this.__nid === undefined) return undefined;
                     if (__n_getTagName(this.__nid) !== 'IFRAME') return undefined;
                     var realm = iframeRealms[this.__nid];
-                    if (!realm) {
-                        // Lazily create about:blank realm for iframes not yet processed
-                        realm = __braille_create_iframe_realm(this.__nid, '<html><head></head><body></body></html>');
-                    }
                     return realm ? realm.window : null;
                 },
                 configurable: true

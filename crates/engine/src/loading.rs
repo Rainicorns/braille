@@ -49,6 +49,11 @@ impl Engine {
         // 3. Register named elements (id → global) per HTML spec
         Self::register_named_elements(&mut runtime);
 
+        // 3b. Create about:blank realms for parser-inserted iframes.
+        // Per spec, iframe insertion steps run immediately, so contentWindow
+        // must be available before any scripts execute.
+        Self::process_iframe_loads(&mut runtime, &self.tree);
+
         // 4. Walk the tree to find all <script> elements in document order,
         //    collect their text content, and execute each one.
         let scripts = self.collect_scripts();
@@ -62,9 +67,6 @@ impl Engine {
 
         // 4. Fire onload for parser-inserted <link> elements
         Self::fire_link_stylesheet_loads(&mut runtime);
-
-        // 4b. Fire pending timers (dynamic <link> elements schedule onload via setTimeout(0))
-        runtime.fire_ready_timers();
         runtime.run_jobs();
 
         // 5. Store the runtime
@@ -120,6 +122,10 @@ impl Engine {
 
         // Register named elements (id → global) per HTML spec
         Self::register_named_elements(&mut runtime);
+
+        // Create about:blank realms for parser-inserted iframes before scripts run.
+        // Per spec, contentWindow must be available before scripts execute.
+        runtime.eval_or_log("if (typeof __braille_init_iframe_realms === 'function') __braille_init_iframe_realms();");
 
         // Phase 1: Execute non-deferred scripts in document order.
         // Per HTML spec, deferred scripts run after parsing completes but before DOMContentLoaded.
@@ -329,6 +335,10 @@ impl Engine {
 
         // Register named elements (id → global) per HTML spec
         Self::register_named_elements(&mut runtime);
+
+        // Create about:blank realms for parser-inserted iframes before scripts run.
+        // Per spec, contentWindow must be available before scripts execute.
+        runtime.eval_or_log("if (typeof __braille_init_iframe_realms === 'function') __braille_init_iframe_realms();");
 
         // Phase 1: Execute non-deferred scripts in document order.
         for descriptor in descriptors {
