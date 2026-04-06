@@ -81,14 +81,15 @@ pub enum HttpMethod {
     Post,
 }
 
-// NOTE: Simplified version without headers. If more complex request handling
-// is needed (e.g., custom headers, authentication), extend this struct.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NavigateRequest {
     pub url: String,
     pub method: HttpMethod,
     pub body: Option<String>,
     pub content_type: Option<String>,
+    /// Custom HTTP headers (e.g., Authorization, User-Agent overrides).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -247,6 +248,9 @@ pub struct DaemonResponse {
     /// Console output (log/warn/error) captured since last command.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub console: Vec<String>,
+    /// HTTP status code from the upstream response, if applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
 }
 
 impl DaemonResponse {
@@ -257,6 +261,7 @@ impl DaemonResponse {
             content: Some(content),
             error: None,
             console: Vec::new(),
+            status_code: None,
         }
     }
 
@@ -267,6 +272,7 @@ impl DaemonResponse {
             content,
             error: None,
             console: Vec::new(),
+            status_code: None,
         }
     }
 
@@ -277,6 +283,7 @@ impl DaemonResponse {
             content: None,
             error: Some(message),
             console: Vec::new(),
+            status_code: None,
         }
     }
 
@@ -350,7 +357,7 @@ mod tests {
     #[test]
     fn navigate_request_get_roundtrip() {
         assert_roundtrip!(
-            NavigateRequest { url: "https://example.com/page".into(), method: HttpMethod::Get, body: None, content_type: None },
+            NavigateRequest { url: "https://example.com/page".into(), method: HttpMethod::Get, body: None, content_type: None, headers: vec![] },
             NavigateRequest
         );
     }
@@ -363,6 +370,7 @@ mod tests {
                 method: HttpMethod::Post,
                 body: Some("name=Alice&email=alice@example.com".into()),
                 content_type: Some("application/x-www-form-urlencoded".into()),
+                headers: vec![],
             },
             NavigateRequest
         );
@@ -381,6 +389,7 @@ mod tests {
                 method: HttpMethod::Post,
                 body: Some("data".into()),
                 content_type: Some("text/plain".into()),
+                headers: vec![],
             }),
             EngineAction
         );
@@ -434,6 +443,78 @@ mod tests {
             DaemonResponse::ok_with_session("sess_abc12345".into(), Some("content".into())),
             DaemonResponse
         );
+    }
+
+    // --- Auth support tests ---
+
+    #[test]
+    fn navigate_request_with_headers_roundtrip() {
+        assert_roundtrip!(
+            NavigateRequest {
+                url: "https://api.example.com/data".into(),
+                method: HttpMethod::Get,
+                body: None,
+                content_type: None,
+                headers: vec![
+                    ("Authorization".into(), "Bearer tok_abc123".into()),
+                    ("User-Agent".into(), "Braille/1.0".into()),
+                ],
+            },
+            NavigateRequest
+        );
+    }
+
+    #[test]
+    fn navigate_request_headers_omitted_when_empty() {
+        let req = NavigateRequest {
+            url: "https://example.com".into(),
+            method: HttpMethod::Get,
+            body: None,
+            content_type: None,
+            headers: vec![],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("headers"), "empty headers should be skipped in JSON");
+        let deserialized: NavigateRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, deserialized);
+    }
+
+    #[test]
+    fn navigate_request_headers_default_from_old_json() {
+        // Backward compat: JSON without a headers field deserializes to empty vec
+        let json = r#"{"url":"https://example.com","method":"Get","body":null,"content_type":null}"#;
+        let req: NavigateRequest = serde_json::from_str(json).unwrap();
+        assert!(req.headers.is_empty());
+    }
+
+    #[test]
+    fn daemon_response_with_status_code_roundtrip() {
+        let resp = DaemonResponse {
+            success: true,
+            session_id: None,
+            content: Some("page".into()),
+            error: None,
+            console: Vec::new(),
+            status_code: Some(200),
+        };
+        assert_roundtrip!(resp, DaemonResponse);
+    }
+
+    #[test]
+    fn daemon_response_status_code_omitted_when_none() {
+        let resp = DaemonResponse::ok("content".into());
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(!json.contains("status_code"), "None status_code should be skipped in JSON");
+        let deserialized: DaemonResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp, deserialized);
+    }
+
+    #[test]
+    fn daemon_response_status_code_default_from_old_json() {
+        // Backward compat: JSON without status_code deserializes to None
+        let json = r#"{"success":true,"session_id":null,"content":"ok","error":null}"#;
+        let resp: DaemonResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status_code, None);
     }
 
     // --- Engine REPL protocol tests ---
