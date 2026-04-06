@@ -15,8 +15,11 @@ use crate::dom::NodeId;
 
 use super::state::EngineState;
 
+mod dom_mutation;
 mod element_prototype;
+mod event_dispatch;
 mod form_bindings;
+mod global_document;
 mod label_bindings;
 mod native_functions;
 mod wrapper_and_dispatch;
@@ -116,7 +119,11 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         element_prototype::element_prototype_js(),
         form_bindings::form_bindings_js(),
         label_bindings::label_bindings_js(),
-        wrapper_and_dispatch::wrapper_and_dispatch_js(),
+        wrapper_and_dispatch::wrapper_factory_js(),
+        event_dispatch::event_dispatch_js(),
+        dom_mutation::dom_mutation_js(),
+        global_document::global_document_js(),
+        wrapper_and_dispatch::constructors_and_wiring_js(),
         "\n})();\n",
     ].concat();
     // Debug: dump JS around line 2002
