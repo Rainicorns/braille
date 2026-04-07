@@ -43,6 +43,7 @@ impl Engine {
                     method: if fs.method == "POST" { HttpMethod::Post } else { HttpMethod::Get },
                     body: if fs.body.is_empty() { None } else { Some(fs.body) },
                     content_type: Some(fs.content_type),
+                    headers: vec![],
                 });
             }
         }
@@ -56,6 +57,7 @@ impl Engine {
                     method: HttpMethod::Get,
                     body: None,
                     content_type: None,
+                    headers: vec![],
                 });
             }
         }
@@ -71,6 +73,7 @@ impl Engine {
                         method: HttpMethod::Get,
                         body: None,
                         content_type: None,
+                        headers: vec![],
                     });
                 }
             }

@@ -71,6 +71,8 @@ SESSION COMMANDS:
   console                 Show JS console output (log/warn/error)
   transcript              Show the last recorded network transcript
   mark <LABEL>            Insert a labeled marker into the transcript
+  export-cookies          Export all cookies from the session as JSON
+  import-cookies <FILE>   Import cookies from a JSON file into the session
   close                   Close the session";
 
 #[derive(Subcommand)]
@@ -345,7 +347,7 @@ fn run(cli: Cli) -> String {
             let sid = &args[0];
 
             // Catch common mistake: `braille goto <url>` instead of `braille <session_id> goto <url>`
-            let session_commands = ["goto", "click", "type", "select", "snap", "back", "forward", "close", "eval", "console", "transcript", "mark"];
+            let session_commands = ["goto", "click", "type", "select", "snap", "back", "forward", "close", "eval", "console", "transcript", "mark", "export-cookies", "import-cookies"];
             if session_commands.contains(&sid.as_str()) {
                 return format!(
                     "error: '{sid}' is a session command, not a session ID\n\n\

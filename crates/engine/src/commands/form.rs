@@ -54,6 +54,7 @@ impl Engine {
                     method: HttpMethod::Get,
                     body: None,
                     content_type: None,
+                    headers: vec![],
                 })
             }
             HttpMethod::Post => {
@@ -63,6 +64,7 @@ impl Engine {
                     method: HttpMethod::Post,
                     body: Some(encoded),
                     content_type: Some("application/x-www-form-urlencoded".to_string()),
+                    headers: vec![],
                 })
             }
         }

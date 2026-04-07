@@ -214,23 +214,73 @@ fn parse_set_cookie(header: &str, default_domain: &str, default_path: &str, now_
 }
 
 impl Engine {
-    /// Export all cookies from the HTTP cookie jar as serializable structs.
-    /// Returns the HTTP-level cookies (including HttpOnly). JS-only cookies
-    /// (set via document.cookie but not originating from Set-Cookie headers)
-    /// are not included — they lack domain/path/flags metadata.
-    pub fn export_cookies(&self) -> Vec<braille_wire::SerializableCookie> {
-        self.http_cookie_jar
+    /// Export all cookies — both HTTP jar cookies and JS-only cookies (set via
+    /// `document.cookie` without originating from `Set-Cookie` headers).
+    /// JS-only cookies get domain/path inferred from the current page URL.
+    pub fn export_cookies(&mut self) -> Vec<braille_wire::SerializableCookie> {
+        let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut result: Vec<braille_wire::SerializableCookie> = self
+            .http_cookie_jar
             .iter()
-            .map(|c| braille_wire::SerializableCookie {
-                name: c.name.clone(),
-                value: c.value.clone(),
-                domain: c.domain.clone(),
-                path: c.path.clone(),
-                http_only: c.http_only,
-                secure: c.secure,
-                expires_ms: c.expires_ms,
+            .map(|c| {
+                seen_names.insert(c.name.clone());
+                braille_wire::SerializableCookie {
+                    name: c.name.clone(),
+                    value: c.value.clone(),
+                    domain: c.domain.clone(),
+                    path: c.path.clone(),
+                    http_only: c.http_only,
+                    secure: c.secure,
+                    expires_ms: c.expires_ms,
+                }
             })
-            .collect()
+            .collect();
+
+        // Also export JS-only cookies not in the HTTP jar
+        let js_cookie_string = if let Some(runtime) = &mut self.runtime {
+            runtime.eval_to_string("document.cookie").unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        if !js_cookie_string.is_empty() {
+            let parsed_url = self.pending_url.as_ref().and_then(|u| url::Url::parse(u).ok());
+            let default_domain = parsed_url
+                .as_ref()
+                .and_then(|u| u.host_str())
+                .unwrap_or("localhost")
+                .to_string();
+            let default_path = parsed_url
+                .as_ref()
+                .map(|u| {
+                    let p = u.path();
+                    match p.rfind('/') {
+                        Some(i) if i > 0 => &p[..i],
+                        _ => "/",
+                    }
+                })
+                .unwrap_or("/")
+                .to_string();
+
+            for pair in js_cookie_string.split("; ") {
+                if let Some(eq_pos) = pair.find('=') {
+                    let name = &pair[..eq_pos];
+                    if !seen_names.contains(name) {
+                        result.push(braille_wire::SerializableCookie {
+                            name: name.to_string(),
+                            value: pair[eq_pos + 1..].to_string(),
+                            domain: default_domain.clone(),
+                            path: default_path.clone(),
+                            http_only: false,
+                            secure: false,
+                            expires_ms: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     /// Import cookies into the HTTP cookie jar, replacing any existing

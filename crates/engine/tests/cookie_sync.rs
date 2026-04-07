@@ -240,9 +240,38 @@ fn import_cookies_replaces_existing_same_identity() {
 
 #[test]
 fn export_cookies_empty_jar() {
-    let e = Engine::new();
+    let mut e = Engine::new();
     let exported = e.export_cookies();
     assert!(exported.is_empty());
+}
+
+#[test]
+fn export_cookies_includes_js_only_cookies() {
+    let mut e = Engine::new();
+    e.set_url("https://example.com/app/page");
+    e.load_html("<html><body></body></html>");
+
+    // Set a cookie via JS only (no Set-Cookie header)
+    e.eval_js(r#"document.cookie = "js_pref=dark""#).unwrap();
+
+    // Also inject an HTTP cookie for contrast
+    e.inject_response_cookies("https://example.com/", &[
+        ("Set-Cookie".to_string(), "http_sess=abc; Path=/; HttpOnly".to_string()),
+    ]);
+
+    let exported = e.export_cookies();
+    assert_eq!(exported.len(), 2, "should have both HTTP and JS cookies: {exported:?}");
+
+    let js_cookie = exported.iter().find(|c| c.name == "js_pref").expect("JS cookie missing");
+    assert_eq!(js_cookie.value, "dark");
+    assert_eq!(js_cookie.domain, "example.com");
+    assert_eq!(js_cookie.path, "/app");
+    assert!(!js_cookie.http_only);
+    assert!(!js_cookie.secure);
+
+    let http_cookie = exported.iter().find(|c| c.name == "http_sess").expect("HTTP cookie missing");
+    assert_eq!(http_cookie.value, "abc");
+    assert!(http_cookie.http_only);
 }
 
 #[test]
