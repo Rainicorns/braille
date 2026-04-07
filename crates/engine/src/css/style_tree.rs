@@ -60,27 +60,44 @@ fn build_ua_rules() -> Vec<CascadeRule> {
     rules
 }
 
-/// Build CascadeRules from the author stylesheets collected from `<style>` elements.
+/// Build CascadeRules from the author stylesheets, scoped by shadow root.
 ///
-/// We re-parse each collected rule's CSS text through the proper `parse_stylesheet`
-/// path so that selectors are parsed by cssparser/selectors rather than the simple
-/// parser in collection.rs. We use the full stylesheet text gathered from each
-/// `<style>` element for accurate parsing.
-fn build_author_rules(tree: &DomTree) -> Vec<CascadeRule> {
-    let mut all_rules = Vec::new();
+/// Returns a map from shadow root scope to rules:
+/// - `None` → document-level rules (from `<style>` not inside any shadow root)
+/// - `Some(sr_nid)` → rules from `<style>` inside that shadow root
+///
+/// Shadow DOM requires that styles defined inside a shadow tree only apply
+/// within that shadow tree, not globally.
+fn build_scoped_author_rules(tree: &DomTree) -> HashMap<Option<NodeId>, Vec<CascadeRule>> {
+    let mut scoped_rules: HashMap<Option<NodeId>, Vec<CascadeRule>> = HashMap::new();
     let mut source_order = 0;
 
-    // Find all <style> elements and parse their CSS through the real parser
     let style_nodes = tree.get_elements_by_tag_name("style");
     for style_node_id in style_nodes {
+        let scope = find_containing_shadow_root(tree, style_node_id);
         let css_text = tree.get_text_content(style_node_id);
         let stylesheet = parse_stylesheet(&css_text);
         let rules = stylesheet_to_rules(&stylesheet, source_order);
         source_order += rules.len();
-        all_rules.extend(rules);
+        scoped_rules.entry(scope).or_default().extend(rules);
     }
 
-    all_rules
+    scoped_rules
+}
+
+/// Walk up from `node_id` to find the containing ShadowRoot, if any.
+/// Returns `Some(shadow_root_nid)` if the node is inside a shadow tree,
+/// or `None` if it's in the document tree.
+fn find_containing_shadow_root(tree: &DomTree, node_id: NodeId) -> Option<NodeId> {
+    let mut current = Some(node_id);
+    while let Some(nid) = current {
+        let node = tree.get_node(nid);
+        if matches!(node.data, NodeData::ShadowRoot { .. }) {
+            return Some(nid);
+        }
+        current = node.parent;
+    }
+    None
 }
 
 /// Parse a CSS selector text string into a `SelectorList`.
@@ -464,8 +481,9 @@ pub fn compute_all_styles(tree: &mut DomTree) {
     // 1. Build UA rules (parsed through the real cssparser path)
     let ua_rules = build_ua_rules();
 
-    // 2. Build author rules from <style> elements (parsed through real cssparser)
-    let author_rules = build_author_rules(tree);
+    // 2. Build scoped author rules from <style> elements (shadow DOM style scoping)
+    let scoped_author_rules = build_scoped_author_rules(tree);
+    let empty_rules = Vec::new();
 
     // 3. Build inline style lookup
     let inline_map = build_inline_map(tree);
@@ -484,16 +502,23 @@ pub fn compute_all_styles(tree: &mut DomTree) {
 
     let mut computed_styles: HashMap<NodeId, ComputedStyle> = HashMap::new();
 
-    // Build a DFS order list of (node_id, is_element) pairs
+    // Build a DFS order list of node IDs.
+    // Also traverses into shadow roots so shadow DOM elements get computed styles.
     let mut dfs_order: Vec<NodeId> = Vec::new();
     {
         let mut stack = vec![tree.document()];
         while let Some(nid) = stack.pop() {
             dfs_order.push(nid);
-            let children: Vec<NodeId> = tree.get_node(nid).children.clone();
+            let node = tree.get_node(nid);
+            let children: Vec<NodeId> = node.children.clone();
+            let shadow_root = node.shadow_root;
             // Push in reverse so that leftmost child is processed first
             for &child in children.iter().rev() {
                 stack.push(child);
+            }
+            // Also traverse into the shadow root if present
+            if let Some(sr_nid) = shadow_root {
+                stack.push(sr_nid);
             }
         }
     }
@@ -512,8 +537,13 @@ pub fn compute_all_styles(tree: &mut DomTree) {
         let empty_inline = Vec::new();
         let inline_decls = inline_map.get(&node_id).unwrap_or(&empty_inline);
 
+        // Determine which shadow root scope this element belongs to,
+        // and use the corresponding scoped author rules.
+        let scope = find_containing_shadow_root(tree, node_id);
+        let author_rules = scoped_author_rules.get(&scope).unwrap_or(&empty_rules);
+
         // Cascade: determine which declaration wins for each property
-        let cascaded = cascade_element(tree, node_id, &ua_rules, &author_rules, inline_decls);
+        let cascaded = cascade_element(tree, node_id, &ua_rules, author_rules, inline_decls);
 
         // Convert cascade::CascadedEntry -> computed::CascadedEntry
         let computed_entries = cascade_to_computed_entries(&cascaded);
@@ -532,10 +562,14 @@ pub fn compute_all_styles(tree: &mut DomTree) {
 
     // Layout depends on computed styles — mark dirty so next layout query recomputes.
     tree.layout_cache.mark_dirty();
+    tree.styles_dirty = false;
 }
 
 /// Walk up the tree from `node_id` to find the nearest ancestor Element
 /// that has a computed style, and return a reference to it.
+///
+/// For nodes inside shadow trees: when we reach a ShadowRoot node (parent is None),
+/// we jump to the host element so shadow tree elements inherit from the host.
 fn find_parent_computed_style<'a>(
     tree: &DomTree,
     node_id: NodeId,
@@ -543,12 +577,23 @@ fn find_parent_computed_style<'a>(
 ) -> Option<&'a ComputedStyle> {
     let mut current = tree.get_node(node_id).parent;
     while let Some(pid) = current {
-        if matches!(tree.get_node(pid).data, NodeData::Element { .. }) {
+        let pnode = tree.get_node(pid);
+        if matches!(pnode.data, NodeData::Element { .. }) {
             if let Some(style) = computed_styles.get(&pid) {
                 return Some(style);
             }
         }
-        current = tree.get_node(pid).parent;
+        // If we reach a ShadowRoot, jump to its host element for inheritance
+        if let NodeData::ShadowRoot { host, .. } = &pnode.data {
+            let host_id = *host;
+            if let Some(style) = computed_styles.get(&host_id) {
+                return Some(style);
+            }
+            // Continue walking from the host's parent
+            current = tree.get_node(host_id).parent;
+            continue;
+        }
+        current = pnode.parent;
     }
     None
 }

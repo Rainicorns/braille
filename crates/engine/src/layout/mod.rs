@@ -70,7 +70,7 @@ pub fn ensure_computed(cache: &mut LayoutCache, nodes: &[Node]) {
                     .unwrap();
                 dom_to_taffy.insert(nid, taffy_node);
             }
-            NodeData::Document | NodeData::DocumentFragment | NodeData::ShadowRoot { .. } => {
+            NodeData::Document | NodeData::DocumentFragment => {
                 // Container nodes — create a block-level taffy node
                 let style = Style {
                     display: taffy::Display::Block,
@@ -84,6 +84,11 @@ pub fn ensure_computed(cache: &mut LayoutCache, nodes: &[Node]) {
                 taffy.set_node_context(taffy_node, Some(nid)).unwrap();
                 dom_to_taffy.insert(nid, taffy_node);
             }
+            NodeData::ShadowRoot { .. } => {
+                // Shadow roots don't generate layout boxes — their children are
+                // distributed to the host element via the flat tree (slot distribution).
+                // Skip creating a taffy node so they act like display:contents.
+            }
             // Skip comments, doctypes, PIs, etc.
             _ => {}
         }
@@ -92,18 +97,67 @@ pub fn ensure_computed(cache: &mut LayoutCache, nodes: &[Node]) {
     // Phase 2: Wire up parent-child relationships.
     // For display:contents elements (no taffy node), promote their children
     // to the nearest ancestor that has a taffy node.
+    // For elements with shadow roots, walk the shadow tree (flat tree).
+    // For <slot> elements, substitute the host's light DOM children.
     fn collect_taffy_children(
         nodes: &[Node],
         nid: NodeId,
         dom_to_taffy: &HashMap<NodeId, taffy::NodeId>,
     ) -> Vec<taffy::NodeId> {
         let node = &nodes[nid];
+
+        // If this element has a shadow root, walk the shadow tree instead of light DOM children
+        if let Some(sr_nid) = node.shadow_root {
+            return collect_flat_tree_children(nodes, nid, sr_nid, dom_to_taffy);
+        }
+
         let mut result = Vec::new();
         for &child_nid in &node.children {
             if let Some(&taffy_id) = dom_to_taffy.get(&child_nid) {
                 result.push(taffy_id);
             } else {
                 // Child has no taffy node (display:contents) — promote its children
+                result.extend(collect_taffy_children(nodes, child_nid, dom_to_taffy));
+            }
+        }
+        result
+    }
+
+    /// Walk shadow root children, substituting <slot> elements with host's light DOM children.
+    fn collect_flat_tree_children(
+        nodes: &[Node],
+        host_nid: NodeId,
+        shadow_root_nid: NodeId,
+        dom_to_taffy: &HashMap<NodeId, taffy::NodeId>,
+    ) -> Vec<taffy::NodeId> {
+        let sr_node = &nodes[shadow_root_nid];
+        let mut result = Vec::new();
+        for &child_nid in &sr_node.children {
+            let child_node = &nodes[child_nid];
+            let is_slot = matches!(&child_node.data, NodeData::Element { tag_name, .. } if tag_name == "slot");
+            if is_slot {
+                // Substitute with host's light DOM children (default slot)
+                let host_children = &nodes[host_nid].children;
+                if host_children.is_empty() {
+                    // Fallback: use slot's own children
+                    for &fallback_nid in &child_node.children {
+                        if let Some(&taffy_id) = dom_to_taffy.get(&fallback_nid) {
+                            result.push(taffy_id);
+                        }
+                    }
+                } else {
+                    for &light_child_nid in host_children {
+                        if let Some(&taffy_id) = dom_to_taffy.get(&light_child_nid) {
+                            result.push(taffy_id);
+                        } else {
+                            result.extend(collect_taffy_children(nodes, light_child_nid, dom_to_taffy));
+                        }
+                    }
+                }
+            } else if let Some(&taffy_id) = dom_to_taffy.get(&child_nid) {
+                result.push(taffy_id);
+            } else {
+                // display:contents or non-element — promote children
                 result.extend(collect_taffy_children(nodes, child_nid, dom_to_taffy));
             }
         }

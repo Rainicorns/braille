@@ -213,5 +213,37 @@ pub(super) fn element_events_js() -> &'static str {
                 this.dispatchEvent(new Event('close', {bubbles: false}));
             }
         };
+        // Popover API
+        ElemProto.showPopover = function() {
+            if (this.__nid === undefined) return;
+            var popoverAttr = this.getAttribute('popover');
+            if (popoverAttr === null) throw new DOMException("Not a popover element.", "InvalidStateError");
+            if (!this.__props) this.__props = {};
+            if (this.__props._popoverOpen) throw new DOMException("Popover is already showing.", "InvalidStateError");
+            this.__props._popoverOpen = true;
+            __n_setAttribute(this.__nid, '__braille_popover_open', '');
+            this.dispatchEvent(new Event('beforetoggle', {bubbles: false}));
+            this.dispatchEvent(new Event('toggle', {bubbles: false}));
+        };
+        ElemProto.hidePopover = function() {
+            if (this.__nid === undefined) return;
+            var popoverAttr = this.getAttribute('popover');
+            if (popoverAttr === null) throw new DOMException("Not a popover element.", "InvalidStateError");
+            if (!this.__props) this.__props = {};
+            if (!this.__props._popoverOpen) throw new DOMException("Popover is not showing.", "InvalidStateError");
+            this.__props._popoverOpen = false;
+            __n_removeAttribute(this.__nid, '__braille_popover_open');
+            this.dispatchEvent(new Event('beforetoggle', {bubbles: false}));
+            this.dispatchEvent(new Event('toggle', {bubbles: false}));
+        };
+        ElemProto.togglePopover = function(force) {
+            if (this.__nid === undefined) return;
+            if (!this.__props) this.__props = {};
+            if (force === true || (!this.__props._popoverOpen && force !== false)) {
+                this.showPopover();
+            } else {
+                this.hidePopover();
+            }
+        };
     "#
 }

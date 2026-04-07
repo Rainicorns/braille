@@ -63,6 +63,9 @@ pub(super) fn dom_mutation_js() -> &'static str {
                     __adoptSubtree(child, parentDoc);
                 }
             }
+            // Clear nonce and release pointer capture on inserted nodes (per HTML spec)
+            __clearNonceOnInsert(child);
+            __releasePointerCaptureOnInsert(child);
             // CE lifecycle: connectedCallback for inserted nodes
             // For fragments, walk the already-moved children (fragment is now empty)
             if (typeof __ceConnected === 'function' && __isConnected(this.__nid)) {
@@ -117,6 +120,26 @@ pub(super) fn dom_mutation_js() -> &'static str {
             __ceFlushReactions();
             return child;
         };
+        // Clear nonce content attribute on inserted nodes (per HTML spec "insert" algorithm).
+        // moveBefore does NOT clear nonce — only insertBefore/appendChild do.
+        function __clearNonceOnInsert(node) {
+            if (node && node.__nid !== undefined && node.nodeType === 1) {
+                if (typeof __n_hasAttrValue === 'function' && __n_hasAttrValue(node.__nid, 'nonce')) {
+                    __n_setAttribute(node.__nid, 'nonce', '');
+                }
+            }
+        }
+        // Release pointer capture for a node being re-inserted (not moved).
+        // Per spec, implicit pointer capture is released when an element is removed from the document.
+        function __releasePointerCaptureOnInsert(node) {
+            if (node && node.__nid !== undefined) {
+                for (var pid in __pointerCaptures) {
+                    if (__pointerCaptures[pid] === node.__nid) {
+                        delete __pointerCaptures[pid];
+                    }
+                }
+            }
+        }
         EP.insertBefore = function(newChild, refChild) {
             if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined && newChild.nodeType === undefined)) {
                 throw new TypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'.");
@@ -156,6 +179,9 @@ pub(super) fn dom_mutation_js() -> &'static str {
                     if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [newChild]});
                 }
             }
+            // Clear nonce and release pointer capture on inserted nodes (per HTML spec)
+            __clearNonceOnInsert(newChild);
+            __releasePointerCaptureOnInsert(newChild);
             // CE lifecycle: connectedCallback for inserted nodes
             if (typeof __ceConnected === 'function' && __isConnected(this.__nid)) {
                 __ceConnected(newChild);
@@ -201,6 +227,12 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 throw new DOMException("The node to be moved is not an Element or CharacterData node.", "HierarchyRequestError");
             }
             if (this.__nid === undefined || node.__nid === undefined) return;
+            // Cross-document check: node must be in the same document as this
+            var thisDoc = this.ownerDocument || (this.nodeType === 9 ? this : null);
+            var nodeDoc = node.ownerDocument || (node.nodeType === 9 ? node : null);
+            if (thisDoc && nodeDoc && thisDoc !== nodeDoc) {
+                throw new DOMException("The node to be moved is in a different document.", "HierarchyRequestError");
+            }
             // node must have a parent (i.e., be in a tree)
             var nodeParent = __n_getParent(node.__nid);
             if (nodeParent < 0) {

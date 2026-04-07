@@ -148,12 +148,24 @@ impl<'a> Element for DomElement<'a> {
     }
 
     fn parent_node_is_shadow_root(&self) -> bool {
-        // We don't support shadow DOM
-        false
+        let node = self.tree.get_node(self.node_id);
+        if let Some(parent_id) = node.parent {
+            matches!(self.tree.get_node(parent_id).data, NodeData::ShadowRoot { .. })
+        } else {
+            false
+        }
     }
 
     fn containing_shadow_host(&self) -> Option<Self> {
-        // We don't support shadow DOM
+        // Walk up to find a ShadowRoot ancestor, then return its host
+        let mut current = self.tree.get_node(self.node_id).parent;
+        while let Some(pid) = current {
+            let pnode = self.tree.get_node(pid);
+            if let NodeData::ShadowRoot { host, .. } = &pnode.data {
+                return Some(DomElement::new(self.tree, *host));
+            }
+            current = pnode.parent;
+        }
         None
     }
 
@@ -342,6 +354,9 @@ impl<'a> Element for DomElement<'a> {
                 } else {
                     false
                 }
+            }
+            PseudoClass::PopoverOpen => {
+                self.tree.has_attribute(self.node_id, "__braille_popover_open")
             }
             // Link-related pseudo-classes
             PseudoClass::Visited => false, // We don't track visited state

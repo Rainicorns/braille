@@ -852,6 +852,48 @@ pub fn resolve_script_src(
                                             touchScrolledElement = null;
                                         }
                                     }
+                                } else if (source.type === "pointer" && (!source.parameters || source.parameters.pointerType === "mouse" || !source.parameters.pointerType)) {
+                                    // Mouse pointer: dispatch PointerEvent with pointerId=1
+                                    var mouseTarget = null;
+                                    var mCurX = 0, mCurY = 0;
+                                    var mOriginEl = null;
+                                    for (var j = 0; j < source.actions.length; j++) {
+                                        var action = source.actions[j];
+                                        if (action.type === "pointerMove") {
+                                            var mx = action.x || 0;
+                                            var my = action.y || 0;
+                                            if (action._originElement) {
+                                                mOriginEl = action._originElement;
+                                                var or = mOriginEl.getBoundingClientRect();
+                                                mx += or.left + or.width / 2;
+                                                my += or.top + or.height / 2;
+                                            }
+                                            mCurX = mx; mCurY = my;
+                                            mouseTarget = document.elementFromPoint ? document.elementFromPoint(mCurX, mCurY) : document.body;
+                                            if (!mouseTarget) mouseTarget = document.body || null;
+                                            mouseTarget = __resolveIframeTarget(mouseTarget, mCurX, mCurY);
+                                            if (mouseTarget) {
+                                                mouseTarget.dispatchEvent(new PointerEvent('pointermove', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY,pointerId:1,pointerType:'mouse'}));
+                                                mouseTarget.dispatchEvent(new MouseEvent('mousemove', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY}));
+                                            }
+                                        } else if (action.type === "pointerDown") {
+                                            if (!mouseTarget) {
+                                                mouseTarget = document.elementFromPoint ? document.elementFromPoint(mCurX, mCurY) : document.body;
+                                                if (!mouseTarget) mouseTarget = document.body || null;
+                                                mouseTarget = __resolveIframeTarget(mouseTarget, mCurX, mCurY);
+                                            }
+                                            if (mouseTarget) {
+                                                mouseTarget.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY,pointerId:1,pointerType:'mouse'}));
+                                                mouseTarget.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY}));
+                                            }
+                                        } else if (action.type === "pointerUp") {
+                                            if (mouseTarget) {
+                                                mouseTarget.dispatchEvent(new PointerEvent('pointerup', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY,pointerId:1,pointerType:'mouse'}));
+                                                mouseTarget.dispatchEvent(new MouseEvent('mouseup', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY}));
+                                                mouseTarget.dispatchEvent(new MouseEvent('click', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY}));
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             resolve();

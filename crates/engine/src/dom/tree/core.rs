@@ -16,6 +16,9 @@ pub struct DomTree {
     pub focused_node: Option<NodeId>,
     /// The currently hovered element (synced from JS __hoveredNode before style computation).
     pub hovered_node: Option<NodeId>,
+    /// True when DOM mutations have occurred since the last style computation.
+    /// Checked by `__n_getComputedStyle` to trigger on-demand recomputation.
+    pub styles_dirty: bool,
 }
 
 impl Default for DomTree {
@@ -36,6 +39,7 @@ impl DomTree {
             meta_cache: HashMap::new(),
             focused_node: None,
             hovered_node: None,
+            styles_dirty: true,
         };
         tree.alloc_node(NodeData::Document);
         tree
@@ -51,6 +55,7 @@ impl DomTree {
             meta_cache: HashMap::new(),
             focused_node: None,
             hovered_node: None,
+            styles_dirty: true,
         };
         tree.alloc_node(NodeData::Document);
         tree

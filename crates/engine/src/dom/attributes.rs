@@ -38,7 +38,9 @@ impl DomTree {
         } else {
             panic!("set_attribute: node {} is not an Element", node_id);
         }
-        if name == "style" || name == "class" {
+        // Any attribute change can affect CSS selectors ([attr], :checked, etc.)
+        self.styles_dirty = true;
+        if name == "style" || name == "class" || name == "id" {
             self.layout_cache.mark_dirty();
         }
     }
@@ -57,6 +59,10 @@ impl DomTree {
                 .position(|a| a.qualified_name() == name || a.local_name == name)
             {
                 attributes.remove(idx);
+                self.styles_dirty = true;
+                if name == "style" || name == "class" || name == "id" {
+                    self.layout_cache.mark_dirty();
+                }
                 true
             } else {
                 false

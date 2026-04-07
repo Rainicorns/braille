@@ -345,8 +345,12 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     }).unwrap()).unwrap();
 
     // __n_getComputedStyle(nodeId, prop) -> string value or empty
+    // Recomputes styles on-demand if DOM mutations have dirtied the style cache.
     g.set("__n_getComputedStyle", Function::new(ctx.clone(), |node_id: u32, prop: DomString| -> String {
-        with_tree(|tree| {
+        with_tree_mut(|tree| {
+            if tree.styles_dirty {
+                crate::css::style_tree::compute_all_styles(tree);
+            }
             let node = tree.get_node(node_id as NodeId);
             node.computed_style.as_ref()
                 .and_then(|cs| cs.get(prop.as_str()))
@@ -362,7 +366,10 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
 
     // __n_getComputedStyleAll(nodeId) -> JSON string of all computed styles
     g.set("__n_getComputedStyleAll", Function::new(ctx.clone(), |node_id: u32| -> String {
-        with_tree(|tree| {
+        with_tree_mut(|tree| {
+            if tree.styles_dirty {
+                crate::css::style_tree::compute_all_styles(tree);
+            }
             let node = tree.get_node(node_id as NodeId);
             match &node.computed_style {
                 Some(cs) => serde_json::to_string(cs).unwrap_or_else(|_| "{}".to_string()),

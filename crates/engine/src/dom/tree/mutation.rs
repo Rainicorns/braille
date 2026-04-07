@@ -30,6 +30,7 @@ impl DomTree {
         self.nodes[child].parent = Some(parent);
         self.nodes[parent].children.push(child);
         self.layout_cache.mark_dirty();
+        self.styles_dirty = true;
     }
 
     /// Removes `child` from `parent`'s children list and clears the child's parent.
@@ -37,6 +38,7 @@ impl DomTree {
         self.nodes[parent].children.retain(|&c| c != child);
         self.nodes[child].parent = None;
         self.layout_cache.mark_dirty();
+        self.styles_dirty = true;
     }
 
     /// Allocates a new Comment node (unattached) and returns its NodeId.
@@ -149,6 +151,7 @@ impl DomTree {
         self.nodes[parent].children.insert(pos, child);
         self.nodes[child].parent = Some(parent);
         self.layout_cache.mark_dirty();
+        self.styles_dirty = true;
     }
 
     /// Removes a node from its parent (if it has one).
