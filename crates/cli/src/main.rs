@@ -9,7 +9,6 @@ mod engine_process;
 pub mod network;
 mod paths;
 mod session;
-#[allow(dead_code)] // Foundation module — not wired into CLI commands yet.
 mod session_store;
 mod worker_manager;
 
@@ -74,6 +73,8 @@ SESSION COMMANDS:
   export-cookies          Export all cookies from the session as JSON
   import-cookies <FILE>   Import cookies from a JSON file into the session
   info                    Show session info (URL, title, cookies, history)
+  heartbeat               Send an explicit keepalive to reset the idle timer
+  set-ttl <SECONDS>       Set the per-session idle timeout in seconds
   close                   Close the session";
 
 #[derive(Subcommand)]
@@ -171,6 +172,13 @@ enum SessionAction {
     },
     /// Show lightweight session info (URL, title, cookie count, history)
     Info,
+    /// Send an explicit keepalive to reset the idle timer
+    Heartbeat,
+    /// Set the per-session idle timeout in seconds
+    SetTtl {
+        /// Idle timeout in seconds (e.g. 7200 for 2 hours)
+        seconds: u64,
+    },
     /// Close the session
     Close,
 }
@@ -271,6 +279,8 @@ fn session_action_to_daemon_command(action: SessionAction, session_id: &str) -> 
             DaemonCommand::ImportCookies { cookies }
         }
         SessionAction::Info => DaemonCommand::SessionInfo,
+        SessionAction::Heartbeat => DaemonCommand::Heartbeat,
+        SessionAction::SetTtl { seconds } => DaemonCommand::SetSessionTtl { ttl_secs: seconds },
         SessionAction::Close => DaemonCommand::Close,
     }
 }
@@ -351,7 +361,7 @@ fn run(cli: Cli) -> String {
             let sid = &args[0];
 
             // Catch common mistake: `braille goto <url>` instead of `braille <session_id> goto <url>`
-            let session_commands = ["goto", "click", "type", "select", "snap", "back", "forward", "close", "eval", "console", "transcript", "mark", "export-cookies", "import-cookies", "info"];
+            let session_commands = ["goto", "click", "type", "select", "snap", "back", "forward", "close", "eval", "console", "transcript", "mark", "export-cookies", "import-cookies", "info", "heartbeat", "set-ttl"];
             if session_commands.contains(&sid.as_str()) {
                 return format!(
                     "error: '{sid}' is a session command, not a session ID\n\n\

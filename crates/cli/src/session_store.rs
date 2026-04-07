@@ -15,6 +15,18 @@ pub struct SessionMetadata {
     /// Active workers at time of checkpoint (for restoration).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_workers: Vec<WorkerDescriptor>,
+    /// Per-session idle timeout in seconds. None means use the daemon's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+}
+
+/// Notice written when the daemon reaps an idle session, so consumers can
+/// distinguish "session was reaped" from "session ID never existed."
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReapNotice {
+    pub session_id: String,
+    pub reason: String,
+    pub reaped_at: u64,
 }
 
 /// A worker that was active when the session was checkpointed.
@@ -61,6 +73,7 @@ pub fn create_session(session_id: &str) -> SessionMetadata {
         last_accessed: now,
         container_id: None,
         active_workers: Vec::new(),
+        ttl_secs: None,
     };
 
     write_metadata(&metadata);
@@ -101,7 +114,30 @@ pub fn delete_session(session_id: &str) {
     }
 }
 
+/// Write a reap notice so consumers can tell a reaped session from an unknown one.
+pub fn write_reap_notice(session_id: &str, reason: &str) {
+    let dir = crate::paths::reaped_dir();
+    std::fs::create_dir_all(&dir).ok();
+    let notice = ReapNotice {
+        session_id: session_id.to_string(),
+        reason: reason.to_string(),
+        reaped_at: now_epoch_secs(),
+    };
+    let path = dir.join(format!("{session_id}.json"));
+    if let Ok(json) = serde_json::to_string(&notice) {
+        std::fs::write(path, json).ok();
+    }
+}
+
+/// Read a reap notice for a session, if one exists.
+pub fn read_reap_notice(session_id: &str) -> Option<ReapNotice> {
+    let path = crate::paths::reaped_dir().join(format!("{session_id}.json"));
+    let data = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
 /// List all session IDs that have metadata on disk.
+#[allow(dead_code)] // Used in tests and available for daemon restart recovery.
 pub fn list_sessions() -> Vec<String> {
     let dir = sessions_dir();
     if !dir.exists() {
@@ -247,6 +283,57 @@ mod tests {
 
             let read_back = read_metadata(&sid).unwrap();
             assert_eq!(read_back.container_id, Some("abc123def456".to_string()));
+        });
+    }
+
+    #[test]
+    fn session_metadata_ttl_secs_persists() {
+        with_temp_home(|| {
+            let sid = generate_session_id();
+            let mut meta = create_session(&sid);
+            assert!(meta.ttl_secs.is_none(), "default ttl_secs should be None");
+
+            meta.ttl_secs = Some(7200);
+            write_metadata(&meta);
+
+            let read_back = read_metadata(&sid).unwrap();
+            assert_eq!(read_back.ttl_secs, Some(7200));
+        });
+    }
+
+    #[test]
+    fn session_metadata_ttl_secs_backward_compat() {
+        with_temp_home(|| {
+            let sid = generate_session_id();
+            create_session(&sid);
+            // Write JSON without ttl_secs field (simulates old metadata format)
+            let path = metadata_path(&sid);
+            let old_json = r#"{"session_id":"test","created_at":1000,"last_accessed":1000,"container_id":null,"active_workers":[]}"#;
+            std::fs::write(&path, old_json).unwrap();
+
+            let meta = read_metadata(&sid).unwrap();
+            assert!(meta.ttl_secs.is_none(), "missing ttl_secs should deserialize as None");
+        });
+    }
+
+    #[test]
+    fn write_and_read_reap_notice() {
+        with_temp_home(|| {
+            let sid = generate_session_id();
+            write_reap_notice(&sid, "idle timeout");
+
+            let notice = read_reap_notice(&sid).expect("reap notice should exist");
+            assert_eq!(notice.session_id, sid);
+            assert_eq!(notice.reason, "idle timeout");
+            assert!(notice.reaped_at > 0);
+        });
+    }
+
+    #[test]
+    fn read_reap_notice_nonexistent_returns_none() {
+        with_temp_home(|| {
+            let result = read_reap_notice("sess_nonexistent");
+            assert!(result.is_none());
         });
     }
 }

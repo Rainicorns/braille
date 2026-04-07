@@ -9,11 +9,14 @@ use braille_wire::{DaemonCommand, DaemonRequest, DaemonResponse};
 use crate::engine_process::EngineProcess;
 use crate::network::NetworkClient;
 use crate::session::generate_session_id;
+use crate::session_store;
 
 struct SessionHandle {
     engine: EngineProcess,
     net: NetworkClient,
     last_activity: Instant,
+    /// Per-session idle timeout. Defaults to IDLE_TIMEOUT_SECS.
+    ttl_secs: u64,
 }
 
 const IDLE_TIMEOUT_SECS: u64 = 30 * 60; // 30 minutes
@@ -116,12 +119,14 @@ fn dispatch(sessions: &mut HashMap<String, SessionHandle>, request: DaemonReques
             let session_id = generate_session_id();
             let engine = EngineProcess::spawn();
             let net = NetworkClient::new();
+            session_store::create_session(&session_id);
             sessions.insert(
                 session_id.clone(),
                 SessionHandle {
                     engine,
                     net,
                     last_activity: Instant::now(),
+                    ttl_secs: IDLE_TIMEOUT_SECS,
                 },
             );
             DaemonResponse::ok_with_session(session_id, None)
@@ -130,6 +135,38 @@ fn dispatch(sessions: &mut HashMap<String, SessionHandle>, request: DaemonReques
         DaemonCommand::DaemonStop => {
             sessions.clear();
             DaemonResponse::ok("daemon stopped".to_string())
+        }
+        DaemonCommand::Heartbeat => {
+            let session_id = match &request.session_id {
+                Some(id) => id.clone(),
+                None => return DaemonResponse::err("session_id required".to_string()),
+            };
+            match sessions.get_mut(&session_id) {
+                Some(handle) => {
+                    handle.last_activity = Instant::now();
+                    session_store::touch_session(&session_id);
+                    DaemonResponse::ok("ok".to_string())
+                }
+                None => session_not_found_response(&session_id),
+            }
+        }
+        DaemonCommand::SetSessionTtl { ttl_secs } => {
+            let session_id = match &request.session_id {
+                Some(id) => id.clone(),
+                None => return DaemonResponse::err("session_id required".to_string()),
+            };
+            match sessions.get_mut(&session_id) {
+                Some(handle) => {
+                    handle.ttl_secs = ttl_secs;
+                    handle.last_activity = Instant::now();
+                    if let Some(mut meta) = session_store::read_metadata(&session_id) {
+                        meta.ttl_secs = Some(ttl_secs);
+                        session_store::write_metadata(&meta);
+                    }
+                    DaemonResponse::ok(format!("TTL set to {ttl_secs}s"))
+                }
+                None => session_not_found_response(&session_id),
+            }
         }
         cmd => {
             let session_id = match &request.session_id {
@@ -141,19 +178,33 @@ fn dispatch(sessions: &mut HashMap<String, SessionHandle>, request: DaemonReques
 
             let handle = match sessions.get_mut(&session_id) {
                 Some(h) => h,
-                None => return DaemonResponse::err(format!("session not found: {session_id}")),
+                None => return session_not_found_response(&session_id),
             };
 
             handle.last_activity = Instant::now();
+            session_store::touch_session(&session_id);
 
             let response = handle.engine.send_command(cmd, &mut handle.net);
 
             if is_close {
                 sessions.remove(&session_id);
+                session_store::delete_session(&session_id);
             }
 
             response
         }
+    }
+}
+
+/// Return a distinct error for reaped sessions vs. unknown session IDs.
+fn session_not_found_response(session_id: &str) -> DaemonResponse {
+    if let Some(notice) = session_store::read_reap_notice(session_id) {
+        DaemonResponse::err(format!(
+            "session was reaped: {} (reason: {})",
+            session_id, notice.reason
+        ))
+    } else {
+        DaemonResponse::err(format!("session not found: {session_id}"))
     }
 }
 
@@ -169,11 +220,13 @@ fn reap_idle_sessions(sessions: &mut HashMap<String, SessionHandle>) {
     let now = Instant::now();
     let idle: Vec<String> = sessions
         .iter()
-        .filter(|(_, h)| now.duration_since(h.last_activity).as_secs() > IDLE_TIMEOUT_SECS)
+        .filter(|(_, h)| now.duration_since(h.last_activity).as_secs() > h.ttl_secs)
         .map(|(id, _)| id.clone())
         .collect();
     for id in idle {
         eprintln!("reaping idle session: {id}");
+        session_store::write_reap_notice(&id, "idle timeout");
+        session_store::delete_session(&id);
         sessions.remove(&id);
     }
 }

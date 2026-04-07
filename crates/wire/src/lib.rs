@@ -244,6 +244,10 @@ pub enum DaemonCommand {
     /// Return lightweight session introspection (URL, title, cookie count, etc.)
     /// without snapshotting the full page.
     SessionInfo,
+    /// Explicit keepalive — resets the session's idle timer without performing any action.
+    Heartbeat,
+    /// Set the per-session idle timeout in seconds. Overrides the daemon's default.
+    SetSessionTtl { ttl_secs: u64 },
 }
 
 /// A cookie that can be serialized/deserialized over the wire protocol.
@@ -818,6 +822,30 @@ mod tests {
                 can_go_forward: false,
             },
             SessionInfoData
+        );
+    }
+
+    #[test]
+    fn daemon_command_heartbeat_roundtrip() {
+        assert_roundtrip!(DaemonCommand::Heartbeat, DaemonCommand);
+    }
+
+    #[test]
+    fn daemon_command_set_session_ttl_roundtrip() {
+        assert_roundtrip!(
+            DaemonCommand::SetSessionTtl { ttl_secs: 7200 },
+            DaemonCommand
+        );
+    }
+
+    #[test]
+    fn daemon_request_heartbeat_roundtrip() {
+        assert_roundtrip!(
+            DaemonRequest {
+                session_id: Some("sess_abc12345".into()),
+                command: DaemonCommand::Heartbeat,
+            },
+            DaemonRequest
         );
     }
 }
