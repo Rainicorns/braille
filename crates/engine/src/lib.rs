@@ -149,8 +149,9 @@ impl Engine {
     }
 
     fn settle_inner(&mut self, time_budget_ms: u64) {
-        // Sync focused element to the DOM tree so CSS :focus matching works.
+        // Sync focused/hovered element to the DOM tree so CSS :focus/:hover matching works.
         self.sync_focus_from_js();
+        self.sync_hover_from_js();
 
         let starting_time = match self.runtime.as_mut() {
             Some(r) => r.current_time_ms(),
@@ -193,6 +194,7 @@ impl Engine {
             //    styles and fire scroll-snap events. This ensures snap scrollend fires
             //    before timeout-based promise rejections.
             self.sync_focus_from_js();
+            self.sync_hover_from_js();
             crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
             if self.validate_focus_after_styles() {
                 continue;
@@ -256,6 +258,7 @@ impl Engine {
 
         // Final style recomputation after all JS has settled
         self.sync_focus_from_js();
+        self.sync_hover_from_js();
         crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
         self.validate_focus_after_styles();
     }
@@ -277,6 +280,22 @@ impl Engine {
         // Use JS-side focus if available, otherwise fall back to Rust-side
         let focused = js_nid.or(self.focused_element);
         self.tree.borrow_mut().focused_node = focused;
+    }
+
+    /// Sync the JS-side hovered element (__hoveredNode) to tree.hovered_node
+    /// so CSS :hover matching works correctly.
+    fn sync_hover_from_js(&mut self) {
+        let js_nid = if let Some(runtime) = self.runtime.as_mut() {
+            runtime
+                .eval_to_string("(typeof __hoveredNode !== 'undefined' && __hoveredNode >= 0) ? String(__hoveredNode) : '-1'")
+                .ok()
+                .and_then(|s| s.parse::<i64>().ok())
+                .filter(|&n| n >= 0)
+                .map(|n| n as usize)
+        } else {
+            None
+        };
+        self.tree.borrow_mut().hovered_node = js_nid;
     }
 
     /// After style recomputation, check if the focused element ended up in an
@@ -350,15 +369,23 @@ impl Engine {
         let mut did_snap = false;
         if let Some(runtime) = self.runtime.as_mut() {
             for nid in targets {
-                // Only snap if the current scroll position is NOT at a snap point.
-                // Returns "1" if a snap adjustment was made, "" otherwise.
+                // Snap if the current scroll position is NOT at a snap point,
+                // OR if this is a newly-visible mandatory container that hasn't
+                // had its initial snap yet (fire scrollend even at position 0).
                 let code = format!(
                     r#"(function(){{
                         var el = __braille_get_element_wrapper({});
                         if (!el) return '';
                         var snapped = __computeSnapOffset(el, el.scrollLeft, el.scrollTop);
-                        if (snapped.x !== el.scrollLeft || snapped.y !== el.scrollTop) {{
+                        var needsSnap = (snapped.x !== el.scrollLeft || snapped.y !== el.scrollTop);
+                        var firstInit = !el.__snap_initialized;
+                        if (needsSnap) {{
+                            el.__snap_initialized = true;
                             el.scrollTo({{ left: snapped.x, top: snapped.y }});
+                            return '1';
+                        }} else if (firstInit) {{
+                            el.__snap_initialized = true;
+                            el.dispatchEvent(new Event('scrollend', {{bubbles: false}}));
                             return '1';
                         }}
                         return '';

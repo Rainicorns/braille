@@ -683,4 +683,11 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
             tree.focused_node = if node_id >= 0 { Some(node_id as NodeId) } else { None };
         });
     }).unwrap()).unwrap();
+
+    // Set hovered node on the tree so CSS :hover matching works.
+    g.set("__n_setHoveredNode", Function::new(ctx.clone(), |node_id: i32| {
+        with_tree_mut(|tree| {
+            tree.hovered_node = if node_id >= 0 { Some(node_id as NodeId) } else { None };
+        });
+    }).unwrap()).unwrap();
 }

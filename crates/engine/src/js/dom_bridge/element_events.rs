@@ -198,7 +198,7 @@ pub(super) fn element_events_js() -> &'static str {
         };
         // <dialog> element APIs
         ElemProto.showModal = function() {
-            if (this.tagName === 'DIALOG') { this.setAttribute('open', ''); if (!this.__props) this.__props = {}; this.__props._dialogModal = true; }
+            if (this.tagName === 'DIALOG') { this.setAttribute('open', ''); if (!this.__props) this.__props = {}; this.__props._dialogModal = true; __n_setAttribute(this.__nid, '__braille_modal', ''); }
         };
         ElemProto.show = function() {
             if (this.tagName === 'DIALOG') this.setAttribute('open', '');
@@ -206,7 +206,9 @@ pub(super) fn element_events_js() -> &'static str {
         ElemProto.close = function(returnValue) {
             if (this.tagName === 'DIALOG') {
                 this.removeAttribute('open');
+                __n_removeAttribute(this.__nid, '__braille_modal');
                 if (!this.__props) this.__props = {};
+                this.__props._dialogModal = false;
                 if (returnValue !== undefined) this.__props._returnValue = String(returnValue);
                 this.dispatchEvent(new Event('close', {bubbles: false}));
             }

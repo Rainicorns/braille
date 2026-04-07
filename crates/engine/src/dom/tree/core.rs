@@ -14,6 +14,8 @@ pub struct DomTree {
     pub(crate) meta_cache: HashMap<String, Vec<MetaEntry>>,
     /// The currently focused element (synced from Engine::focused_element before style computation).
     pub focused_node: Option<NodeId>,
+    /// The currently hovered element (synced from JS __hoveredNode before style computation).
+    pub hovered_node: Option<NodeId>,
 }
 
 impl Default for DomTree {
@@ -33,6 +35,7 @@ impl DomTree {
             layout_cache: LayoutCache::default(),
             meta_cache: HashMap::new(),
             focused_node: None,
+            hovered_node: None,
         };
         tree.alloc_node(NodeData::Document);
         tree
@@ -47,6 +50,7 @@ impl DomTree {
             layout_cache: LayoutCache::default(),
             meta_cache: HashMap::new(),
             focused_node: None,
+            hovered_node: None,
         };
         tree.alloc_node(NodeData::Document);
         tree

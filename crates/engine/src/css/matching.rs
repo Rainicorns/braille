@@ -314,7 +314,35 @@ impl<'a> Element for DomElement<'a> {
                 }
             }
             // Dynamic pseudo-classes (user interaction states)
-            PseudoClass::Hover | PseudoClass::Active => false,
+            PseudoClass::Hover => {
+                if let Some(hovered) = self.tree.hovered_node {
+                    if hovered == self.node_id {
+                        true
+                    } else {
+                        // Walk ancestors of the hovered node to check if self is an ancestor
+                        let mut cur = hovered;
+                        let mut found = false;
+                        while let Some(parent) = self.tree.get_parent(cur) {
+                            if parent == self.node_id {
+                                found = true;
+                                break;
+                            }
+                            cur = parent;
+                        }
+                        found
+                    }
+                } else {
+                    false
+                }
+            }
+            PseudoClass::Active => false,
+            PseudoClass::Modal => {
+                if let Some(tag) = self.tag_name() {
+                    tag == "dialog" && self.tree.has_attribute(self.node_id, "__braille_modal")
+                } else {
+                    false
+                }
+            }
             // Link-related pseudo-classes
             PseudoClass::Visited => false, // We don't track visited state
             // :any-link — <a> or <area> with href (same as :link but includes visited)

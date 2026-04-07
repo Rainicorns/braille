@@ -272,10 +272,20 @@ pub(super) fn dom_mutation_js() -> &'static str {
             }
             __collectCE(node);
 
-            // Perform atomic move
+            // Perform atomic move — capture old parent BEFORE the move for MO notifications
+            var oldParent = node.parentNode;
+            // Adjust live Range boundaries before the move (snap start/endContainer up if in moved subtree)
+            if (typeof __adjustRangesForRemoval === 'function' && oldParent) {
+                __adjustRangesForRemoval(node, oldParent);
+            }
             var refId = (child && child.__nid !== undefined) ? child.__nid : -1;
             __n_insertBefore(this.__nid, node.__nid, refId);
-            if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [node]});
+            if (typeof __mo_notify === 'function') {
+                if (oldParent && oldParent.__nid !== undefined && oldParent.__nid !== this.__nid) {
+                    __mo_notify('childList', oldParent, {removedNodes: [node]});
+                }
+                __mo_notify('childList', this, {addedNodes: [node]});
+            }
 
             // Fire CE lifecycle: per spec, only when connected (element stays connected during move)
             if (thisConnected) {

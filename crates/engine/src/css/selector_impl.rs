@@ -92,6 +92,7 @@ pub enum PseudoClass {
     Invalid,
     Valid,
     Target,
+    Modal,
     Lang(String),
 }
 
@@ -150,6 +151,7 @@ impl CssparserToCss for PseudoClass {
             PseudoClass::Invalid => dest.write_str(":invalid"),
             PseudoClass::Valid => dest.write_str(":valid"),
             PseudoClass::Target => dest.write_str(":target"),
+            PseudoClass::Modal => dest.write_str(":modal"),
             PseudoClass::Lang(ref lang) => write!(dest, ":lang({})", lang),
         }
     }
@@ -240,6 +242,7 @@ impl<'i> parser::Parser<'i> for BrailleSelectorParser {
             "invalid" => Ok(PseudoClass::Invalid),
             "valid" => Ok(PseudoClass::Valid),
             "target" => Ok(PseudoClass::Target),
+            "modal" => Ok(PseudoClass::Modal),
             _ => Err(cssparser::ParseError {
                 kind: cssparser::ParseErrorKind::Custom(parser::SelectorParseErrorKind::UnexpectedIdent(name.clone())),
                 location: _location,

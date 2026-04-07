@@ -1009,6 +1009,21 @@ pub fn resolve_script_src(
             }
         "#.to_string());
     }
+    if src.contains("trusted-click") {
+        return Some(r#"
+            function trusted_click() {
+                return new Promise(function(resolve) {
+                    document.addEventListener("click", resolve, {once: true});
+                    test_driver.click(document.body);
+                });
+            }
+            function fullScreenChange() {
+                return new Promise(function(resolve) {
+                    document.addEventListener("fullscreenchange", resolve, {once: true});
+                });
+            }
+        "#.to_string());
+    }
 
     let resolved_path = if src.starts_with('/') {
         wpt_root().join(src.trim_start_matches('/'))

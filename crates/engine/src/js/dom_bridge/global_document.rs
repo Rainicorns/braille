@@ -462,6 +462,98 @@ pub(super) fn global_document_js() -> &'static str {
         BrailleRange.prototype.isPointInRange = function(node, offset) {
             return this.startContainer === node && offset >= this.startOffset && offset <= this.endOffset;
         };
+        BrailleRange.prototype.intersectsNode = function(node) {
+            if (!node || !this.startContainer || !this.endContainer) return false;
+            var parent = node.parentNode;
+            if (!parent) return true;
+            var siblings = parent.childNodes;
+            var offset = 0;
+            for (var i = 0; i < siblings.length; i++) {
+                if (siblings[i] === node) { offset = i; break; }
+            }
+            // Compare two boundary points (container, offset).
+            // Returns -1 if (c1,o1) < (c2,o2), 0 if equal, 1 if greater.
+            function compareBP(c1, o1, c2, o2) {
+                if (c1 === c2) return o1 < o2 ? -1 : o1 > o2 ? 1 : 0;
+                // Check if c1 contains c2
+                var pos = c1.compareDocumentPosition(c2);
+                if (pos & 16) {
+                    // c1 contains c2: find c2's ancestor that is a direct child of c1
+                    var cur = c2;
+                    while (cur.parentNode && cur.parentNode !== c1) cur = cur.parentNode;
+                    var idx = 0;
+                    var kids = c1.childNodes;
+                    for (var i = 0; i < kids.length; i++) { if (kids[i] === cur) { idx = i; break; } }
+                    return o1 <= idx ? -1 : 1;
+                }
+                if (pos & 8) {
+                    // c2 contains c1: find c1's ancestor that is a direct child of c2
+                    var cur = c1;
+                    while (cur.parentNode && cur.parentNode !== c2) cur = cur.parentNode;
+                    var idx = 0;
+                    var kids = c2.childNodes;
+                    for (var i = 0; i < kids.length; i++) { if (kids[i] === cur) { idx = i; break; } }
+                    return idx < o2 ? -1 : 1;
+                }
+                if (pos & 4) return -1; // c2 follows c1
+                if (pos & 2) return 1;  // c2 precedes c1
+                return 0;
+            }
+            // (parent, offset) before range end AND (parent, offset+1) after range start
+            return compareBP(parent, offset, this.endContainer, this.endOffset) < 0 &&
+                   compareBP(this.startContainer, this.startOffset, parent, offset + 1) < 0;
+        };
+        // Track all live ranges for boundary adjustment during DOM mutations
+        var __liveRanges = [];
+        var __origSetStart = BrailleRange.prototype.setStart;
+        var __origSetEnd = BrailleRange.prototype.setEnd;
+        BrailleRange.prototype.setStart = function(node, offset) {
+            __origSetStart.call(this, node, offset);
+            if (__liveRanges.indexOf(this) < 0) __liveRanges.push(this);
+        };
+        BrailleRange.prototype.setEnd = function(node, offset) {
+            __origSetEnd.call(this, node, offset);
+            if (__liveRanges.indexOf(this) < 0) __liveRanges.push(this);
+        };
+        // Called by moveBefore/insertBefore/removeChild to snap range boundaries
+        // when a node is removed from its parent. Per spec, if a range's
+        // startContainer or endContainer is a descendant of the removed node,
+        // snap the boundary up to the removed node's parent.
+        globalThis.__adjustRangesForRemoval = function(node, oldParent) {
+            if (!__liveRanges.length) return;
+            var oldIndex = 0;
+            if (oldParent && oldParent.childNodes) {
+                var kids = oldParent.childNodes;
+                for (var i = 0; i < kids.length; i++) {
+                    if (kids[i] === node) { oldIndex = i; break; }
+                }
+            }
+            for (var ri = 0; ri < __liveRanges.length; ri++) {
+                var r = __liveRanges[ri];
+                // Check if startContainer is node or a descendant of node
+                var sc = r.startContainer;
+                while (sc) {
+                    if (sc === node) {
+                        r.startContainer = oldParent;
+                        r.startOffset = oldIndex;
+                        r._update();
+                        break;
+                    }
+                    sc = sc.parentNode;
+                }
+                // Check if endContainer is node or a descendant of node
+                var ec = r.endContainer;
+                while (ec) {
+                    if (ec === node) {
+                        r.endContainer = oldParent;
+                        r.endOffset = oldIndex;
+                        r._update();
+                        break;
+                    }
+                    ec = ec.parentNode;
+                }
+            }
+        };
         globalThis.Range = BrailleRange;
         doc.createRange = function() { return new BrailleRange(); };
 
@@ -724,6 +816,8 @@ pub(super) fn global_document_js() -> &'static str {
         // it via runtime.eval through the globalThis reference.
         var __focusCtx = { el: null };
         globalThis.__focusCtx = __focusCtx;
+        // Hovered node nid for CSS :hover matching (synced to Rust tree via __n_setHoveredNode)
+        globalThis.__hoveredNode = -1;
         EP.focus = function() {
             var prev = __focusCtx.el;
             if (prev === this) return;

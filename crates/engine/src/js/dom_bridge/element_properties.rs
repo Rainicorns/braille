@@ -279,6 +279,8 @@ pub(super) fn element_properties_js() -> &'static str {
                         for (var i = 0; i < kids.length; i++) removedNodes.push(kids[i]);
                     }
                     __n_setInnerHTML(this.__nid, String(v));
+                    // Register named element access (window.foo for <div id="foo">)
+                    __registerNamedElements(this);
                     // Upgrade custom elements in new content
                     if (typeof __ceUpgradeTree === 'function') __ceUpgradeTree(this);
                     // Fire MO childList notification
