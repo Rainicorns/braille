@@ -51,6 +51,11 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
             var iframeRealms = {};
             var __iframeDocMap = {};
 
+            // Single source of truth: does this src mean "about:blank" (no fetch needed)?
+            function __isAboutBlankSrc(src) {
+                return !src || src === 'about:blank';
+            }
+
             function buildIframeWindow(iframeEl, iframeDoc) {
                 var iframeWindow;
 
@@ -350,7 +355,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 if (iframeRealms[node.__nid]) return;
 
                 var src = node.getAttribute('src');
-                if (src && src !== 'about:blank') return;
+                if (!__isAboutBlankSrc(src)) return;
 
                 // Only init when connected to the document (not in a disconnected fragment)
                 if (!node.isConnected) return;
@@ -497,7 +502,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     var nid = iframeIds[i];
                     if (iframeRealms[nid]) continue;
                     var src = __braille_iframe_get_src(nid);
-                    if (src) continue; // src iframes handled later by process_iframes
+                    if (!__isAboutBlankSrc(src)) continue;
                     __braille_create_iframe_realm(nid, '<html><head></head><body></body></html>');
                 }
             };
@@ -510,12 +515,11 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
 
                     var src = __braille_iframe_get_src(nid);
                     var content;
-                    if (src) {
+                    if (__isAboutBlankSrc(src)) {
+                        content = '<html><head></head><body></body></html>';
+                    } else {
                         content = __braille_iframe_lookup_content(src);
                         if (!content) continue;
-                    } else {
-                        // No src — create an about:blank iframe realm
-                        content = '<html><head></head><body></body></html>';
                     }
 
                     var realm = __braille_create_iframe_realm(nid, content);
