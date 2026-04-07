@@ -550,6 +550,15 @@ impl Engine {
         self.runtime.is_some()
     }
 
+    /// Get the page title from the DOM tree (first `<title>` element's text content).
+    /// Returns None if no title element exists or its text is empty.
+    pub fn get_title(&self) -> Option<String> {
+        let tree = self.tree.borrow();
+        let title_id = tree.find_element_by_tag("title")?;
+        let text = tree.get_text_content(title_id);
+        if text.is_empty() { None } else { Some(text) }
+    }
+
     /// Evaluate a JavaScript expression and return the result as a string.
     /// Panics if no runtime is loaded (call load_html or execute_scripts first).
     pub fn eval_js(&mut self, code: &str) -> Result<String, String> {

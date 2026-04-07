@@ -73,6 +73,7 @@ SESSION COMMANDS:
   mark <LABEL>            Insert a labeled marker into the transcript
   export-cookies          Export all cookies from the session as JSON
   import-cookies <FILE>   Import cookies from a JSON file into the session
+  info                    Show session info (URL, title, cookies, history)
   close                   Close the session";
 
 #[derive(Subcommand)]
@@ -168,6 +169,8 @@ enum SessionAction {
         /// Path to JSON file containing cookie array
         file: String,
     },
+    /// Show lightweight session info (URL, title, cookie count, history)
+    Info,
     /// Close the session
     Close,
 }
@@ -267,6 +270,7 @@ fn session_action_to_daemon_command(action: SessionAction, session_id: &str) -> 
                 .unwrap_or_else(|e| panic!("invalid cookie JSON in {file}: {e}"));
             DaemonCommand::ImportCookies { cookies }
         }
+        SessionAction::Info => DaemonCommand::SessionInfo,
         SessionAction::Close => DaemonCommand::Close,
     }
 }
@@ -347,7 +351,7 @@ fn run(cli: Cli) -> String {
             let sid = &args[0];
 
             // Catch common mistake: `braille goto <url>` instead of `braille <session_id> goto <url>`
-            let session_commands = ["goto", "click", "type", "select", "snap", "back", "forward", "close", "eval", "console", "transcript", "mark", "export-cookies", "import-cookies"];
+            let session_commands = ["goto", "click", "type", "select", "snap", "back", "forward", "close", "eval", "console", "transcript", "mark", "export-cookies", "import-cookies", "info"];
             if session_commands.contains(&sid.as_str()) {
                 return format!(
                     "error: '{sid}' is a session command, not a session ID\n\n\

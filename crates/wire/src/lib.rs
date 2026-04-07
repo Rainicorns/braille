@@ -241,6 +241,9 @@ pub enum DaemonCommand {
     ExportCookies,
     /// Import cookies into the session's cookie jar.
     ImportCookies { cookies: Vec<SerializableCookie> },
+    /// Return lightweight session introspection (URL, title, cookie count, etc.)
+    /// without snapshotting the full page.
+    SessionInfo,
 }
 
 /// A cookie that can be serialized/deserialized over the wire protocol.
@@ -255,6 +258,23 @@ pub struct SerializableCookie {
     pub secure: bool,
     /// Expiry as milliseconds since epoch, or None for session cookies.
     pub expires_ms: Option<f64>,
+}
+
+/// Lightweight session metadata returned by the `SessionInfo` command.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionInfoData {
+    /// Current page URL, if any page has been loaded.
+    pub url: Option<String>,
+    /// Current page title from `<title>` element.
+    pub title: Option<String>,
+    /// Number of cookies in the HTTP cookie jar.
+    pub cookie_count: usize,
+    /// Number of entries in navigation history.
+    pub history_length: usize,
+    /// Whether there is a previous page to go back to.
+    pub can_go_back: bool,
+    /// Whether there is a forward page.
+    pub can_go_forward: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -763,6 +783,41 @@ mod tests {
                 expires_ms: Some(1700000000000.0),
             },
             SerializableCookie
+        );
+    }
+
+    #[test]
+    fn daemon_command_session_info_roundtrip() {
+        assert_roundtrip!(DaemonCommand::SessionInfo, DaemonCommand);
+    }
+
+    #[test]
+    fn session_info_data_roundtrip() {
+        assert_roundtrip!(
+            SessionInfoData {
+                url: Some("https://example.com/page".into()),
+                title: Some("Example Page".into()),
+                cookie_count: 3,
+                history_length: 5,
+                can_go_back: true,
+                can_go_forward: false,
+            },
+            SessionInfoData
+        );
+    }
+
+    #[test]
+    fn session_info_data_empty_roundtrip() {
+        assert_roundtrip!(
+            SessionInfoData {
+                url: None,
+                title: None,
+                cookie_count: 0,
+                history_length: 0,
+                can_go_back: false,
+                can_go_forward: false,
+            },
+            SessionInfoData
         );
     }
 }

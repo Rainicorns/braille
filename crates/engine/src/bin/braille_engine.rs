@@ -386,6 +386,20 @@ fn handle_command_inner(
             session.engine.import_cookies(cookies);
             DaemonResponse::ok(format!("imported {count} cookies"))
         }
+        DaemonCommand::SessionInfo => {
+            let url = session.history_index.map(|idx| session.history[idx].clone());
+            let title = session.engine.get_title();
+            let info = braille_wire::SessionInfoData {
+                url,
+                title,
+                cookie_count: session.engine.cookie_count(),
+                history_length: session.history.len(),
+                can_go_back: matches!(session.history_index, Some(idx) if idx > 0),
+                can_go_forward: matches!(session.history_index, Some(idx) if idx + 1 < session.history.len()),
+            };
+            let json = serde_json::to_string(&info).unwrap_or_else(|_| "{}".to_string());
+            DaemonResponse::ok(json)
+        }
         DaemonCommand::NewSession | DaemonCommand::DaemonStop | DaemonCommand::Ping => {
             DaemonResponse::err("unexpected command for engine process".to_string())
         }
