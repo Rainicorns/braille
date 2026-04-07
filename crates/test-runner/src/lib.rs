@@ -823,13 +823,24 @@ pub fn resolve_script_src(
                                                 var te = new Event("touchend", {bubbles: true, cancelable: cancelable});
                                                 te.touches = []; te.changedTouches = [{clientX: curX, clientY: curY}]; te.targetTouches = [];
                                                 touchTarget.dispatchEvent(te);
-                                                // Fire scrollend once for the whole touch gesture (async)
+                                                // Apply scroll-snap before firing scrollend
                                                 if (totalDy !== 0 || totalDx !== 0) {
                                                     var vv = window.visualViewport;
                                                     if (vv && vv.scale > 1) {
                                                         vv.dispatchEvent(new Event('scrollend'));
                                                     }
                                                     if (touchScrolledElement) {
+                                                        // Snap to nearest snap point (like browsers do after touch gestures)
+                                                        if (typeof __computeSnapOffset === 'function') {
+                                                            var snapped = __computeSnapOffset(touchScrolledElement, touchScrolledElement.scrollLeft, touchScrolledElement.scrollTop);
+                                                            if (snapped.x !== touchScrolledElement.scrollLeft || snapped.y !== touchScrolledElement.scrollTop) {
+                                                                if (!touchScrolledElement.__props) touchScrolledElement.__props = {};
+                                                                touchScrolledElement.__props._scrollLeft = snapped.x;
+                                                                touchScrolledElement.__props._scrollTop = snapped.y;
+                                                                var st2 = __resolveScrollTarget(touchScrolledElement);
+                                                                st2.target.dispatchEvent(new Event('scroll', {bubbles: st2.isRoot}));
+                                                            }
+                                                        }
                                                         var st = __resolveScrollTarget(touchScrolledElement);
                                                         __fireScrollend(st.target, st.isRoot);
                                                     }

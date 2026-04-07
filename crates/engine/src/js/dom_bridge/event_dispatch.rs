@@ -483,11 +483,15 @@ pub(super) fn event_dispatch_js() -> &'static str {
         var __validScriptTypes = {'': 1, 'text/javascript': 1, 'application/javascript': 1, 'application/x-javascript': 1, 'text/ecmascript': 1, 'application/ecmascript': 1, 'module': 1};
         globalThis.__braille_maybe_load_script = function(node) {
             if (!node || node.tagName !== 'SCRIPT') return;
+            // Per HTML spec "already started" flag: once a script has been executed,
+            // it must not execute again when re-inserted into the document.
+            if (node.__scriptAlreadyStarted) return;
             // Per spec: don't execute scripts that were disconnected (e.g., removed by an earlier script in the same batch)
             if (node.__nid !== undefined && !node.isConnected) return;
             // Per spec: scripts with invalid type attributes don't execute
             var scriptType = node.getAttribute('type');
             if (scriptType !== null && !__validScriptTypes[scriptType.toLowerCase()]) return;
+            node.__scriptAlreadyStarted = true;
             var src = node.getAttribute('src');
             if (src) {
                 var shortSrc = src.substring(src.lastIndexOf('/') + 1).substring(0, 40);

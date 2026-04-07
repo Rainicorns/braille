@@ -56,11 +56,16 @@ impl Engine {
 
         // 4. Walk the tree to find all <script> elements in document order,
         //    collect their text content, and execute each one.
+        //    Per HTML spec, mark all parser-inserted scripts as "already started"
+        //    so they don't re-execute if moved via appendChild during execution.
         let scripts = self.collect_scripts();
-        for script_content in scripts {
+        runtime.eval_or_log(
+            "var __ss = document.querySelectorAll('script'); for (var __si = 0; __si < __ss.length; __si++) __ss[__si].__scriptAlreadyStarted = true;",
+        );
+        for script_content in &scripts {
             if !script_content.trim().is_empty() {
                 // Execute the script; let errors propagate as panics (fail fast)
-                runtime.eval(&script_content).unwrap();
+                runtime.eval(script_content).unwrap();
                 runtime.notify_mutation_observers();
             }
         }

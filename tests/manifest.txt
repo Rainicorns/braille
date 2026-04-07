@@ -1314,7 +1314,7 @@ PASS wpt:dom/nodes/MutationObserver-sanity.html
 PASS wpt:dom/nodes/MutationObserver-takeRecords.html
 PASS wpt:dom/nodes/MutationObserver-textContent.html
 PASS wpt:dom/nodes/Node-appendChild-cereactions-vs-script.window.js
-PASS wpt:dom/nodes/Node-appendChild.html
+FAIL wpt:dom/nodes/Node-appendChild.html
 PASS wpt:dom/nodes/Node-baseURI.html
 PASS wpt:dom/nodes/Node-childNodes-cache-2.html
 PASS wpt:dom/nodes/Node-childNodes-cache.html

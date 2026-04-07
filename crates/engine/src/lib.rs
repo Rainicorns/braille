@@ -16,7 +16,7 @@ mod scripts;
 pub mod transcript;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 // Engine-level code should not reference QuickJS types directly.
@@ -107,7 +107,6 @@ pub struct Engine {
     pub include_hidden_content: bool,
     /// Tracks elements that have already fired their initial scroll-snap scrollend.
     /// Reset when an element goes back to display:none so it fires again on re-show.
-    snap_fired: HashSet<NodeId>,
     /// Permission states (persists across page loads within session).
     pub permissions: Permissions,
 }
@@ -130,7 +129,6 @@ impl Engine {
             cookies_pending_js_sync: false,
             runtime_mode: RuntimeMode::default(),
             include_hidden_content: false,
-            snap_fired: HashSet::new(),
             permissions: Permissions::default(),
         }
     }
@@ -189,7 +187,7 @@ impl Engine {
                     continue;
                 }
             }
-            // runtime borrow is released here — safe to access self.tree, self.snap_fired
+            // runtime borrow is released here — safe to access self.tree
 
             // 4. No MO and no ready timers — before advancing the clock, recompute
             //    styles and fire scroll-snap events. This ensures snap scrollend fires
@@ -339,12 +337,7 @@ impl Engine {
                 let display = cs.get("display").map(|s| s.as_str()).unwrap_or("inline");
 
                 if snap_type.contains("mandatory") && display != "none" {
-                    if !self.snap_fired.contains(&nid) {
-                        targets.push(nid);
-                    }
-                } else if display == "none" {
-                    // Element is hidden — reset so scrollend fires again when re-shown
-                    self.snap_fired.remove(&nid);
+                    targets.push(nid);
                 }
             }
         }
@@ -354,36 +347,34 @@ impl Engine {
             return false;
         }
 
-        for &nid in &targets {
-            self.snap_fired.insert(nid);
-        }
-
+        let mut did_snap = false;
         if let Some(runtime) = self.runtime.as_mut() {
             for nid in targets {
-                // Only fire scrollend if the current scroll position is NOT already
-                // at a snap point. If already snapped, no adjustment needed.
+                // Only snap if the current scroll position is NOT at a snap point.
+                // Returns "1" if a snap adjustment was made, "" otherwise.
                 let code = format!(
                     r#"(function(){{
                         var el = __braille_get_element_wrapper({});
-                        if (!el) return;
+                        if (!el) return '';
                         var snapped = __computeSnapOffset(el, el.scrollLeft, el.scrollTop);
                         if (snapped.x !== el.scrollLeft || snapped.y !== el.scrollTop) {{
                             el.scrollTo({{ left: snapped.x, top: snapped.y }});
-                        }} else {{
-                            // Already at snap point — still fire scrollend for mandatory snap resolution
-                            var isRoot = (el === document.scrollingElement);
-                            var evTarget = isRoot ? document : el;
-                            evTarget.dispatchEvent(new Event('scrollend', {{bubbles: isRoot}}));
+                            return '1';
                         }}
+                        return '';
                     }})()"#,
                     nid
                 );
-                let _ = runtime.eval(&code);
-                runtime.run_jobs();
+                if let Ok(result) = runtime.eval_to_string(&code) {
+                    if result == "1" {
+                        runtime.run_jobs();
+                        did_snap = true;
+                    }
+                }
             }
         }
 
-        true
+        did_snap
     }
 
     /// Deliver a WebSocket event to a JS WebSocket instance.
