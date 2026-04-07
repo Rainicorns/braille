@@ -857,6 +857,8 @@ pub fn resolve_script_src(
                                     var mouseTarget = null;
                                     var mCurX = 0, mCurY = 0;
                                     var mOriginEl = null;
+                                    var mouseDownTarget = null;
+                                    var mouseDownOriginEl = null;
                                     for (var j = 0; j < source.actions.length; j++) {
                                         var action = source.actions[j];
                                         if (action.type === "pointerMove") {
@@ -882,6 +884,8 @@ pub fn resolve_script_src(
                                                 if (!mouseTarget) mouseTarget = document.body || null;
                                                 mouseTarget = __resolveIframeTarget(mouseTarget, mCurX, mCurY);
                                             }
+                                            mouseDownTarget = mouseTarget;
+                                            mouseDownOriginEl = mOriginEl;
                                             if (mouseTarget) {
                                                 mouseTarget.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY,pointerId:1,pointerType:'mouse'}));
                                                 mouseTarget.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY}));
@@ -892,6 +896,34 @@ pub fn resolve_script_src(
                                                 mouseTarget.dispatchEvent(new MouseEvent('mouseup', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY}));
                                                 mouseTarget.dispatchEvent(new MouseEvent('click', {bubbles:true,cancelable:true,clientX:mCurX,clientY:mCurY}));
                                             }
+                                            // Simulate user-initiated text selection (pointer drag)
+                                            if (mouseDownTarget && typeof getSelection === 'function') {
+                                                var sel = getSelection();
+                                                var anchorEl = mouseDownOriginEl || mouseDownTarget;
+                                                var focusEl = mOriginEl || mouseTarget;
+                                                // Find first text node in an element
+                                                function __findFirstText(el) {
+                                                    if (!el) return null;
+                                                    if (el.nodeType === 3) return el;
+                                                    var cn = el.childNodes;
+                                                    if (cn) for (var ti = 0; ti < cn.length; ti++) {
+                                                        var t = __findFirstText(cn[ti]);
+                                                        if (t) return t;
+                                                    }
+                                                    return null;
+                                                }
+                                                var anchorText = __findFirstText(anchorEl);
+                                                var focusText = __findFirstText(focusEl);
+                                                if (anchorText && focusText) {
+                                                    sel.removeAllRanges();
+                                                    var r = document.createRange();
+                                                    r.setStart(anchorText, 0);
+                                                    r.setEnd(focusText, focusText.length || 0);
+                                                    sel.addRange(r);
+                                                }
+                                            }
+                                            mouseDownTarget = null;
+                                            mouseDownOriginEl = null;
                                         }
                                     }
                                 }
@@ -1689,7 +1721,7 @@ fn run_wpt_test_with_search(
     // Drain microtask queue so promise_test chains resolve before reading results
     engine.settle();
 
-    let has_test_fn = engine.eval_js("typeof test").unwrap_or_default();
+    let has_test_fn = engine.eval_js("typeof globalThis.test").unwrap_or_default();
     if has_test_fn != "function" {
         let err_summary = if js_errors.is_empty() {
             "test harness preamble did not load".to_string()

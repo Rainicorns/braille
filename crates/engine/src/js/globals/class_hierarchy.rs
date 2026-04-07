@@ -113,6 +113,7 @@ const CLASS_HIERARCHY_JS: &str = r#"
         globalThis.HTMLTableSectionElement = class HTMLTableSectionElement extends HTMLElement {};
         globalThis.HTMLTimeElement = class HTMLTimeElement extends HTMLElement {};
         globalThis.HTMLTrackElement = class HTMLTrackElement extends HTMLElement {};
+        globalThis.HTMLSlotElement = class HTMLSlotElement extends HTMLElement {};
         globalThis.SVGElement = class SVGElement extends Element {};
         globalThis.Window = class Window {};
 

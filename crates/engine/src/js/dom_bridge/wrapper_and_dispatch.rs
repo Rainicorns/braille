@@ -43,6 +43,7 @@ pub(super) fn wrapper_factory_js() -> &'static str {
             COL: HTMLTableColElement, COLGROUP: HTMLTableColElement,
             THEAD: HTMLTableSectionElement, TBODY: HTMLTableSectionElement,
             TFOOT: HTMLTableSectionElement,
+            SLOT: HTMLSlotElement,
             TIME: HTMLTimeElement, TRACK: HTMLTrackElement,
             // Generic HTML elements that use HTMLElement (not a specialized subclass)
             ABBR: HTMLElement, ADDRESS: HTMLElement, ARTICLE: HTMLElement,

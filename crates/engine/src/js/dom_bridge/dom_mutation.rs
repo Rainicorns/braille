@@ -100,6 +100,7 @@ pub(super) fn dom_mutation_js() -> &'static str {
             }
             // Update selectedness when options move into a select
             if (typeof __checkSelectedness === 'function') __checkSelectedness(child, this);
+            if (typeof __checkSlotChange === 'function') __checkSlotChange(this, child);
             __ceFlushReactions();
             return child;
         };
@@ -126,6 +127,7 @@ pub(super) fn dom_mutation_js() -> &'static str {
             }
             // Update selectedness when options are removed from a select
             if (typeof __checkSelectedness === 'function') __checkSelectedness(child, this);
+            if (typeof __checkSlotChange === 'function') __checkSlotChange(this, child);
             __ceFlushReactions();
             return child;
         };
@@ -215,6 +217,7 @@ pub(super) fn dom_mutation_js() -> &'static str {
             }
             // Update selectedness when options move into a select
             if (typeof __checkSelectedness === 'function') __checkSelectedness(newChild, this);
+            if (typeof __checkSlotChange === 'function') __checkSlotChange(this, newChild);
             __ceFlushReactions();
             return newChild;
         };
@@ -352,6 +355,10 @@ pub(super) fn dom_mutation_js() -> &'static str {
             if (typeof __checkSelectedness === 'function') {
                 __checkSelectedness(node, this);
                 if (oldParent && oldParent !== this) __checkSelectedness(node, oldParent);
+            }
+            if (typeof __checkSlotChange === 'function') {
+                __checkSlotChange(this, node);
+                if (oldParent && oldParent !== this) __checkSlotChange(oldParent, node);
             }
         };
 

@@ -562,23 +562,7 @@ const WEB_APIS_JS: &str = r#"
         globalThis.cancelAnimationFrame = function(id) { clearTimeout(id); };
         globalThis.requestIdleCallback = function(cb) { return setTimeout(cb, 0); };
         globalThis.cancelIdleCallback = function(id) { clearTimeout(id); };
-        globalThis.getSelection = function() {
-            var _ranges = [];
-            return {
-                get rangeCount() { return _ranges.length; },
-                getRangeAt: function(i) { return _ranges[i] || null; },
-                addRange: function(r) { _ranges.push(r); },
-                removeAllRanges: function() { _ranges = []; },
-                removeRange: function(r) { var i = _ranges.indexOf(r); if (i >= 0) _ranges.splice(i, 1); },
-                collapse: function(node, offset) { _ranges = []; if (typeof Range !== 'undefined') { var r = new Range(); r.setStart(node, offset || 0); r.collapse(true); _ranges.push(r); } },
-                collapseToStart: function() { if (_ranges.length) { _ranges[0].collapse(true); _ranges = [_ranges[0]]; } },
-                collapseToEnd: function() { if (_ranges.length) { _ranges[0].collapse(false); _ranges = [_ranges[0]]; } },
-                toString: function() { return _ranges.length ? _ranges[0].toString() : ''; },
-                isCollapsed: true,
-                anchorNode: null, anchorOffset: 0, focusNode: null, focusOffset: 0,
-                type: 'None',
-            };
-        };
+        // getSelection is installed by dom_bridge/selection.rs (needs Range/BrailleRange)
 
         // MessageChannel — React 18 scheduler uses this for async rendering
         globalThis.MessageChannel = class MessageChannel {

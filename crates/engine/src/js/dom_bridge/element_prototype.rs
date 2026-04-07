@@ -64,7 +64,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
         };
         ElemProto.setAttribute = function(name, value) {
             name = String(name);
-            if (name === '') throw new DOMException("The string contains invalid characters.", "InvalidCharacterError");
+            if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'setAttribute' on 'Element': '" + name + "' is not a valid attribute name.", "InvalidCharacterError");
             name = __attrName(this, name);
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
             __n_setAttribute(this.__nid, name, String(value));

@@ -515,14 +515,28 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
 
                     var src = __braille_iframe_get_src(nid);
                     var content;
+                    var fragment = null;
                     if (__isAboutBlankSrc(src)) {
                         content = '<html><head></head><body></body></html>';
                     } else {
-                        content = __braille_iframe_lookup_content(src);
+                        // Strip URL fragment before content lookup
+                        var srcNoFrag = src;
+                        var hashIdx = src.indexOf('#');
+                        if (hashIdx >= 0) {
+                            fragment = src.substring(hashIdx + 1);
+                            srcNoFrag = src.substring(0, hashIdx);
+                        }
+                        content = __braille_iframe_lookup_content(srcNoFrag);
+                        if (!content) content = __braille_iframe_lookup_content(src);
                         if (!content) continue;
                     }
 
                     var realm = __braille_create_iframe_realm(nid, content);
+
+                    // Set URL fragment for :target pseudo-class support
+                    if (fragment && realm && realm.document && realm.document.__nid !== undefined) {
+                        __n_setUrlFragment(realm.document.__nid, fragment);
+                    }
 
                     // Mark XML documents: if src ends with .xml or .xhtml, flag as non-HTML
                     if (src && realm && realm.document) {
@@ -535,6 +549,14 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                         }
                     }
 
+                    // Fire load event on the iframe's window (for window.onload handlers)
+                    if (realm && realm.window) {
+                        var loadEvt = new Event('load');
+                        if (typeof realm.window.onload === 'function') {
+                            realm.window.onload(loadEvt);
+                        }
+                    }
+                    // Fire load event on the iframe element
                     var el = __braille_get_element_wrapper(nid);
                     if (el) {
                         if (el.dispatchEvent) {
@@ -562,6 +584,58 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     return realm ? realm.document : null;
                 },
                 configurable: true
+            });
+
+            // Dynamic iframe.src setter: when src is set to a real URL (not about:blank),
+            // look up pre-fetched content and create the iframe realm.
+            Object.defineProperty(HTMLIFrameElement.prototype, 'src', {
+                get: function() {
+                    if (this.__nid === undefined) return '';
+                    return __n_getAttribute(this.__nid, 'src') || '';
+                },
+                set: function(v) {
+                    var val = String(v);
+                    if (this.__nid === undefined) return;
+                    __n_setAttribute(this.__nid, 'src', val);
+                    // If already has a realm, destroy it first
+                    if (iframeRealms[this.__nid]) {
+                        // Clear children
+                        var kids = __n_getAllChildIds(this.__nid);
+                        for (var ci = kids.length - 1; ci >= 0; ci--) {
+                            __n_removeChild(this.__nid, kids[ci]);
+                        }
+                        delete iframeRealms[this.__nid];
+                    }
+                    if (__isAboutBlankSrc(val)) {
+                        __initSingleIframe(this);
+                        return;
+                    }
+                    // Strip fragment for content lookup
+                    var srcNoFrag = val;
+                    var fragment = null;
+                    var hashIdx = val.indexOf('#');
+                    if (hashIdx >= 0) {
+                        fragment = val.substring(hashIdx + 1);
+                        srcNoFrag = val.substring(0, hashIdx);
+                    }
+                    var content = __braille_iframe_lookup_content(srcNoFrag);
+                    if (!content) content = __braille_iframe_lookup_content(val);
+                    if (!content) return;
+                    var realm = __braille_create_iframe_realm(this.__nid, content);
+                    // Set URL fragment for :target
+                    if (fragment && realm && realm.document && realm.document.__nid !== undefined) {
+                        __n_setUrlFragment(realm.document.__nid, fragment);
+                    }
+                    // Fire load on iframe's window (for window.onload handlers)
+                    if (realm && realm.window && typeof realm.window.onload === 'function') {
+                        realm.window.onload(new Event('load'));
+                    }
+                    // Fire load on iframe element
+                    if (this.dispatchEvent) {
+                        this.dispatchEvent(new Event('load'));
+                    }
+                },
+                configurable: true, enumerable: true,
             });
 
             var origReset = globalThis.__braille_reset_dom_cache;

@@ -46,8 +46,7 @@ fn is_lenient_name_start_char(c: char) -> bool {
 /// which are leniently accepted in non-first positions.
 pub fn is_valid_dom_name(name: &str) -> bool {
     name.chars().next().is_some_and(is_lenient_name_start_char)
-        && !name.contains(char::is_whitespace)
-        && !name.contains('>')
+        && !name.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>'])
 }
 
 /// Validates whether a string is a valid element name per the HTML spec.
@@ -100,8 +99,10 @@ pub fn validate_and_extract(
         return Err("InvalidCharacterError");
     }
 
-    // Whitespace or '>' anywhere → INVALID_CHARACTER_ERR
-    if qualified_name.contains(char::is_whitespace) || qualified_name.contains('>') {
+    // Reject NUL, ASCII whitespace (\t \n \f \r space), and '>' in qualified names.
+    // Note: other control chars like U+0001 are VALID in prefixes per browser behavior.
+    // Local name validation (element/attribute name rules) is done by callers.
+    if qualified_name.contains(['\0', '\t', '\n', '\x0C', '\r', ' ', '/', '>']) {
         return Err("InvalidCharacterError");
     }
 

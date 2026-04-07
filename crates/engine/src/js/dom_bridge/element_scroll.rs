@@ -315,7 +315,7 @@ pub(super) fn element_scroll_js() -> &'static str {
         };
         ElemProto.toggleAttribute = function(name, force) {
             name = String(name);
-            if (name === '') throw new DOMException("The string contains invalid characters.", "InvalidCharacterError");
+            if (__isInvalidAttrName(name)) throw new DOMException("Failed to execute 'toggleAttribute' on 'Element': '" + name + "' is not a valid attribute name.", "InvalidCharacterError");
             name = __attrName(this, name);
             if (force !== undefined) {
                 if (force) { this.setAttribute(name, ''); return true; }
@@ -331,6 +331,10 @@ pub(super) fn element_scroll_js() -> &'static str {
             if (result.err) {
                 var eName = result.err;
                 throw new DOMException("Failed to execute 'setAttributeNS' on 'Element': " + (eName === 'InvalidCharacterError' ? "'" + qualifiedName + "' is not a valid attribute name." : "The namespace provided has an error."), eName);
+            }
+            // Validate local name as attribute name
+            if (__isInvalidAttrName(result.ok.localName)) {
+                throw new DOMException("Failed to execute 'setAttributeNS' on 'Element': '" + qualifiedName + "' is not a valid attribute name.", "InvalidCharacterError");
             }
             __n_setAttributeNS(this.__nid, ns, qualifiedName, String(value));
         };

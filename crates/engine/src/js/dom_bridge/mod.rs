@@ -44,6 +44,8 @@ mod label_bindings;
 mod native_attributes;
 mod native_functions;
 mod native_tree_ops;
+mod selection;
+mod slot_assignment;
 mod wrapper_and_dispatch;
 
 #[cfg(test)]
@@ -148,6 +150,8 @@ fn register_js_wrappers(ctx: &Ctx<'_>) {
         event_dispatch::event_dispatch_js(),
         dom_mutation::dom_mutation_js(),
         global_document::global_document_js(),
+        selection::selection_js(),
+        slot_assignment::slot_assignment_js(),
         wrapper_and_dispatch::constructors_and_wiring_js(),
         "\n})();\n",
     ].concat();

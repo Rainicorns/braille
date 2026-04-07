@@ -206,7 +206,15 @@ pub(super) fn global_document_js() -> &'static str {
         doc.querySelectorAll = function(sel) {
             return __makeStaticNodeList(__n_querySelectorAll(0, sel, 0).map(__w));
         };
+        // Element name validation regex per WPT name-validation spec:
+        // ASCII alpha start: subsequent chars must not be \0, \t, \n, \f, \r, space, /, >
+        // :, _, or >= U+0080 start: subsequent chars only A-Za-z0-9, -, ., :, _, >= U+0080
+        var __validElemNameRe = /^(?:[A-Za-z][^\0\t\n\f\r\u0020\u002f\u003e]*|[:\u005f\u0080-\u{10FFFF}][A-Za-z0-9\u002d\u002e\u003a\u005f\u0080-\u{10FFFF}]*)$/u;
         doc.createElement = function(tag) {
+            tag = String(tag);
+            if (!__validElemNameRe.test(tag)) {
+                throw new DOMException("Failed to execute 'createElement' on 'Document': The tag name provided ('" + tag + "') is not a valid name.", "InvalidCharacterError");
+            }
             var nid = __n_createElement(tag);
             var el = __w(nid);
             el.namespaceURI = 'http://www.w3.org/1999/xhtml';
@@ -240,6 +248,10 @@ pub(super) fn global_document_js() -> &'static str {
             }
             var localName = result.ok.localName;
             var pfx = result.ok.prefix || '';
+            // Validate local name against element name rules
+            if (!__validElemNameRe.test(localName)) {
+                throw new DOMException("Failed to execute 'createElementNS' on 'Document': The qualified name provided ('" + qn + "') contains the invalid character.", "InvalidCharacterError");
+            }
             var nsNorm = (ns === null || ns === undefined || ns === '') ? null : String(ns);
             var nsForNative = nsNorm || '';
             var nid = __n_createElementNS(localName, nsForNative, pfx);
@@ -338,11 +350,20 @@ pub(super) fn global_document_js() -> &'static str {
 
         doc.createAttributeNS = function(ns, qualifiedName) {
             if (arguments.length < 2) throw new TypeError("Failed to execute 'createAttributeNS' on 'Document': 2 arguments required.");
-            var prefix = null;
-            var localName = String(qualifiedName);
-            var idx = localName.indexOf(':');
-            if (idx >= 0) { prefix = localName.substring(0, idx); localName = localName.substring(idx + 1); }
-            var attr = new Attr(qualifiedName, '', ns === null ? null : String(ns), prefix);
+            var qn = String(qualifiedName);
+            var nsStr = (ns === null || ns === undefined) ? '' : String(ns);
+            var result = JSON.parse(__n_validateAndExtract(nsStr, qn));
+            if (result.err) {
+                var eName = result.err;
+                throw new DOMException("Failed to execute 'createAttributeNS' on 'Document': " + (eName === 'InvalidCharacterError' ? "'" + qn + "' is not a valid attribute name." : "The namespace provided has an error."), eName);
+            }
+            var localName = result.ok.localName;
+            // Validate local name as attribute name
+            if (__isInvalidAttrName(localName)) {
+                throw new DOMException("Failed to execute 'createAttributeNS' on 'Document': '" + qn + "' is not a valid attribute name.", "InvalidCharacterError");
+            }
+            var prefix = result.ok.prefix || null;
+            var attr = new Attr(qn, '', ns === null ? null : String(ns), prefix);
             attr.localName = localName;
             return attr;
         };
@@ -519,6 +540,67 @@ pub(super) fn global_document_js() -> &'static str {
         // when a node is removed from its parent. Per spec, if a range's
         // startContainer or endContainer is a descendant of the removed node,
         // snap the boundary up to the removed node's parent.
+        // Find the deepest last non-whitespace text descendant of a node
+        function __deepestLastText(node) {
+            if (node.nodeType === 3 && !__isWhitespaceOnly(node)) return node;
+            var cn = node.childNodes;
+            if (cn) for (var i = cn.length - 1; i >= 0; i--) {
+                var t = __deepestLastText(cn[i]);
+                if (t) return t;
+            }
+            return null;
+        }
+        // Find the deepest first non-whitespace text descendant of a node
+        function __deepestFirstText(node) {
+            if (node.nodeType === 3 && !__isWhitespaceOnly(node)) return node;
+            var cn = node.childNodes;
+            if (cn) for (var i = 0; i < cn.length; i++) {
+                var t = __deepestFirstText(cn[i]);
+                if (t) return t;
+            }
+            return null;
+        }
+        // Check if a text node is whitespace-only
+        function __isWhitespaceOnly(node) {
+            return node.nodeType === 3 && /^\s*$/.test(node.data || '');
+        }
+        // Find nearest text position backward from movedNode's index in parent
+        function __findNearestTextBackward(oldParent, movedNode) {
+            var kids = oldParent.childNodes;
+            if (!kids) return null;
+            var idx = -1;
+            for (var i = 0; i < kids.length; i++) {
+                if (kids[i] === movedNode) { idx = i; break; }
+            }
+            // Walk backward
+            for (var i = idx - 1; i >= 0; i--) {
+                var kid = kids[i];
+                if (kid.nodeType === 3 && !__isWhitespaceOnly(kid)) return { node: kid, offset: (kid.data || '').length };
+                if (kid.nodeType === 1) {
+                    var t = __deepestLastText(kid);
+                    if (t && !__isWhitespaceOnly(t)) return { node: t, offset: (t.data || '').length };
+                }
+            }
+            return null;
+        }
+        // Find nearest text position forward from movedNode's index in parent
+        function __findNearestTextForward(oldParent, movedNode) {
+            var kids = oldParent.childNodes;
+            if (!kids) return null;
+            var idx = -1;
+            for (var i = 0; i < kids.length; i++) {
+                if (kids[i] === movedNode) { idx = i; break; }
+            }
+            for (var i = idx + 1; i < kids.length; i++) {
+                var kid = kids[i];
+                if (kid.nodeType === 3 && !__isWhitespaceOnly(kid)) return { node: kid, offset: 0 };
+                if (kid.nodeType === 1) {
+                    var t = __deepestFirstText(kid);
+                    if (t && !__isWhitespaceOnly(t)) return { node: t, offset: 0 };
+                }
+            }
+            return null;
+        }
         globalThis.__adjustRangesForRemoval = function(node, oldParent) {
             if (!__liveRanges.length) return;
             var oldIndex = 0;
@@ -528,15 +610,25 @@ pub(super) fn global_document_js() -> &'static str {
                     if (kids[i] === node) { oldIndex = i; break; }
                 }
             }
+            // Find nearest text positions (cached for all ranges)
+            var nearText = __findNearestTextBackward(oldParent, node) || __findNearestTextForward(oldParent, node);
             for (var ri = 0; ri < __liveRanges.length; ri++) {
                 var r = __liveRanges[ri];
+                var startAdjusted = false, endAdjusted = false;
+                var origStartContainer = r.startContainer;
+                var origEndContainer = r.endContainer;
                 // Check if startContainer is node or a descendant of node
                 var sc = r.startContainer;
                 while (sc) {
                     if (sc === node) {
-                        r.startContainer = oldParent;
-                        r.startOffset = oldIndex;
-                        r._update();
+                        if (nearText) {
+                            r.startContainer = nearText.node;
+                            r.startOffset = nearText.offset;
+                        } else {
+                            r.startContainer = oldParent;
+                            r.startOffset = oldIndex;
+                        }
+                        startAdjusted = true;
                         break;
                     }
                     sc = sc.parentNode;
@@ -545,13 +637,29 @@ pub(super) fn global_document_js() -> &'static str {
                 var ec = r.endContainer;
                 while (ec) {
                     if (ec === node) {
-                        r.endContainer = oldParent;
-                        r.endOffset = oldIndex;
-                        r._update();
+                        if (nearText) {
+                            r.endContainer = nearText.node;
+                            r.endOffset = nearText.offset;
+                        } else {
+                            r.endContainer = oldParent;
+                            r.endOffset = oldIndex;
+                        }
+                        endAdjusted = true;
                         break;
                     }
                     ec = ec.parentNode;
                 }
+                // If an adjusted boundary landed on the same text node as the
+                // unadjusted one (originally from a different container), collapse
+                // the range to the unadjusted boundary's position.
+                if (startAdjusted && !endAdjusted && r.startContainer === r.endContainer && origStartContainer !== origEndContainer) {
+                    r.startContainer = r.endContainer;
+                    r.startOffset = r.endOffset;
+                } else if (endAdjusted && !startAdjusted && r.startContainer === r.endContainer && origStartContainer !== origEndContainer) {
+                    r.endContainer = r.startContainer;
+                    r.endOffset = r.startOffset;
+                }
+                if (startAdjusted || endAdjusted) r._update();
             }
         };
         globalThis.Range = BrailleRange;
@@ -1004,6 +1112,10 @@ pub(super) fn global_document_js() -> &'static str {
                             var eName = result.err;
                             throw new DOMException("Failed to execute 'createDocument' on 'DOMImplementation': The qualified name provided ('" + qnVal + "') " + (eName === 'InvalidCharacterError' ? 'is not a valid name' : 'has a namespace error') + ".", eName);
                         }
+                        // Validate local name against element name rules
+                        if (!__validElemNameRe.test(result.ok.localName)) {
+                            throw new DOMException("Failed to execute 'createDocument' on 'DOMImplementation': The qualified name provided ('" + qnVal + "') is not a valid name.", "InvalidCharacterError");
+                        }
                     } else if (nsVal === null || nsVal === undefined || nsVal === '') {
                         // Empty qname with null namespace is fine (creates doc with no element)
                     } else {
@@ -1064,8 +1176,8 @@ pub(super) fn global_document_js() -> &'static str {
                 createDocumentType: function(qualifiedName, publicId, systemId) {
                     if (arguments.length < 3) throw new TypeError("Failed to execute 'createDocumentType' on 'DOMImplementation': 3 arguments required.");
                     var qn = String(qualifiedName);
-                    // DOCTYPE names only reject > and whitespace
-                    if (/[>\s]/.test(qn)) {
+                    // DOCTYPE names only reject NUL, ASCII whitespace (\t \n \f \r space), and >
+                    if (/[\0\t\n\f\r\u0020>]/.test(qn)) {
                         throw new DOMException("Failed to execute 'createDocumentType' on 'DOMImplementation': The qualified name provided is not a valid name.", "InvalidCharacterError");
                     }
                     var nid = __n_createDoctype(qn, String(publicId), String(systemId));

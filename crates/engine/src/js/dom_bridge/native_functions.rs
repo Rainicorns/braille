@@ -6,6 +6,25 @@ use crate::dom::NodeId;
 
 use super::{import_node_recursive, with_tree, with_tree_mut};
 
+/// Escape a string for safe inclusion in a JSON string literal.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     super::native_attributes::register_native_attributes(ctx);
     super::native_tree_ops::register_native_tree_ops(ctx);
@@ -674,11 +693,12 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
         let ns = if namespace.is_empty() || namespace == "null" { None } else { Some(namespace.as_str()) };
         match crate::dom::tree::validate_and_extract(ns, &qualified_name) {
             Ok((prefix, local_name)) => {
-                let p = prefix.as_deref().unwrap_or("");
-                format!("{{\"ok\":{{\"prefix\":\"{}\",\"localName\":\"{}\"}}}}", p, local_name)
+                let p = json_escape(prefix.as_deref().unwrap_or(""));
+                let l = json_escape(&local_name);
+                format!("{{\"ok\":{{\"prefix\":\"{p}\",\"localName\":\"{l}\"}}}}")
             }
             Err(err_name) => {
-                format!("{{\"err\":\"{}\"}}", err_name)
+                format!("{{\"err\":\"{err_name}\"}}")
             }
         }
     }).unwrap()).unwrap();
@@ -688,6 +708,13 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
     g.set("__n_setFocusedNode", Function::new(ctx.clone(), |node_id: i32| {
         with_tree_mut(|tree| {
             tree.focused_node = if node_id >= 0 { Some(node_id as NodeId) } else { None };
+        });
+    }).unwrap()).unwrap();
+
+    // Set URL fragment for :target pseudo-class matching.
+    g.set("__n_setUrlFragment", Function::new(ctx.clone(), |_doc_nid: u32, fragment: DomString| {
+        with_tree_mut(|tree| {
+            tree.url_fragment = if fragment.is_empty() { None } else { Some(fragment.to_string()) };
         });
     }).unwrap()).unwrap();
 
