@@ -125,6 +125,9 @@ impl Engine {
         // Make all fetched scripts available to inline Worker execution
         Self::populate_worker_scripts(&fetched.scripts, &mut runtime);
 
+        // Make pre-fetched CSS available for link stylesheet loading
+        Self::populate_link_css(&fetched.css, &mut runtime);
+
         // Register named elements (id → global) per HTML spec
         Self::register_named_elements(&mut runtime);
 
@@ -153,8 +156,7 @@ impl Engine {
         }
 
         // Fire onload for parser-inserted <link rel="stylesheet"> elements.
-        // Browsers fire these when stylesheets finish loading. We don't fetch CSS,
-        // but sites gate content visibility on these callbacks (e.g. ifixit's deferCss).
+        // This now actually loads CSS content from pre-fetched resources.
         Self::fire_link_stylesheet_loads(&mut runtime);
 
         // Fire DOMContentLoaded on document (defer scripts have all run)
@@ -338,6 +340,9 @@ impl Engine {
         // Make all fetched scripts available to inline Worker execution
         Self::populate_worker_scripts(&fetched.scripts, &mut runtime);
 
+        // Make pre-fetched CSS available for link stylesheet loading
+        Self::populate_link_css(&fetched.css, &mut runtime);
+
         // Register named elements (id → global) per HTML spec
         Self::register_named_elements(&mut runtime);
 
@@ -417,8 +422,9 @@ impl Engine {
         self.tree = Rc::clone(&tree);
         let mut runtime = self.make_runtime();
 
-        // 3. Populate iframe src content
+        // 3. Populate iframe src content and pre-fetched CSS
         Self::populate_iframe_src_content(&fetched.iframes, &runtime);
+        Self::populate_link_css(&fetched.css, &mut runtime);
 
         // 4. Split HTML at </script> boundaries
         let chunks = split_html_at_scripts(html);
@@ -498,6 +504,7 @@ impl Engine {
         let _ = inc.finish();
 
         // 7. Post-processing
+        Self::fire_link_stylesheet_loads(&mut runtime);
         Self::process_iframe_loads(&mut runtime, &tree);
         Self::fire_window_load(&mut runtime);
 
@@ -517,6 +524,22 @@ impl Engine {
     /// Store pre-fetched iframe HTML content in the realm state.
     pub(crate) fn populate_iframe_src_content(iframes: &HashMap<String, String>, runtime: &JsRuntime) {
         runtime.populate_iframe_content(iframes);
+    }
+
+    /// Make pre-fetched CSS available to __braille_maybe_load_link via a JS-side map.
+    fn populate_link_css(css: &HashMap<String, String>, runtime: &mut JsRuntime) {
+        if css.is_empty() {
+            return;
+        }
+        runtime.eval_or_log("if (!globalThis.__braille_fetched_css) globalThis.__braille_fetched_css = {};");
+        for (url, content) in css {
+            let url_json = serde_json::to_string(url).unwrap();
+            let content_json = serde_json::to_string(content).unwrap();
+            runtime.eval_or_log(&format!(
+                "globalThis.__braille_fetched_css[{}] = {};",
+                url_json, content_json
+            ));
+        }
     }
 
     /// Make fetched scripts available to inline Worker execution via a JS-side map.
@@ -546,6 +569,11 @@ impl Engine {
                     var link = links[i];
                     // Skip links whose load was already scheduled by __braille_maybe_load_link (dynamic insertion)
                     if (link.__linkLoadScheduled) continue;
+                    // Load actual CSS content if available
+                    var href = link.getAttribute('href') || '';
+                    if (href && link.__nid !== undefined) {
+                        __braille_load_link_css(link, href);
+                    }
                     // Compile onload HTML attribute into an IDL handler so dispatchEvent can invoke it
                     if (!link.onload || typeof link.onload !== 'function') {
                         var attrVal = link.getAttribute('onload');

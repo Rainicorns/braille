@@ -195,7 +195,31 @@ pub(super) fn element_properties_js() -> &'static str {
             selected: {
                 get: function() {
                     if (this.__props && this.__props._selected !== undefined) return this.__props._selected;
-                    return this.hasAttribute('selected');
+                    if (this.hasAttribute('selected')) return true;
+                    // Implicit selectedness: first non-disabled option in a non-multiple select
+                    // is selected when no option has explicit selection
+                    if (this.tagName === 'OPTION') {
+                        var sel = this.parentNode;
+                        if (sel && sel.tagName === 'OPTGROUP') sel = sel.parentNode;
+                        if (sel && sel.tagName === 'SELECT' && !sel.hasAttribute('multiple')) {
+                            var opts = sel.querySelectorAll('option');
+                            // Check if any option has explicit selection
+                            var hasExplicit = false;
+                            for (var si = 0; si < opts.length; si++) {
+                                if ((opts[si].__props && opts[si].__props._selected !== undefined) || opts[si].hasAttribute('selected')) {
+                                    hasExplicit = true;
+                                    break;
+                                }
+                            }
+                            if (!hasExplicit) {
+                                // First non-disabled option is implicitly selected
+                                for (var si = 0; si < opts.length; si++) {
+                                    if (!opts[si].disabled) return opts[si] === this;
+                                }
+                            }
+                        }
+                    }
+                    return false;
                 },
                 set: function(v) { if (!this.__props) this.__props = {}; this.__props._selected = !!v; },
                 configurable: true

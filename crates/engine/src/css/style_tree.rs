@@ -72,11 +72,21 @@ fn build_scoped_author_rules(tree: &DomTree) -> HashMap<Option<NodeId>, Vec<Casc
     let mut scoped_rules: HashMap<Option<NodeId>, Vec<CascadeRule>> = HashMap::new();
     let mut source_order = 0;
 
+    // Collect rules from <style> elements
     let style_nodes = tree.get_elements_by_tag_name("style");
     for style_node_id in style_nodes {
         let scope = find_containing_shadow_root(tree, style_node_id);
         let css_text = tree.get_text_content(style_node_id);
         let stylesheet = parse_stylesheet(&css_text);
+        let rules = stylesheet_to_rules(&stylesheet, source_order);
+        source_order += rules.len();
+        scoped_rules.entry(scope).or_default().extend(rules);
+    }
+
+    // Collect rules from <link rel="stylesheet"> elements with pre-fetched CSS
+    for (&node_id, css_text) in &tree.link_stylesheets {
+        let scope = find_containing_shadow_root(tree, node_id);
+        let stylesheet = parse_stylesheet(css_text);
         let rules = stylesheet_to_rules(&stylesheet, source_order);
         source_order += rules.len();
         scoped_rules.entry(scope).or_default().extend(rules);

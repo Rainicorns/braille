@@ -33,13 +33,15 @@ pub use crate::meta_refresh::{check_refresh_header, MetaRefresh};
 pub use crate::navigation::{FetchProvider, MockFetcher};
 pub use crate::scripts::ScriptDescriptor;
 
-/// Pre-fetched resources for external scripts and iframe content.
+/// Pre-fetched resources for external scripts, iframe content, and stylesheets.
 #[derive(Default)]
 pub struct FetchedResources {
     /// Maps script src URL -> fetched JavaScript content.
     pub scripts: HashMap<String, String>,
     /// Maps iframe src URL -> fetched HTML content.
     pub iframes: HashMap<String, String>,
+    /// Maps link href URL -> fetched CSS content.
+    pub css: HashMap<String, String>,
 }
 
 // Note: derive(Default) used instead of manual impl
@@ -50,6 +52,7 @@ impl FetchedResources {
         Self {
             scripts,
             iframes: HashMap::new(),
+            css: HashMap::new(),
         }
     }
 }

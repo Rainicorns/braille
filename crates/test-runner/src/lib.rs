@@ -1067,10 +1067,12 @@ pub fn resolve_script_src(
         "#.to_string());
     }
 
-    let resolved_path = if src.starts_with('/') {
-        wpt_root().join(src.trim_start_matches('/'))
+    // Strip query params (e.g. ?pipe=trickle(d1)) before resolving filesystem path
+    let clean_src = src.split('?').next().unwrap_or(src);
+    let resolved_path = if clean_src.starts_with('/') {
+        wpt_root().join(clean_src.trim_start_matches('/'))
     } else {
-        html_path.parent().unwrap().join(src)
+        html_path.parent().unwrap().join(clean_src)
     };
 
     std::fs::read_to_string(&resolved_path).ok()
@@ -1107,6 +1109,96 @@ pub fn extract_script_srcs(html: &str) -> Vec<String> {
         pos = tag_end + 1;
     }
     srcs
+}
+
+// ---------------------------------------------------------------------------
+// Link href extraction (for <link rel="stylesheet">)
+// ---------------------------------------------------------------------------
+
+pub fn extract_link_hrefs(html: &str) -> Vec<String> {
+    let mut hrefs = Vec::new();
+    let lower = html.to_ascii_lowercase();
+    let mut pos = 0;
+    while let Some(link_start) = lower[pos..].find("<link") {
+        let abs_start = pos + link_start;
+        let tag_end = match lower[abs_start..].find('>') {
+            Some(e) => abs_start + e,
+            None => break,
+        };
+        let tag = &html[abs_start..=tag_end];
+        let tag_lower = tag.to_ascii_lowercase();
+
+        // Only extract stylesheet links
+        if !tag_lower.contains("stylesheet") {
+            pos = tag_end + 1;
+            continue;
+        }
+
+        if let Some(href_idx) = tag_lower.find("href=") {
+            let after_href = &tag[href_idx + 5..];
+            let quote = after_href.chars().next().unwrap_or(' ');
+            if quote == '"' || quote == '\'' {
+                if let Some(end_quote) = after_href[1..].find(quote) {
+                    let href_val = &after_href[1..1 + end_quote];
+                    hrefs.push(href_val.to_string());
+                }
+            } else {
+                let end = after_href
+                    .find(|c: char| c.is_whitespace() || c == '>')
+                    .unwrap_or(after_href.len());
+                hrefs.push(after_href[..end].to_string());
+            }
+        }
+
+        pos = tag_end + 1;
+    }
+    hrefs
+}
+
+/// Extract CSS file references from inline script content (e.g. `link.href = "resources/green.css"`)
+pub fn extract_css_refs_from_scripts(html: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    let mut pos = 0;
+    while pos < html.len() {
+        // Look for quoted strings containing .css
+        let next_quote = html[pos..].find(['"', '\'']);
+        let q_pos = match next_quote {
+            Some(p) => pos + p,
+            None => break,
+        };
+        let quote = html.as_bytes()[q_pos] as char;
+        let after = &html[q_pos + 1..];
+        let end = match after.find(quote) {
+            Some(e) => e,
+            None => { pos = q_pos + 1; continue; }
+        };
+        let val = &after[..end];
+        if val.contains(".css") && !val.contains('<') && !val.contains('>') && val.len() < 200 {
+            // Looks like a CSS file reference — skip if it's clearly not a path
+            if !val.starts_with("http://") && !val.starts_with("https://") && !val.starts_with("//")
+                && !refs.iter().any(|r: &String| r == val)
+            {
+                refs.push(val.to_string());
+            }
+        }
+        pos = q_pos + 1 + end + 1;
+    }
+    refs
+}
+
+pub fn resolve_link_href(html_path: &Path, href: &str) -> Option<String> {
+    // Skip data: URLs — those are handled inline by the JS side
+    if href.starts_with("data:") {
+        return None;
+    }
+    // Strip query params before resolving filesystem path
+    let clean_href = href.split('?').next().unwrap_or(href);
+    let resolved_path = if clean_href.starts_with('/') {
+        wpt_root().join(clean_href.trim_start_matches('/'))
+    } else {
+        html_path.parent().unwrap().join(clean_href)
+    };
+    std::fs::read_to_string(&resolved_path).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,11 +1280,13 @@ pub fn extract_js_iframe_srcs(html: &str) -> Vec<String> {
 }
 
 pub fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<String> {
+    // Strip fragment and query params before resolving filesystem path
     let src_no_fragment = src.split('#').next().unwrap_or(src);
-    let resolved_path = if src_no_fragment.starts_with('/') {
-        wpt_root().join(src_no_fragment.trim_start_matches('/'))
+    let clean_src = src_no_fragment.split('?').next().unwrap_or(src_no_fragment);
+    let resolved_path = if clean_src.starts_with('/') {
+        wpt_root().join(clean_src.trim_start_matches('/'))
     } else {
-        html_path.parent().unwrap().join(src_no_fragment)
+        html_path.parent().unwrap().join(clean_src)
     };
     std::fs::read_to_string(&resolved_path).ok()
 }
@@ -1541,6 +1635,20 @@ fn run_wpt_test_with_search(
         }
     }
 
+    let mut link_hrefs = extract_link_hrefs(html);
+    // Also extract CSS refs from inline scripts (dynamically created <link> elements)
+    for css_ref in extract_css_refs_from_scripts(html) {
+        if !link_hrefs.contains(&css_ref) {
+            link_hrefs.push(css_ref);
+        }
+    }
+    let mut fetched_css = HashMap::new();
+    for href in &link_hrefs {
+        if let Some(content) = resolve_link_href(html_path, href) {
+            fetched_css.insert(href.clone(), content);
+        }
+    }
+
     let mut iframe_srcs = extract_iframe_srcs(html);
     iframe_srcs.extend(extract_js_iframe_srcs(html));
     let mut fetched_iframes = HashMap::new();
@@ -1554,6 +1662,7 @@ fn run_wpt_test_with_search(
     let resources = FetchedResources {
         scripts: fetched_scripts,
         iframes: fetched_iframes,
+        css: fetched_css,
     };
 
     let mut engine = Engine::new();

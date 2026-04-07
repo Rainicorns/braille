@@ -359,5 +359,68 @@ pub(crate) fn form_bindings_js() -> &'static str {
             configurable: true
         });
 
+        // Update selectedness of a <select> element per the HTML spec algorithm.
+        // Called when options are added/removed/moved within a select.
+        // If no option has an explicit selection, the first non-disabled option gets selected.
+        globalThis.__updateSelectedness = function(selectEl) {
+            if (!selectEl || selectEl.tagName !== 'SELECT') return;
+            var opts = selectEl.querySelectorAll('option');
+            if (opts.length === 0) return;
+            // Check if any option has an explicit IDL selection or content attribute
+            var hasExplicit = false;
+            for (var i = 0; i < opts.length; i++) {
+                if ((opts[i].__props && opts[i].__props._selected === true) || opts[i].hasAttribute('selected')) {
+                    hasExplicit = true;
+                    break;
+                }
+            }
+            if (hasExplicit) return;
+            // No option is selected — for a non-multiple select,
+            // the first non-disabled option should be selected per spec
+            if (!selectEl.hasAttribute('multiple')) {
+                for (var i = 0; i < opts.length; i++) {
+                    if (!opts[i].disabled) {
+                        if (!opts[i].__props) opts[i].__props = {};
+                        opts[i].__props._selected = true;
+                        return;
+                    }
+                }
+            }
+        };
+
+        // Check if a node or its ancestors include a <select>, and update selectedness.
+        // Used after DOM mutations (appendChild, removeChild, insertBefore, moveBefore).
+        globalThis.__checkSelectedness = function(node, parent) {
+            if (!node) return;
+            var tag = node.tagName;
+            if (tag === 'OPTION' || tag === 'OPTGROUP') {
+                // Find the select ancestor for oldParent
+                var oldSelect = null;
+                if (parent && parent.tagName === 'SELECT') oldSelect = parent;
+                else if (parent && parent.tagName === 'OPTGROUP' && parent.parentNode && parent.parentNode.tagName === 'SELECT') oldSelect = parent.parentNode;
+
+                // Find the select ancestor for newParent
+                var newParent = node.parentNode;
+                var newSelect = null;
+                if (newParent && newParent.tagName === 'SELECT') newSelect = newParent;
+                else if (newParent && newParent.tagName === 'OPTGROUP' && newParent.parentNode && newParent.parentNode.tagName === 'SELECT') newSelect = newParent.parentNode;
+
+                // If a selected option moved INTO a non-multiple select, enforce single selection
+                if (tag === 'OPTION' && newSelect && !newSelect.hasAttribute('multiple')) {
+                    if (node.__props && node.__props._selected === true) {
+                        var opts = newSelect.querySelectorAll('option');
+                        for (var i = 0; i < opts.length; i++) {
+                            if (opts[i] !== node && opts[i].__props && opts[i].__props._selected === true) {
+                                opts[i].__props._selected = false;
+                            }
+                        }
+                    }
+                }
+
+                if (oldSelect) __updateSelectedness(oldSelect);
+                if (newSelect && newSelect !== oldSelect) __updateSelectedness(newSelect);
+            }
+        };
+
     "#
 }

@@ -697,4 +697,12 @@ pub(super) fn register_native_functions(ctx: &Ctx<'_>) {
             tree.hovered_node = if node_id >= 0 { Some(node_id as NodeId) } else { None };
         });
     }).unwrap()).unwrap();
+
+    // Store CSS text for a <link rel="stylesheet"> element and mark styles dirty.
+    g.set("__n_setLinkCss", Function::new(ctx.clone(), |node_id: u32, css_text: DomString| {
+        with_tree_mut(|tree| {
+            tree.link_stylesheets.insert(node_id as NodeId, css_text.into_string());
+            tree.styles_dirty = true;
+        });
+    }).unwrap()).unwrap();
 }

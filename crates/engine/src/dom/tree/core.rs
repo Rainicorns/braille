@@ -19,6 +19,8 @@ pub struct DomTree {
     /// True when DOM mutations have occurred since the last style computation.
     /// Checked by `__n_getComputedStyle` to trigger on-demand recomputation.
     pub styles_dirty: bool,
+    /// CSS text from external `<link rel="stylesheet">` elements, keyed by node ID.
+    pub link_stylesheets: HashMap<NodeId, String>,
 }
 
 impl Default for DomTree {
@@ -40,6 +42,7 @@ impl DomTree {
             focused_node: None,
             hovered_node: None,
             styles_dirty: true,
+            link_stylesheets: HashMap::new(),
         };
         tree.alloc_node(NodeData::Document);
         tree
@@ -56,6 +59,7 @@ impl DomTree {
             focused_node: None,
             hovered_node: None,
             styles_dirty: true,
+            link_stylesheets: HashMap::new(),
         };
         tree.alloc_node(NodeData::Document);
         tree

@@ -98,6 +98,8 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 __braille_maybe_load_link(child);
                 if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(child);
             }
+            // Update selectedness when options move into a select
+            if (typeof __checkSelectedness === 'function') __checkSelectedness(child, this);
             __ceFlushReactions();
             return child;
         };
@@ -109,6 +111,11 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 if (__n_getParent(child.__nid) !== this.__nid) {
                     throw new DOMException("The node to be removed is not a child of this node.", "NotFoundError");
                 }
+                // Capture selectedness before removal
+                if (child.tagName === 'OPTION' && child.selected && !(child.__props && child.__props._selected !== undefined)) {
+                    if (!child.__props) child.__props = {};
+                    child.__props._selected = true;
+                }
                 __loseFocusIfRemoving(child);
                 // CE lifecycle: disconnectedCallback before removal
                 if (typeof __ceDisconnected === 'function' && __isConnected(this.__nid)) {
@@ -117,6 +124,8 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 __n_removeChild(this.__nid, child.__nid);
                 if (typeof __mo_notify === 'function') __mo_notify('childList', this, {removedNodes: [child]});
             }
+            // Update selectedness when options are removed from a select
+            if (typeof __checkSelectedness === 'function') __checkSelectedness(child, this);
             __ceFlushReactions();
             return child;
         };
@@ -204,6 +213,8 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 __braille_maybe_load_link(newChild);
                 if (typeof __braille_maybe_init_iframe === 'function') __braille_maybe_init_iframe(newChild);
             }
+            // Update selectedness when options move into a select
+            if (typeof __checkSelectedness === 'function') __checkSelectedness(newChild, this);
             __ceFlushReactions();
             return newChild;
         };
@@ -304,6 +315,12 @@ pub(super) fn dom_mutation_js() -> &'static str {
             }
             __collectCE(node);
 
+            // Capture selectedness BEFORE the move — if option is selected (implicit or explicit),
+            // persist it so it survives leaving the select.
+            if (node.tagName === 'OPTION' && node.selected && !(node.__props && node.__props._selected !== undefined)) {
+                if (!node.__props) node.__props = {};
+                node.__props._selected = true;
+            }
             // Perform atomic move — capture old parent BEFORE the move for MO notifications
             var oldParent = node.parentNode;
             // Adjust live Range boundaries before the move (snap start/endContainer up if in moved subtree)
@@ -330,6 +347,11 @@ pub(super) fn dom_mutation_js() -> &'static str {
                         if (typeof ceEl.connectedCallback === 'function') ceEl.connectedCallback();
                     }
                 }
+            }
+            // Update selectedness when options move between selects
+            if (typeof __checkSelectedness === 'function') {
+                __checkSelectedness(node, this);
+                if (oldParent && oldParent !== this) __checkSelectedness(node, oldParent);
             }
         };
 

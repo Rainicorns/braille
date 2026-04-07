@@ -455,13 +455,38 @@ pub(super) fn event_dispatch_js() -> &'static str {
         };
 
         // Schedule a deferred link load for dynamically-inserted <link> elements.
-        // We don't actually load CSS, but frameworks need the onload to resolve promises.
+        // If pre-fetched CSS is available, store it in the Rust DOM tree for style computation.
         globalThis.__braille_maybe_load_link = function(node) {
             if (!node || node.tagName !== 'LINK') return;
             var rel = node.rel || node.getAttribute('rel') || '';
             if (rel === 'stylesheet' || rel === 'prefetch' || rel === 'preload') {
                 node.__linkLoadScheduled = true;
+                // Try to load actual CSS content
+                var href = node.getAttribute('href') || '';
+                if (href && node.__nid !== undefined) {
+                    __braille_load_link_css(node, href);
+                }
                 setTimeout(function() { __braille_fire_link_load(node); }, 0);
+            }
+        };
+
+        // Load CSS content for a link element from pre-fetched CSS or data: URLs
+        globalThis.__braille_load_link_css = function(node, href) {
+            var cssText = null;
+            // Check data: URL
+            if (href.indexOf('data:text/css') === 0) {
+                var commaIdx = href.indexOf(',');
+                if (commaIdx >= 0) {
+                    cssText = decodeURIComponent(href.substring(commaIdx + 1));
+                }
+            }
+            // Check pre-fetched CSS (strip query params for lookup)
+            if (!cssText && globalThis.__braille_fetched_css) {
+                var cleanHref = href.split('?')[0];
+                cssText = globalThis.__braille_fetched_css[href] || globalThis.__braille_fetched_css[cleanHref];
+            }
+            if (cssText && node.__nid !== undefined) {
+                __n_setLinkCss(node.__nid, cssText);
             }
         };
 
