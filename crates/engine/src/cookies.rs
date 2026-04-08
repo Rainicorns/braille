@@ -60,6 +60,12 @@ impl Engine {
                     self.http_cookie_jar.retain(|c| {
                         !(c.name == cookie.name && c.domain == cookie.domain && c.path == cookie.path)
                     });
+                    // Don't store cookies that are already expired (Expires in the past, Max-Age <= 0)
+                    if let Some(exp) = cookie.expires_ms {
+                        if exp <= now_ms {
+                            continue;
+                        }
+                    }
                     self.http_cookie_jar.push(cookie);
                 }
             }
@@ -111,18 +117,20 @@ impl Engine {
         let mut parts: Vec<String> = Vec::new();
         let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        // HTTP jar cookies (including HttpOnly).
-        // We track ALL cookie names from the jar (even skipped ones) in seen_names
-        // to prevent them from being re-added via the JS cookie string path.
+        // First pass: collect all cookie names from the HTTP jar so JS cookies
+        // can't bypass domain/path/expiry/Secure checks.
+        for cookie in &self.http_cookie_jar {
+            seen_names.insert(cookie.name.clone());
+        }
+
+        // Second pass: only include cookies that actually match the request.
         for cookie in &self.http_cookie_jar {
             if !domain_matches(req_domain, &cookie.domain) {
                 continue;
             }
-            if !req_path.starts_with(&cookie.path) {
+            if !path_matches(req_path, &cookie.path) {
                 continue;
             }
-            // Always record the name so JS cookies don't bypass expiry/Secure checks
-            seen_names.insert(cookie.name.clone());
             if let Some(exp) = cookie.expires_ms {
                 if exp < now_ms {
                     continue;
@@ -311,10 +319,29 @@ impl Engine {
     }
 }
 
+/// Check if a request path matches a cookie path per RFC 6265 §5.1.4.
+fn path_matches(request_path: &str, cookie_path: &str) -> bool {
+    if request_path == cookie_path {
+        return true;
+    }
+    if request_path.starts_with(cookie_path) {
+        // cookie_path "/app" matches "/app/foo" but not "/application"
+        return cookie_path.ends_with('/') || request_path.as_bytes().get(cookie_path.len()) == Some(&b'/');
+    }
+    false
+}
+
 /// Check if a request domain matches a cookie domain.
+/// Rejects single-label domains (e.g. "com") as a basic public suffix guard.
 fn domain_matches(request_domain: &str, cookie_domain: &str) -> bool {
+    // Reject single-label cookie domains (no dots = TLD-level)
+    if !cookie_domain.contains('.') {
+        return false;
+    }
     if request_domain == cookie_domain {
         return true;
     }
+    // Must match at a dot boundary: sub.example.com matches example.com,
+    // but notexample.com does not.
     request_domain.ends_with(&format!(".{}", cookie_domain))
 }

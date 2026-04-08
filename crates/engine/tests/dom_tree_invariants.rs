@@ -166,13 +166,11 @@ fn sibling_chain_after_insert_before() {
 
 #[test]
 fn sibling_chain_after_remove_middle() {
-    let mut e = engine_with_html(r#"<html><body>
-        <div id='parent'>
-            <span id='a'>A</span>
-            <span id='b'>B</span>
-            <span id='c'>C</span>
-        </div>
-    </body></html>"#);
+    // No whitespace between elements — whitespace creates text nodes that
+    // make nextSibling/previousSibling return text nodes instead of elements.
+    let mut e = engine_with_html(
+        r#"<html><body><div id='parent'><span id='a'>A</span><span id='b'>B</span><span id='c'>C</span></div></body></html>"#
+    );
 
     // Remove B
     e.eval_js(r#"
@@ -180,13 +178,13 @@ fn sibling_chain_after_remove_middle() {
         b.parentNode.removeChild(b);
     "#).unwrap();
 
-    // A.nextSibling should now be C
-    let a_next = e.eval_js("document.getElementById('a').nextSibling.id").unwrap();
-    assert_eq!(a_next, "c", "after removing B, A.nextSibling should be C: {}", a_next);
+    // A.nextElementSibling should now be C
+    let a_next = e.eval_js("document.getElementById('a').nextElementSibling.id").unwrap();
+    assert_eq!(a_next, "c", "after removing B, A.nextElementSibling should be C: {}", a_next);
 
-    // C.previousSibling should now be A
-    let c_prev = e.eval_js("document.getElementById('c').previousSibling.id").unwrap();
-    assert_eq!(c_prev, "a", "after removing B, C.previousSibling should be A: {}", c_prev);
+    // C.previousElementSibling should now be A
+    let c_prev = e.eval_js("document.getElementById('c').previousElementSibling.id").unwrap();
+    assert_eq!(c_prev, "a", "after removing B, C.previousElementSibling should be A: {}", c_prev);
 }
 
 // ===========================================================================
@@ -195,11 +193,9 @@ fn sibling_chain_after_remove_middle() {
 
 #[test]
 fn replace_child_maintains_tree_integrity() {
-    let mut e = engine_with_html(r#"<html><body>
-        <div id='parent'>
-            <span id='old'>Old</span>
-        </div>
-    </body></html>"#);
+    let mut e = engine_with_html(
+        r#"<html><body><div id='parent'><span id='old'>Old</span></div></body></html>"#
+    );
 
     e.eval_js(r#"
         var parent = document.getElementById('parent');
@@ -209,7 +205,7 @@ fn replace_child_maintains_tree_integrity() {
         parent.replaceChild(newNode, document.getElementById('old'));
     "#).unwrap();
 
-    let child_id = e.eval_js("document.getElementById('parent').firstChild.id").unwrap();
+    let child_id = e.eval_js("document.getElementById('parent').firstElementChild.id").unwrap();
     assert_eq!(child_id, "replacement", "replaced child should be in place: {}", child_id);
 
     let count = e.eval_js("document.getElementById('parent').children.length").unwrap();
@@ -258,9 +254,10 @@ fn rapid_mutation_sequence_maintains_consistency() {
         ids.join(',')
     "#).unwrap();
 
-    // After reversing [0-9] we get [9,8,7,6,5,4,3,2,1,0]
-    // After removing even indices (0,2,4,6,8): [9,7,5,3,1]
-    assert_eq!(remaining, "n9,n7,n5,n3,n1",
+    // The reversal loop (i=9 down to 0, insertBefore(n_i, firstChild)) undoes itself:
+    // each iteration prepends, and the full sweep restores [n0,n1,...,n9].
+    // After removing even-numbered nodes (n0,n2,n4,n6,n8): [n1,n3,n5,n7,n9]
+    assert_eq!(remaining, "n1,n3,n5,n7,n9",
         "complex mutation sequence should produce correct result: {}", remaining);
 
     // Verify children count matches

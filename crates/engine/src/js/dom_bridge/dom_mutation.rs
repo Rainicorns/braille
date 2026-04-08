@@ -131,6 +131,37 @@ pub(super) fn dom_mutation_js() -> &'static str {
             __ceFlushReactions();
             return child;
         };
+        EP.replaceChild = function(newChild, oldChild) {
+            if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined)) {
+                throw new TypeError("Failed to execute 'replaceChild' on 'Node': parameter 1 is not of type 'Node'.");
+            }
+            if (oldChild === null || oldChild === undefined || (typeof oldChild === 'object' && oldChild.__nid === undefined)) {
+                throw new TypeError("Failed to execute 'replaceChild' on 'Node': parameter 2 is not of type 'Node'.");
+            }
+            if (this.__nid === undefined) return oldChild;
+            if (__n_getParent(oldChild.__nid) !== this.__nid) {
+                throw new DOMException("The node to be replaced is not a child of this node.", "NotFoundError");
+            }
+            __loseFocusIfRemoving(oldChild);
+            if (typeof __ceDisconnected === 'function' && __isConnected(this.__nid)) {
+                __ceDisconnected(oldChild);
+            }
+            // If newChild is already in the tree, remove it first
+            if (newChild.__nid !== undefined && __n_getParent(newChild.__nid) >= 0) {
+                __loseFocusIfRemoving(newChild);
+            }
+            __n_replaceChild(this.__nid, newChild.__nid, oldChild.__nid);
+            if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [newChild], removedNodes: [oldChild]});
+            if (typeof __ceConnected === 'function' && __isConnected(this.__nid)) {
+                __ceConnected(newChild);
+            }
+            if (typeof __ceUpgradeTree === 'function' && newChild.__nid !== undefined) {
+                __ceUpgradeTree(newChild);
+            }
+            __ceFlushReactions();
+            return oldChild;
+        };
+
         // Clear nonce content attribute on inserted nodes (per HTML spec "insert" algorithm).
         // moveBefore does NOT clear nonce — only insertBefore/appendChild do.
         function __clearNonceOnInsert(node) {
