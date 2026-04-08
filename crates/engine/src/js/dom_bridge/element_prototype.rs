@@ -68,7 +68,7 @@ pub(crate) fn element_prototype_js() -> &'static str {
             name = __attrName(this, name);
             var old = __n_hasAttrValue(this.__nid, name) ? __n_getAttribute(this.__nid, name) : null;
             __n_setAttribute(this.__nid, name, String(value));
-            if (name === 'id' && value) globalThis[value] = this;
+            if (name === 'id' && value && !(value in globalThis)) globalThis[value] = this;
             if (typeof __mo_notify === 'function') __mo_notify('attributes', this, {attributeName: name, oldValue: old});
             // CE attributeChangedCallback
             if (this.__ce_upgraded && typeof this.attributeChangedCallback === 'function') {
@@ -541,7 +541,23 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 this.parentNode.removeChild(this);
             }
         };
-        EP.getRootNode = function() { return document; };
+        EP.getRootNode = function(options) {
+            var node = this;
+            if (options && options.composed) {
+                // shadow-including root: cross shadow boundaries
+                while (true) {
+                    var p = node.parentNode;
+                    if (p) { node = p; continue; }
+                    // If node is a ShadowRoot, jump to host
+                    if (node.host) { node = node.host; continue; }
+                    break;
+                }
+            } else {
+                // Regular root: walk up parentNode chain
+                while (node.parentNode) { node = node.parentNode; }
+            }
+            return node;
+        };
         EP.compareDocumentPosition = function(other) {
             if (!other || (other.__nid === undefined && other.nodeType === undefined)) return 0;
             if (this === other) return 0;

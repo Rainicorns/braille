@@ -194,8 +194,14 @@ impl<'a> Element for DomElement<'a> {
     }
 
     fn is_html_element_in_html_document(&self) -> bool {
-        // We're always in an HTML context
-        true
+        // Only HTML-namespace elements get case-insensitive attribute name matching.
+        // SVG/MathML elements need case-sensitive matching.
+        match &self.tree.get_node(self.node_id).data {
+            NodeData::Element { namespace, .. } => {
+                namespace.is_empty() || namespace == "http://www.w3.org/1999/xhtml"
+            }
+            _ => true,
+        }
     }
 
     fn has_local_name(&self, local_name: &str) -> bool {

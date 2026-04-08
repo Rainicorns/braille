@@ -369,9 +369,9 @@ pub(super) fn global_document_js() -> &'static str {
         };
 
         function BrailleRange() {
-            this.startContainer = null; this.startOffset = 0;
-            this.endContainer = null; this.endOffset = 0;
-            this.collapsed = true; this.commonAncestorContainer = null;
+            this.startContainer = doc; this.startOffset = 0;
+            this.endContainer = doc; this.endOffset = 0;
+            this.collapsed = true; this.commonAncestorContainer = doc;
         }
         BrailleRange.START_TO_START = 0; BrailleRange.START_TO_END = 1;
         BrailleRange.END_TO_END = 2; BrailleRange.END_TO_START = 3;
@@ -528,81 +528,50 @@ pub(super) fn global_document_js() -> &'static str {
         var __liveRanges = [];
         var __origSetStart = BrailleRange.prototype.setStart;
         var __origSetEnd = BrailleRange.prototype.setEnd;
+        function __trackRange(r) { if (__liveRanges.indexOf(r) < 0) __liveRanges.push(r); }
         BrailleRange.prototype.setStart = function(node, offset) {
             __origSetStart.call(this, node, offset);
-            if (__liveRanges.indexOf(this) < 0) __liveRanges.push(this);
+            __trackRange(this);
         };
         BrailleRange.prototype.setEnd = function(node, offset) {
             __origSetEnd.call(this, node, offset);
-            if (__liveRanges.indexOf(this) < 0) __liveRanges.push(this);
+            __trackRange(this);
         };
-        // Called by moveBefore/insertBefore/removeChild to snap range boundaries
-        // when a node is removed from its parent. Per spec, if a range's
-        // startContainer or endContainer is a descendant of the removed node,
-        // snap the boundary up to the removed node's parent.
-        // Find the deepest last non-whitespace text descendant of a node
-        function __deepestLastText(node) {
-            if (node.nodeType === 3 && !__isWhitespaceOnly(node)) return node;
-            var cn = node.childNodes;
-            if (cn) for (var i = cn.length - 1; i >= 0; i--) {
-                var t = __deepestLastText(cn[i]);
-                if (t) return t;
-            }
-            return null;
-        }
-        // Find the deepest first non-whitespace text descendant of a node
-        function __deepestFirstText(node) {
-            if (node.nodeType === 3 && !__isWhitespaceOnly(node)) return node;
-            var cn = node.childNodes;
-            if (cn) for (var i = 0; i < cn.length; i++) {
-                var t = __deepestFirstText(cn[i]);
-                if (t) return t;
-            }
-            return null;
-        }
-        // Check if a text node is whitespace-only
-        function __isWhitespaceOnly(node) {
-            return node.nodeType === 3 && /^\s*$/.test(node.data || '');
-        }
-        // Find nearest text position backward from movedNode's index in parent
-        function __findNearestTextBackward(oldParent, movedNode) {
-            var kids = oldParent.childNodes;
-            if (!kids) return null;
-            var idx = -1;
-            for (var i = 0; i < kids.length; i++) {
-                if (kids[i] === movedNode) { idx = i; break; }
-            }
-            // Walk backward
-            for (var i = idx - 1; i >= 0; i--) {
-                var kid = kids[i];
-                if (kid.nodeType === 3 && !__isWhitespaceOnly(kid)) return { node: kid, offset: (kid.data || '').length };
-                if (kid.nodeType === 1) {
-                    var t = __deepestLastText(kid);
-                    if (t && !__isWhitespaceOnly(t)) return { node: t, offset: (t.data || '').length };
-                }
-            }
-            return null;
-        }
-        // Find nearest text position forward from movedNode's index in parent
-        function __findNearestTextForward(oldParent, movedNode) {
-            var kids = oldParent.childNodes;
-            if (!kids) return null;
-            var idx = -1;
-            for (var i = 0; i < kids.length; i++) {
-                if (kids[i] === movedNode) { idx = i; break; }
-            }
-            for (var i = idx + 1; i < kids.length; i++) {
-                var kid = kids[i];
-                if (kid.nodeType === 3 && !__isWhitespaceOnly(kid)) return { node: kid, offset: 0 };
-                if (kid.nodeType === 1) {
-                    var t = __deepestFirstText(kid);
-                    if (t && !__isWhitespaceOnly(t)) return { node: t, offset: 0 };
-                }
-            }
-            return null;
-        }
+        var __origSetStartBefore = BrailleRange.prototype.setStartBefore;
+        BrailleRange.prototype.setStartBefore = function(node) {
+            __origSetStartBefore.call(this, node);
+            __trackRange(this);
+        };
+        var __origSetStartAfter = BrailleRange.prototype.setStartAfter;
+        BrailleRange.prototype.setStartAfter = function(node) {
+            __origSetStartAfter.call(this, node);
+            __trackRange(this);
+        };
+        var __origSetEndBefore = BrailleRange.prototype.setEndBefore;
+        BrailleRange.prototype.setEndBefore = function(node) {
+            __origSetEndBefore.call(this, node);
+            __trackRange(this);
+        };
+        var __origSetEndAfter = BrailleRange.prototype.setEndAfter;
+        BrailleRange.prototype.setEndAfter = function(node) {
+            __origSetEndAfter.call(this, node);
+            __trackRange(this);
+        };
+        var __origSelectNode = BrailleRange.prototype.selectNode;
+        BrailleRange.prototype.selectNode = function(node) {
+            __origSelectNode.call(this, node);
+            __trackRange(this);
+        };
+        var __origSelectNodeContents = BrailleRange.prototype.selectNodeContents;
+        BrailleRange.prototype.selectNodeContents = function(node) {
+            __origSelectNodeContents.call(this, node);
+            __trackRange(this);
+        };
+        // Called by moveBefore/insertBefore/removeChild to adjust range boundaries
+        // when a node is removed from its parent, per DOM spec §4.2.3 step 14.
         globalThis.__adjustRangesForRemoval = function(node, oldParent) {
             if (!__liveRanges.length) return;
+            // Compute index of the node being removed (called before actual removal)
             var oldIndex = 0;
             if (oldParent && oldParent.childNodes) {
                 var kids = oldParent.childNodes;
@@ -610,56 +579,42 @@ pub(super) fn global_document_js() -> &'static str {
                     if (kids[i] === node) { oldIndex = i; break; }
                 }
             }
-            // Find nearest text positions (cached for all ranges)
-            var nearText = __findNearestTextBackward(oldParent, node) || __findNearestTextForward(oldParent, node);
             for (var ri = 0; ri < __liveRanges.length; ri++) {
                 var r = __liveRanges[ri];
-                var startAdjusted = false, endAdjusted = false;
-                var origStartContainer = r.startContainer;
-                var origEndContainer = r.endContainer;
-                // Check if startContainer is node or a descendant of node
+                var changed = false;
+                // Per spec §4.2.3 step 14: if start/end node is an inclusive
+                // descendant of the removed node, set boundary to (parent, index).
                 var sc = r.startContainer;
                 while (sc) {
                     if (sc === node) {
-                        if (nearText) {
-                            r.startContainer = nearText.node;
-                            r.startOffset = nearText.offset;
-                        } else {
-                            r.startContainer = oldParent;
-                            r.startOffset = oldIndex;
-                        }
-                        startAdjusted = true;
+                        r.startContainer = oldParent;
+                        r.startOffset = oldIndex;
+                        changed = true;
                         break;
                     }
                     sc = sc.parentNode;
                 }
-                // Check if endContainer is node or a descendant of node
                 var ec = r.endContainer;
                 while (ec) {
                     if (ec === node) {
-                        if (nearText) {
-                            r.endContainer = nearText.node;
-                            r.endOffset = nearText.offset;
-                        } else {
-                            r.endContainer = oldParent;
-                            r.endOffset = oldIndex;
-                        }
-                        endAdjusted = true;
+                        r.endContainer = oldParent;
+                        r.endOffset = oldIndex;
+                        changed = true;
                         break;
                     }
                     ec = ec.parentNode;
                 }
-                // If an adjusted boundary landed on the same text node as the
-                // unadjusted one (originally from a different container), collapse
-                // the range to the unadjusted boundary's position.
-                if (startAdjusted && !endAdjusted && r.startContainer === r.endContainer && origStartContainer !== origEndContainer) {
-                    r.startContainer = r.endContainer;
-                    r.startOffset = r.endOffset;
-                } else if (endAdjusted && !startAdjusted && r.startContainer === r.endContainer && origStartContainer !== origEndContainer) {
-                    r.endContainer = r.startContainer;
-                    r.endOffset = r.startOffset;
+                // Per spec: if start node is parent and start offset > index, decrement
+                if (r.startContainer === oldParent && r.startOffset > oldIndex) {
+                    r.startOffset--;
+                    changed = true;
                 }
-                if (startAdjusted || endAdjusted) r._update();
+                // Per spec: if end node is parent and end offset > index, decrement
+                if (r.endContainer === oldParent && r.endOffset > oldIndex) {
+                    r.endOffset--;
+                    changed = true;
+                }
+                if (changed) r._update();
             }
         };
         globalThis.Range = BrailleRange;

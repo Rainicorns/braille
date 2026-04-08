@@ -1459,7 +1459,7 @@ const WEB_APIS_JS: &str = r#"
         globalThis.gtag = function(){};
 
         // Window/Dialog stubs
-        globalThis.open = function(url, target) { return null; };
+        // window.open is implemented in iframe.rs with real DOM support
         globalThis.close = function() {};
         globalThis.print = function() {};
         globalThis.stop = function() {};

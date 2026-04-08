@@ -638,11 +638,38 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 configurable: true, enumerable: true,
             });
 
+            // window.open() — creates a new window with its own document, reusing
+            // the same iframe realm infrastructure (buildIframeWindow, __makeDocumentLike).
+            var popupRealms = [];
+            globalThis.open = function(url, target, features) {
+                // Create a standalone document node with html>head+body
+                var docNid = __n_createDocumentNode();
+                var htmlNid = __n_createElement('html');
+                __n_appendChild(docNid, htmlNid);
+                var headNid = __n_createElement('head');
+                __n_appendChild(htmlNid, headNid);
+                var bodyNid = __n_createElement('body');
+                __n_appendChild(htmlNid, bodyNid);
+                var htmlEl = __w(htmlNid);
+                var popupDoc = __makeDocumentLike(htmlEl);
+                popupDoc.contentType = 'text/html';
+
+                // Build a window object around this document (null iframeEl — it's a popup)
+                var built = buildIframeWindow(null, popupDoc);
+                var popupWin = built.window;
+                popupWin.opener = window;
+                popupWin.closed = false;
+                popupWin.close = function() { popupWin.closed = true; };
+                popupRealms.push(popupWin);
+                return popupWin;
+            };
+
             var origReset = globalThis.__braille_reset_dom_cache;
             globalThis.__braille_reset_dom_cache = function() {
                 if (origReset) origReset();
                 for (var k in iframeRealms) delete iframeRealms[k];
                 for (var k in __iframeDocMap) delete __iframeDocMap[k];
+                popupRealms = [];
             };
         })();
     "#,

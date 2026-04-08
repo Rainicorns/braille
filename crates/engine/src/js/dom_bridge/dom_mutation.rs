@@ -41,6 +41,11 @@ pub(super) fn dom_mutation_js() -> &'static str {
             if (child && child.__nid !== undefined) {
                 var err = __n_validatePreInsert(this.__nid, child.__nid, -1);
                 if (err) __throwValidationError(err);
+                // Adjust live Range boundaries before the DOM mutation
+                var oldParentAC = child.parentNode;
+                if (typeof __adjustRangesForRemoval === 'function' && oldParentAC) {
+                    __adjustRangesForRemoval(child, oldParentAC);
+                }
                 if (child.nodeType === 11) {
                     var kids = __n_getAllChildIds(child.__nid);
                     var added = [];
@@ -118,6 +123,10 @@ pub(super) fn dom_mutation_js() -> &'static str {
                     child.__props._selected = true;
                 }
                 __loseFocusIfRemoving(child);
+                // Adjust live Range boundaries before the DOM mutation
+                if (typeof __adjustRangesForRemoval === 'function') {
+                    __adjustRangesForRemoval(child, this);
+                }
                 // CE lifecycle: disconnectedCallback before removal
                 if (typeof __ceDisconnected === 'function' && __isConnected(this.__nid)) {
                     __ceDisconnected(child);

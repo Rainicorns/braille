@@ -115,6 +115,19 @@ const CLASS_HIERARCHY_JS: &str = r#"
         globalThis.HTMLTrackElement = class HTMLTrackElement extends HTMLElement {};
         globalThis.HTMLSlotElement = class HTMLSlotElement extends HTMLElement {};
         globalThis.SVGElement = class SVGElement extends Element {};
+
+        // Symbol.unscopables for Element.prototype — prevents these methods from
+        // shadowing same-named variables inside `with` blocks (used by event handlers)
+        Element.prototype[Symbol.unscopables] = {
+            slot: true,
+            before: true,
+            after: true,
+            replaceWith: true,
+            remove: true,
+            prepend: true,
+            append: true,
+        };
+
         globalThis.Window = class Window {};
 
         globalThis.DocumentFragment = class DocumentFragment extends Node {};

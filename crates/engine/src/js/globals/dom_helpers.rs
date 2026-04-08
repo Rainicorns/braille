@@ -468,7 +468,7 @@ const DOM_HELPERS_JS: &str = r#"
                 var w = __w(nid);
                 if (w && w.nodeType === 1) {
                     var id = __n_getAttribute(nid, 'id');
-                    if (id) globalThis[id] = w;
+                    if (id && !(id in globalThis)) globalThis[id] = w;
                 }
                 var kids = __n_getAllChildIds(nid);
                 for (var i = 0; i < kids.length; i++) walk(kids[i]);
