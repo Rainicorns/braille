@@ -7,10 +7,11 @@ A browser for those who read, not see.
 **Spike:** [SPIKE.md](./SPIKE.md) — COMPLETE (46 tests, core loop proven)
 **WPT Status:** [WPT_STATUS.md](./WPT_STATUS.md) — per-file test status, skip reasons
 
-## Current Status (2026-03-28)
+## Current Status (2026-04-08)
 
 ### What's Working
-- **2600+ tests passing** across lib, integration, WPT, framework suites
+- **Ratchet HWM: 1688** (920 cargo + 1403 WPT tests tracked)
+- **498 lib unit tests**, 89 integration tests, 1778 html5lib tree construction (100%), 204 html5lib serializer
 - **Anubis bot protection — fully defeated end-to-end.** Solves PoW challenges (Preact bundled SHA-256), follows 302 redirects with cookie accumulation, loads real Docusaurus site with full JS hydration. Multi-page navigation across Anubis-protected sites works (homepage → docs → subpages → blog → back).
 - **Wikipedia** loads and renders correctly (homepage, articles, search flow)
 - **Codeberg/GitHub** loads fully (JS-heavy sites with Gitea/GitHub frontend)
@@ -18,9 +19,12 @@ A browser for those who read, not see.
 - **Web Workers** — process-based implementation. Worker scripts executed in separate QuickJS child processes. postMessage/onmessage IPC via CLI. Used by Anubis PoW solver.
 - **HTTP redirect handling** — manual redirect following with cookie accumulation across hops, HSTS-style https downgrade prevention, cross-origin header stripping, redirect chain captured in transcripts.
 - **Session recording** — `--record` flag enables session-scoped transcript capture. `mark` command inserts labeled checkpoints. `transcript` command retrieves. Full redirect chains (status, URL, Location, Set-Cookie per hop) recorded.
+- **Session management** — per-session TTL, heartbeat keepalive, reap notices, cookie export/import, lightweight session introspection (info command)
 - **Form features complete** — constraint validation, requestSubmit(), label association, live HTMLCollections
 - **React integration** — proper capture-phase event delegation, property/attribute separation
-- **Container persistence foundation** — Dockerfile (musl static build), session storage module
+- **Flex layout** — flex-basis, flex-grow/shrink, overflow wired to Taffy, PerformanceObserver with all 11 standard entry types
+- **Cookie security** — domain boundary matching, path scoping per RFC 6265, expiry enforcement, public suffix guard
+- **Container persistence foundation** — Dockerfile (musl static build), session storage with TTL and reap notices
 
 ### Architectural Decisions
 
@@ -109,17 +113,20 @@ The default path (99% of pages) has zero rendering overhead. Canvas commands are
 - URL: URL constructor with searchParams (get/set/has/delete/append), URLSearchParams
 - Crypto: crypto.subtle.digest (SHA-256), crypto.getRandomValues
 - Encoding: TextEncoder/TextDecoder (UTF-8)
-- Observers: MutationObserver (full), IntersectionObserver/ResizeObserver (stubs)
+- Observers: MutationObserver (full), IntersectionObserver/ResizeObserver (stubs), PerformanceObserver (all 11 entry types)
 - DOM Traversal: TreeWalker, NodeIterator, Range (21 methods), StaticRange
+- DOM Mutation: appendChild, removeChild, insertBefore, replaceChild, moveBefore
 - Shadow DOM: attachShadow, shadowRoot, composed event dispatch
 - Custom Elements: customElements.define/get/whenDefined, lifecycle callbacks
+- Layout: Taffy flex layout (flex-grow/shrink/basis, overflow, gap, min/max size)
+- Cookies: HTTP jar with domain/path/expiry/Secure/HttpOnly, JS↔HTTP sync, export/import
 - Other: structuredClone, matchMedia, DOMParser, AbortController/AbortSignal, MessageChannel, document.currentScript, window.isSecureContext
 
 ### Test Results
 
 | Test suite | Result |
 |---|---|
-| `cargo test -p braille-engine --lib` | **482 passed** |
+| `cargo test -p braille-engine --lib` | **498 passed** |
 | `--test html5lib_tree_construction` | **1778 passed (100%)** |
 | `--test html5lib_serializer` | **204 passed** |
 | `--test frameworks` | **31 passed** |
@@ -130,12 +137,26 @@ The default path (99% of pages) has zero rendering overhead. Canvas commands are
 | `--test snapshot_views` | **16 passed** |
 | `--test es_modules` | **10 passed** |
 | `--test anubis_challenges` | **13 passed, 3 failing (TDD backlog)** |
-| `--test wpt_dom` | ~279/353 (74 skipped, see [WPT_STATUS.md](./WPT_STATUS.md)) |
-| `./dev.sh check` (clippy) | **0 warnings** |
+| `--test cookie_sync` | **15 passed** |
+| `--test cookie_security` | **21 passed** |
+| `--test session_info` | **6 passed** |
+| `--test dom_tree_invariants` | **10 passed** |
+| `--test css_cascade_determinism` | **13 passed** |
+| `--test event_dispatch_propagation` | **10 passed** |
+| `--test js_sandbox_boundaries` | **13 passed** |
+| `--test navigation_error_paths` | **9 passed** |
+| `--test settle_loop_properties` | **13 passed** |
+| `--test performance_observer` | **8 passed** |
+| `--test layout_flex` | **17 passed** |
+| `--test airbnb_search` | **4 passed** |
+| Ratchet HWM (cargo + WPT) | **1688** |
+| `cargo clippy --workspace` | **0 warnings** |
 
 ### Session Architecture (Complete)
 
 Engine binary is a stdin/stdout REPL communicating via JSON-line protocol. Wire protocol: `HostMessage` (Command | FetchResults) and `EngineMessage` (NeedFetch | CommandResult). CLI daemon spawns one engine process per session. Fetch delegation: engine has zero network access, CLI does all HTTP. Sessions persist across CLI invocations while daemon is running.
+
+Wire protocol supports custom HTTP headers (Authorization, User-Agent) for authenticated browsing, status codes in responses, cookie export/import for session persistence, lightweight session introspection (URL, title, cookie count, history), per-session TTL with heartbeat keepalive, and reap notices for timed-out sessions.
 
 ### Completed Phases
 - Phase S1-S3: fetch/History/FormData, URL/localStorage, ES modules
