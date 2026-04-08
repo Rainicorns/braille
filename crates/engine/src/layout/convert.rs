@@ -138,12 +138,21 @@ pub fn to_taffy_style(node: &Node) -> Style {
     style.align_self = grid::parse_align_self_val(cs.get("align-self"));
     style.justify_self = grid::parse_justify_self_val(cs.get("justify-self"));
 
-    // flex-grow/shrink on child items
+    // flex-grow/shrink/basis on child items
     if let Some(v) = cs.get("flex-grow") {
         style.flex_grow = v.parse::<f32>().unwrap_or(0.0);
     }
     if let Some(v) = cs.get("flex-shrink") {
         style.flex_shrink = v.parse::<f32>().unwrap_or(1.0);
+    }
+    if let Some(v) = cs.get("flex-basis") {
+        style.flex_basis = parse_dimension(Some(v));
+    }
+
+    // Overflow (taffy uses per-axis overflow)
+    if let Some(v) = cs.get("overflow") {
+        let o = parse_overflow_taffy(v);
+        style.overflow = taffy::Point { x: o, y: o };
     }
 
     // Min/max size
@@ -247,6 +256,15 @@ fn parse_dimension(val: Option<&String>) -> Dimension {
                 Dimension::Length(v)
             }
         }
+    }
+}
+
+fn parse_overflow_taffy(val: &str) -> taffy::Overflow {
+    match val.trim() {
+        "hidden" => taffy::Overflow::Hidden,
+        "scroll" => taffy::Overflow::Scroll,
+        "clip" => taffy::Overflow::Clip,
+        _ => taffy::Overflow::Visible,
     }
 }
 

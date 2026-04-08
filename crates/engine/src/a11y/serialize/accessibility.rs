@@ -74,6 +74,16 @@ fn walk_a11y(
             }
 
             if TRANSPARENT_ELEMENTS.contains(&tag.as_str()) {
+                // Transparent elements emit their direct text (if any) before recursing,
+                // so that <div>text</div> doesn't vanish from the output.
+                if !is_visibility_hidden(node) {
+                    let direct_text = collect_direct_text(tree, node_id);
+                    if !direct_text.is_empty() {
+                        let indent_str = " ".repeat(indent);
+                        output.push_str(&format!("{}\"{}\"", indent_str, direct_text));
+                        output.push('\n');
+                    }
+                }
                 let children: Vec<NodeId> = node.children.clone();
                 for child_id in children {
                     walk_a11y(tree, child_id, indent, reverse, output, focused);

@@ -469,15 +469,13 @@ form
         let div_text = tree.create_text("Focusable div");
         tree.append_child(div, div_text);
 
-        // Even though div is transparent, if it has tabindex and is focused, it should show the marker
-        // Note: Currently div is in TRANSPARENT_ELEMENTS, so it won't produce a role line.
-        // This test documents current behavior - focused state only shows on non-transparent elements.
+        // Transparent elements emit their direct text content so nested divs
+        // don't vanish from snapshots.
         let (output, _ref_map) = serialize_a11y(&tree, Some(div));
 
-        // div is transparent, so no output expected
         assert_eq!(
-            output, "",
-            "transparent elements don't produce output even when focused: {}",
+            output, "\"Focusable div\"",
+            "transparent elements should emit direct text: {}",
             output
         );
     }
