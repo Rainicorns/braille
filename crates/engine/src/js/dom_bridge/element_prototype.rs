@@ -587,9 +587,9 @@ pub(crate) fn element_prototype_js() -> &'static str {
                     var nt = __n_getNodeType(this.__nid);
                     // Document and Doctype: setting textContent is a no-op
                     if (nt === 9 || nt === 10) return;
-                    // CharacterData nodes (Text=3, Comment=8, PI=7, CDATA=4): set data directly
+                    // CharacterData nodes (Text=3, Comment=8, PI=7, CDATA=4): set via .data for range adjustment
                     if (nt === 3 || nt === 8 || nt === 7 || nt === 4) {
-                        __n_setCharData(this.__nid, v === null || v === undefined ? '' : String(v));
+                        this.data = v === null || v === undefined ? '' : String(v);
                         return;
                     }
                     // Element and DocumentFragment: remove all children, optionally add text node
@@ -771,13 +771,13 @@ pub(crate) fn element_prototype_js() -> &'static str {
                 get: function() {
                     if (this.__nid === undefined) return null;
                     var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8 || nt === 7) return __n_getNodeValue(this.__nid);
+                    if (nt === 3 || nt === 4 || nt === 8 || nt === 7) return __n_getNodeValue(this.__nid);
                     return null;
                 },
                 set: function(v) {
                     if (this.__nid === undefined) return;
                     var nt = __n_getNodeType(this.__nid);
-                    if (nt === 3 || nt === 8 || nt === 7) __n_setCharData(this.__nid, v === null ? '' : String(v));
+                    if (nt === 3 || nt === 8 || nt === 7 || nt === 4) { this.data = v === null ? '' : String(v); }
                 },
                 configurable: true
             },

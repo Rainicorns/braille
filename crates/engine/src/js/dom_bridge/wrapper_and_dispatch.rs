@@ -74,6 +74,7 @@ pub(super) fn wrapper_factory_js() -> &'static str {
             switch (nt) {
                 case 1:  proto = __ElemProto; break;
                 case 3:  proto = Text.prototype; break;
+                case 4:  proto = CDATASection.prototype; break;
                 case 7:  proto = ProcessingInstruction.prototype; break;
                 case 8:  proto = Comment.prototype; break;
                 case 9:  proto = Document.prototype; break;
@@ -426,9 +427,11 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
                 },
                 set: function(v) {
                     var old = this.data;
+                    var oldLen = old ? old.length : 0;
                     var s = v === null ? '' : String(v);
                     __cdCache.set(this.__nid, s);
                     __n_setCharData(this.__nid, s);
+                    if (typeof __adjustRangesForCharData === 'function') __adjustRangesForCharData(this, 0, oldLen, s.length);
                     if (typeof __mo_notify === 'function') __mo_notify('characterData', this, {oldValue: old});
                 },
                 configurable: true
@@ -441,6 +444,13 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
                 configurable: true
             },
         });
+        // Internal: set data without range adjustment (caller handles it)
+        CharacterData.prototype._setDataRaw = function(s) {
+            var old = this.data;
+            __cdCache.set(this.__nid, s);
+            __n_setCharData(this.__nid, s);
+            if (typeof __mo_notify === 'function') __mo_notify('characterData', this, {oldValue: old});
+        };
         CharacterData.prototype.substringData = function(offset, count) {
             if (arguments.length < 2) throw new TypeError("Failed to execute 'substringData' on 'CharacterData': 2 arguments required, but only " + arguments.length + " present.");
             offset = offset >>> 0; count = count >>> 0;
@@ -450,14 +460,19 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
         };
         CharacterData.prototype.appendData = function(data) {
             if (arguments.length < 1) throw new TypeError("Failed to execute 'appendData' on 'CharacterData': 1 argument required, but only 0 present.");
-            this.data = this.data + String(data);
+            var d = this.data;
+            var s = String(data);
+            if (typeof __adjustRangesForCharData === 'function') __adjustRangesForCharData(this, d.length, 0, s.length);
+            this._setDataRaw(d + s);
         };
         CharacterData.prototype.insertData = function(offset, data) {
             if (arguments.length < 2) throw new TypeError("Failed to execute 'insertData' on 'CharacterData': 2 arguments required, but only " + arguments.length + " present.");
             offset = offset >>> 0;
             var d = this.data;
             if (offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
-            this.data = d.substring(0, offset) + String(data) + d.substring(offset);
+            var s = String(data);
+            if (typeof __adjustRangesForCharData === 'function') __adjustRangesForCharData(this, offset, 0, s.length);
+            this._setDataRaw(d.substring(0, offset) + s + d.substring(offset));
         };
         CharacterData.prototype.deleteData = function(offset, count) {
             if (arguments.length < 2) throw new TypeError("Failed to execute 'deleteData' on 'CharacterData': 2 arguments required, but only " + arguments.length + " present.");
@@ -466,7 +481,9 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
             if (offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
             var end = offset + count;
             if (end > d.length) end = d.length;
-            this.data = d.substring(0, offset) + d.substring(end);
+            var actualCount = end - offset;
+            if (typeof __adjustRangesForCharData === 'function') __adjustRangesForCharData(this, offset, actualCount, 0);
+            this._setDataRaw(d.substring(0, offset) + d.substring(end));
         };
         CharacterData.prototype.replaceData = function(offset, count, data) {
             if (arguments.length < 3) throw new TypeError("Failed to execute 'replaceData' on 'CharacterData': 3 arguments required, but only " + arguments.length + " present.");
@@ -475,7 +492,10 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
             if (offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
             var end = offset + count;
             if (end > d.length) end = d.length;
-            this.data = d.substring(0, offset) + String(data) + d.substring(end);
+            var actualCount = end - offset;
+            var s = String(data);
+            if (typeof __adjustRangesForCharData === 'function') __adjustRangesForCharData(this, offset, actualCount, s.length);
+            this._setDataRaw(d.substring(0, offset) + s + d.substring(end));
         };
         globalThis.CharacterData = CharacterData;
 
@@ -528,6 +548,12 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
         Comment.prototype = Object.create(CharacterData.prototype);
         Comment.prototype.constructor = Comment;
         globalThis.Comment = Comment;
+
+        // CDATASection — inherits from Text per DOM spec
+        function CDATASection() {}
+        CDATASection.prototype = Object.create(Text.prototype);
+        CDATASection.prototype.constructor = CDATASection;
+        globalThis.CDATASection = CDATASection;
 
         // Attr constructor — attribute nodes (nodeType 2)
         // Attr.prototype inherits from Node (EP) for instanceof, but we

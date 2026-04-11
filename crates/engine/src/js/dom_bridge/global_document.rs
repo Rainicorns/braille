@@ -163,6 +163,12 @@ pub(super) fn global_document_js() -> &'static str {
                 newDoc.write.apply(newDoc, arguments);
                 newDoc.write('\n');
             };
+            newDoc.createRange = function() {
+                var r = new BrailleRange();
+                r.startContainer = newDoc; r.endContainer = newDoc;
+                r.commonAncestorContainer = newDoc;
+                return r;
+            };
             // Tag the root element and all descendants so EP.ownerDocument works
             if (rootEl) {
                 rootEl.__ownerDoc = newDoc;
@@ -187,6 +193,11 @@ pub(super) fn global_document_js() -> &'static str {
         doc.inputEncoding = 'UTF-8';
         doc.contentType = 'text/html';
         Object.defineProperty(doc, 'ownerDocument', { value: null, writable: true, configurable: true });
+        Object.defineProperty(doc, 'location', {
+            get: function() { return (typeof window !== 'undefined') ? window.location : undefined; },
+            set: function(v) { if (typeof window !== 'undefined') window.location = v; },
+            configurable: true
+        });
         Object.defineProperty(doc, 'URL', {
             get: function() { return (typeof location !== 'undefined' && location.href) || 'about:blank'; },
             configurable: true
@@ -368,6 +379,48 @@ pub(super) fn global_document_js() -> &'static str {
             return attr;
         };
 
+        // Shared boundary-point comparator used by Range methods.
+        // Returns -1 if (c1,o1) < (c2,o2), 0 if equal, 1 if greater.
+        function __compareBP(c1, o1, c2, o2) {
+            if (c1 === c2) return o1 < o2 ? -1 : o1 > o2 ? 1 : 0;
+            var pos = c1.compareDocumentPosition(c2);
+            if (pos & 16) {
+                // c1 contains c2: find c2's ancestor that is a direct child of c1
+                var cur = c2;
+                while (cur.parentNode && cur.parentNode !== c1) cur = cur.parentNode;
+                var idx = 0;
+                var kids = c1.childNodes;
+                for (var i = 0; i < kids.length; i++) { if (kids[i] === cur) { idx = i; break; } }
+                return o1 <= idx ? -1 : 1;
+            }
+            if (pos & 8) {
+                // c2 contains c1: find c1's ancestor that is a direct child of c2
+                var cur = c1;
+                while (cur.parentNode && cur.parentNode !== c2) cur = cur.parentNode;
+                var idx = 0;
+                var kids = c2.childNodes;
+                for (var i = 0; i < kids.length; i++) { if (kids[i] === cur) { idx = i; break; } }
+                return idx < o2 ? -1 : 1;
+            }
+            if (pos & 4) return -1; // c2 follows c1
+            if (pos & 2) return 1;  // c2 precedes c1
+            return 0;
+        }
+
+        // Get the root node of a node (walk parentNode to the top)
+        function __getRootNode(node) {
+            var cur = node;
+            while (cur.parentNode) cur = cur.parentNode;
+            return cur;
+        }
+
+        // Get the length of a node per spec (child count for elements, text length for text/comment/PI)
+        function __nodeLength(node) {
+            var t = node.nodeType;
+            if (t === 3 || t === 4 || t === 7 || t === 8) return (node.data || '').length;
+            return node.childNodes ? node.childNodes.length : 0;
+        }
+
         function BrailleRange() {
             this.startContainer = doc; this.startOffset = 0;
             this.endContainer = doc; this.endOffset = 0;
@@ -382,8 +435,12 @@ pub(super) fn global_document_js() -> &'static str {
         BrailleRange.prototype.setEndBefore = function(node) { this.endContainer = node.parentNode; this.endOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) : 0; this._update(); };
         BrailleRange.prototype.setEndAfter = function(node) { this.endContainer = node.parentNode; this.endOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1 : 0; this._update(); };
         BrailleRange.prototype.selectNode = function(node) { this.setStartBefore(node); this.setEndAfter(node); };
-        BrailleRange.prototype.selectNodeContents = function(node) { this.startContainer = node; this.startOffset = 0; this.endContainer = node; this.endOffset = node.childNodes ? node.childNodes.length : 0; this._update(); };
-        BrailleRange.prototype.collapse = function(toStart) { if (toStart || toStart === undefined) { this.endContainer = this.startContainer; this.endOffset = this.startOffset; } else { this.startContainer = this.endContainer; this.startOffset = this.endOffset; } this.collapsed = true; };
+        BrailleRange.prototype.selectNodeContents = function(node) {
+            if (node.nodeType === 10) throw new DOMException("The supplied node is a doctype.", "InvalidNodeTypeError");
+            this.startContainer = node; this.startOffset = 0;
+            this.endContainer = node; this.endOffset = __nodeLength(node); this._update();
+        };
+        BrailleRange.prototype.collapse = function(toStart) { if (toStart) { this.endContainer = this.startContainer; this.endOffset = this.startOffset; } else { this.startContainer = this.endContainer; this.startOffset = this.endOffset; } this.collapsed = true; this.commonAncestorContainer = this.startContainer; };
         BrailleRange.prototype.cloneRange = function() { var r = new BrailleRange(); r.startContainer = this.startContainer; r.startOffset = this.startOffset; r.endContainer = this.endContainer; r.endOffset = this.endOffset; r._update(); return r; };
         BrailleRange.prototype.detach = function() {};
         BrailleRange.prototype.getBoundingClientRect = function() {
@@ -467,24 +524,49 @@ pub(super) fn global_document_js() -> &'static str {
             this.selectNode(newParent);
         };
         BrailleRange.prototype.compareBoundaryPoints = function(how, sourceRange) {
-            function pos(container, offset) { return {c: container, o: offset}; }
-            var thisStart = pos(this.startContainer, this.startOffset);
-            var thisEnd = pos(this.endContainer, this.endOffset);
-            var srcStart = pos(sourceRange.startContainer, sourceRange.startOffset);
-            var srcEnd = pos(sourceRange.endContainer, sourceRange.endOffset);
-            var a, b;
-            if (how === 0) { a = thisStart; b = srcStart; }       // START_TO_START
-            else if (how === 1) { a = thisStart; b = srcEnd; }    // START_TO_END
-            else if (how === 2) { a = thisEnd; b = srcEnd; }      // END_TO_END
-            else { a = thisEnd; b = srcStart; }                    // END_TO_START
-            if (a.c === b.c) return a.o < b.o ? -1 : a.o > b.o ? 1 : 0;
-            return 0; // simplified: can't reliably compare different containers without tree walk
+            // WebIDL unsigned short (ToUint16) conversion
+            how = ((+how) >>> 0) % 65536;
+            if (how > 3) throw new DOMException("Failed to execute 'compareBoundaryPoints' on 'Range': The comparison method provided must be one of 'START_TO_START', 'START_TO_END', 'END_TO_END', or 'END_TO_START'.", "NotSupportedError");
+            if (!sourceRange || !(sourceRange instanceof BrailleRange)) throw new TypeError("Failed to execute 'compareBoundaryPoints' on 'Range': parameter 2 is not of type 'Range'.");
+            // Check same root
+            var thisRoot = __getRootNode(this.startContainer);
+            var srcRoot = __getRootNode(sourceRange.startContainer);
+            if (thisRoot !== srcRoot) throw new DOMException("The two ranges are not in the same tree.", "WrongDocumentError");
+            var ac, ao, bc, bo;
+            if (how === 0) { ac = this.startContainer; ao = this.startOffset; bc = sourceRange.startContainer; bo = sourceRange.startOffset; }
+            else if (how === 1) { ac = this.endContainer; ao = this.endOffset; bc = sourceRange.startContainer; bo = sourceRange.startOffset; }
+            else if (how === 2) { ac = this.endContainer; ao = this.endOffset; bc = sourceRange.endContainer; bo = sourceRange.endOffset; }
+            else { ac = this.startContainer; ao = this.startOffset; bc = sourceRange.endContainer; bo = sourceRange.endOffset; }
+            return __compareBP(ac, ao, bc, bo);
         };
         BrailleRange.prototype.isPointInRange = function(node, offset) {
-            return this.startContainer === node && offset >= this.startOffset && offset <= this.endOffset;
+            offset = offset >>> 0; // WebIDL unsigned long
+            var nodeRoot = __getRootNode(node);
+            var rangeRoot = __getRootNode(this.startContainer);
+            if (nodeRoot !== rangeRoot) return false;
+            if (node.nodeType === 10) throw new DOMException("The supplied node is a doctype.", "InvalidNodeTypeError");
+            if (offset > __nodeLength(node)) throw new DOMException("The offset is larger than the node's length.", "IndexSizeError");
+            if (__compareBP(node, offset, this.startContainer, this.startOffset) < 0) return false;
+            if (__compareBP(node, offset, this.endContainer, this.endOffset) > 0) return false;
+            return true;
+        };
+        BrailleRange.prototype.comparePoint = function(node, offset) {
+            offset = offset >>> 0; // WebIDL unsigned long
+            var nodeRoot = __getRootNode(node);
+            var rangeRoot = __getRootNode(this.startContainer);
+            if (nodeRoot !== rangeRoot) throw new DOMException("The two ranges are not in the same tree.", "WrongDocumentError");
+            if (node.nodeType === 10) throw new DOMException("The supplied node is a doctype.", "InvalidNodeTypeError");
+            if (offset > __nodeLength(node)) throw new DOMException("The offset is larger than the node's length.", "IndexSizeError");
+            if (__compareBP(node, offset, this.startContainer, this.startOffset) < 0) return -1;
+            if (__compareBP(node, offset, this.endContainer, this.endOffset) > 0) return 1;
+            return 0;
         };
         BrailleRange.prototype.intersectsNode = function(node) {
-            if (!node || !this.startContainer || !this.endContainer) return false;
+            if (arguments.length < 1) throw new TypeError("Failed to execute 'intersectsNode' on 'Range': 1 argument required, but only 0 present.");
+            if (!node || typeof node !== 'object' || node.nodeType === undefined) throw new TypeError("Failed to execute 'intersectsNode' on 'Range': parameter 1 is not of type 'Node'.");
+            if (!this.startContainer || !this.endContainer) return false;
+            // Per spec: if node's root is not the same as range's root, return false
+            if (__getRootNode(node) !== __getRootNode(this.startContainer)) return false;
             var parent = node.parentNode;
             if (!parent) return true;
             var siblings = parent.childNodes;
@@ -492,37 +574,9 @@ pub(super) fn global_document_js() -> &'static str {
             for (var i = 0; i < siblings.length; i++) {
                 if (siblings[i] === node) { offset = i; break; }
             }
-            // Compare two boundary points (container, offset).
-            // Returns -1 if (c1,o1) < (c2,o2), 0 if equal, 1 if greater.
-            function compareBP(c1, o1, c2, o2) {
-                if (c1 === c2) return o1 < o2 ? -1 : o1 > o2 ? 1 : 0;
-                // Check if c1 contains c2
-                var pos = c1.compareDocumentPosition(c2);
-                if (pos & 16) {
-                    // c1 contains c2: find c2's ancestor that is a direct child of c1
-                    var cur = c2;
-                    while (cur.parentNode && cur.parentNode !== c1) cur = cur.parentNode;
-                    var idx = 0;
-                    var kids = c1.childNodes;
-                    for (var i = 0; i < kids.length; i++) { if (kids[i] === cur) { idx = i; break; } }
-                    return o1 <= idx ? -1 : 1;
-                }
-                if (pos & 8) {
-                    // c2 contains c1: find c1's ancestor that is a direct child of c2
-                    var cur = c1;
-                    while (cur.parentNode && cur.parentNode !== c2) cur = cur.parentNode;
-                    var idx = 0;
-                    var kids = c2.childNodes;
-                    for (var i = 0; i < kids.length; i++) { if (kids[i] === cur) { idx = i; break; } }
-                    return idx < o2 ? -1 : 1;
-                }
-                if (pos & 4) return -1; // c2 follows c1
-                if (pos & 2) return 1;  // c2 precedes c1
-                return 0;
-            }
             // (parent, offset) before range end AND (parent, offset+1) after range start
-            return compareBP(parent, offset, this.endContainer, this.endOffset) < 0 &&
-                   compareBP(this.startContainer, this.startOffset, parent, offset + 1) < 0;
+            return __compareBP(parent, offset, this.endContainer, this.endOffset) < 0 &&
+                   __compareBP(this.startContainer, this.startOffset, parent, offset + 1) < 0;
         };
         // Track all live ranges for boundary adjustment during DOM mutations
         var __liveRanges = [];
@@ -613,6 +667,52 @@ pub(super) fn global_document_js() -> &'static str {
                 if (r.endContainer === oldParent && r.endOffset > oldIndex) {
                     r.endOffset--;
                     changed = true;
+                }
+                if (changed) r._update();
+            }
+        };
+        // Per DOM spec: adjust live range boundaries when nodes are inserted.
+        // `parent` is the container, `index` is the insertion index, `count` is the number of nodes inserted.
+        globalThis.__adjustRangesForInsertion = function(parent, index, count) {
+            if (!__liveRanges.length) return;
+            for (var ri = 0; ri < __liveRanges.length; ri++) {
+                var r = __liveRanges[ri];
+                var changed = false;
+                if (r.startContainer === parent && r.startOffset > index) {
+                    r.startOffset += count;
+                    changed = true;
+                }
+                if (r.endContainer === parent && r.endOffset > index) {
+                    r.endOffset += count;
+                    changed = true;
+                }
+                if (changed) r._update();
+            }
+        };
+        // Per DOM spec "replace data" step 2: adjust live range boundaries
+        // when character data in `node` is replaced at (offset, count) with data of length addedCount.
+        globalThis.__adjustRangesForCharData = function(node, offset, count, addedCount) {
+            if (!__liveRanges.length) return;
+            for (var ri = 0; ri < __liveRanges.length; ri++) {
+                var r = __liveRanges[ri];
+                var changed = false;
+                if (r.startContainer === node) {
+                    if (r.startOffset > offset + count) {
+                        r.startOffset += addedCount - count;
+                        changed = true;
+                    } else if (r.startOffset > offset) {
+                        r.startOffset = offset;
+                        changed = true;
+                    }
+                }
+                if (r.endContainer === node) {
+                    if (r.endOffset > offset + count) {
+                        r.endOffset += addedCount - count;
+                        changed = true;
+                    } else if (r.endOffset > offset) {
+                        r.endOffset = offset;
+                        changed = true;
+                    }
                 }
                 if (changed) r._update();
             }
