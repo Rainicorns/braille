@@ -375,7 +375,20 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
 
         // Fix prototype chains: Node -> EventTarget, so Document/Element get addEventListener etc.
         if (typeof Node !== 'undefined') Object.setPrototypeOf(Node.prototype, EventTarget.prototype);
-        if (typeof Window !== 'undefined') Object.setPrototypeOf(Window.prototype, EventTarget.prototype);
+        if (typeof Window !== 'undefined') {
+            // Spec: Window.prototype → WindowProperties → EventTarget.prototype
+            var _WindowProperties = Object.create(EventTarget.prototype);
+            Object.defineProperty(_WindowProperties, Symbol.toStringTag, {
+                value: 'WindowProperties', writable: false, enumerable: false, configurable: true
+            });
+            Object.setPrototypeOf(Window.prototype, _WindowProperties);
+            // Constructor inheritance: Window.__proto__ === EventTarget (spec: Window : EventTarget)
+            Object.setPrototypeOf(Window, EventTarget);
+            // Symbol.toStringTag for window stringification: [object Window]
+            Object.defineProperty(Window.prototype, Symbol.toStringTag, {
+                value: 'Window', writable: false, enumerable: false, configurable: true
+            });
+        }
 
         // Wire XMLHttpRequest.dispatchEvent with proper window.event support
         if (typeof XMLHttpRequest !== 'undefined') {
@@ -993,5 +1006,60 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
         window.addEventListener = EventTarget.prototype.addEventListener;
         window.removeEventListener = EventTarget.prototype.removeEventListener;
         window.dispatchEvent = EventTarget.prototype.dispatchEvent;
+
+        // Wire window's prototype to Window.prototype (spec: window instanceof Window)
+        Object.setPrototypeOf(window, Window.prototype);
+        // Override QuickJS's default [object global] class string
+        Object.defineProperty(window, Symbol.toStringTag, {
+            value: 'Window', writable: false, enumerable: false, configurable: true
+        });
+
+        // Immutable [[SetPrototypeOf]] for window and Window.prototype (spec requirement)
+        // Setting to the SAME value is allowed (returns true / no throw).
+        // Setting to a DIFFERENT value must throw TypeError / return false.
+        (function() {
+            var _immutableTargets = new Map();
+            _immutableTargets.set(window, Object.getPrototypeOf(window));
+            _immutableTargets.set(Window.prototype, Object.getPrototypeOf(Window.prototype));
+
+            var _origSetProto = Object.setPrototypeOf;
+            var _origReflectSetProto = Reflect.setPrototypeOf;
+
+            Object.setPrototypeOf = function(target, proto) {
+                var frozenProto = _immutableTargets.get(target);
+                if (frozenProto !== undefined) {
+                    if (proto !== frozenProto) throw new TypeError("Immutable prototype object '#<" + (target === window ? "Window" : "Object") + ">' cannot set prototype");
+                    return target;
+                }
+                return _origSetProto(target, proto);
+            };
+
+            Reflect.setPrototypeOf = function(target, proto) {
+                var frozenProto = _immutableTargets.get(target);
+                if (frozenProto !== undefined) {
+                    return proto === frozenProto;
+                }
+                return _origReflectSetProto(target, proto);
+            };
+
+            // Guard __proto__ setter on Object.prototype
+            var _protoDesc = Object.getOwnPropertyDescriptor(Object.prototype, '__proto__');
+            if (_protoDesc && _protoDesc.set) {
+                var _origProtoSetter = _protoDesc.set;
+                Object.defineProperty(Object.prototype, '__proto__', {
+                    get: _protoDesc.get,
+                    set: function(v) {
+                        var frozenProto = _immutableTargets.get(this);
+                        if (frozenProto !== undefined) {
+                            if (v !== frozenProto) throw new TypeError("Immutable prototype object '#<" + (this === window ? "Window" : "Object") + ">' cannot set prototype");
+                            return;
+                        }
+                        return _origProtoSetter.call(this, v);
+                    },
+                    enumerable: _protoDesc.enumerable,
+                    configurable: _protoDesc.configurable
+                });
+            }
+        })();
     "#
 }

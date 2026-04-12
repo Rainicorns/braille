@@ -128,7 +128,9 @@ const CLASS_HIERARCHY_JS: &str = r#"
             append: true,
         };
 
-        globalThis.Window = class Window {};
+        globalThis.Window = class Window {
+            constructor() { throw new TypeError("Illegal constructor"); }
+        };
 
         globalThis.DocumentFragment = class DocumentFragment extends Node {};
         globalThis.ShadowRoot = class ShadowRoot extends DocumentFragment {

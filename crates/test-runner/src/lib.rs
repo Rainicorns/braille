@@ -51,6 +51,60 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         }
     }
 
+    var _nameCount = {};
+    function _dedupName(name) {
+        if (_nameCount[name] === undefined) {
+            _nameCount[name] = 0;
+            return name;
+        }
+        _nameCount[name]++;
+        var deduped = name + ' ' + _nameCount[name];
+        // Also track the deduped name to prevent its own collisions
+        _nameCount[deduped] = 0;
+        return deduped;
+    }
+
+    function _autoName(fn) {
+        var s = fn.toString();
+        // Only auto-name arrow functions
+        var arrowIdx = s.indexOf('=>');
+        if (arrowIdx < 0) return null;
+
+        var afterArrow = s.substring(arrowIdx + 2).trim();
+
+        // Concise arrow (no braces): () => expr
+        if (afterArrow.charAt(0) !== '{') {
+            return afterArrow;
+        }
+
+        // Block arrow: () => { ... }
+        var bodyStart = 1;
+        var bodyEnd = afterArrow.lastIndexOf('}');
+        if (bodyEnd <= bodyStart) return null;
+        var body = afterArrow.substring(bodyStart, bodyEnd);
+
+        // Multiline → page title
+        if (body.indexOf('\n') >= 0) return null;
+
+        // Trim and strip trailing semicolons
+        body = body.trim().replace(/;+\s*$/, '').trim();
+
+        // Empty → page title
+        if (!body) return null;
+
+        return body;
+    }
+
+    function _resolveName(fn, name) {
+        if (name) return _dedupName(name);
+        // Try auto-naming from function source
+        var auto = _autoName(fn);
+        if (auto) return _dedupName(auto);
+        // Fall back to page title
+        var title = (typeof document !== 'undefined' && document.title) ? document.title : "(unnamed)";
+        return _dedupName(title);
+    }
+
     function _notifyResult(result) {
         for (var i = 0; i < _result_callbacks.length; i++) {
             try { _result_callbacks[i](result); } catch(e) {}
@@ -69,8 +123,9 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         run_setup();
         var cleanups = [];
         var _signal = null;
+        var resolvedName = _resolveName(fn, name);
         var t = {
-            name: name || "(unnamed)",
+            name: resolvedName,
             step: function(f) { return function() { return f.apply(t, arguments); }; },
             step_func: function(f) { return function() { return f.apply(t, arguments); }; },
             step_func_done: function(f) { return function() { return f.apply(t, arguments); }; },
@@ -86,7 +141,7 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                 return _signal;
             }
         };
-        var result = { name: name || "(unnamed)", status: 0, message: "" };
+        var result = { name: resolvedName, status: 0, message: "" };
         try {
             fn.call(t, t);
         } catch(e) {
@@ -116,10 +171,11 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
             name = fn;
             fn = null;
         }
+        var resolvedName = fn ? _resolveName(fn, name) : (name || "(unnamed)");
         var _asignal = null;
         var _acleanups = [];
         var _started = !!fn;
-        var result = { name: name || "(unnamed)", status: _started ? 0 : 3, message: "" };
+        var result = { name: resolvedName, status: _started ? 0 : 3, message: "" };
         function _markStarted() {
             if (!_started) {
                 _started = true;
@@ -128,22 +184,58 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
             }
         }
         var t = {
-            name: name || "(unnamed)",
+            name: resolvedName,
             step: function(f) {
+                if (t._done) return;
                 _markStarted();
-                f.apply(t, [t]);
+                try {
+                    f.apply(t, [t]);
+                } catch(e) {
+                    if (t._done) return;
+                    if (e instanceof OptionalFeatureUnsupportedError) {
+                        result.status = 3;
+                    } else {
+                        result.status = 1;
+                    }
+                    result.message = e.message || String(e);
+                    t.done();
+                }
             },
             step_func: function(f) {
                 return function() {
+                    if (t._done) return;
                     _markStarted();
-                    return f.apply(t, arguments);
+                    try {
+                        return f.apply(t, arguments);
+                    } catch(e) {
+                        if (t._done) return;
+                        if (e instanceof OptionalFeatureUnsupportedError) {
+                            result.status = 3;
+                        } else {
+                            result.status = 1;
+                        }
+                        result.message = e.message || String(e);
+                        t.done();
+                    }
                 };
             },
             step_func_done: function(f) {
                 return function() {
+                    if (t._done) return;
                     _markStarted();
-                    f.apply(t, arguments);
-                    t.done();
+                    try {
+                        f.apply(t, arguments);
+                        t.done();
+                    } catch(e) {
+                        if (t._done) return;
+                        if (e instanceof OptionalFeatureUnsupportedError) {
+                            result.status = 3;
+                        } else {
+                            result.status = 1;
+                        }
+                        result.message = e.message || String(e);
+                        t.done();
+                    }
                 };
             },
             done: function() {
@@ -198,13 +290,14 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     };
 
     self.promise_test = function(fn, name) {
-        var result = { name: name || "(unnamed)", status: 0, message: "" };
+        var resolvedName = _resolveName(fn, name);
+        var result = { name: resolvedName, status: 0, message: "" };
         results.push(result);
         promise_chain = promise_chain.then(function() {
             var cleanups = [];
             var _psignal = null;
             var t = {
-                name: name || "(unnamed)",
+                name: resolvedName,
                 step: function(f) { return function() { return f.apply(t, arguments); }; },
                 step_func: function(f) { return function() { return f.apply(t, arguments); }; },
                 step_func_done: function(f) { return function() { f.apply(t, arguments); t._done = true; }; },
@@ -251,26 +344,16 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                 _progress(result.status);
                 return;
             }
-            if (p && typeof p.then === 'function') {
-                return p.then(function() {
-                }, function(e) {
-                    if (e instanceof OptionalFeatureUnsupportedError) {
-                        result.status = 3;
-                    } else {
-                        result.status = 1;
-                    }
-                    result.message = e.message || String(e);
-                }).then(function() {
-                    var chain = Promise.resolve();
-                    for (var i = 0; i < cleanups.length; i++) {
-                        chain = chain.then(cleanups[i]);
-                    }
-                    return chain;
-                }).then(function() {
-                    _notifyResult(result);
-                    _progress(result.status);
-                });
-            } else {
+            // Validate thenable return
+            if (!p || typeof p.then !== 'function') {
+                result.status = 1;
+                if (p === undefined) {
+                    result.message = "promise_test: test body must return a 'thenable' object (received undefined)";
+                } else if (p === null) {
+                    result.message = "promise_test: test body must return a 'thenable' object (received null)";
+                } else {
+                    result.message = "promise_test: test body must return a 'thenable' object (received an object with no `then` method)";
+                }
                 var chain = Promise.resolve();
                 for (var i = 0; i < cleanups.length; i++) {
                     chain = chain.then(cleanups[i]);
@@ -280,6 +363,31 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                     _progress(result.status);
                 });
             }
+            return p.then(function() {
+            }, function(e) {
+                if (e instanceof OptionalFeatureUnsupportedError) {
+                    result.status = 3;
+                } else {
+                    result.status = 1;
+                }
+                var val = e;
+                if (val instanceof Error) {
+                    result.message = "promise_test: Unhandled rejection with value: object \"" + val + "\"";
+                } else if (typeof val === 'string') {
+                    result.message = "promise_test: Unhandled rejection with value: \"" + val + "\"";
+                } else {
+                    result.message = e.message || String(e);
+                }
+            }).then(function() {
+                var chain = Promise.resolve();
+                for (var i = 0; i < cleanups.length; i++) {
+                    chain = chain.then(cleanups[i]);
+                }
+                return chain;
+            }).then(function() {
+                _notifyResult(result);
+                _progress(result.status);
+            });
         });
     };
 
@@ -301,8 +409,17 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     };
 
     self.done = function() {
-        if (single_test_mode && results.length === 0) {
-            results.push({ name: "(single test)", status: 0, message: "" });
+        if (single_test_mode) {
+            // Finalize the single test: use the page title as the test name
+            var title = (typeof document !== 'undefined' && document.title) ? document.title : "(single test)";
+            if (results.length === 0) {
+                results.push({ name: title, status: 0, message: "" });
+            } else {
+                // Update the name of the existing single test if it was anonymous
+                if (results[0].name === "(single test)" || results[0].name === "(unnamed)") {
+                    results[0].name = title;
+                }
+            }
         }
     };
 
