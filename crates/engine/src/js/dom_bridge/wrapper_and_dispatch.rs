@@ -688,6 +688,11 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
         Document.prototype.write = function() {
             var html = Array.prototype.join.call(arguments, '');
             if (!html) return;
+            if (this.__iframeRealm) {
+                if (!this.__writeBuffer) this.__writeBuffer = '';
+                this.__writeBuffer += html;
+                return;
+            }
             var body = this.body;
             if (!body) return;
             var temp = document.createElement('div');
@@ -697,6 +702,17 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
         Document.prototype.writeln = function() {
             this.write.apply(this, arguments);
             this.write('\n');
+        };
+        Document.prototype.open = function() {
+            this.__writeBuffer = '';
+            return this;
+        };
+        Document.prototype.close = function() {
+            if (this.__writeBuffer && this.__iframeRealm) {
+                var html = this.__writeBuffer;
+                this.__writeBuffer = null;
+                __braille_iframe_write_close(this.__iframeRealm, html, this.__iframeNodeId);
+            }
         };
 
         // DOMImplementation constructor (for instanceof checks)

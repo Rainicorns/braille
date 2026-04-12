@@ -83,6 +83,40 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     }
                 });
 
+                // Wrap timer functions to dispatch errors on iframe window
+                var _iframeSetTimeout = function(fn, delay) {
+                    if (typeof fn !== 'function') return setTimeout(fn, delay);
+                    return setTimeout(function() {
+                        try { fn(); } catch(e) {
+                            var errEvt;
+                            if (typeof ErrorEvent !== 'undefined') {
+                                errEvt = new ErrorEvent('error', {error: e, message: String(e)});
+                            } else {
+                                errEvt = new Event('error');
+                                errEvt.error = e;
+                                errEvt.message = String(e);
+                            }
+                            iframeWindow.dispatchEvent(errEvt);
+                        }
+                    }, delay);
+                };
+                var _iframeSetInterval = function(fn, delay) {
+                    if (typeof fn !== 'function') return setInterval(fn, delay);
+                    return setInterval(function() {
+                        try { fn(); } catch(e) {
+                            var errEvt;
+                            if (typeof ErrorEvent !== 'undefined') {
+                                errEvt = new ErrorEvent('error', {error: e, message: String(e)});
+                            } else {
+                                errEvt = new Event('error');
+                                errEvt.error = e;
+                                errEvt.message = String(e);
+                            }
+                            iframeWindow.dispatchEvent(errEvt);
+                        }
+                    }, delay);
+                };
+
                 iframeWindow = {
                     document: iframeDoc,
                     parent: parentProxy,
@@ -101,8 +135,8 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                         hash: location.hash
                     } : {},
                     navigator: (typeof navigator !== 'undefined') ? navigator : {},
-                    setTimeout: setTimeout,
-                    setInterval: setInterval,
+                    setTimeout: _iframeSetTimeout,
+                    setInterval: _iframeSetInterval,
                     clearTimeout: clearTimeout,
                     clearInterval: clearInterval,
                     console: console,
@@ -378,7 +412,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     },
                     iw.addEventListener,
                     iw.removeEventListener,
-                    setTimeout, setInterval, clearTimeout, clearInterval,
+                    iw.setTimeout, iw.setInterval, clearTimeout, clearInterval,
                     console,
                     iw.location, iw.navigator, JSON, MessageEvent,
                     (typeof crypto !== 'undefined') ? crypto : undefined,
@@ -421,6 +455,8 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     _iframeNodeId: node.__nid
                 };
                 iframeRealms[node.__nid] = realm;
+                iframeDoc.__iframeRealm = realm;
+                iframeDoc.__iframeNodeId = node.__nid;
 
                 // Fire load event synchronously for about:blank iframes (per spec)
                 // dispatchEvent invokes on<type> handlers via fireOnHandler — no manual call needed
@@ -486,7 +522,8 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     var srcMatch = header.match(/\bsrc\s*=\s*["']([^"']+)["']/i) || header.match(/\bsrc\s*=\s*([^\s>]+)/i);
                     if (srcMatch) {
                         var src = srcMatch[1];
-                        var content = (typeof __braille_worker_scripts !== 'undefined' && __braille_worker_scripts[src]) ? __braille_worker_scripts[src] : '';
+                        var lookupSrc = src.split('?')[0];
+                        var content = (typeof __braille_worker_scripts !== 'undefined' && (__braille_worker_scripts[src] || __braille_worker_scripts[lookupSrc])) || '';
                         if (content) scripts.push(content);
                     } else {
                         if (m[1].trim()) scripts.push(m[1]);
@@ -544,6 +581,8 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 };
                 iframeRealms[iframeNodeId] = realm;
                 __iframeDocMap[iframeDoc.__nid] = iframeNodeId;
+                iframeDoc.__iframeRealm = realm;
+                iframeDoc.__iframeNodeId = iframeNodeId;
 
                 // Execute inline scripts from the HTML content
                 var scripts = extractScripts(html || '');
@@ -552,6 +591,84 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 }
 
                 return realm;
+            };
+
+            // Rebuild an existing iframe realm's DOM from buffered HTML and execute scripts.
+            // Called by document.close() after document.write() has buffered content.
+            globalThis.__braille_iframe_write_close = function(realm, html, iframeNodeId) {
+                // Clear existing children from iframe element in DOM tree
+                var kids = __n_getAllChildIds(iframeNodeId);
+                for (var ci = kids.length - 1; ci >= 0; ci--) {
+                    __n_removeChild(iframeNodeId, kids[ci]);
+                }
+
+                // Parse HTML into real nodes under iframe
+                var htmlNid = __n_createElement('html');
+                __n_appendChild(iframeNodeId, htmlNid);
+                __n_setInnerHTML(htmlNid, html);
+
+                // Ensure <head> and <body> exist
+                var htmlEl = __w(htmlNid);
+                var hasHead = false, hasBody = false;
+                var ckids = htmlEl.childNodes;
+                for (var i = 0; i < ckids.length; i++) {
+                    if (ckids[i].tagName === 'HEAD') hasHead = true;
+                    if (ckids[i].tagName === 'BODY') hasBody = true;
+                }
+                if (!hasHead) {
+                    var headNid = __n_createElement('head');
+                    if (ckids.length > 0 && ckids[0].__nid !== undefined) {
+                        __n_insertBefore(htmlNid, headNid, ckids[0].__nid);
+                    } else {
+                        __n_appendChild(htmlNid, headNid);
+                    }
+                }
+                if (!hasBody) {
+                    var bodyNid = __n_createElement('body');
+                    __n_appendChild(htmlNid, bodyNid);
+                }
+
+                // Create new document-like wrapper
+                var newDoc = __makeDocumentLike(htmlEl);
+                newDoc.contentType = 'text/html';
+
+                // Update realm references
+                realm.document = newDoc;
+                realm.window.document = newDoc;
+                newDoc.__iframeRealm = realm;
+                newDoc.__iframeNodeId = iframeNodeId;
+                newDoc.defaultView = realm.window;
+                __iframeDocMap[newDoc.__nid] = iframeNodeId;
+
+                // Extract and execute scripts, catching per-script errors
+                var scripts = extractScripts(html);
+                for (var i = 0; i < scripts.length; i++) {
+                    try {
+                        execScriptInIframe(realm, scripts[i]);
+                    } catch(e) {
+                        // Dispatch error event on iframe window (like browser behavior)
+                        var errEvt;
+                        if (typeof ErrorEvent !== 'undefined') {
+                            errEvt = new ErrorEvent('error', {error: e, message: String(e)});
+                        } else {
+                            errEvt = new Event('error');
+                            errEvt.error = e;
+                            errEvt.message = String(e);
+                        }
+                        realm.window.dispatchEvent(errEvt);
+                    }
+                }
+
+                // Fire DOMContentLoaded on the document, then load on the window
+                // (simulates browser behavior after document.close())
+                if (realm.document && realm.document.dispatchEvent) {
+                    realm.document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));
+                }
+                setTimeout(function() {
+                    if (realm.window.dispatchEvent) {
+                        realm.window.dispatchEvent(new Event('load'));
+                    }
+                }, 0);
             };
 
             // Get iframe realm by nodeId

@@ -46,6 +46,7 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     var _result_callbacks = [];
     var _completion_callbacks = [];
     var _pending_async = [];
+    var _harnessError = null;
 
     function _progress(status) {
         if (typeof __braille_test_progress === 'function') {
@@ -121,7 +122,11 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     }
 
     self.test = function(fn, name) {
-        if (_stopped) return;
+        if (_stopped || _promise_setup_failed) return;
+        if (_promise_setup_called) {
+            if (!_harnessError) _harnessError = 'test() is not allowed after promise_setup';
+            return;
+        }
         run_setup();
         var cleanups = [];
         var _signal = null;
@@ -145,7 +150,14 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         };
         var result = { name: resolvedName, status: 0, message: "" };
         try {
-            fn.call(t, t);
+            var retval = fn.call(t, t);
+            if (retval !== undefined && !_harnessError) {
+                var msg = 'Test named "' + resolvedName + '" passed a function to `test` that returned a value.';
+                if (retval && typeof retval.then === 'function') {
+                    msg += ' Consider using `promise_test` instead when using Promises or async/await.';
+                }
+                _harnessError = msg;
+            }
         } catch(e) {
             if (e instanceof OptionalFeatureUnsupportedError) {
                 result.status = 3;
@@ -169,6 +181,11 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     };
 
     self.async_test = function(fn, name) {
+        if (_stopped || _promise_setup_failed) return;
+        if (_promise_setup_called) {
+            if (!_harnessError) _harnessError = 'async_test() is not allowed after promise_setup';
+            return;
+        }
         if (typeof fn === "string") {
             name = fn;
             fn = null;
@@ -311,7 +328,15 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         };
         if (fn) {
             try {
-                fn.call(t, t);
+                var retval = fn.call(t, t);
+                if (retval !== undefined) {
+                    var msg = 'Test named "' + resolvedName + '" passed a function to `async_test` that returned a value.';
+                    if (retval && typeof retval.then === 'function') {
+                        msg += ' Consider using `promise_test` instead when using Promises or async/await.';
+                    }
+                    _harnessError = msg;
+                    _stopped = true;
+                }
             } catch(e) {
                 if (e instanceof OptionalFeatureUnsupportedError) {
                     result.status = 3;
@@ -335,9 +360,11 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
 
     self.promise_test = function(fn, name) {
         var resolvedName = _resolveName(fn, name);
-        var result = { name: resolvedName, status: 0, message: "" };
+        var result = { name: resolvedName, status: 3, message: "", _started: false };
         results.push(result);
         promise_chain = promise_chain.then(function() {
+            result._started = true;
+            result.status = 0;
             var cleanups = [];
             var _psignal = null;
             var t = {
@@ -471,6 +498,61 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         }
     };
 
+    var _harnessTimeout = false;
+    var _promise_setup_failed = false;
+    var _promise_setup_called = false;
+
+    self.promise_setup = function(fn, properties) {
+        _promise_setup_called = true;
+        // promise_setup must be called before any tests
+        if (results.length > 0) {
+            if (!_harnessError) _harnessError = 'promise_setup must be the first thing in the file';
+            return;
+        }
+        if (properties && typeof properties === 'object') {
+            if (properties.single_test) single_test_mode = true;
+            if (properties.explicit_done) _explicit_done = true;
+            if (properties.allow_uncaught_exception) globalThis._allow_uncaught_exception = true;
+        }
+        if (typeof fn !== 'function') {
+            if (!_harnessError) _harnessError = 'promise_setup: argument is not a function';
+            _promise_setup_failed = true;
+            // Block the chain permanently so subsequent tests stay NOTRUN
+            promise_chain = new Promise(function() {});
+            return;
+        }
+        var result;
+        try {
+            result = fn();
+        } catch(e) {
+            if (!_harnessError) _harnessError = 'promise_setup: ' + (e.message || String(e));
+            _promise_setup_failed = true;
+            promise_chain = new Promise(function() {});
+            return;
+        }
+        var isThennable = false;
+        try { isThennable = result && typeof result.then === 'function'; } catch(e) {
+            if (!_harnessError) _harnessError = 'promise_setup: ' + (e.message || String(e));
+            _promise_setup_failed = true;
+            promise_chain = new Promise(function() {});
+            return;
+        }
+        if (!isThennable) {
+            if (!_harnessError) _harnessError = 'promise_setup: function did not return a thenable value';
+            _promise_setup_failed = true;
+            promise_chain = new Promise(function() {});
+            return;
+        }
+        promise_chain = promise_chain.then(function() {
+            return result;
+        }).then(null, function(e) {
+            if (!_harnessError) _harnessError = 'promise_setup: ' + (e && e.message ? e.message : String(e));
+            _promise_setup_failed = true;
+            // Return a never-resolving promise to block remaining tests
+            return new Promise(function() {});
+        });
+    };
+
     // Track uncaught errors for single_test mode
     var _uncaughtError = null;
 
@@ -498,9 +580,11 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         }
 
         var tests = results.map(function(r) {
+            // Safeguard: promise_tests that never started should be NOTRUN
+            if (r._started === false && r.status !== 1) r.status = 3;
             return {name: r.name, status: r.status, message: r.message || '', PASS: 0, FAIL: 1, TIMEOUT: 2, NOTRUN: 3};
         });
-        var statusObj = {status: 0, OK: 0, ERROR: 1, TIMEOUT: 2};
+        var statusObj = {status: _harnessTimeout ? 2 : (_harnessError ? 1 : 0), message: _harnessError || null, OK: 0, ERROR: 1, TIMEOUT: 2};
 
         // Fire internal completion callbacks
         for (var ci = 0; ci < _completion_callbacks.length; ci++) {
@@ -543,6 +627,10 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
 
     self.done = function() {
         _explicit_done = true;
+        // Calling done() with no tests registered is a harness error
+        if (!single_test_mode && results.length === 0 && _pending_async.length === 0) {
+            if (!_harnessError) _harnessError = 'done() was called before any tests were registered';
+        }
         if (single_test_mode) {
             // Finalize the single test: use the page title as the test name
             var title = (typeof document !== 'undefined' && document.title) ? document.title : ((typeof location !== 'undefined' && location.pathname) ? location.pathname.replace(/.*\//, '').replace(/\.js$/, '') : '(single test)');
@@ -938,11 +1026,51 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         var args = Array.prototype.slice.call(arguments, 2);
         return testFunc.apply(null, args);
     };
-    self.format_value = function(val) {
+    self.format_value = function format_value(val) {
         if (val === null) return "null";
         if (val === undefined) return "undefined";
-        if (typeof val === "string") return '"' + val + '"';
-        return String(val);
+        if (typeof val === "boolean") return val ? "true" : "false";
+        if (typeof val === "number") {
+            if (val === 0 && 1/val === -Infinity) return "-0";
+            return String(val);
+        }
+        if (typeof val === "string") {
+            return '"' + val.replace(/\n/g, "\\n") + '"';
+        }
+        if (typeof val === "symbol") return 'symbol "' + String(val) + '"';
+        if (Array.isArray(val)) {
+            return "[" + val.map(function(v) { return format_value(v); }).join(", ") + "]";
+        }
+        if (val && typeof val === "object" && val.nodeType !== undefined) {
+            switch (val.nodeType) {
+                case 1:
+                    var tag = val.outerHTML;
+                    if (tag) {
+                        var idx = tag.indexOf(">");
+                        if (idx >= 0) tag = tag.substring(0, idx + 1);
+                    }
+                    return "Element node " + tag;
+                case 3:
+                    return 'Text node "' + val.data + '"';
+                case 7:
+                    return 'ProcessingInstruction node with target "' + val.target + '" and data "' + val.data + '"';
+                case 8:
+                    return "Comment node <!--" + val.data + "-->";
+                case 9:
+                    var cnt = val.childNodes ? val.childNodes.length : 0;
+                    return "Document node with " + cnt + " child" + (cnt !== 1 ? "ren" : "");
+                case 10:
+                    return "DocumentType node";
+                case 11:
+                    var cnt2 = val.childNodes ? val.childNodes.length : 0;
+                    return "DocumentFragment node with " + cnt2 + " child" + (cnt2 !== 1 ? "ren" : "");
+            }
+        }
+        try {
+            return String(val);
+        } catch(e) {
+            return "[stringifying object threw " + e + " with type " + typeof e + "]";
+        }
     };
 
     if (typeof Event !== 'undefined') {
@@ -992,15 +1120,27 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
             if (globalThis._allow_uncaught_exception) return;
             var msg = (ev && ev.error) ? String(ev.error) : (ev && ev.message) ? ev.message : String(ev);
             if (!_uncaughtError) _uncaughtError = msg;
+            if (!_harnessError) _harnessError = msg;
         });
     }
     // Also hook into the unhandled rejection tracker
+    var _rejectionHandler = function(ev) {
+        if (globalThis._allow_uncaught_exception) return;
+        var msg = ev && ev.reason ? String(ev.reason) : 'unhandled rejection';
+        if (!_uncaughtError) _uncaughtError = msg;
+        if (!_harnessError) _harnessError = msg;
+    };
     if (typeof addEventListener === 'function') {
-        addEventListener('unhandledrejection', function(ev) {
-            var msg = ev && ev.reason ? String(ev.reason) : 'unhandled rejection';
-            if (!_uncaughtError) _uncaughtError = msg;
-        });
+        addEventListener('unhandledrejection', _rejectionHandler);
     }
+    // In iframe contexts, Promise rejections dispatch on the parent window.
+    // Also listen there so we catch them.
+    try {
+        if (typeof window !== 'undefined' && window.parent && window.parent !== window &&
+            typeof window.parent.addEventListener === 'function') {
+            window.parent.addEventListener('unhandledrejection', _rejectionHandler);
+        }
+    } catch(e) {}
 
     // Auto-fire completion after all tests settle.
     // Uses setTimeout to defer until after all synchronous scripts have run,
@@ -1008,7 +1148,44 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     // Re-checks _explicit_done at fire time since setup() may run after this is queued.
     setTimeout(function() {
         if (_explicit_done || _completionFired) return;
+
+        // Watchdog: if promise_chain doesn't resolve, force timeout after a delay.
+        // This handles promise_setup returning a never-resolving promise.
+        var _promiseResolved = false;
+        var isChildOrWorker2 = false;
+        try { isChildOrWorker2 = (typeof window !== 'undefined' && window.parent && window.parent !== window); } catch(e) {}
+        try { if (typeof document === 'undefined' && typeof postMessage === 'function') isChildOrWorker2 = true; } catch(e) {}
+        if (isChildOrWorker2) {
+            // Watchdog for permanently-blocked promise chains (e.g. promise_setup failures).
+            // Only fires when promise_setup has explicitly failed; normal tests get processed
+            // by the promise_chain.then() path below.
+            var _watchdogCheck = function() {
+                if (_completionFired) return;
+                if (_promise_setup_failed || _harnessTimeout) {
+                    for (var ai3 = 0; ai3 < _pending_async.length; ai3++) {
+                        if (!_pending_async[ai3].test._done) {
+                            _pending_async[ai3].result.status = 2;
+                            _pending_async[ai3].result.message = 'Test timed out';
+                            _pending_async[ai3].test.done();
+                        }
+                    }
+                    if (!_harnessTimeout && !_harnessError) _harnessTimeout = true;
+                    _fireCompletion();
+                    return;
+                }
+                // Re-check after a delay for cases where promise blocks without explicit failure
+                setTimeout(function() {
+                    if (!_promiseResolved && !_completionFired) {
+                        _harnessTimeout = true;
+                        _watchdogCheck();
+                    }
+                }, 200);
+            };
+            setTimeout(_watchdogCheck, 0);
+        }
+
         promise_chain.then(function() {
+            _promiseResolved = true;
             if (_explicit_done || _completionFired) return;
 
             // Check if we're in a child frame or worker
@@ -1017,15 +1194,18 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
             try { if (typeof document === 'undefined' && typeof postMessage === 'function') isChildOrWorker = true; } catch(e) {}
 
             if (isChildOrWorker) {
-                // In child contexts, aggressively timeout un-done async tests
-                for (var ai = 0; ai < _pending_async.length; ai++) {
-                    if (!_pending_async[ai].test._done) {
-                        _pending_async[ai].result.status = 2;
-                        _pending_async[ai].result.message = 'Test timed out';
-                        _pending_async[ai].test._done = true;
+                // In child contexts, defer multiple times to let pending timers
+                // (e.g. nested setTimeout callbacks, error handlers) fire before we finalize
+                setTimeout(function() { setTimeout(function() {
+                    for (var ai = 0; ai < _pending_async.length; ai++) {
+                        if (!_pending_async[ai].test._done) {
+                            _pending_async[ai].result.status = 2;
+                            _pending_async[ai].result.message = 'Test timed out';
+                            _pending_async[ai].test.done();
+                        }
                     }
-                }
-                _fireCompletion();
+                    _fireCompletion();
+                }, 0); }, 0);
             } else {
                 // In main context, only fire if all async tests are done
                 for (var ai2 = 0; ai2 < _pending_async.length; ai2++) {

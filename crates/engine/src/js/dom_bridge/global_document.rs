@@ -153,6 +153,11 @@ pub(super) fn global_document_js() -> &'static str {
             newDoc.write = function() {
                 var html = Array.prototype.join.call(arguments, '');
                 if (!html) return;
+                if (this.__iframeRealm) {
+                    if (!this.__writeBuffer) this.__writeBuffer = '';
+                    this.__writeBuffer += html;
+                    return;
+                }
                 var body = newDoc.body;
                 if (!body) return;
                 var temp = document.createElement('div');
@@ -162,6 +167,17 @@ pub(super) fn global_document_js() -> &'static str {
             newDoc.writeln = function() {
                 newDoc.write.apply(newDoc, arguments);
                 newDoc.write('\n');
+            };
+            newDoc.open = function() {
+                this.__writeBuffer = '';
+                return this;
+            };
+            newDoc.close = function() {
+                if (this.__writeBuffer && this.__iframeRealm) {
+                    var html = this.__writeBuffer;
+                    this.__writeBuffer = null;
+                    __braille_iframe_write_close(this.__iframeRealm, html, this.__iframeNodeId);
+                }
             };
             newDoc.createRange = function() {
                 var r = new BrailleRange();

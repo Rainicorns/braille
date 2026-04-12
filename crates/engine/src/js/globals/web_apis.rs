@@ -1526,6 +1526,21 @@ const WEB_APIS_JS: &str = r#"
                     cancelable: true, promise: null, reason: arr[i]
                 });
                 window.dispatchEvent(evt);
+                // Also dispatch on all active iframe windows so iframe-scoped
+                // unhandledrejection handlers fire
+                if (typeof __braille_find_iframes === 'function' &&
+                    typeof __braille_get_iframe_realm === 'function') {
+                    var iframeIds = __braille_find_iframes();
+                    for (var fi = 0; fi < iframeIds.length; fi++) {
+                        var realm = __braille_get_iframe_realm(iframeIds[fi]);
+                        if (realm && realm.window && realm.window.dispatchEvent) {
+                            var iframeEvt = new PromiseRejectionEvent('unhandledrejection', {
+                                cancelable: true, promise: null, reason: arr[i]
+                            });
+                            realm.window.dispatchEvent(iframeEvt);
+                        }
+                    }
+                }
             }
         };
         globalThis.structuredClone = globalThis.structuredClone || function(v) {
