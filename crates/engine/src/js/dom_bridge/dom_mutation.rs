@@ -48,25 +48,20 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 }
                 if (child.nodeType === 11) {
                     var kids = __n_getAllChildIds(child.__nid);
-                    var fragInsertIdx = this.childNodes.length;
+                    var fragInsertIdx = -1;
                     var added = [];
                     for (var i = 0; i < kids.length; i++) {
-                        __n_appendChild(this.__nid, kids[i]);
+                        var idx = __n_appendChild(this.__nid, kids[i]);
+                        if (i === 0) fragInsertIdx = idx;
                         added.push(__w(kids[i]));
                     }
-                    if (typeof __adjustRangesForInsertion === 'function' && added.length) {
+                    if (typeof __adjustRangesForInsertion === 'function' && added.length && fragInsertIdx >= 0) {
                         __adjustRangesForInsertion(this, fragInsertIdx, added.length);
                     }
                     if (typeof __mo_notify === 'function' && added.length) __mo_notify('childList', this, {addedNodes: added});
                 } else {
-                    __n_appendChild(this.__nid, child.__nid);
-                    // Adjust live range boundaries after insertion
+                    var insertIdx = __n_appendChild(this.__nid, child.__nid);
                     if (typeof __adjustRangesForInsertion === 'function') {
-                        var kids = this.childNodes;
-                        var insertIdx = kids.length - 1;
-                        for (var _ri = 0; _ri < kids.length; _ri++) {
-                            if (kids[_ri] === child) { insertIdx = _ri; break; }
-                        }
                         __adjustRangesForInsertion(this, insertIdx, 1);
                     }
                     if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [child]});
@@ -164,15 +159,34 @@ pub(super) fn dom_mutation_js() -> &'static str {
             if (__n_getParent(oldChild.__nid) !== this.__nid) {
                 throw new DOMException("The node to be replaced is not a child of this node.", "NotFoundError");
             }
+            var err = __n_validatePreReplace(this.__nid, newChild.__nid, oldChild.__nid);
+            if (err) __throwValidationError(err);
             __loseFocusIfRemoving(oldChild);
             if (typeof __ceDisconnected === 'function' && __isConnected(this.__nid)) {
                 __ceDisconnected(oldChild);
             }
-            // If newChild is already in the tree, remove it first
-            if (newChild.__nid !== undefined && __n_getParent(newChild.__nid) >= 0) {
+            // Adjust live Range boundaries: removal of newChild from old parent (skip if same as oldChild)
+            if (newChild !== oldChild && newChild.__nid !== undefined && __n_getParent(newChild.__nid) >= 0) {
                 __loseFocusIfRemoving(newChild);
+                var ncParent = newChild.parentNode;
+                if (typeof __adjustRangesForRemoval === 'function' && ncParent) {
+                    __adjustRangesForRemoval(newChild, ncParent);
+                }
+            }
+            // Compute oldChild index for range adjustment (before replacement)
+            var oldIdx = 0;
+            if (typeof __adjustRangesForRemoval === 'function') {
+                var ch = this.childNodes;
+                for (var _rci = 0; _rci < ch.length; _rci++) {
+                    if (ch[_rci] === oldChild) { oldIdx = _rci; break; }
+                }
+                __adjustRangesForRemoval(oldChild, this);
             }
             __n_replaceChild(this.__nid, newChild.__nid, oldChild.__nid);
+            // Adjust live Range boundaries: insertion of newChild at oldChild's position
+            if (typeof __adjustRangesForInsertion === 'function') {
+                __adjustRangesForInsertion(this, oldIdx, 1);
+            }
             if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [newChild], removedNodes: [oldChild]});
             if (typeof __ceConnected === 'function' && __isConnected(this.__nid)) {
                 __ceConnected(newChild);
@@ -234,13 +248,14 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 }
                 if (newChild.nodeType === 11) {
                     var kids = __n_getAllChildIds(newChild.__nid);
-                    var fragIdx = refChild ? (function() { var ch = this.childNodes; for (var fi = 0; fi < ch.length; fi++) if (ch[fi] === refChild) return fi; return ch.length; }).call(this) : this.childNodes.length;
+                    var fragIdx = -1;
                     var added = [];
                     for (var i = 0; i < kids.length; i++) {
-                        __n_insertBefore(this.__nid, kids[i], refId);
+                        var idx = __n_insertBefore(this.__nid, kids[i], refId);
+                        if (i === 0) fragIdx = idx;
                         added.push(__w(kids[i]));
                     }
-                    if (typeof __adjustRangesForInsertion === 'function' && added.length) {
+                    if (typeof __adjustRangesForInsertion === 'function' && added.length && fragIdx >= 0) {
                         __adjustRangesForInsertion(this, fragIdx, added.length);
                     }
                     if (typeof __mo_notify === 'function' && added.length) __mo_notify('childList', this, {addedNodes: added});
@@ -248,15 +263,9 @@ pub(super) fn dom_mutation_js() -> &'static str {
                     if (refId >= 0 && newChild.__nid === refId) {
                         return newChild;
                     }
-                    __n_insertBefore(this.__nid, newChild.__nid, refId);
-                    // Adjust live Range boundaries for insertion after mutation
+                    var insertIdx = __n_insertBefore(this.__nid, newChild.__nid, refId);
                     if (typeof __adjustRangesForInsertion === 'function') {
-                        var ch = this.childNodes;
-                        var idx = ch.length - 1;
-                        for (var _ii = 0; _ii < ch.length; _ii++) {
-                            if (ch[_ii] === newChild) { idx = _ii; break; }
-                        }
-                        __adjustRangesForInsertion(this, idx, 1);
+                        __adjustRangesForInsertion(this, insertIdx, 1);
                     }
                     if (typeof __mo_notify === 'function') __mo_notify('childList', this, {addedNodes: [newChild]});
                 }
@@ -402,14 +411,8 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 __adjustRangesForRemoval(node, oldParent);
             }
             var refId = (child && child.__nid !== undefined) ? child.__nid : -1;
-            __n_insertBefore(this.__nid, node.__nid, refId);
-            // Adjust live range boundaries after insertion
+            var insertIdx = __n_insertBefore(this.__nid, node.__nid, refId);
             if (typeof __adjustRangesForInsertion === 'function') {
-                var kids = this.childNodes;
-                var insertIdx = kids.length - 1;
-                for (var _ri = 0; _ri < kids.length; _ri++) {
-                    if (kids[_ri] === node) { insertIdx = _ri; break; }
-                }
                 __adjustRangesForInsertion(this, insertIdx, 1);
             }
             if (typeof __mo_notify === 'function') {

@@ -148,11 +148,11 @@ pub(super) fn register_native_tree_ops(ctx: &Ctx<'_>) {
         })
     }).unwrap()).unwrap();
 
-    // appendChild(parentId, childId)
-    g.set("__n_appendChild", Function::new(ctx.clone(), |parent_id: u32, child_id: u32| {
+    // appendChild(parentId, childId) -> insertionIndex
+    g.set("__n_appendChild", Function::new(ctx.clone(), |parent_id: u32, child_id: u32| -> u32 {
         with_tree_mut(|tree| {
-            tree.append_child(parent_id as NodeId, child_id as NodeId);
-        });
+            tree.append_child(parent_id as NodeId, child_id as NodeId) as u32
+        })
     }).unwrap()).unwrap();
 
     // removeChild(parentId, childId)
@@ -162,15 +162,15 @@ pub(super) fn register_native_tree_ops(ctx: &Ctx<'_>) {
         });
     }).unwrap()).unwrap();
 
-    // insertBefore(parentId, newChildId, refChildId) — refChildId -1 means append
-    g.set("__n_insertBefore", Function::new(ctx.clone(), |parent_id: u32, new_child_id: u32, ref_child_id: i32| {
+    // insertBefore(parentId, newChildId, refChildId) — refChildId -1 means append. Returns insertion index.
+    g.set("__n_insertBefore", Function::new(ctx.clone(), |parent_id: u32, new_child_id: u32, ref_child_id: i32| -> u32 {
         with_tree_mut(|tree| {
             if ref_child_id < 0 {
-                tree.append_child(parent_id as NodeId, new_child_id as NodeId);
+                tree.append_child(parent_id as NodeId, new_child_id as NodeId) as u32
             } else {
-                tree.insert_before(ref_child_id as NodeId, new_child_id as NodeId);
+                tree.insert_before(ref_child_id as NodeId, new_child_id as NodeId) as u32
             }
-        });
+        })
     }).unwrap()).unwrap();
 
     // removeAllChildren(nodeId) — removes all children of a node

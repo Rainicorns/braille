@@ -22,15 +22,18 @@ impl DomTree {
 
     /// Appends `child` as the last child of `parent`.
     /// If the child already has a parent, it is first removed from that parent.
-    pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
+    /// Returns the index at which the child was inserted.
+    pub fn append_child(&mut self, parent: NodeId, child: NodeId) -> usize {
         // Detach from current parent if any.
         if let Some(old_parent) = self.nodes[child].parent {
             self.nodes[old_parent].children.retain(|&c| c != child);
         }
         self.nodes[child].parent = Some(parent);
+        let idx = self.nodes[parent].children.len();
         self.nodes[parent].children.push(child);
         self.layout_cache.mark_dirty();
         self.styles_dirty = true;
+        idx
     }
 
     /// Removes `child` from `parent`'s children list and clears the child's parent.
@@ -134,7 +137,8 @@ impl DomTree {
 
     /// Inserts `child` as a sibling immediately before `sibling`.
     /// If `child` already has a parent, it is first detached.
-    pub fn insert_before(&mut self, sibling: NodeId, child: NodeId) {
+    /// Returns the index at which the child was inserted.
+    pub fn insert_before(&mut self, sibling: NodeId, child: NodeId) -> usize {
         let parent = self.nodes[sibling]
             .parent
             .expect("insert_before: sibling has no parent");
@@ -152,6 +156,7 @@ impl DomTree {
         self.nodes[child].parent = Some(parent);
         self.layout_cache.mark_dirty();
         self.styles_dirty = true;
+        pos
     }
 
     /// Removes a node from its parent (if it has one).
@@ -206,12 +211,17 @@ impl DomTree {
     /// If new_child already has a parent, it is first detached.
     /// Clears old_child's parent. Panics if old_child is not in parent's children.
     pub fn replace_child(&mut self, parent: NodeId, new_child: NodeId, old_child: NodeId) {
+        // No-op: replacing a node with itself
+        if new_child == old_child {
+            return;
+        }
+
         // Detach new_child from its current parent if any.
         if let Some(old_parent) = self.nodes[new_child].parent {
             self.nodes[old_parent].children.retain(|&c| c != new_child);
         }
 
-        // Find old_child position and replace it.
+        // Find old_child position (after detaching new_child, which may have shifted indices)
         let pos = self
             .find_child_index(parent, old_child)
             .expect("replace_child: old_child not found in parent's children");

@@ -33,12 +33,14 @@ pub fn load_testharness_js() -> String {
 pub fn testharness_preamble() -> String {
     r#"
 // Minimal WPT test harness preamble
+globalThis.__braille_stop_on_fail = true;
 (function() {
     var results = [];
     var setup_fn = null;
     var setup_ran = false;
     var single_test_mode = false;
     var promise_chain = Promise.resolve();
+    var _stopped = false;
 
     function _progress(status) {
         if (typeof __braille_test_progress === 'function') {
@@ -54,6 +56,7 @@ pub fn testharness_preamble() -> String {
     }
 
     self.test = function(fn, name) {
+        if (_stopped) return;
         run_setup();
         var cleanups = [];
         var t = {
@@ -80,6 +83,9 @@ pub fn testharness_preamble() -> String {
         }
         results.push(result);
         _progress(result.status);
+        if (result.status === 1 && typeof __braille_stop_on_fail !== 'undefined' && __braille_stop_on_fail) {
+            _stopped = true;
+        }
     };
 
     self.async_test = function(fn, name) {

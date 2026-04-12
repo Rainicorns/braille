@@ -525,13 +525,19 @@ pub(super) fn constructors_and_wiring_js() -> &'static str {
             configurable: true
         });
         Text.prototype.splitText = function(offset) {
+            offset = offset >>> 0;
             var d = this.data;
             if (offset > d.length) throw new DOMException('Index or size is negative, or greater than the allowed value', 'IndexSizeError');
             var newData = d.substring(offset);
-            this.data = d.substring(0, offset);
             var newNode = new Text(newData);
+            // Use _setDataRaw to avoid generic chardata range adjustment
+            this._setDataRaw(d.substring(0, offset));
             if (this.parentNode) {
                 this.parentNode.insertBefore(newNode, this.nextSibling);
+            }
+            // Apply split-specific range adjustment per spec
+            if (typeof __adjustRangesForSplitText === 'function') {
+                __adjustRangesForSplitText(this, offset, newNode);
             }
             return newNode;
         };

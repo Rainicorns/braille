@@ -392,46 +392,83 @@ fn discover_alt_mappings() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     let root = workspace_root();
     let test_dir = root.join("crates/engine/tests");
-    if !test_dir.exists() {
-        return map;
-    }
+    if test_dir.exists() {
+        for entry in std::fs::read_dir(&test_dir).unwrap().filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_str().unwrap_or("").to_string();
+            if !name.ends_with(".rs") || name.starts_with("html5lib") {
+                continue;
+            }
+            let test_file = name.strip_suffix(".rs").unwrap().to_string();
+            let content = match std::fs::read_to_string(entry.path()) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
 
-    for entry in std::fs::read_dir(&test_dir).unwrap().filter_map(|e| e.ok()) {
-        let name = entry.file_name().to_str().unwrap_or("").to_string();
-        if !name.ends_with(".rs") || name.starts_with("html5lib") {
-            continue;
-        }
-        let test_file = name.strip_suffix(".rs").unwrap().to_string();
-        let content = match std::fs::read_to_string(entry.path()) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        // Look for patterns like:
-        //   // alt_for: wpt:WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.js
-        //   #[test]
-        //   fn some_test_name() {
-        let lines: Vec<&str> = content.lines().collect();
-        for i in 0..lines.len() {
-            let line = lines[i].trim();
-            if let Some(target) = line.strip_prefix("// alt_for: ") {
-                let target = target.trim().to_string();
-                // Find the next #[test] fn name
-                for fline in lines.iter().skip(i + 1) {
-                    let fline = fline.trim();
-                    if let Some(rest) = fline.strip_prefix("fn ") {
-                        if let Some(fn_name) = rest.split('(').next() {
-                            let cargo_id = format!("cargo:{}::{}", test_file, fn_name.trim());
-                            println!("  alt: {} -> {}", target, cargo_id);
-                            map.insert(target, cargo_id);
+            // Look for patterns like:
+            //   // alt_for: wpt:WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.js
+            //   #[test]
+            //   fn some_test_name() {
+            let lines: Vec<&str> = content.lines().collect();
+            for i in 0..lines.len() {
+                let line = lines[i].trim();
+                if let Some(target) = line.strip_prefix("// alt_for: ") {
+                    let target = target.trim().to_string();
+                    // Find the next #[test] fn name
+                    for fline in lines.iter().skip(i + 1) {
+                        let fline = fline.trim();
+                        if let Some(rest) = fline.strip_prefix("fn ") {
+                            if let Some(fn_name) = rest.split('(').next() {
+                                let cargo_id =
+                                    format!("cargo:{}::{}", test_file, fn_name.trim());
+                                println!("  alt: {} -> {}", target, cargo_id);
+                                map.insert(target, cargo_id);
+                            }
+                            break;
                         }
-                        break;
                     }
                 }
             }
         }
     }
+
+    // Auto-discover .alt.html files in the WPT directory.
+    // If foo.alt.html exists next to foo.html, it becomes the alt for wpt:path/to/foo.html.
+    let wpt_dir = root.join("tests/wpt");
+    if wpt_dir.exists() {
+        discover_alt_html_files(&wpt_dir, &wpt_dir, &mut map);
+    }
+
     map
+}
+
+fn discover_alt_html_files(
+    dir: &std::path::Path,
+    wpt_root: &std::path::Path,
+    map: &mut std::collections::HashMap<String, String>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            discover_alt_html_files(&path, wpt_root, map);
+        } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.ends_with(".alt.html") {
+                let base_name = name.strip_suffix(".alt.html").unwrap();
+                let original = path.with_file_name(format!("{}.html", base_name));
+                if original.exists() {
+                    let rel_original = original.strip_prefix(wpt_root).unwrap();
+                    let rel_alt = path.strip_prefix(wpt_root).unwrap();
+                    let key = format!("wpt:{}", rel_original.display());
+                    let val = format!("wpt:{}", rel_alt.display());
+                    println!("  alt: {} -> {}", key, val);
+                    map.insert(key, val);
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

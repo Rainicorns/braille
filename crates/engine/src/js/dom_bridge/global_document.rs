@@ -428,13 +428,50 @@ pub(super) fn global_document_js() -> &'static str {
         }
         BrailleRange.START_TO_START = 0; BrailleRange.START_TO_END = 1;
         BrailleRange.END_TO_END = 2; BrailleRange.END_TO_START = 3;
-        BrailleRange.prototype.setStart = function(node, offset) { this.startContainer = node; this.startOffset = offset; this._update(); };
-        BrailleRange.prototype.setEnd = function(node, offset) { this.endContainer = node; this.endOffset = offset; this._update(); };
-        BrailleRange.prototype.setStartBefore = function(node) { this.startContainer = node.parentNode; this.startOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) : 0; this._update(); };
-        BrailleRange.prototype.setStartAfter = function(node) { this.startContainer = node.parentNode; this.startOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1 : 0; this._update(); };
-        BrailleRange.prototype.setEndBefore = function(node) { this.endContainer = node.parentNode; this.endOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) : 0; this._update(); };
-        BrailleRange.prototype.setEndAfter = function(node) { this.endContainer = node.parentNode; this.endOffset = node.parentNode ? Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1 : 0; this._update(); };
-        BrailleRange.prototype.selectNode = function(node) { this.setStartBefore(node); this.setEndAfter(node); };
+        BrailleRange.prototype.setStart = function(node, offset) {
+            if (node.nodeType === 10) throw new DOMException("The supplied node is a doctype.", "InvalidNodeTypeError");
+            offset = offset >>> 0;
+            if (offset > __nodeLength(node)) throw new DOMException("The offset is larger than the node's length.", "IndexSizeError");
+            this.startContainer = node; this.startOffset = offset;
+            // If new start is after end, or in a different tree, collapse to start
+            if (__getRootNode(node) !== __getRootNode(this.endContainer) ||
+                __compareBP(this.startContainer, this.startOffset, this.endContainer, this.endOffset) > 0) {
+                this.endContainer = this.startContainer; this.endOffset = this.startOffset;
+            }
+            this._update();
+        };
+        BrailleRange.prototype.setEnd = function(node, offset) {
+            if (node.nodeType === 10) throw new DOMException("The supplied node is a doctype.", "InvalidNodeTypeError");
+            offset = offset >>> 0;
+            if (offset > __nodeLength(node)) throw new DOMException("The offset is larger than the node's length.", "IndexSizeError");
+            this.endContainer = node; this.endOffset = offset;
+            // If new end is before start, or in a different tree, collapse to end
+            if (__getRootNode(node) !== __getRootNode(this.startContainer) ||
+                __compareBP(this.endContainer, this.endOffset, this.startContainer, this.startOffset) < 0) {
+                this.startContainer = this.endContainer; this.startOffset = this.endOffset;
+            }
+            this._update();
+        };
+        BrailleRange.prototype.setStartBefore = function(node) {
+            if (!node.parentNode) throw new DOMException("The supplied node has no parent.", "InvalidNodeTypeError");
+            this.setStart(node.parentNode, Array.prototype.indexOf.call(node.parentNode.childNodes, node));
+        };
+        BrailleRange.prototype.setStartAfter = function(node) {
+            if (!node.parentNode) throw new DOMException("The supplied node has no parent.", "InvalidNodeTypeError");
+            this.setStart(node.parentNode, Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1);
+        };
+        BrailleRange.prototype.setEndBefore = function(node) {
+            if (!node.parentNode) throw new DOMException("The supplied node has no parent.", "InvalidNodeTypeError");
+            this.setEnd(node.parentNode, Array.prototype.indexOf.call(node.parentNode.childNodes, node));
+        };
+        BrailleRange.prototype.setEndAfter = function(node) {
+            if (!node.parentNode) throw new DOMException("The supplied node has no parent.", "InvalidNodeTypeError");
+            this.setEnd(node.parentNode, Array.prototype.indexOf.call(node.parentNode.childNodes, node) + 1);
+        };
+        BrailleRange.prototype.selectNode = function(node) {
+            if (!node.parentNode) throw new DOMException("The supplied node has no parent.", "InvalidNodeTypeError");
+            this.setStartBefore(node); this.setEndAfter(node);
+        };
         BrailleRange.prototype.selectNodeContents = function(node) {
             if (node.nodeType === 10) throw new DOMException("The supplied node is a doctype.", "InvalidNodeTypeError");
             this.startContainer = node; this.startOffset = 0;
@@ -450,10 +487,47 @@ pub(super) fn global_document_js() -> &'static str {
         };
         BrailleRange.prototype.getClientRects = function() { return [this.getBoundingClientRect()]; };
         BrailleRange.prototype.toString = function() {
-            if (this.startContainer && this.endContainer && this.startContainer === this.endContainer && this.startContainer.nodeType === 3) {
-                return (this.startContainer.textContent || '').substring(this.startOffset, this.endOffset);
+            var s = this.startContainer, so = this.startOffset;
+            var e = this.endContainer, eo = this.endOffset;
+            if (!s || !e) return '';
+            if (s === e && s.nodeType === 3) return (s.data || '').substring(so, eo);
+            // Walk DOM tree in order, collecting text from text nodes within the range
+            var result = '';
+            // Helper: next node in tree order
+            function nextNode(n) {
+                if (n.firstChild) return n.firstChild;
+                while (n) { if (n.nextSibling) return n.nextSibling; n = n.parentNode; }
+                return null;
             }
-            return this.startContainer ? (this.startContainer.textContent || '') : '';
+            // Find the first text node in/after the start boundary
+            var cur;
+            if (s.nodeType === 3) {
+                result += (s.data || '').substring(so);
+                cur = nextNode(s);
+            } else {
+                cur = s.childNodes[so] || nextNode(s);
+            }
+            // Determine the end boundary node for comparison
+            var endNode;
+            if (e.nodeType === 3) { endNode = e; }
+            else { endNode = e.childNodes[eo] || null; }
+            // Walk until we hit the end boundary
+            while (cur) {
+                if (cur === endNode) break;
+                if (e.nodeType !== 3 && endNode === null) {
+                    // endNode is null = end is after all children of e; stop if we pass e
+                    var anc = cur;
+                    var pastEnd = false;
+                    while (anc) { if (anc === e) break; anc = anc.parentNode; }
+                    if (!anc) pastEnd = true;
+                    if (pastEnd) break;
+                }
+                if (cur.nodeType === 3) result += cur.data || '';
+                cur = nextNode(cur);
+            }
+            // Partial end text node
+            if (e.nodeType === 3 && e !== s) result += (e.data || '').substring(0, eo);
+            return result;
         };
         BrailleRange.prototype.createContextualFragment = function(html) {
             var temp = document.createElement('div');
@@ -689,6 +763,47 @@ pub(super) fn global_document_js() -> &'static str {
                 if (changed) r._update();
             }
         };
+        // Per DOM spec "split" steps 8-9: adjust live range boundaries for splitText.
+        globalThis.__adjustRangesForSplitText = function(node, offset, newNode) {
+            if (!__liveRanges.length) return;
+            var parent = node.parentNode;
+            var nodeIdx = -1;
+            if (parent) {
+                var ch = parent.childNodes;
+                for (var i = 0; i < ch.length; i++) {
+                    if (ch[i] === node) { nodeIdx = i; break; }
+                }
+            }
+            for (var ri = 0; ri < __liveRanges.length; ri++) {
+                var r = __liveRanges[ri];
+                var changed = false;
+                // Step 8: if start node is node and start offset > offset,
+                // set start node to newNode and startOffset -= offset
+                if (r.startContainer === node && r.startOffset > offset) {
+                    r.startContainer = newNode;
+                    r.startOffset -= offset;
+                    changed = true;
+                }
+                // Same for end
+                if (r.endContainer === node && r.endOffset > offset) {
+                    r.endContainer = newNode;
+                    r.endOffset -= offset;
+                    changed = true;
+                }
+                // Step 9: if start node is parent and start offset == nodeIdx + 1, increment
+                if (parent && nodeIdx >= 0) {
+                    if (r.startContainer === parent && r.startOffset === nodeIdx + 1) {
+                        r.startOffset++;
+                        changed = true;
+                    }
+                    if (r.endContainer === parent && r.endOffset === nodeIdx + 1) {
+                        r.endOffset++;
+                        changed = true;
+                    }
+                }
+                if (changed) r._update();
+            }
+        };
         // Per DOM spec "replace data" step 2: adjust live range boundaries
         // when character data in `node` is replaced at (offset, count) with data of length addedCount.
         globalThis.__adjustRangesForCharData = function(node, offset, count, addedCount) {
@@ -719,6 +834,24 @@ pub(super) fn global_document_js() -> &'static str {
         };
         globalThis.Range = BrailleRange;
         doc.createRange = function() { return new BrailleRange(); };
+
+        // StaticRange — non-live range (simple data holder)
+        function StaticRange(init) {
+            if (!init || typeof init !== 'object') throw new TypeError("Failed to construct 'StaticRange': 1 argument required.");
+            if (init.startContainer === undefined || init.startContainer === null) throw new TypeError("Failed to construct 'StaticRange': startContainer is required.");
+            if (init.startOffset === undefined) throw new TypeError("Failed to construct 'StaticRange': startOffset is required.");
+            if (init.endContainer === undefined || init.endContainer === null) throw new TypeError("Failed to construct 'StaticRange': endContainer is required.");
+            if (init.endOffset === undefined) throw new TypeError("Failed to construct 'StaticRange': endOffset is required.");
+            var sc = init.startContainer, ec = init.endContainer;
+            if (sc.nodeType === 10 || sc.nodeType === 2) throw new DOMException("The supplied node is a doctype or attribute.", "InvalidNodeTypeError");
+            if (ec.nodeType === 10 || ec.nodeType === 2) throw new DOMException("The supplied node is a doctype or attribute.", "InvalidNodeTypeError");
+            this.startContainer = sc;
+            this.startOffset = init.startOffset >>> 0;
+            this.endContainer = ec;
+            this.endOffset = init.endOffset >>> 0;
+            this.collapsed = (sc === ec && this.startOffset === this.endOffset);
+        }
+        globalThis.StaticRange = StaticRange;
 
         // DOMRect / DOMRectReadOnly
         function DOMRectReadOnly(x, y, width, height) {
