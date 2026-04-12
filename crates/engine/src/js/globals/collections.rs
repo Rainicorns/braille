@@ -22,7 +22,10 @@ const COLLECTIONS_JS: &str = r#"
             SHOW_COMMENT: 0x80,
             SHOW_DOCUMENT: 0x100,
             SHOW_DOCUMENT_TYPE: 0x200,
-            SHOW_DOCUMENT_FRAGMENT: 0x400
+            SHOW_DOCUMENT_FRAGMENT: 0x400,
+            SHOW_ENTITY_REFERENCE: 0x10,
+            SHOW_ENTITY: 0x20,
+            SHOW_NOTATION: 0x800
         };
 
         // NodeList class

@@ -1021,10 +1021,15 @@ pub(super) fn global_document_js() -> &'static str {
             return e;
         };
         doc.createTreeWalker = function(root, whatToShow, filter) {
-            if (arguments.length === 0) throw new TypeError("Failed to execute 'createTreeWalker' on 'Document': 1 argument required, but only 0 present.");
+            if (arguments.length === 0 || root === null || root === undefined || root.__nid === undefined) {
+                throw new TypeError("Failed to execute 'createTreeWalker' on 'Document': parameter 1 is not of type 'Node'.");
+            }
             return new TreeWalker(root, whatToShow, filter);
         };
         doc.createNodeIterator = function(root, whatToShow, filter) {
+            if (arguments.length === 0 || root === null || root === undefined || root.__nid === undefined) {
+                throw new TypeError("Failed to execute 'createNodeIterator' on 'Document': parameter 1 is not of type 'Node'.");
+            }
             return new NodeIterator(root, whatToShow, filter);
         };
         doc.importNode = function(node, deep) {

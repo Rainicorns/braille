@@ -135,6 +135,10 @@ pub(super) fn dom_mutation_js() -> &'static str {
                 if (typeof __adjustRangesForRemoval === 'function') {
                     __adjustRangesForRemoval(child, this);
                 }
+                // Adjust live NodeIterators before the DOM mutation (spec §6.1)
+                if (typeof __adjustNodeIteratorsForRemoval === 'function') {
+                    __adjustNodeIteratorsForRemoval(child);
+                }
                 // CE lifecycle: disconnectedCallback before removal
                 if (typeof __ceDisconnected === 'function' && __isConnected(this.__nid)) {
                     __ceDisconnected(child);
@@ -165,13 +169,20 @@ pub(super) fn dom_mutation_js() -> &'static str {
             if (typeof __ceDisconnected === 'function' && __isConnected(this.__nid)) {
                 __ceDisconnected(oldChild);
             }
-            // Adjust live Range boundaries: removal of newChild from old parent (skip if same as oldChild)
+            // Adjust live Range boundaries and NodeIterators: removal of newChild from old parent
             if (newChild !== oldChild && newChild.__nid !== undefined && __n_getParent(newChild.__nid) >= 0) {
                 __loseFocusIfRemoving(newChild);
                 var ncParent = newChild.parentNode;
+                if (typeof __adjustNodeIteratorsForRemoval === 'function') {
+                    __adjustNodeIteratorsForRemoval(newChild);
+                }
                 if (typeof __adjustRangesForRemoval === 'function' && ncParent) {
                     __adjustRangesForRemoval(newChild, ncParent);
                 }
+            }
+            // Adjust live NodeIterators before replacement (spec §6.1)
+            if (typeof __adjustNodeIteratorsForRemoval === 'function') {
+                __adjustNodeIteratorsForRemoval(oldChild);
             }
             // Compute oldChild index for range adjustment (before replacement)
             var oldIdx = 0;

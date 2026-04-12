@@ -284,7 +284,7 @@ fn run_discover(manifest_path: &std::path::Path) {
         fn sort_key(path: &str) -> (u8, &str) {
             if path.starts_with("cargo:") {
                 (0, path)
-            } else if path.contains(".tentative.") {
+            } else if path.contains(".tentative.") || path.contains("/tentative/") {
                 (2, path)
             } else {
                 (1, path)

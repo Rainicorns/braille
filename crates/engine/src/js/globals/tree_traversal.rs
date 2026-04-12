@@ -7,22 +7,114 @@ pub(super) fn register(ctx: &Ctx<'_>) {
 }
 
 const TREE_TRAVERSAL_JS: &str = r#"
+        // NodeIterator pre-removal registry (DOM spec §6.1)
+        var __liveNodeIterators = [];
+
+        function __isInclusiveAncestorOf(ancestor, node) {
+            while (node) {
+                if (node === ancestor) return true;
+                node = node.parentNode;
+            }
+            return false;
+        }
+
+        function __previousNodeInTree(node, root) {
+            if (node === root) return null;
+            var sib = node.previousSibling;
+            if (sib) {
+                while (sib.lastChild) sib = sib.lastChild;
+                return sib;
+            }
+            return node.parentNode;
+        }
+
+        function __nextNodeDescendants(node) {
+            while (node && !node.nextSibling) {
+                node = node.parentNode;
+            }
+            return node ? node.nextSibling : null;
+        }
+
+        // Called before removeChild/replaceChild to adjust all live NodeIterators
+        // per DOM spec §6.1 "NodeIterator pre-removing steps"
+        globalThis.__adjustNodeIteratorsForRemoval = function(node) {
+            for (var i = __liveNodeIterators.length - 1; i >= 0; i--) {
+                var iter = __liveNodeIterators[i];
+                if (!iter) { __liveNodeIterators.splice(i, 1); continue; }
+
+                // Step 1: if node is root, an ancestor of root, or not an inclusive
+                // ancestor of referenceNode, skip (spec §6.1 + implicit ancestor-of-root rule)
+                if (__isInclusiveAncestorOf(node, iter.root)) continue;
+                if (!__isInclusiveAncestorOf(node, iter.referenceNode)) continue;
+
+                // Step 2: if pointer is after referenceNode
+                if (!iter.pointerBeforeReferenceNode) {
+                    var prev = __previousNodeInTree(node, iter.root);
+                    if (prev) {
+                        iter.referenceNode = prev;
+                    }
+                    continue;
+                }
+
+                // Step 3: try node following last inclusive descendant of node
+                var next = __nextNodeDescendants(node);
+                if (next) {
+                    iter.referenceNode = next;
+                    continue;
+                }
+
+                // Step 4-5: set to previous node and flip pointer
+                var prev = __previousNodeInTree(node, iter.root);
+                if (prev) {
+                    iter.referenceNode = prev;
+                    iter.pointerBeforeReferenceNode = false;
+                }
+            }
+        };
+
         // TreeWalker — spec-compliant traversal with whatToShow/filter support
         globalThis.TreeWalker = class TreeWalker {
             constructor(root, whatToShow, filter) {
-                this.root = root;
-                this.whatToShow = whatToShow === undefined ? 0xFFFFFFFF : (whatToShow >>> 0);
-                this.filter = filter || null;
-                this.currentNode = root;
+                var _currentNode = root;
+                Object.defineProperties(this, {
+                    root: { value: root, enumerable: true },
+                    whatToShow: { value: whatToShow === undefined ? 0xFFFFFFFF : (whatToShow >>> 0), enumerable: true },
+                    filter: { value: filter == null ? null : filter, enumerable: true },
+                    currentNode: {
+                        get: function() { return _currentNode; },
+                        set: function(v) {
+                            if (v === null || v === undefined || v.__nid === undefined) {
+                                throw new TypeError("Failed to set 'currentNode' on 'TreeWalker': The provided value is not of type 'Node'.");
+                            }
+                            _currentNode = v;
+                        },
+                        enumerable: true, configurable: true
+                    }
+                });
+                this._active = false;
             }
             _acceptNode(node) {
                 var nodeType = node.nodeType;
                 // whatToShow bitmask: bit (nodeType - 1)
                 if (!((1 << (nodeType - 1)) & this.whatToShow)) return 3; // FILTER_SKIP
-                if (!this.filter) return 1; // FILTER_ACCEPT
-                if (typeof this.filter === 'function') return this.filter(node);
-                if (typeof this.filter.acceptNode === 'function') return this.filter.acceptNode(node);
-                return 1;
+                if (this.filter == null) return 1; // FILTER_ACCEPT (null or undefined)
+                if (this._active) throw new DOMException("Failed to execute 'acceptNode' on 'NodeFilter': filter is active", "InvalidStateError");
+                this._active = true;
+                var result;
+                try {
+                    if (typeof this.filter === 'function') {
+                        result = this.filter(node);
+                    } else {
+                        var acceptNode = this.filter.acceptNode;
+                        if (typeof acceptNode !== 'function') {
+                            throw new TypeError("Failed to execute 'acceptNode' on 'NodeFilter': acceptNode is not a function");
+                        }
+                        result = acceptNode.call(this.filter, node);
+                    }
+                } finally {
+                    this._active = false;
+                }
+                return (result >>> 0) & 0xFFFF;
             }
             parentNode() {
                 var node = this.currentNode;
@@ -58,156 +150,168 @@ const TREE_TRAVERSAL_JS: &str = r#"
             firstChild() { return this._traverseChildren(true); }
             lastChild() { return this._traverseChildren(false); }
             _traverseSiblings(next) {
+                // Spec: https://dom.spec.whatwg.org/#concept-traverse-siblings
                 var node = this.currentNode;
                 if (node === this.root) return null;
                 while (true) {
-                    var sib = next ? node.nextSibling : node.previousSibling;
-                    while (sib) {
-                        var r = this._acceptNode(sib);
-                        if (r === 1) { this.currentNode = sib; return sib; }
-                        if (r === 3) { // FILTER_SKIP — descend into children
-                            var child = next ? sib.firstChild : sib.lastChild;
-                            if (child) { sib = child; continue; }
+                    var sibling = next ? node.nextSibling : node.previousSibling;
+                    while (sibling) {
+                        node = sibling;
+                        var result = this._acceptNode(node);
+                        if (result === 1) { this.currentNode = node; return node; }
+                        // Always try children first
+                        sibling = next ? node.firstChild : node.lastChild;
+                        // If REJECT or no children, try next/prev sibling instead
+                        if (result === 2 || !sibling) {
+                            sibling = next ? node.nextSibling : node.previousSibling;
                         }
-                        sib = next ? sib.nextSibling : sib.previousSibling;
                     }
                     node = node.parentNode;
                     if (!node || node === this.root) return null;
-                    var pr = this._acceptNode(node);
-                    if (pr === 1) return null; // parent accepted = no more siblings to traverse
+                    if (this._acceptNode(node) === 1) return null;
                 }
             }
             nextSibling() { return this._traverseSiblings(true); }
             previousSibling() { return this._traverseSiblings(false); }
             nextNode() {
+                // Spec: https://dom.spec.whatwg.org/#dom-treewalker-nextnode
                 var node = this.currentNode;
-                // Try first child
-                var child = node.firstChild;
-                while (child) {
-                    var r = this._acceptNode(child);
-                    if (r === 1) { this.currentNode = child; return child; }
-                    if (r === 3 && child.firstChild) { child = child.firstChild; continue; } // SKIP — descend
-                    // REJECT or SKIP-no-children — try next sibling, then walk up
-                    break;
-                }
-                // Depth-first: try siblings and ancestors' siblings
-                var cur = child || node;
-                while (cur && cur !== this.root) {
-                    var sib = cur.nextSibling;
-                    while (sib) {
-                        var r = this._acceptNode(sib);
-                        if (r === 1) { this.currentNode = sib; return sib; }
-                        if (r === 3 && sib.firstChild) { sib = sib.firstChild; continue; }
-                        sib = sib.nextSibling;
+                var result = 1; // FILTER_ACCEPT
+                while (true) {
+                    // Descend into children while not REJECT
+                    while (result !== 2 && node.firstChild) {
+                        node = node.firstChild;
+                        result = this._acceptNode(node);
+                        if (result === 1) { this.currentNode = node; return node; }
                     }
-                    cur = cur.parentNode;
+                    // Find next sibling, walking up ancestors
+                    var sibling = null;
+                    var temp = node;
+                    while (temp) {
+                        if (temp === this.root) return null;
+                        sibling = temp.nextSibling;
+                        if (sibling) { node = sibling; break; }
+                        temp = temp.parentNode;
+                    }
+                    if (!temp) return null;
+                    result = this._acceptNode(node);
+                    if (result === 1) { this.currentNode = node; return node; }
                 }
-                return null;
             }
             previousNode() {
+                // Spec: https://dom.spec.whatwg.org/#dom-treewalker-previousnode
                 var node = this.currentNode;
                 while (node !== this.root) {
                     var sib = node.previousSibling;
                     while (sib) {
-                        // Descend to last accepted descendant
-                        var r = this._acceptNode(sib);
-                        var last = sib.lastChild;
-                        while (last) {
-                            var lr = this._acceptNode(last);
-                            if (lr === 2) { // REJECT — try previous sibling of last
-                                last = last.previousSibling;
-                                continue;
-                            }
-                            var deeper = last.lastChild;
-                            if (deeper) { last = deeper; continue; }
-                            if (lr === 1) { this.currentNode = last; return last; }
-                            last = last.previousSibling;
+                        node = sib;
+                        var result = this._acceptNode(node);
+                        // Descend to last descendant while not REJECT and has children
+                        while (result !== 2 && node.lastChild) {
+                            node = node.lastChild;
+                            result = this._acceptNode(node);
                         }
-                        if (r === 1) { this.currentNode = sib; return sib; }
-                        sib = sib.previousSibling;
+                        if (result === 1) { this.currentNode = node; return node; }
+                        sib = node.previousSibling;
                     }
-                    var parent = node.parentNode;
-                    if (!parent || parent === this.root) return null;
-                    var pr = this._acceptNode(parent);
-                    if (pr === 1) { this.currentNode = parent; return parent; }
-                    node = parent;
+                    // No more siblings — go to parent
+                    if (node === this.root || !node.parentNode) return null;
+                    node = node.parentNode;
+                    if (this._acceptNode(node) === 1) { this.currentNode = node; return node; }
                 }
                 return null;
             }
         };
 
+        TreeWalker.prototype[Symbol.toStringTag] = 'TreeWalker';
+
         // NodeIterator — flat pre-order traversal with whatToShow/filter support
-        globalThis.NodeIterator = class NodeIterator {
-            constructor(root, whatToShow, filter) {
-                this.root = root;
-                this.whatToShow = whatToShow === undefined ? 0xFFFFFFFF : (whatToShow >>> 0);
-                this.filter = filter || null;
-                this.referenceNode = root;
-                this.pointerBeforeReferenceNode = true;
-            }
-            _acceptNode(node) {
-                if (!((1 << (node.nodeType - 1)) & this.whatToShow)) return 3; // FILTER_SKIP
-                if (!this.filter) return 1;
-                if (typeof this.filter === 'function') return this.filter(node);
-                if (typeof this.filter.acceptNode === 'function') return this.filter.acceptNode(node);
-                return 1;
-            }
-            _nextInPreOrder(node) {
-                if (node.firstChild) return node.firstChild;
-                var cur = node;
-                while (cur && cur !== this.root) {
-                    if (cur.nextSibling) return cur.nextSibling;
-                    cur = cur.parentNode;
+        globalThis.NodeIterator = function NodeIterator(root, whatToShow, filter) {
+            Object.defineProperties(this, {
+                root: { value: root, enumerable: true },
+                whatToShow: { value: whatToShow === undefined ? 0xFFFFFFFF : (whatToShow >>> 0), enumerable: true },
+                filter: { value: filter || null, enumerable: true },
+                referenceNode: { value: root, writable: true, enumerable: true },
+                pointerBeforeReferenceNode: { value: true, writable: true, enumerable: true }
+            });
+            this._active = false;
+            __liveNodeIterators.push(this);
+        };
+        NodeIterator.prototype._acceptNode = function(node) {
+            if (!((1 << (node.nodeType - 1)) & this.whatToShow)) return 3; // FILTER_SKIP
+            if (this.filter == null) return 1;
+            if (this._active) throw new DOMException("Failed to execute 'acceptNode' on 'NodeFilter': filter is active", "InvalidStateError");
+            this._active = true;
+            var result;
+            try {
+                if (typeof this.filter === 'function') {
+                    result = this.filter(node);
+                } else {
+                    var acceptNode = this.filter.acceptNode;
+                    if (typeof acceptNode !== 'function') {
+                        throw new TypeError("Failed to execute 'acceptNode' on 'NodeFilter': acceptNode is not a function");
+                    }
+                    result = acceptNode.call(this.filter, node);
                 }
-                return null;
+            } finally {
+                this._active = false;
             }
-            _prevInPreOrder(node) {
-                if (node === this.root) return null;
-                var sib = node.previousSibling;
-                if (sib) {
-                    // Descend to last descendant
-                    while (sib.lastChild) sib = sib.lastChild;
-                    return sib;
-                }
-                return node.parentNode;
+            return (result >>> 0) & 0xFFFF;
+        };
+        NodeIterator.prototype._nextInPreOrder = function(node) {
+            if (node.firstChild) return node.firstChild;
+            var cur = node;
+            while (cur && cur !== this.root) {
+                if (cur.nextSibling) return cur.nextSibling;
+                cur = cur.parentNode;
             }
-            nextNode() {
-                var node = this.referenceNode;
-                var beforeRef = this.pointerBeforeReferenceNode;
-                if (beforeRef) {
-                    // pointer is before reference — first candidate is reference itself
-                    var r = this._acceptNode(node);
-                    this.pointerBeforeReferenceNode = false;
-                    if (r === 1) return node;
-                    // If rejected/skipped, fall through to walk forward
-                }
-                while (true) {
+            return null;
+        };
+        NodeIterator.prototype._prevInPreOrder = function(node) {
+            if (node === this.root) return null;
+            var sib = node.previousSibling;
+            if (sib) {
+                while (sib.lastChild) sib = sib.lastChild;
+                return sib;
+            }
+            return node.parentNode;
+        };
+        NodeIterator.prototype.nextNode = function() {
+            var node = this.referenceNode;
+            var beforeNode = this.pointerBeforeReferenceNode;
+            while (true) {
+                if (!beforeNode) {
                     node = this._nextInPreOrder(node);
                     if (!node) return null;
+                } else {
+                    beforeNode = false;
+                }
+                var r = this._acceptNode(node);
+                if (r === 1) {
                     this.referenceNode = node;
-                    this.pointerBeforeReferenceNode = false;
-                    var r = this._acceptNode(node);
-                    if (r === 1) return node;
+                    this.pointerBeforeReferenceNode = beforeNode;
+                    return node;
                 }
             }
-            previousNode() {
-                var node = this.referenceNode;
-                var beforeRef = this.pointerBeforeReferenceNode;
-                if (!beforeRef) {
-                    // pointer is after reference — first candidate is reference itself
-                    var r = this._acceptNode(node);
-                    this.pointerBeforeReferenceNode = true;
-                    if (r === 1) return node;
-                }
-                while (true) {
+        };
+        NodeIterator.prototype.previousNode = function() {
+            var node = this.referenceNode;
+            var beforeNode = this.pointerBeforeReferenceNode;
+            while (true) {
+                if (beforeNode) {
                     node = this._prevInPreOrder(node);
                     if (!node) return null;
+                } else {
+                    beforeNode = true;
+                }
+                var r = this._acceptNode(node);
+                if (r === 1) {
                     this.referenceNode = node;
-                    this.pointerBeforeReferenceNode = true;
-                    var r = this._acceptNode(node);
-                    if (r === 1) return node;
+                    this.pointerBeforeReferenceNode = beforeNode;
+                    return node;
                 }
             }
-            detach() {} // legacy no-op
         };
+        NodeIterator.prototype.detach = function() {}; // legacy no-op
+        NodeIterator.prototype[Symbol.toStringTag] = 'NodeIterator';
 "#;
