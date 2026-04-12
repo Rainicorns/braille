@@ -76,7 +76,7 @@ pub(super) fn register_worker(ctx: &Ctx<'_>) {
                             var meta = resolvedUrl.substring(5, commaIdx);
                             var payload = resolvedUrl.substring(commaIdx + 1);
                             var code = meta.indexOf('base64') >= 0 ? atob(payload) : decodeURIComponent(payload);
-                            this._initInline(code);
+                            this._initInline(code, resolvedUrl);
                         }
                         return;
                     }
@@ -90,7 +90,7 @@ pub(super) fn register_worker(ctx: &Ctx<'_>) {
                             try { code = scripts[new URL(resolvedUrl).pathname]; } catch(e) {}
                         }
                         if (code) {
-                            this._initInline(code);
+                            this._initInline(code, resolvedUrl || url);
                             return;
                         }
                     }
@@ -101,10 +101,18 @@ pub(super) fn register_worker(ctx: &Ctx<'_>) {
                     __braille_worker_spawn(resolvedUrl);
                 }
 
-                _initInline(code) {
+                _initInline(code, scriptUrl) {
                     this._inline = true;
                     this._workerId = -1;
                     var workerSelf = this;
+                    // Derive worker location from script URL
+                    var workerLocation = {};
+                    try {
+                        var u = new URL(scriptUrl || '', (typeof location !== 'undefined' && location.href) || 'http://localhost');
+                        workerLocation = { href: u.href, origin: u.origin, protocol: u.protocol, host: u.host, hostname: u.hostname, port: u.port, pathname: u.pathname, search: u.search, hash: u.hash };
+                    } catch(e) {
+                        workerLocation = (typeof location !== 'undefined') ? location : {};
+                    }
 
                     var workerPostMessage = function(data) {
                         if (workerSelf._terminated) return;
@@ -114,10 +122,67 @@ pub(super) fn register_worker(ctx: &Ctx<'_>) {
                         }, 0);
                     };
 
+                    // Worker-scoped setTimeout that catches errors and routes to onerror
+                    var _realSetTimeout = setTimeout;
+                    var workerSetTimeout = function(fn, delay) {
+                        var args = [];
+                        for (var i = 2; i < arguments.length; i++) args.push(arguments[i]);
+                        return _realSetTimeout(function() {
+                            if (workerSelf._terminated) return;
+                            try {
+                                if (typeof fn === 'function') fn.apply(null, args);
+                                else if (typeof fn === 'string') (0, eval)(fn);
+                            } catch(e) {
+                                // Fire onerror on worker scope (per spec: ErrorEvent with message)
+                                var msg = (e && e.message) ? e.message : String(e);
+                                if (typeof workerScope.onerror === 'function') {
+                                    workerScope.onerror(msg, '', 0, 0, e);
+                                }
+                                var ls = workerScope._listeners['error'];
+                                if (ls) {
+                                    var errEvt = new Event('error');
+                                    errEvt.message = msg;
+                                    errEvt.error = e;
+                                    var s = ls.slice();
+                                    for (var j = 0; j < s.length; j++) s[j](errEvt);
+                                }
+                                // Propagate to parent Worker object
+                                var parentErr = new Event('error');
+                                parentErr.message = msg;
+                                parentErr.error = e;
+                                workerSelf._dispatch('error', parentErr);
+                            }
+                        }, delay || 0);
+                    };
+                    var workerSetInterval = function(fn, delay) {
+                        var args = [];
+                        for (var i = 2; i < arguments.length; i++) args.push(arguments[i]);
+                        return setInterval(function() {
+                            if (workerSelf._terminated) return;
+                            try {
+                                if (typeof fn === 'function') fn.apply(null, args);
+                            } catch(e) {
+                                var msg = (e && e.message) ? e.message : String(e);
+                                if (typeof workerScope.onerror === 'function') {
+                                    workerScope.onerror(msg, '', 0, 0, e);
+                                }
+                            }
+                        }, delay || 0);
+                    };
+
                     var workerScope = {
                         postMessage: workerPostMessage,
                         self: null,
                         onmessage: null,
+                        onerror: null,
+                        document: undefined,
+                        window: undefined,
+                        globalThis: null,
+                        location: workerLocation,
+                        setTimeout: workerSetTimeout,
+                        setInterval: workerSetInterval,
+                        clearTimeout: clearTimeout,
+                        clearInterval: clearInterval,
                         _listeners: {},
                         addEventListener: function(type, handler) {
                             if (!workerScope._listeners[type]) workerScope._listeners[type] = [];
@@ -135,13 +200,51 @@ pub(super) fn register_worker(ctx: &Ctx<'_>) {
                         }
                     };
                     workerScope.self = workerScope;
+                    workerScope.globalThis = workerScope;
                     this._workerScope = workerScope;
+
+                    // Execute worker code with(self) so importScripts globals are visible
+                    function execInWorker(c) {
+                        var fn = new Function('postMessage','self','addEventListener','removeEventListener','importScripts','setTimeout','setInterval',
+                            'with(self){\n' + c + '\n}');
+                        fn(workerPostMessage, workerScope, workerScope.addEventListener, workerScope.removeEventListener, importScriptsFn, workerSetTimeout, workerSetInterval);
+                    }
+                    var importScriptsFn = function() {
+                        var scripts = globalThis.__braille_worker_scripts;
+                        if (!scripts) return;
+                        for (var ai = 0; ai < arguments.length; ai++) {
+                            var surl = arguments[ai];
+                            var scode = scripts[surl] || scripts[surl.replace(/^.*:\/\/[^\/]+/, '')];
+                            if (scode) execInWorker(scode);
+                        }
+                    };
 
                     // Execute worker script in next microtask (like a real worker startup)
                     setTimeout(function() {
                         if (workerSelf._terminated) return;
-                        var fn = new Function('postMessage', 'self', 'addEventListener', 'removeEventListener', 'importScripts', code);
-                        fn(workerPostMessage, workerScope, workerScope.addEventListener, workerScope.removeEventListener, function(){});
+                        try {
+                            execInWorker(code);
+                        } catch(e) {
+                            // Fire onerror on worker scope (IDL handler)
+                            var msg = (e && e.message) ? e.message : String(e);
+                            if (typeof workerScope.onerror === 'function') {
+                                workerScope.onerror(msg, '', 0, 0, e);
+                            }
+                            // Fire error event listeners on worker scope
+                            var scopeErr = new Event('error');
+                            scopeErr.message = msg;
+                            scopeErr.error = e;
+                            var ls = workerScope._listeners['error'];
+                            if (ls) {
+                                var s = ls.slice();
+                                for (var li = 0; li < s.length; li++) s[li](scopeErr);
+                            }
+                            // Propagate error to parent Worker object
+                            var errEvent = new Event('error');
+                            errEvent.message = msg;
+                            errEvent.error = e;
+                            workerSelf._dispatch('error', errEvent);
+                        }
                     }, 0);
                 }
 
@@ -219,6 +322,175 @@ pub(super) fn register_worker(ctx: &Ctx<'_>) {
                     var event = new Event('error');
                     event.message = errorMsg;
                     worker._dispatch('error', event);
+                }
+            };
+            // SharedWorker: like Worker but communicates via MessagePort
+            globalThis.SharedWorker = class SharedWorker {
+                constructor(url, name) {
+                    this.onerror = null;
+                    this._listeners = {};
+
+                    // Create port pair
+                    var outerPort = {
+                        onmessage: null,
+                        _listeners: {},
+                        _started: false,
+                        _queue: [],
+                        postMessage: function(data) {
+                            // Send to inner port
+                            setTimeout(function() {
+                                var ev = { type: 'message', data: data, origin: '', lastEventId: '', source: null, ports: [] };
+                                if (innerPort.onmessage) innerPort.onmessage(ev);
+                                var ls = innerPort._listeners['message'];
+                                if (ls) { var s = ls.slice(); for (var i = 0; i < s.length; i++) s[i](ev); }
+                            }, 0);
+                        },
+                        addEventListener: function(type, handler) {
+                            if (!outerPort._listeners[type]) outerPort._listeners[type] = [];
+                            outerPort._listeners[type].push(handler);
+                            if (type === 'message') outerPort._started = true;
+                        },
+                        removeEventListener: function(type, handler) {
+                            if (outerPort._listeners[type]) {
+                                outerPort._listeners[type] = outerPort._listeners[type].filter(function(f) { return f !== handler; });
+                            }
+                        },
+                        start: function() {
+                            outerPort._started = true;
+                            // Flush queued messages
+                            var q = outerPort._queue.splice(0);
+                            for (var i = 0; i < q.length; i++) {
+                                var ev = q[i];
+                                if (outerPort.onmessage) outerPort.onmessage(ev);
+                                var ls = outerPort._listeners['message'];
+                                if (ls) { var s = ls.slice(); for (var j = 0; j < s.length; j++) s[j](ev); }
+                            }
+                        },
+                        close: function() {}
+                    };
+
+                    var innerPort = {
+                        onmessage: null,
+                        _listeners: {},
+                        postMessage: function(data) {
+                            var ev = { type: 'message', data: data, origin: '', lastEventId: '', source: null, ports: [] };
+                            if (outerPort._started) {
+                                setTimeout(function() {
+                                    if (outerPort.onmessage) outerPort.onmessage(ev);
+                                    var ls = outerPort._listeners['message'];
+                                    if (ls) { var s = ls.slice(); for (var i = 0; i < s.length; i++) s[i](ev); }
+                                }, 0);
+                            } else {
+                                outerPort._queue.push(ev);
+                            }
+                        },
+                        addEventListener: function(type, handler) {
+                            if (!innerPort._listeners[type]) innerPort._listeners[type] = [];
+                            innerPort._listeners[type].push(handler);
+                        },
+                        removeEventListener: function() {},
+                        start: function() {},
+                        close: function() {}
+                    };
+
+                    this.port = outerPort;
+                    var sharedSelf = this;
+
+                    // Resolve URL
+                    var resolvedUrl = url;
+                    if (typeof url === 'string' && !/^https?:\/\//.test(url) && !/^data:/.test(url) && !/^blob:/.test(url)) {
+                        if (url.charAt(0) === '/') {
+                            resolvedUrl = (typeof location !== 'undefined' ? location.origin : '') + url;
+                        } else {
+                            resolvedUrl = (typeof location !== 'undefined' ? location.origin + location.pathname.replace(/[^\/]*$/, '') : '') + url;
+                        }
+                    }
+
+                    // Find code from pre-fetched scripts
+                    var code = null;
+                    var scripts = globalThis.__braille_worker_scripts;
+                    if (scripts) {
+                        code = scripts[resolvedUrl] || scripts[url];
+                        if (!code) {
+                            try { code = scripts[new URL(resolvedUrl).pathname]; } catch(e) {}
+                        }
+                    }
+
+                    if (code) {
+                        setTimeout(function() {
+                            // postMessage for SharedWorker: routes through the inner port to outer port
+                            var sharedPostMessage = function(data) {
+                                innerPort.postMessage(data);
+                            };
+
+                            var workerScope = {
+                                self: null,
+                                onconnect: null,
+                                document: undefined,
+                                window: undefined,
+                                globalThis: null,
+                                postMessage: sharedPostMessage,
+                                setTimeout: setTimeout,
+                                setInterval: setInterval,
+                                clearTimeout: clearTimeout,
+                                clearInterval: clearInterval,
+                                _listeners: {},
+                                addEventListener: function(type, handler) {
+                                    if (!workerScope._listeners[type]) workerScope._listeners[type] = [];
+                                    workerScope._listeners[type].push(handler);
+                                },
+                                removeEventListener: function() {},
+                                close: function() {},
+                                location: (typeof location !== 'undefined') ? location : {}
+                            };
+                            workerScope.self = workerScope;
+                            workerScope.globalThis = workerScope;
+
+                            var importScriptsFn = function() {
+                                var sc = globalThis.__braille_worker_scripts;
+                                if (!sc) return;
+                                for (var ai = 0; ai < arguments.length; ai++) {
+                                    var surl = arguments[ai];
+                                    var scode = sc[surl] || sc[surl.replace(/^.*:\/\/[^\/]+/, '')];
+                                    if (scode) {
+                                        var fn2 = new Function('self','addEventListener','removeEventListener','importScripts','postMessage','setTimeout','setInterval',
+                                            'with(self){\n' + scode + '\n}');
+                                        fn2(workerScope, workerScope.addEventListener, workerScope.removeEventListener, importScriptsFn, sharedPostMessage, setTimeout, setInterval);
+                                    }
+                                }
+                            };
+
+                            try {
+                                var fn = new Function('self','addEventListener','removeEventListener','importScripts','postMessage','setTimeout','setInterval',
+                                    'with(self){\n' + code + '\n}');
+                                fn(workerScope, workerScope.addEventListener, workerScope.removeEventListener, importScriptsFn, sharedPostMessage, setTimeout, setInterval);
+                            } catch(e) {
+                                var errEvent = new Event('error');
+                                errEvent.message = (e && e.message) ? e.message : String(e);
+                                errEvent.error = e;
+                                if (sharedSelf.onerror) sharedSelf.onerror(errEvent);
+                                return;
+                            }
+
+                            // Fire connect event with port
+                            var connectEvent = { type: 'connect', ports: [innerPort], source: innerPort };
+                            if (typeof workerScope.onconnect === 'function') {
+                                workerScope.onconnect(connectEvent);
+                            }
+                            var cls = workerScope._listeners['connect'];
+                            if (cls) { for (var ci = 0; ci < cls.length; ci++) cls[ci](connectEvent); }
+                        }, 0);
+                    }
+                }
+
+                addEventListener(type, cb) {
+                    if (!this._listeners[type]) this._listeners[type] = [];
+                    this._listeners[type].push(cb);
+                }
+                removeEventListener(type, cb) {
+                    if (this._listeners[type]) {
+                        this._listeners[type] = this._listeners[type].filter(function(f) { return f !== cb; });
+                    }
                 }
             };
         })();

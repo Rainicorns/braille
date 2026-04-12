@@ -232,7 +232,13 @@ impl Engine {
             }
             Ok(Err(e)) => {
                 runtime.notify_mutation_observers();
-                errors.push(format!("{:?}", e));
+                let err_msg = format!("{:?}", e);
+                // Fire window.onerror + ErrorEvent before logging
+                let escaped = err_msg.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "\\r");
+                runtime.eval_or_log(&format!(
+                    "if(typeof __braille_report_script_error==='function')__braille_report_script_error('{escaped}')"
+                ));
+                errors.push(err_msg);
             }
             Err(panic_err) => {
                 let msg = if let Some(s) = panic_err.downcast_ref::<String>() {

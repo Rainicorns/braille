@@ -405,11 +405,17 @@ const WEB_APIS_JS: &str = r#"
                                 },
                                 document: undefined,
                                 window: undefined,
+                                globalThis: null,
+                                setTimeout: setTimeout,
+                                setInterval: setInterval,
+                                clearTimeout: clearTimeout,
+                                clearInterval: clearInterval,
                                 registration: null,
                                 clients: { matchAll: function(){return Promise.resolve([]);}, claim: function(){return Promise.resolve();} },
                                 skipWaiting: function(){return Promise.resolve();}
                             };
                             ws.self = ws;
+                            ws.globalThis = ws;
                             workerObj._scope = ws;
                             setTimeout(function() {
                                 // Execute code in the worker scope context.
@@ -1490,6 +1496,27 @@ const WEB_APIS_JS: &str = r#"
         })();
 
         globalThis.queueMicrotask = function(cb) { Promise.resolve().then(cb); };
+        // Script error reporting: fires window.onerror + ErrorEvent on window
+        // Called from Rust when a <script> throws during page load
+        globalThis.__braille_report_script_error = function(message, error) {
+            if (!error && message) {
+                error = new Error(message);
+            }
+            var msg = (error && error.message) ? String(error.message) : String(message);
+            var handled = false;
+            if (typeof window !== 'undefined' && typeof window.onerror === 'function') {
+                handled = window.onerror(msg, '', 0, 0, error);
+            }
+            if (!handled && typeof window !== 'undefined') {
+                var errEvt = new ErrorEvent('error', {message: msg, filename: '', lineno: 0, colno: 0, error: error, cancelable: true});
+                if (window.__et_listeners && window.__et_listeners['error_b']) {
+                    var eCbs = window.__et_listeners['error_b'].slice();
+                    for (var ei = 0; ei < eCbs.length; ei++) {
+                        eCbs[ei].call(window, errEvt);
+                    }
+                }
+            }
+        };
         // Unhandled promise rejection support
         globalThis.__braille_pending_rejections = [];
         globalThis.__braille_drain_rejections = function() {

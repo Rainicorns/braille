@@ -467,6 +467,7 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         if (props) {
             if (props.single_test) single_test_mode = true;
             if (props.explicit_done) _explicit_done = true;
+            if (props.allow_uncaught_exception) globalThis._allow_uncaught_exception = true;
         }
     };
 
@@ -477,9 +478,18 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         if (_completionFired) return;
         _completionFired = true;
 
+        // Timeout any un-done async tests
+        for (var ai = 0; ai < _pending_async.length; ai++) {
+            if (!_pending_async[ai].test._done) {
+                _pending_async[ai].result.status = 2;
+                _pending_async[ai].result.message = 'Test timed out';
+                _pending_async[ai].test._done = true;
+            }
+        }
+
         // For single_test mode: finalize the test result
         if (single_test_mode && results.length === 0) {
-            var title = (typeof document !== 'undefined' && document.title) ? document.title : '(single test)';
+            var title = (typeof document !== 'undefined' && document.title) ? document.title : ((typeof location !== 'undefined' && location.pathname) ? location.pathname.replace(/.*\//, '').replace(/\.js$/, '') : '(single test)');
             if (_uncaughtError) {
                 results.push({name: title, status: 1, message: 'uncaught exception: ' + _uncaughtError});
             } else {
@@ -532,9 +542,10 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     }
 
     self.done = function() {
+        _explicit_done = true;
         if (single_test_mode) {
             // Finalize the single test: use the page title as the test name
-            var title = (typeof document !== 'undefined' && document.title) ? document.title : "(single test)";
+            var title = (typeof document !== 'undefined' && document.title) ? document.title : ((typeof location !== 'undefined' && location.pathname) ? location.pathname.replace(/.*\//, '').replace(/\.js$/, '') : '(single test)');
             if (results.length === 0) {
                 results.push({ name: title, status: 0, message: "" });
             } else {
@@ -544,7 +555,10 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                 }
             }
         }
-        _fireCompletion();
+        // Defer completion to let pending setTimeout(0) callbacks run first
+        // Double-defer: first setTimeout lets same-round timers fire,
+        // second ensures any newly-registered timers from those also settle.
+        setTimeout(function() { setTimeout(function() { _fireCompletion(); }, 0); }, 0);
     };
 
     self.add_completion_callback = function(fn) { _completion_callbacks.push(fn); };
@@ -565,9 +579,16 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     };
 
     self.fetch_tests_from_worker = function(worker) {
-        // Collect test results from a ServiceWorker/Worker via message events.
-        if (!worker || typeof worker.addEventListener !== 'function') return;
-        worker.addEventListener('message', function(ev) {
+        // Collect test results from a Worker/ServiceWorker/SharedWorker via message events.
+        if (!worker) return;
+        var target = worker;
+        // SharedWorker: listen on port instead of the worker itself
+        if (worker.port && typeof worker.port.addEventListener === 'function') {
+            target = worker.port;
+            worker.port.start();
+        }
+        if (typeof target.addEventListener !== 'function') return;
+        target.addEventListener('message', function(ev) {
             var data = ev.data;
             if (!data || typeof data !== 'object') return;
             if (data.type === 'result' && data.test) {
@@ -618,7 +639,7 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         this.message = message || '';
         this.stack = (new Error()).stack;
     }
-    OptionalFeatureUnsupportedError.prototype = Object.create(Error.prototype);
+    OptionalFeatureUnsupportedError.prototype = Object.create(AssertionError.prototype);
     OptionalFeatureUnsupportedError.prototype.constructor = OptionalFeatureUnsupportedError;
     OptionalFeatureUnsupportedError.prototype.name = 'OptionalFeatureUnsupportedError';
     self.OptionalFeatureUnsupportedError = OptionalFeatureUnsupportedError;
@@ -685,9 +706,39 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         }
     };
     self.assert_object_equals = function(a, b, msg) {
-        var aStr = JSON.stringify(a);
-        var bStr = JSON.stringify(b);
-        if (aStr !== bStr) throw new AssertionError(msg || "assert_object_equals: " + aStr + " !== " + bStr);
+        // Per WPT spec: recursive comparison using for-in (includes inherited enumerable)
+        // with cycle detection on the 'actual' side
+        function check(x, y, path, seen) {
+            if (typeof x !== 'object' || typeof y !== 'object' || x === null || y === null) {
+                if (!Object.is(x, y)) {
+                    throw new AssertionError(msg || "assert_object_equals: " + path + ": " + format_value(x) + " !== " + format_value(y));
+                }
+                return;
+            }
+            if (seen.has(x)) return;
+            seen.add(x);
+            // Check all enumerable properties (own + inherited) of both sides
+            var checked = {};
+            for (var k in x) {
+                checked[k] = true;
+                if (!(k in y)) {
+                    throw new AssertionError(msg || "assert_object_equals: " + path + " has unexpected property " + k);
+                }
+                check(x[k], y[k], path + '.' + k, seen);
+            }
+            for (var k2 in y) {
+                if (!checked[k2]) {
+                    if (!(k2 in x)) {
+                        throw new AssertionError(msg || "assert_object_equals: " + path + " missing property " + k2);
+                    }
+                    check(x[k2], y[k2], path + '.' + k2, seen);
+                }
+            }
+        }
+        if (a === null || a === undefined || typeof a !== 'object') {
+            throw new AssertionError(msg || "assert_object_equals: value is " + format_value(a));
+        }
+        check(a, b, 'root', new Set());
     };
     self.assert_regexp_match = function(val, re, msg) {
         if (!re.test(val)) throw new AssertionError(msg || "assert_regexp_match: " + val + " doesn't match " + re);
@@ -938,6 +989,7 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     // Our engine may catch them differently, but we also hook the error event.
     if (typeof addEventListener === 'function') {
         addEventListener('error', function(ev) {
+            if (globalThis._allow_uncaught_exception) return;
             var msg = (ev && ev.error) ? String(ev.error) : (ev && ev.message) ? ev.message : String(ev);
             if (!_uncaughtError) _uncaughtError = msg;
         });
