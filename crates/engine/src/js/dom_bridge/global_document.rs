@@ -211,10 +211,12 @@ pub(super) fn global_document_js() -> &'static str {
             return nid >= 0 ? __w(nid) : null;
         };
         doc.querySelector = function(sel) {
+            if (sel === '') throw new DOMException("Document.querySelector: '' is not a valid selector", "SyntaxError");
             var nid = __n_querySelector(0, sel, 0);
             return nid >= 0 ? __w(nid) : null;
         };
         doc.querySelectorAll = function(sel) {
+            if (sel === '') throw new DOMException("Document.querySelectorAll: '' is not a valid selector", "SyntaxError");
             return __makeStaticNodeList(__n_querySelectorAll(0, sel, 0).map(__w));
         };
         // Element name validation regex per WPT name-validation spec:
@@ -1031,6 +1033,9 @@ pub(super) fn global_document_js() -> &'static str {
                 throw new TypeError("Failed to execute 'createNodeIterator' on 'Document': parameter 1 is not of type 'Node'.");
             }
             return new NodeIterator(root, whatToShow, filter);
+        };
+        doc.evaluate = function(expression, contextNode, nsResolver, type, result) {
+            return __xpathEvaluate(expression, contextNode, nsResolver, type, result);
         };
         doc.importNode = function(node, deep) {
             if (!node) return node;

@@ -33,7 +33,7 @@ pub fn load_testharness_js() -> String {
 pub fn testharness_preamble() -> String {
     r#"
 // Minimal WPT test harness preamble
-globalThis.__braille_stop_on_fail = true;
+if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_on_fail = true;
 (function() {
     var results = [];
     var setup_fn = null;
@@ -41,10 +41,19 @@ globalThis.__braille_stop_on_fail = true;
     var single_test_mode = false;
     var promise_chain = Promise.resolve();
     var _stopped = false;
+    var _result_callbacks = [];
+    var _completion_callbacks = [];
+    var _pending_async = [];
 
     function _progress(status) {
         if (typeof __braille_test_progress === 'function') {
             __braille_test_progress(status === 0 || status === 3);
+        }
+    }
+
+    function _notifyResult(result) {
+        for (var i = 0; i < _result_callbacks.length; i++) {
+            try { _result_callbacks[i](result); } catch(e) {}
         }
     }
 
@@ -59,13 +68,23 @@ globalThis.__braille_stop_on_fail = true;
         if (_stopped) return;
         run_setup();
         var cleanups = [];
+        var _signal = null;
         var t = {
             name: name || "(unnamed)",
             step: function(f) { return function() { return f.apply(t, arguments); }; },
             step_func: function(f) { return function() { return f.apply(t, arguments); }; },
             step_func_done: function(f) { return function() { return f.apply(t, arguments); }; },
             unreached_func: function(msg) { return function() { throw new Error(msg || "unreached"); }; },
-            add_cleanup: function(f) { cleanups.push(f); }
+            add_cleanup: function(f) { cleanups.push(f); },
+            force_timeout: function() { result.status = 2; result.message = "Test timed out"; },
+            get_signal: function() {
+                if (!_signal) {
+                    var ac = new AbortController();
+                    _signal = ac.signal;
+                    _signal._controller = ac;
+                }
+                return _signal;
+            }
         };
         var result = { name: name || "(unnamed)", status: 0, message: "" };
         try {
@@ -81,7 +100,11 @@ globalThis.__braille_stop_on_fail = true;
         for (var i = 0; i < cleanups.length; i++) {
             try { cleanups[i](); } catch(e) {}
         }
+        if (_signal && _signal._controller) {
+            _signal._controller.abort();
+        }
         results.push(result);
+        _notifyResult(result);
         _progress(result.status);
         if (result.status === 1 && typeof __braille_stop_on_fail !== 'undefined' && __braille_stop_on_fail) {
             _stopped = true;
@@ -93,29 +116,63 @@ globalThis.__braille_stop_on_fail = true;
             name = fn;
             fn = null;
         }
+        var _asignal = null;
+        var _acleanups = [];
+        var _started = !!fn;
+        var result = { name: name || "(unnamed)", status: _started ? 0 : 3, message: "" };
+        function _markStarted() {
+            if (!_started) {
+                _started = true;
+                result.status = 0;
+                _pending_async.push({ test: t, result: result });
+            }
+        }
         var t = {
             name: name || "(unnamed)",
             step: function(f) {
+                _markStarted();
                 f.apply(t, [t]);
             },
             step_func: function(f) {
-                return function() { return f.apply(t, arguments); };
+                return function() {
+                    _markStarted();
+                    return f.apply(t, arguments);
+                };
             },
             step_func_done: function(f) {
                 return function() {
+                    _markStarted();
                     f.apply(t, arguments);
-                    t._done = true;
+                    t.done();
                 };
             },
-            done: function() { t._done = true; },
+            done: function() {
+                _markStarted();
+                t._done = true;
+                if (_asignal && _asignal._controller) _asignal._controller.abort();
+                for (var ci = 0; ci < _acleanups.length; ci++) {
+                    try { _acleanups[ci](); } catch(ce) {}
+                }
+                // Finalize: report result
+                _notifyResult(result);
+                _progress(result.status);
+            },
             unreached_func: function(msg) {
                 return function() { throw new Error(msg || "unreached"); };
             },
-            add_cleanup: function() {},
+            add_cleanup: function(f) { _acleanups.push(f); },
+            force_timeout: function() { result.status = 2; result.message = "Test timed out"; },
             step_timeout: function(fn, timeout) { return setTimeout(fn, timeout || 0); },
+            get_signal: function() {
+                if (!_asignal) {
+                    var ac = new AbortController();
+                    _asignal = ac.signal;
+                    _asignal._controller = ac;
+                }
+                return _asignal;
+            },
             _done: false
         };
-        var result = { name: t.name, status: 0, message: "" };
         if (fn) {
             try {
                 fn.call(t, t);
@@ -129,7 +186,14 @@ globalThis.__braille_stop_on_fail = true;
             }
         }
         results.push(result);
-        _progress(result.status);
+        // For async tests that complete synchronously (done() already called), report now
+        // For others, report is deferred to done()
+        if (t._done || !_started) {
+            _notifyResult(result);
+            _progress(result.status);
+        } else {
+            _pending_async.push({ test: t, result: result });
+        }
         return t;
     };
 
@@ -138,15 +202,25 @@ globalThis.__braille_stop_on_fail = true;
         results.push(result);
         promise_chain = promise_chain.then(function() {
             var cleanups = [];
+            var _psignal = null;
             var t = {
                 name: name || "(unnamed)",
                 step: function(f) { return function() { return f.apply(t, arguments); }; },
                 step_func: function(f) { return function() { return f.apply(t, arguments); }; },
                 step_func_done: function(f) { return function() { f.apply(t, arguments); t._done = true; }; },
-                done: function() { t._done = true; },
+                done: function() { t._done = true; if (_psignal && _psignal._controller) _psignal._controller.abort(); },
                 unreached_func: function(msg) { return function() { throw new Error(msg || "unreached"); }; },
                 add_cleanup: function(f) { cleanups.push(f); },
+                force_timeout: function() { result.status = 2; result.message = "Test timed out"; },
                 step_timeout: function(fn, timeout) { return setTimeout(fn, timeout || 0); },
+                get_signal: function() {
+                    if (!_psignal) {
+                        var ac = new AbortController();
+                        _psignal = ac.signal;
+                        _psignal._controller = ac;
+                    }
+                    return _psignal;
+                },
                 step_wait: function(cond, description, timeout, interval) {
                     return new Promise(function(resolve, reject) {
                         if (cond()) { resolve(); return; }
@@ -173,12 +247,12 @@ globalThis.__braille_stop_on_fail = true;
                 }
                 result.message = e.message || String(e);
                 for (var i = 0; i < cleanups.length; i++) { try { cleanups[i](); } catch(ce) {} }
+                _notifyResult(result);
                 _progress(result.status);
                 return;
             }
             if (p && typeof p.then === 'function') {
                 return p.then(function() {
-                    _progress(result.status);
                 }, function(e) {
                     if (e instanceof OptionalFeatureUnsupportedError) {
                         result.status = 3;
@@ -186,30 +260,42 @@ globalThis.__braille_stop_on_fail = true;
                         result.status = 1;
                     }
                     result.message = e.message || String(e);
-                    _progress(result.status);
                 }).then(function() {
                     var chain = Promise.resolve();
                     for (var i = 0; i < cleanups.length; i++) {
                         chain = chain.then(cleanups[i]);
                     }
                     return chain;
+                }).then(function() {
+                    _notifyResult(result);
+                    _progress(result.status);
                 });
             } else {
                 var chain = Promise.resolve();
                 for (var i = 0; i < cleanups.length; i++) {
                     chain = chain.then(cleanups[i]);
                 }
-                _progress(result.status);
-                return chain;
+                return chain.then(function() {
+                    _notifyResult(result);
+                    _progress(result.status);
+                });
             }
         });
     };
 
-    self.setup = function(fn_or_props) {
+    self.setup = function(fn_or_props, maybe_props) {
+        var fn = null, props = null;
         if (typeof fn_or_props === 'function') {
-            fn_or_props();
+            fn = fn_or_props;
+            props = maybe_props || null;
+        } else if (fn_or_props && typeof fn_or_props === 'object') {
+            props = fn_or_props;
+        }
+        if (fn) {
+            fn();
             setup_ran = true;
-        } else if (fn_or_props && fn_or_props.single_test) {
+        }
+        if (props && props.single_test) {
             single_test_mode = true;
         }
     };
@@ -220,8 +306,8 @@ globalThis.__braille_stop_on_fail = true;
         }
     };
 
-    self.add_completion_callback = function() {};
-    self.add_result_callback = function() {};
+    self.add_completion_callback = function(fn) { _completion_callbacks.push(fn); };
+    self.add_result_callback = function(fn) { _result_callbacks.push(fn); };
     self.add_start_callback = function() {};
 
     self.on_event = function(obj, event_type, handler) {
@@ -236,9 +322,17 @@ globalThis.__braille_stop_on_fail = true;
 
     self.generate_tests = function(fn, tests, props) {
         for (var i = 0; i < tests.length; i++) {
-            var args = tests[i];
-            var name = args[0];
-            self.test(function() { fn.apply(null, args.slice(1)); }, name);
+            (function(args, idx) {
+                var name = args[0];
+                var testProps = {};
+                if (props) {
+                    testProps = Array.isArray(props) ? (props[idx] || {}) : props;
+                }
+                self.test(function() {
+                    this.properties = testProps;
+                    fn.apply(this, args.slice(1));
+                }, name);
+            })(tests[i], i);
         }
     };
 
@@ -270,24 +364,37 @@ globalThis.__braille_stop_on_fail = true;
         if (val !== false) throw new AssertionError(msg || "assert_false: got " + val);
     };
     self.assert_equals = function(a, b, msg) {
-        if (a !== b) throw new AssertionError(msg || "assert_equals: " + a + " !== " + b);
+        if (!Object.is(a, b)) throw new AssertionError(msg || "assert_equals: " + format_value(a) + " !== " + format_value(b));
     };
     self.assert_not_equals = function(a, b, msg) {
-        if (a === b) throw new AssertionError(msg || "assert_not_equals: values are equal: " + a);
+        if (Object.is(a, b)) throw new AssertionError(msg || "assert_not_equals: values are equal: " + format_value(a));
     };
     self.assert_in_array = function(val, arr, msg) {
         if (arr.indexOf(val) === -1) throw new AssertionError(msg || "assert_in_array: " + val + " not in array");
     };
+    function _assertNumericType(val, msg) {
+        if (typeof val !== 'number' && typeof val !== 'bigint') {
+            throw new AssertionError(msg || "expected a number but got a \"" + typeof val + "\"");
+        }
+    }
     self.assert_greater_than = function(a, b, msg) {
+        _assertNumericType(a, msg);
+        _assertNumericType(b, msg);
         if (!(a > b)) throw new AssertionError(msg || "assert_greater_than: " + a + " <= " + b);
     };
     self.assert_less_than = function(a, b, msg) {
+        _assertNumericType(a, msg);
+        _assertNumericType(b, msg);
         if (!(a < b)) throw new AssertionError(msg || "assert_less_than: " + a + " >= " + b);
     };
     self.assert_greater_than_equal = function(a, b, msg) {
+        _assertNumericType(a, msg);
+        _assertNumericType(b, msg);
         if (!(a >= b)) throw new AssertionError(msg || "assert_greater_than_equal: " + a + " < " + b);
     };
     self.assert_less_than_equal = function(a, b, msg) {
+        _assertNumericType(a, msg);
+        _assertNumericType(b, msg);
         if (!(a <= b)) throw new AssertionError(msg || "assert_less_than_equal: " + a + " > " + b);
     };
     self.assert_approx_equals = function(actual, expected, epsilon, msg) {
@@ -307,7 +414,7 @@ globalThis.__braille_stop_on_fail = true;
             throw new AssertionError(msg || "assert_array_equals: length mismatch (" + aLen + " vs " + bLen + ")");
         }
         for (var i = 0; i < aLen; i++) {
-            if (a[i] !== b[i]) throw new AssertionError(msg || "assert_array_equals: index " + i + ": " + a[i] + " !== " + b[i]);
+            if (!Object.is(a[i], b[i])) throw new AssertionError(msg || "assert_array_equals: index " + i + ": " + a[i] + " !== " + b[i]);
         }
     };
     self.assert_object_equals = function(a, b, msg) {
@@ -330,19 +437,105 @@ globalThis.__braille_stop_on_fail = true;
         if (cls !== expected) throw new AssertionError(msg || "assert_class_string: " + cls + " !== " + expected);
     };
     self.assert_throws_js = function(ctor, fn, msg) {
+        // Validate ctor is an Error subtype (not DOMException)
+        if (ctor.prototype && !(ctor.prototype instanceof Error) && ctor !== Error) {
+            throw new AssertionError(msg || 'assert_throws_js: function "' + ctor + '" is not an Error subtype');
+        }
         var threw = false;
         try { fn(); } catch(e) {
             threw = true;
-            if (!(e instanceof ctor)) throw new AssertionError(msg || "assert_throws_js: wrong error type: " + e);
+            if (!(e instanceof ctor)) {
+                throw new AssertionError(msg || 'assert_throws_js: function "' + fn + '" threw object "' + e + '" (' + (e && typeof e === 'object' ? '"' + e.constructor.name + '"' : typeof e) + ') expected instance of function "' + ctor + '" ("' + ctor.name + '")');
+            }
         }
         if (!threw) throw new AssertionError(msg || "assert_throws_js: no error thrown");
     };
-    self.assert_throws_dom = function(name, fn, msg) {
-        var threw = false;
-        try { fn(); } catch(e) {
-            threw = true;
+    var __domExceptionCodes = {
+        IndexSizeError: 1, HierarchyRequestError: 3, WrongDocumentError: 4,
+        InvalidCharacterError: 5, NoModificationAllowedError: 7, NotFoundError: 8,
+        NotSupportedError: 9, InUseAttributeError: 10, InvalidStateError: 11,
+        SyntaxError: 12, InvalidModificationError: 13, NamespaceError: 14,
+        InvalidAccessError: 15, TypeMismatchError: 17, SecurityError: 18,
+        NetworkError: 19, AbortError: 20, URLMismatchError: 21,
+        QuotaExceededError: 22, TimeoutError: 23, InvalidNodeTypeError: 24,
+        DataCloneError: 25
+    };
+    var __legacyCodeNames = {
+        INDEX_SIZE_ERR: "IndexSizeError", HIERARCHY_REQUEST_ERR: "HierarchyRequestError",
+        WRONG_DOCUMENT_ERR: "WrongDocumentError", INVALID_CHARACTER_ERR: "InvalidCharacterError",
+        NO_MODIFICATION_ALLOWED_ERR: "NoModificationAllowedError", NOT_FOUND_ERR: "NotFoundError",
+        NOT_SUPPORTED_ERR: "NotSupportedError", INUSE_ATTRIBUTE_ERR: "InUseAttributeError",
+        INVALID_STATE_ERR: "InvalidStateError", SYNTAX_ERR: "SyntaxError",
+        INVALID_MODIFICATION_ERR: "InvalidModificationError", NAMESPACE_ERR: "NamespaceError",
+        INVALID_ACCESS_ERR: "InvalidAccessError", TYPE_MISMATCH_ERR: "TypeMismatchError",
+        SECURITY_ERR: "SecurityError", NETWORK_ERR: "NetworkError",
+        ABORT_ERR: "AbortError", URL_MISMATCH_ERR: "URLMismatchError",
+        QUOTA_EXCEEDED_ERR: "QuotaExceededError", TIMEOUT_ERR: "TimeoutError",
+        INVALID_NODE_TYPE_ERR: "InvalidNodeTypeError", DATA_CLONE_ERR: "DataCloneError"
+    };
+    self.assert_throws_dom = function(type, funcOrConstructor, descOrFunc, maybeDesc) {
+        var func, desc, constructor = null;
+        if (typeof funcOrConstructor === 'function' && funcOrConstructor !== DOMException &&
+            !(funcOrConstructor.prototype instanceof DOMException) &&
+            typeof funcOrConstructor.prototype === 'object' &&
+            !('name' in funcOrConstructor.prototype && 'code' in funcOrConstructor.prototype)) {
+            // assert_throws_dom(type, fn, desc) — no constructor
+            func = funcOrConstructor;
+            desc = descOrFunc || '';
+        } else if (typeof descOrFunc === 'function') {
+            // assert_throws_dom(type, DOMExceptionConstructor, fn, desc)
+            constructor = funcOrConstructor;
+            func = descOrFunc;
+            desc = maybeDesc || '';
+        } else {
+            func = funcOrConstructor;
+            desc = descOrFunc || '';
         }
-        if (!threw) throw new AssertionError(msg || "assert_throws_dom(" + name + "): no error thrown");
+
+        // Resolve name and expected code
+        var eName, eCode;
+        if (typeof type === 'number') {
+            eCode = type;
+            eName = null;
+            // Find name by code
+            for (var k in __domExceptionCodes) {
+                if (__domExceptionCodes[k] === type) { eName = k; break; }
+            }
+            if (eCode === 0) {
+                throw new AssertionError("Test bug: ambiguous DOMException code 0 passed to assert_throws_dom()");
+            }
+        } else {
+            eName = __legacyCodeNames[type] || type;
+            eCode = __domExceptionCodes[eName];
+            if (eCode === undefined) {
+                throw new AssertionError("Test bug: unrecognized DOMException code name or name \"" + type + "\" passed to assert_throws_dom()");
+            }
+        }
+
+        var threw = false;
+        try { func(); } catch(e) {
+            threw = true;
+            // Must be a DOMException (or from the specified constructor's global)
+            var isDOMExc = (e instanceof DOMException) ||
+                           (e && typeof e === 'object' && e.constructor === DOMException);
+            var targetCtor = constructor || DOMException;
+            if (constructor) {
+                var isFromGlobal = (e instanceof constructor) ||
+                                   (e && typeof e === 'object' && e.constructor === constructor);
+                if (!isFromGlobal) {
+                    throw new AssertionError((desc ? desc + ": " : "") + "assert_throws_dom: function \"" + func + "\" threw an exception from the wrong global");
+                }
+            } else if (!isDOMExc) {
+                throw new AssertionError((desc ? desc + ": " : "") + "assert_throws_dom: function \"" + func + "\" threw object \"" + e + "\" that is not a DOMException " + eName + ": property \"code\" is equal to " + (e && e.code) + ", expected " + eCode);
+            }
+            if (e.name !== eName) {
+                throw new AssertionError((desc ? desc + ": " : "") + "assert_throws_dom: expected " + eName + " but got " + e.name);
+            }
+            if (e.code !== eCode) {
+                throw new AssertionError((desc ? desc + ": " : "") + "assert_throws_dom: expected code " + eCode + " but got " + e.code);
+            }
+        }
+        if (!threw) throw new AssertionError((desc ? desc + ": " : "") + "assert_throws_dom(" + eName + "): no error thrown");
     };
     self.assert_throws_quotaexceedederror = function(fnOrCtor, reqOrFn, quotaOrReq, descOrQuota, maybeDesc) {
         // Simplified: just check that fn throws a DOMException with name QuotaExceededError
@@ -409,6 +602,9 @@ globalThis.__braille_stop_on_fail = true;
     self.assert_idl_attribute = function(obj, prop, msg) {
         if (!(prop in obj)) throw new AssertionError(msg || "assert_idl_attribute: missing " + prop);
     };
+    self.assert_inherits = function(obj, prop, msg) {
+        if (!(prop in obj) || obj.hasOwnProperty(prop)) throw new AssertionError(msg || "assert_inherits: " + prop + " is not inherited");
+    };
     self.assert_implements = function(val, msg) {
         if (!val) throw new AssertionError(msg || "assert_implements: not implemented");
     };
@@ -419,6 +615,7 @@ globalThis.__braille_stop_on_fail = true;
         var args = Array.prototype.slice.call(arguments, 1);
         return testFunc.apply(null, args);
     };
+    self.shouldRunSubTest = function() { return true; };
     self.subsetTestByKey = function(key, testFunc) {
         var args = Array.prototype.slice.call(arguments, 2);
         return testFunc.apply(null, args);
@@ -469,7 +666,18 @@ globalThis.__braille_stop_on_fail = true;
         };
     };
 
-    self.__wpt_get_results = function() { return results; };
+    self.__wpt_get_results = function() {
+        // Finalize pending async tests — mark unfinished ones as TIMEOUT
+        for (var i = 0; i < _pending_async.length; i++) {
+            var entry = _pending_async[i];
+            if (!entry.test._done) {
+                entry.result.status = 2;
+                entry.result.message = "Test timed out";
+            }
+        }
+        _pending_async = [];
+        return results;
+    };
 })();
 "#
     .to_string()
@@ -1113,6 +1321,30 @@ pub fn resolve_script_src(
         html_path.parent().unwrap().join(clean_src)
     };
 
+    // Catch relative paths that resolve to testharness.js or testharnessreport.js
+    if let Some(fname) = resolved_path.file_name().and_then(|f| f.to_str()) {
+        if fname == "testharness.js" {
+            if let Ok(canonical) = resolved_path.canonicalize() {
+                let th_path = wpt_root().join("resources/testharness.js");
+                if let Ok(th_canonical) = th_path.canonicalize() {
+                    if canonical == th_canonical {
+                        return Some(preamble.to_string());
+                    }
+                }
+            }
+        }
+        if fname == "testharnessreport.js" {
+            if let Ok(canonical) = resolved_path.canonicalize() {
+                let tr_path = wpt_root().join("resources/testharnessreport.js");
+                if let Ok(tr_canonical) = tr_path.canonicalize() {
+                    if canonical == tr_canonical {
+                        return Some(report_shim.to_string());
+                    }
+                }
+            }
+        }
+    }
+
     std::fs::read_to_string(&resolved_path).ok()
 }
 
@@ -1650,6 +1882,57 @@ fn extract_variants(html: &str) -> Vec<String> {
     variants
 }
 
+/// Extract expected test results from `<script type="text/json" id="expected">` block.
+fn extract_expected_results(html: &str) -> Option<ExpectedResults> {
+    // Find the expected JSON block
+    let marker = r#"<script type="text/json" id="expected">"#;
+    let start = html.find(marker)?;
+    let json_start = start + marker.len();
+    let end = html[json_start..].find("</script>")?;
+    let json_str = &html[json_start..json_start + end];
+
+    let parsed: serde_json::Value = serde_json::from_str(json_str.trim()).ok()?;
+
+    let status = parsed
+        .get("summarized_status")
+        .and_then(|s| s.get("status_string"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("OK")
+        .to_string();
+
+    let mut tests = HashMap::new();
+    if let Some(arr) = parsed.get("summarized_tests").and_then(|t| t.as_array()) {
+        for t in arr {
+            let name = t.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+            let status_str = t
+                .get("status_string")
+                .and_then(|s| s.as_str())
+                .unwrap_or("PASS")
+                .to_string();
+            tests.insert(name, status_str);
+        }
+    }
+
+    Some(ExpectedResults {
+        overall_status: status,
+        subtests: tests,
+    })
+}
+
+#[derive(Debug)]
+struct ExpectedResults {
+    overall_status: String,
+    subtests: HashMap<String, String>,
+}
+
+impl ExpectedResults {
+    /// Returns true if any subtest is expected to not-pass.
+    fn has_expected_failures(&self) -> bool {
+        self.subtests.values().any(|s| s != "PASS")
+            || (self.overall_status != "OK" && self.overall_status != "PASS")
+    }
+}
+
 fn run_wpt_test_with_search(
     html_path: &Path,
     html: &str,
@@ -1657,12 +1940,28 @@ fn run_wpt_test_with_search(
     report_shim: &str,
     search: &str,
 ) -> WptTestResult {
+    // Extract expected results before running
+    let expected = extract_expected_results(html);
+
+    // If test has expected failures, disable stop-on-fail so all subtests run
+    let has_expected_failures = expected.as_ref().is_some_and(|e| e.has_expected_failures());
+
     // Prepend location.search to preamble so it's set before subset-tests-by-key.js runs
     let variant_preamble = if !search.is_empty() {
         let escaped = search.replace('\\', "\\\\").replace('\'', "\\'");
         format!("location.search = '{}';\n{}", escaped, preamble)
     } else {
         preamble.to_string()
+    };
+
+    // Disable stop-on-fail for tests with expected failures
+    let variant_preamble = if has_expected_failures {
+        format!(
+            "globalThis.__braille_stop_on_fail = false;\n{}",
+            variant_preamble
+        )
+    } else {
+        variant_preamble
     };
 
     let srcs = extract_script_srcs(html);
@@ -1791,21 +2090,92 @@ fn run_wpt_test_with_search(
         }
     };
 
-    let mut failures = Vec::new();
-    for r in &results {
-        if r.status != 0 {
-            let status_name = match r.status {
-                1 => "FAIL",
-                2 => "TIMEOUT",
-                3 => "NOTRUN",
-                _ => "UNKNOWN",
-            };
-            failures.push(format!("  [{}] {}: {}", status_name, r.name, r.message));
+    // Convert numeric status to string for comparison
+    fn status_to_string(status: i32) -> &'static str {
+        match status {
+            0 => "PASS",
+            1 => "FAIL",
+            2 => "TIMEOUT",
+            3 => "NOTRUN",
+            _ => "UNKNOWN",
         }
     }
 
-    let pass_count = results.iter().filter(|r| r.status == 0 || r.status == 3).count();
-    let fail_count = results.len() - pass_count;
+    let mut failures = Vec::new();
+
+    if let Some(ref exp) = expected {
+        // Compare actual results against expected results
+        // Build a map of actual results by name
+        let mut actual_by_name: HashMap<&str, &WptSubResult> = HashMap::new();
+        for r in &results {
+            actual_by_name.insert(&r.name, r);
+        }
+
+        // Check each expected subtest
+        for (exp_name, exp_status) in &exp.subtests {
+            match actual_by_name.get(exp_name.as_str()) {
+                Some(actual) => {
+                    let actual_status = status_to_string(actual.status);
+                    if actual_status != exp_status {
+                        failures.push(format!(
+                            "  [MISMATCH] {}: expected {} but got {}{}",
+                            exp_name,
+                            exp_status,
+                            actual_status,
+                            if actual.message.is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {}", actual.message)
+                            }
+                        ));
+                    }
+                }
+                None => {
+                    // Expected subtest didn't run
+                    if exp_status != "NOTRUN" {
+                        failures.push(format!(
+                            "  [MISSING] {}: expected {} but test did not run",
+                            exp_name, exp_status
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Check for unexpected subtests (ran but not in expected)
+        for r in &results {
+            if !exp.subtests.contains_key(&r.name) {
+                failures.push(format!(
+                    "  [UNEXPECTED] {}: ran with status {} but not in expected results",
+                    r.name,
+                    status_to_string(r.status)
+                ));
+            }
+        }
+    } else {
+        // No expected results — use simple pass/fail counting
+        for r in &results {
+            if r.status != 0 && r.status != 3 {
+                failures.push(format!(
+                    "  [{}] {}: {}",
+                    status_to_string(r.status),
+                    r.name,
+                    r.message
+                ));
+            }
+        }
+    }
+
+    let pass_count = if expected.is_some() {
+        // With expected results, pass = total - mismatches
+        results.len().saturating_sub(failures.len())
+    } else {
+        results
+            .iter()
+            .filter(|r| r.status == 0 || r.status == 3)
+            .count()
+    };
+    let fail_count = failures.len();
 
     WptTestResult {
         passed: pass_count,

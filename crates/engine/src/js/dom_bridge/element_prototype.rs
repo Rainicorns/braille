@@ -110,10 +110,12 @@ pub(crate) fn element_prototype_js() -> &'static str {
         ElemProto.hasAttributes = function() { return __n_hasAttributes(this.__nid); };
 
         ElemProto.querySelector = function(sel) {
+            if (sel === '') throw new DOMException("Document.querySelector: '' is not a valid selector", "SyntaxError");
             var id = __n_querySelector(this.__nid, sel, this.__nid);
             return id >= 0 ? __w(id) : null;
         };
         ElemProto.querySelectorAll = function(sel) {
+            if (sel === '') throw new DOMException("Document.querySelectorAll: '' is not a valid selector", "SyntaxError");
             return __makeStaticNodeList(__n_querySelectorAll(this.__nid, sel, this.__nid).map(__w));
         };
         ElemProto.getElementsByTagName = function(tag) {

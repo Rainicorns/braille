@@ -1,5 +1,7 @@
-    // ---- DOMException (if not already defined) ----
-    if (typeof globalThis.DOMException === 'undefined') {
+    // ---- DOMException ----
+    // Override QuickJS's native DOMException (which incorrectly extends Error).
+    // Per spec, DOMException does NOT extend Error.
+    {
         globalThis.DOMException = (function() {
             var codeMap = {
                 IndexSizeError: 1, DOMStringSizeError: 2, HierarchyRequestError: 3,
@@ -20,14 +22,30 @@
                 this.code = codeMap[this.name] || 0;
                 this.stack = (new Error()).stack;
             }
-            DOMException.prototype = Object.create(Error.prototype);
+            DOMException.prototype = Object.create(Object.prototype);
             DOMException.prototype.constructor = DOMException;
+            DOMException.prototype.toString = function() { return this.name + ': ' + this.message; };
             Object.defineProperty(DOMException.prototype, Symbol.toStringTag, {value: 'DOMException', configurable: true});
+            var legacyNames = {
+                INDEX_SIZE_ERR: 1, DOMSTRING_SIZE_ERR: 2, HIERARCHY_REQUEST_ERR: 3,
+                WRONG_DOCUMENT_ERR: 4, INVALID_CHARACTER_ERR: 5, NO_DATA_ALLOWED_ERR: 6,
+                NO_MODIFICATION_ALLOWED_ERR: 7, NOT_FOUND_ERR: 8, NOT_SUPPORTED_ERR: 9,
+                INUSE_ATTRIBUTE_ERR: 10, INVALID_STATE_ERR: 11, SYNTAX_ERR: 12,
+                INVALID_MODIFICATION_ERR: 13, NAMESPACE_ERR: 14, INVALID_ACCESS_ERR: 15,
+                VALIDATION_ERR: 16, TYPE_MISMATCH_ERR: 17, SECURITY_ERR: 18,
+                NETWORK_ERR: 19, ABORT_ERR: 20, URL_MISMATCH_ERR: 21,
+                QUOTA_EXCEEDED_ERR: 22, TIMEOUT_ERR: 23, INVALID_NODE_TYPE_ERR: 24,
+                DATA_CLONE_ERR: 25
+            };
             for (var n in codeMap) {
                 if (codeMap[n] > 0) {
                     DOMException[n] = codeMap[n];
                     DOMException.prototype[n] = codeMap[n];
                 }
+            }
+            for (var ln in legacyNames) {
+                DOMException[ln] = legacyNames[ln];
+                DOMException.prototype[ln] = legacyNames[ln];
             }
             return DOMException;
         })();

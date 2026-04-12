@@ -13,6 +13,7 @@ mod shadowrealm;
 mod timers;
 mod tree_traversal;
 mod web_apis;
+mod xpath;
 mod websocket;
 mod worker;
 
@@ -78,6 +79,9 @@ pub fn register_all(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell
 
     // 7. Tree traversal (TreeWalker, NodeIterator)
     tree_traversal::register(ctx);
+
+    // 7b. XPath API (XPathResult class + evaluator — uses TreeWalker)
+    xpath::register(ctx);
 
     // 8. Async APIs
     worker::register_worker(ctx);
