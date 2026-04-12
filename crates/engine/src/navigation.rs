@@ -214,16 +214,19 @@ impl Engine {
     }
 
     /// Interleave settle + fetch loops until quiescent.
-    /// Uses settle_no_advance to avoid firing interval timers repeatedly.
+    /// Uses drain_js_work between fetch batches (no CSS recompute) for speed,
+    /// with a single settle_no_advance at the end for the final render pass.
     pub fn settle_with_fetches(&mut self, fetcher: &mut impl FetchProvider) {
         let mut seen_urls: HashSet<String> = HashSet::new();
         for _ in 0..30 {
-            self.settle_no_advance();
+            // Drain JS work only (no CSS) — fetch callbacks may queue more fetches
+            self.drain_js_work();
             if !self.has_pending_fetches() {
                 break;
             }
             self.resolve_pending_fetches_via(fetcher, &mut seen_urls);
         }
+        // Final settle with CSS recompute + observer pass
         self.settle_no_advance();
     }
 
@@ -281,7 +284,8 @@ impl Engine {
                 }
             }
 
-            self.settle_no_advance();
+            // Drain JS work only — no CSS recompute between fetch batches
+            self.drain_js_work();
 
             if !has_new {
                 break;

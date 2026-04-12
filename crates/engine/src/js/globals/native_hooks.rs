@@ -76,4 +76,18 @@ pub(super) fn register(ctx: &Ctx<'_>) {
         });
     }).unwrap();
     ctx.globals().set("__braille_form_submit", form_submit_fn).unwrap();
+
+    // __braille_set_focus — JS pushes focus changes to Rust (avoids eval polling)
+    let set_focus_fn = Function::new(ctx.clone(), |nid: rquickjs::Value<'_>| {
+        let val = nid.as_int().map(|n| n as usize).filter(|&n| n < usize::MAX);
+        with_state_mut(|s| s.focused_nid = val);
+    }).unwrap();
+    ctx.globals().set("__braille_set_focus", set_focus_fn).unwrap();
+
+    // __braille_set_hover — JS pushes hover changes to Rust (avoids eval polling)
+    let set_hover_fn = Function::new(ctx.clone(), |nid: rquickjs::Value<'_>| {
+        let val = nid.as_int().map(|n| n as usize).filter(|&n| n < usize::MAX);
+        with_state_mut(|s| s.hovered_nid = val);
+    }).unwrap();
+    ctx.globals().set("__braille_set_hover", set_hover_fn).unwrap();
 }

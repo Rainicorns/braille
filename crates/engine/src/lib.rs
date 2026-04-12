@@ -151,86 +151,54 @@ impl Engine {
         self.settle_inner(0);
     }
 
-    fn settle_inner(&mut self, time_budget_ms: u64) {
-        // Sync focused/hovered element to the DOM tree so CSS :focus/:hover matching works.
-        self.sync_focus_from_js();
-        self.sync_hover_from_js();
+    /// Drain all pending JS work (microtasks, MO records, timers) without
+    /// touching CSS or observers. Returns true if any work was done.
+    pub fn drain_js_work(&mut self) -> bool {
+        let runtime = self.runtime.as_mut().unwrap();
+        let mut did_work = false;
 
-        let starting_time = match self.runtime.as_mut() {
-            Some(r) => r.current_time_ms(),
-            None => {
-                crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
-                return;
+        for _ in 0..500 {
+            // 1. Flush microtask queue
+            runtime.run_jobs();
+
+            // 2. Deliver pending MO records
+            let had_mo = runtime.has_pending_mutation_observers();
+            if had_mo {
+                runtime.notify_mutation_observers();
+                runtime.run_jobs();
+                did_work = true;
+                continue;
             }
-        };
+
+            // 3. Fire ready timers
+            if runtime.fire_ready_timers() {
+                did_work = true;
+                continue;
+            }
+
+            break;
+        }
+        did_work
+    }
+
+    fn settle_inner(&mut self, time_budget_ms: u64) {
+        if self.runtime.is_none() {
+            crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+            return;
+        }
+
+        let starting_time = self.runtime.as_mut().unwrap().current_time_ms();
         let wall_start = std::time::Instant::now();
 
-        for _ in 0..100 {
-            {
+        // Outer loop: drain JS → render pass → repeat if render caused new JS work
+        for _ in 0..20 {
+            // Phase 1: Drain all JS work (microtasks, MO, timers) — no CSS
+            self.drain_js_work();
+
+            // Phase 2: Try advancing the clock to fire more timers
+            let advanced = {
                 let runtime = self.runtime.as_mut().unwrap();
-
-                // 1. Flush microtask queue (Promises from event handlers)
-                runtime.run_jobs();
-
-                // 2. Deliver pending MO records
-                let had_mo = runtime.has_pending_mutation_observers();
-                if had_mo {
-                    runtime.notify_mutation_observers();
-                    runtime.run_jobs();
-                }
-
-                // 3. Fire ready timers (delay <= current virtual time)
-                let fired_timers = runtime.fire_ready_timers();
-
-                if fired_timers {
-                    // Timer callbacks may have queued MO/microtasks — loop again
-                    continue;
-                }
-
-                if had_mo {
-                    continue;
-                }
-            }
-            // runtime borrow is released here — safe to access self.tree
-
-            // 4. No MO and no ready timers — before advancing the clock, recompute
-            //    styles and fire scroll-snap events. This ensures snap scrollend fires
-            //    before timeout-based promise rejections.
-            self.sync_focus_from_js();
-            self.sync_hover_from_js();
-            crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
-            if self.validate_focus_after_styles() {
-                continue;
-            }
-
-            // 4a. Fire ResizeObserver callbacks (before IO, per spec rendering pipeline)
-            {
-                let runtime = self.runtime.as_mut().unwrap();
-                let ro_fired = runtime.eval_to_string("typeof __ro_check === 'function' ? String(__ro_check()) : 'false'");
-                if ro_fired.as_deref() == Ok("true") {
-                    runtime.run_jobs();
-                    continue;
-                }
-            }
-
-            // 4b. Fire IntersectionObserver callbacks
-            {
-                let runtime = self.runtime.as_mut().unwrap();
-                let io_fired = runtime.eval_to_string("typeof __io_check === 'function' ? String(__io_check()) : 'false'");
-                if io_fired.as_deref() == Ok("true") {
-                    runtime.run_jobs();
-                    continue;
-                }
-            }
-
-            if self.fire_scroll_snap_events() {
-                // Snap events fired — loop again to process microtasks/timers
-                continue;
-            }
-
-            // 5. Try advancing clock
-            {
-                let runtime = self.runtime.as_mut().unwrap();
+                let mut clock_advanced = false;
                 if time_budget_ms > 0 && runtime.has_pending_timers() && !runtime.has_pending_fetches() {
                     if let Some(next) = runtime.next_timer_deadline() {
                         if next <= starting_time + time_budget_ms {
@@ -247,58 +215,47 @@ impl Engine {
                                 runtime.set_timer_current_time(capped);
                             }
 
-                            if runtime.advance_timers_to_next_deadline() {
-                                continue;
-                            }
+                            clock_advanced = runtime.advance_timers_to_next_deadline();
                         }
                     }
                 }
+                clock_advanced
+            };
+
+            if advanced {
+                // New timers fired — drain their JS work before render pass
+                self.drain_js_work();
             }
 
-            // Truly quiescent (or waiting on fetches, or next timer is beyond budget)
-            break;
+            // Phase 3: Render pass — CSS, observers, focus (once per settle cycle)
+            // Focus/hover state is already pushed to tree by JS via __n_setFocusedNode
+            // and __n_setHoveredNode — no eval polling needed.
+            crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+
+            let mut needs_relayout = self.validate_focus_after_styles();
+
+            // ResizeObserver — direct function call, no eval
+            if self.runtime.as_mut().unwrap().call_global_fn_bool("__ro_check") {
+                needs_relayout = true;
+            }
+
+            // IntersectionObserver — direct function call, no eval
+            if self.runtime.as_mut().unwrap().call_global_fn_bool("__io_check") {
+                needs_relayout = true;
+            }
+
+            if self.fire_scroll_snap_events() {
+                needs_relayout = true;
+            }
+
+            if !needs_relayout && !advanced {
+                // Truly quiescent — no more work
+                break;
+            }
+
+            // Observers or focus fired new JS work — loop back to drain it,
+            // but skip the expensive render pass until JS is quiescent again
         }
-
-        // Final style recomputation after all JS has settled
-        self.sync_focus_from_js();
-        self.sync_hover_from_js();
-        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
-        self.validate_focus_after_styles();
-    }
-
-    /// Sync the JS-side focused element (__focusCtx.el.__nid) to tree.focused_node
-    /// so CSS :focus and :focus-within matching works correctly.
-    fn sync_focus_from_js(&mut self) {
-        let js_nid = if let Some(runtime) = self.runtime.as_mut() {
-            runtime
-                .eval_to_string("(__focusCtx && __focusCtx.el && __focusCtx.el.__nid !== undefined) ? String(__focusCtx.el.__nid) : '-1'")
-                .ok()
-                .and_then(|s| s.parse::<i64>().ok())
-                .filter(|&n| n >= 0)
-                .map(|n| n as usize)
-        } else {
-            None
-        };
-
-        // Use JS-side focus if available, otherwise fall back to Rust-side
-        let focused = js_nid.or(self.focused_element);
-        self.tree.borrow_mut().focused_node = focused;
-    }
-
-    /// Sync the JS-side hovered element (__hoveredNode) to tree.hovered_node
-    /// so CSS :hover matching works correctly.
-    fn sync_hover_from_js(&mut self) {
-        let js_nid = if let Some(runtime) = self.runtime.as_mut() {
-            runtime
-                .eval_to_string("(typeof __hoveredNode !== 'undefined' && __hoveredNode >= 0) ? String(__hoveredNode) : '-1'")
-                .ok()
-                .and_then(|s| s.parse::<i64>().ok())
-                .filter(|&n| n >= 0)
-                .map(|n| n as usize)
-        } else {
-            None
-        };
-        self.tree.borrow_mut().hovered_node = js_nid;
     }
 
     /// After style recomputation, check if the focused element ended up in an

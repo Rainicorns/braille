@@ -112,6 +112,10 @@ pub struct EngineState {
     pub clipboard_buffer: String,
     /// Pending form submission (POST form data).
     pub pending_form_submit: Option<PendingFormSubmit>,
+    /// Focused element node ID, pushed from JS when focus changes.
+    pub focused_nid: Option<usize>,
+    /// Hovered element node ID, pushed from JS when hover changes.
+    pub hovered_nid: Option<usize>,
 }
 
 /// A pending form POST submission.
@@ -177,6 +181,8 @@ impl EngineState {
             blocking_event_response: None,
             clipboard_buffer: String::new(),
             pending_form_submit: None,
+            focused_nid: None,
+            hovered_nid: None,
         }
     }
 }

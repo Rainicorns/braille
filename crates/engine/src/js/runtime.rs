@@ -156,6 +156,25 @@ impl JsRuntime {
         Ok(())
     }
 
+    /// Call a global JS function by name with no arguments.
+    /// Returns true if the function exists and returned a truthy value.
+    /// Uses direct function call — no eval/parse overhead.
+    pub fn call_global_fn_bool(&mut self, name: &str) -> bool {
+        let result = self.context.with(|ctx| {
+            let global = ctx.globals();
+            let func: Function = match global.get(name) {
+                Ok(f) => f,
+                Err(_) => return false,
+            };
+            match func.call::<_, rquickjs::Value>(()) {
+                Ok(val) => val.as_bool().unwrap_or(false),
+                Err(_) => false,
+            }
+        });
+        self.flush_jobs();
+        result
+    }
+
     /// Evaluate JS and return the result as a string.
     /// Uses non-strict mode like browsers.
     pub fn eval_to_string(&mut self, code: &str) -> Result<String, String> {
@@ -236,6 +255,8 @@ impl JsRuntime {
     /// Fire all timers whose deadline has passed. Returns true if any fired.
     /// Timers are fired in registration order (ascending ID) to match browser
     /// semantics: setTimeout(f, 0) calls registered earlier fire first.
+    /// Uses direct function calls instead of eval for each timer — avoids
+    /// string allocation, parse, and compile overhead per timer fire.
     pub fn fire_ready_timers(&mut self) -> bool {
         let mut ready: Vec<(u32, bool)> = {
             let state = self.state.borrow();
@@ -255,27 +276,39 @@ impl JsRuntime {
         // Fire in registration order (lower ID = registered first)
         ready.sort_by_key(|(id, _)| *id);
 
-        for (id, is_interval) in ready {
-            let callback_code = {
-                let mut state = self.state.borrow_mut();
-                if let Some(entry) = state.timer_entries.get(&id) {
-                    let code = entry.callback_code.clone();
-                    let current_time = state.timer_current_time_ms;
-                    if is_interval {
-                        let e = state.timer_entries.get_mut(&id).unwrap();
-                        e.registered_at = current_time;
-                    } else {
-                        state.timer_entries.remove(&id);
-                    }
-                    Some(code)
-                } else {
-                    None
-                }
-            };
+        // Fire all timers via direct function call (no eval/parse/compile).
+        // Each timer: update state → call JS function → flush microtasks.
+        // Look up the fire function once, then call it per timer.
+        let has_fire_fn = self.context.with(|ctx| {
+            ctx.globals().get::<_, Function>("__braille_fire_timer").is_ok()
+        });
+        if !has_fire_fn {
+            return true;
+        }
 
-            if let Some(code) = callback_code {
-                self.eval_or_log(&code);
+        for &(id, is_interval) in &ready {
+            // Update timer entry before firing
+            {
+                let mut st = self.state.borrow_mut();
+                let current_time = st.timer_current_time_ms;
+                if is_interval {
+                    if let Some(e) = st.timer_entries.get_mut(&id) {
+                        e.registered_at = current_time;
+                    }
+                } else {
+                    st.timer_entries.remove(&id);
+                }
             }
+            // Direct function call — no eval/parse/compile
+            self.context.with(|ctx| {
+                if let Ok(fire_fn) = ctx.globals().get::<_, Function>("__braille_fire_timer") {
+                    if let Err(e) = fire_fn.call::<_, ()>((id,)) {
+                        log_eval_error_to_console(format_js_error(&ctx, e));
+                    }
+                }
+            });
+            // Flush microtasks between timers (preserves task boundary semantics)
+            self.flush_jobs();
         }
 
         true
