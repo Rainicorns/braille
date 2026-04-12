@@ -221,6 +221,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
 
                 iframeWindow.self = iframeWindow;
                 iframeWindow.window = iframeWindow;
+                iframeWindow.globalThis = iframeWindow;
                 iframeDoc.defaultView = iframeWindow;
 
                 // Window scroll properties
@@ -339,16 +340,28 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
             function execScriptInIframe(realm, code) {
                 var iw = realm.window;
                 var pp = realm._parentProxy;
+                // Pre-populate common event handler properties on iw so that bare
+                // assignments like `onload = function()...` go through the with() scope.
+                // Without this, the assignment creates a global instead of setting iw.onload.
+                var evtProps = ['onload','onerror','onmessage','onunload','onresize','onscroll',
+                                'onclick','onkeydown','onkeyup','onkeypress','onfocus','onblur',
+                                'onhashchange','onpopstate','onbeforeunload','onsubmit'];
+                for (var ei = 0; ei < evtProps.length; ei++) {
+                    if (!(evtProps[ei] in iw)) iw[evtProps[ei]] = null;
+                }
+                // Use with(window) — the real iw object, NOT a Proxy — to provide
+                // bare-name access to iframe window properties. Unlike Proxy has:()=>true,
+                // with(plainObject) correctly respects closure variable scope in QuickJS.
                 var fn = new Function(
-                    'window', 'document', 'self', 'parent', 'top',
+                    'window', 'document', 'self', 'parent', 'top', 'globalThis',
                     'postMessage', 'addEventListener', 'removeEventListener',
                     'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
                     'console', 'location', 'navigator', 'JSON', 'MessageEvent',
                     'crypto', 'TextEncoder', 'TextDecoder',
-                    code
+                    'with(window) {\n' + code + '\n}'
                 );
                 fn(
-                    iw, iw.document, iw, pp, pp,
+                    iw, iw.document, iw, pp, pp, iw,
                     function(data, targetOrigin) {
                         var serialized = data;
                         if (typeof data === 'object' && data !== null) {
@@ -452,15 +465,32 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 execScriptInIframe(realm, code);
             };
 
-            // Extract inline <script> content from HTML (simple regex)
+            // Extract scripts from HTML in document order (both external and inline).
+            // External scripts are resolved from __braille_worker_scripts (pre-fetched).
+            // Skips non-JavaScript types (e.g. type="text/json", type="application/json").
             function extractScripts(html) {
                 var scripts = [];
                 var re = /<script[^>]*>([\s\S]*?)<\/script>/gi;
                 var m;
                 while ((m = re.exec(html)) !== null) {
                     var tag = m[0];
-                    if (/\bsrc\s*=/i.test(tag.substring(0, tag.indexOf('>')))) continue;
-                    if (m[1].trim()) scripts.push(m[1]);
+                    var header = tag.substring(0, tag.indexOf('>'));
+                    // Skip non-JS script types (json, template, etc.)
+                    var typeMatch = header.match(/\btype\s*=\s*["']([^"']+)["']/i);
+                    if (typeMatch) {
+                        var stype = typeMatch[1].toLowerCase();
+                        if (stype !== 'text/javascript' && stype !== 'application/javascript' && stype !== 'module' && stype !== '') {
+                            continue;
+                        }
+                    }
+                    var srcMatch = header.match(/\bsrc\s*=\s*["']([^"']+)["']/i) || header.match(/\bsrc\s*=\s*([^\s>]+)/i);
+                    if (srcMatch) {
+                        var src = srcMatch[1];
+                        var content = (typeof __braille_worker_scripts !== 'undefined' && __braille_worker_scripts[src]) ? __braille_worker_scripts[src] : '';
+                        if (content) scripts.push(content);
+                    } else {
+                        if (m[1].trim()) scripts.push(m[1]);
+                    }
                 }
                 return scripts;
             }

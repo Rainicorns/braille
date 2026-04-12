@@ -39,6 +39,8 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     var setup_fn = null;
     var setup_ran = false;
     var single_test_mode = false;
+    var _explicit_done = false;
+    var _completionFired = false;
     var promise_chain = Promise.resolve();
     var _stopped = false;
     var _result_callbacks = [];
@@ -89,8 +91,8 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         // Trim and strip trailing semicolons
         body = body.trim().replace(/;+\s*$/, '').trim();
 
-        // Empty → page title
-        if (!body) return null;
+        // Empty or only semicolons/whitespace → page title
+        if (!body || /^[;\s]*$/.test(body)) return null;
 
         return body;
     }
@@ -224,7 +226,7 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                     if (t._done) return;
                     _markStarted();
                     try {
-                        f.apply(t, arguments);
+                        if (f) f.apply(t, arguments);
                         t.done();
                     } catch(e) {
                         if (t._done) return;
@@ -250,11 +252,53 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                 _progress(result.status);
             },
             unreached_func: function(msg) {
-                return function() { throw new Error(msg || "unreached"); };
+                return t.step_func(function() { throw new Error(msg || "unreached"); });
             },
             add_cleanup: function(f) { _acleanups.push(f); },
             force_timeout: function() { result.status = 2; result.message = "Test timed out"; },
             step_timeout: function(fn, timeout) { return setTimeout(fn, timeout || 0); },
+            step_wait_func: function(cond, func, timeout, interval) {
+                var _interval = interval || 100;
+                var _timeout = timeout || 3000;
+                var elapsed = 0;
+                function check() {
+                    if (t._done) return;
+                    var condResult;
+                    try { condResult = cond(); } catch(e) {
+                        result.status = 1;
+                        result.message = e.message || String(e);
+                        t.done();
+                        return;
+                    }
+                    if (condResult) {
+                        try { func(); } catch(e) {
+                            result.status = 1;
+                            result.message = e.message || String(e);
+                            t.done();
+                            return;
+                        }
+                        return;
+                    }
+                    elapsed += _interval;
+                    if (elapsed >= _timeout) {
+                        result.status = 2;
+                        result.message = 'step_wait_func timed out';
+                        t.done();
+                        return;
+                    }
+                    setTimeout(check, _interval);
+                }
+                check();
+            },
+            step_wait_func_done: function(cond, func, timeout, interval) {
+                t.step_wait_func(cond, function() {
+                    try { func(); } catch(e) {
+                        result.status = 1;
+                        result.message = e.message || String(e);
+                    }
+                    t.done();
+                }, timeout, interval);
+            },
             get_signal: function() {
                 if (!_asignal) {
                     var ac = new AbortController();
@@ -300,9 +344,9 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                 name: resolvedName,
                 step: function(f) { return function() { return f.apply(t, arguments); }; },
                 step_func: function(f) { return function() { return f.apply(t, arguments); }; },
-                step_func_done: function(f) { return function() { f.apply(t, arguments); t._done = true; }; },
+                step_func_done: function(f) { return function() { if (f) f.apply(t, arguments); t._done = true; }; },
                 done: function() { t._done = true; if (_psignal && _psignal._controller) _psignal._controller.abort(); },
-                unreached_func: function(msg) { return function() { throw new Error(msg || "unreached"); }; },
+                unreached_func: function(msg) { return t.step_func(function() { throw new Error(msg || "unreached"); }); },
                 add_cleanup: function(f) { cleanups.push(f); },
                 force_timeout: function() { result.status = 2; result.message = "Test timed out"; },
                 step_timeout: function(fn, timeout) { return setTimeout(fn, timeout || 0); },
@@ -315,16 +359,33 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                     return _psignal;
                 },
                 step_wait: function(cond, description, timeout, interval) {
+                    if (typeof cond !== 'function') {
+                        return Promise.reject(new TypeError('cond is not a function'));
+                    }
+                    var _interval = interval || 100;
+                    var _timeout = timeout || 3000;
                     return new Promise(function(resolve, reject) {
-                        if (cond()) { resolve(); return; }
-                        var attempts = 0;
-                        var maxAttempts = Math.ceil((timeout || 3000) / (interval || 10));
+                        var elapsed = 0;
                         function check() {
-                            if (cond()) { resolve(); return; }
-                            if (++attempts >= maxAttempts) { reject(new Error(description || "step_wait timed out")); return; }
-                            setTimeout(check, interval || 10);
+                            var result;
+                            try { result = cond(); } catch(e) { reject(e); return; }
+                            // Handle async conditions (Promise-returning)
+                            if (result && typeof result.then === 'function') {
+                                result.then(function(val) {
+                                    if (val) { resolve(); return; }
+                                    elapsed += _interval;
+                                    if (elapsed >= _timeout) { reject(new Error(description || 'step_wait timed out')); return; }
+                                    setTimeout(check, _interval);
+                                }, reject);
+                            } else if (result) {
+                                resolve();
+                            } else {
+                                elapsed += _interval;
+                                if (elapsed >= _timeout) { reject(new Error(description || 'step_wait timed out')); return; }
+                                setTimeout(check, _interval);
+                            }
                         }
-                        setTimeout(check, interval || 10);
+                        check();
                     });
                 },
                 _done: false
@@ -403,10 +464,72 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
             fn();
             setup_ran = true;
         }
-        if (props && props.single_test) {
-            single_test_mode = true;
+        if (props) {
+            if (props.single_test) single_test_mode = true;
+            if (props.explicit_done) _explicit_done = true;
         }
     };
+
+    // Track uncaught errors for single_test mode
+    var _uncaughtError = null;
+
+    function _fireCompletion() {
+        if (_completionFired) return;
+        _completionFired = true;
+
+        // For single_test mode: finalize the test result
+        if (single_test_mode && results.length === 0) {
+            var title = (typeof document !== 'undefined' && document.title) ? document.title : '(single test)';
+            if (_uncaughtError) {
+                results.push({name: title, status: 1, message: 'uncaught exception: ' + _uncaughtError});
+            } else {
+                results.push({name: title, status: 0, message: ''});
+            }
+        }
+
+        var tests = results.map(function(r) {
+            return {name: r.name, status: r.status, message: r.message || '', PASS: 0, FAIL: 1, TIMEOUT: 2, NOTRUN: 3};
+        });
+        var statusObj = {status: 0, OK: 0, ERROR: 1, TIMEOUT: 2};
+
+        // Fire internal completion callbacks
+        for (var ci = 0; ci < _completion_callbacks.length; ci++) {
+            try { _completion_callbacks[ci](tests, statusObj); } catch(e) {}
+        }
+
+        // Cross-frame dispatch: if running in a child frame, notify parent
+        var isChild = false;
+        try { isChild = typeof window !== 'undefined' && window.parent && window.parent !== window; } catch(e) {}
+        if (isChild) {
+            // Direct callback invocations on parent window
+            try { if (typeof window.parent.start_callback === 'function') window.parent.start_callback({}); } catch(e) {}
+            for (var ti = 0; ti < tests.length; ti++) {
+                var notrunCopy = {name: tests[ti].name, status: 3, message: '', PASS: 0, FAIL: 1, TIMEOUT: 2, NOTRUN: 3};
+                try { if (typeof window.parent.test_state_callback === 'function') window.parent.test_state_callback(notrunCopy); } catch(e) {}
+                try { if (typeof window.parent.result_callback === 'function') window.parent.result_callback(tests[ti]); } catch(e) {}
+            }
+            try { if (typeof window.parent.completion_callback === 'function') window.parent.completion_callback(tests, statusObj); } catch(e) {}
+
+            // postMessage protocol (for iframe-msg style tests)
+            try { window.parent.postMessage({type: 'start', properties: {}}, '*'); } catch(e) {}
+            for (var mi = 0; mi < tests.length; mi++) {
+                var nmCopy = {name: tests[mi].name, status: 3, message: '', PASS: 0, FAIL: 1, TIMEOUT: 2, NOTRUN: 3};
+                try { window.parent.postMessage({type: 'test_state', test: nmCopy}, '*'); } catch(e) {}
+                try { window.parent.postMessage({type: 'result', test: tests[mi]}, '*'); } catch(e) {}
+            }
+            try { window.parent.postMessage({type: 'complete', tests: tests, status: statusObj}, '*'); } catch(e) {}
+        }
+
+        // Worker dispatch: if running in a worker (no document), postMessage results back
+        var isWorker = false;
+        try { isWorker = typeof document === 'undefined' && typeof postMessage === 'function'; } catch(e) {}
+        if (isWorker) {
+            for (var wi = 0; wi < tests.length; wi++) {
+                try { postMessage({type: 'result', test: tests[wi]}); } catch(e) {}
+            }
+            try { postMessage({type: 'complete', tests: tests, status: statusObj}); } catch(e) {}
+        }
+    }
 
     self.done = function() {
         if (single_test_mode) {
@@ -421,11 +544,38 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                 }
             }
         }
+        _fireCompletion();
     };
 
     self.add_completion_callback = function(fn) { _completion_callbacks.push(fn); };
     self.add_result_callback = function(fn) { _result_callbacks.push(fn); };
     self.add_start_callback = function() {};
+
+    self.fetch_tests_from_window = function(win) {
+        // Collect test results from child iframe via postMessage protocol.
+        // win may be null if iframe hasn't loaded yet — we listen for all messages.
+        addEventListener('message', function(ev) {
+            var data = ev.data;
+            if (!data || typeof data !== 'object') return;
+            if (data.type === 'result' && data.test) {
+                results.push(data.test);
+                _notifyResult(data.test);
+            }
+        });
+    };
+
+    self.fetch_tests_from_worker = function(worker) {
+        // Collect test results from a ServiceWorker/Worker via message events.
+        if (!worker || typeof worker.addEventListener !== 'function') return;
+        worker.addEventListener('message', function(ev) {
+            var data = ev.data;
+            if (!data || typeof data !== 'object') return;
+            if (data.type === 'result' && data.test) {
+                results.push(data.test);
+                _notifyResult(data.test);
+            }
+        });
+    };
 
     self.on_event = function(obj, event_type, handler) {
         if (obj && typeof obj.addEventListener === 'function') {
@@ -782,6 +932,75 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
             });
         };
     };
+
+    // Catch uncaught errors for single_test mode.
+    // In real browsers, errors during event handlers fire window.onerror.
+    // Our engine may catch them differently, but we also hook the error event.
+    if (typeof addEventListener === 'function') {
+        addEventListener('error', function(ev) {
+            var msg = (ev && ev.error) ? String(ev.error) : (ev && ev.message) ? ev.message : String(ev);
+            if (!_uncaughtError) _uncaughtError = msg;
+        });
+    }
+    // Also hook into the unhandled rejection tracker
+    if (typeof addEventListener === 'function') {
+        addEventListener('unhandledrejection', function(ev) {
+            var msg = ev && ev.reason ? String(ev.reason) : 'unhandled rejection';
+            if (!_uncaughtError) _uncaughtError = msg;
+        });
+    }
+
+    // Auto-fire completion after all tests settle.
+    // Uses setTimeout to defer until after all synchronous scripts have run,
+    // then chains on promise_chain to wait for promise_tests to finish.
+    // Re-checks _explicit_done at fire time since setup() may run after this is queued.
+    setTimeout(function() {
+        if (_explicit_done || _completionFired) return;
+        promise_chain.then(function() {
+            if (_explicit_done || _completionFired) return;
+
+            // Check if we're in a child frame or worker
+            var isChildOrWorker = false;
+            try { isChildOrWorker = (typeof window !== 'undefined' && window.parent && window.parent !== window); } catch(e) {}
+            try { if (typeof document === 'undefined' && typeof postMessage === 'function') isChildOrWorker = true; } catch(e) {}
+
+            if (isChildOrWorker) {
+                // In child contexts, aggressively timeout un-done async tests
+                for (var ai = 0; ai < _pending_async.length; ai++) {
+                    if (!_pending_async[ai].test._done) {
+                        _pending_async[ai].result.status = 2;
+                        _pending_async[ai].result.message = 'Test timed out';
+                        _pending_async[ai].test._done = true;
+                    }
+                }
+                _fireCompletion();
+            } else {
+                // In main context, only fire if all async tests are done
+                for (var ai2 = 0; ai2 < _pending_async.length; ai2++) {
+                    if (!_pending_async[ai2].test._done) return;
+                }
+                _fireCompletion();
+            }
+        });
+    }, 0);
+
+    // Create <div id="log"> for WPT harness display (like real testharness.js).
+    // Try immediately (for non-incremental) AND register for DOMContentLoaded (for incremental).
+    if (typeof document !== 'undefined') {
+        var _ensureLog = function() {
+            if (document.body && !document.getElementById('log')) {
+                var _logEl = document.createElement('div');
+                _logEl.id = 'log';
+                document.body.appendChild(_logEl);
+            }
+        };
+        _ensureLog();
+        document.addEventListener('DOMContentLoaded', _ensureLog);
+        // Also try on window load (belt and suspenders)
+        if (typeof addEventListener === 'function') {
+            addEventListener('load', _ensureLog);
+        }
+    }
 
     self.__wpt_get_results = function() {
         // Finalize pending async tests — mark unfinished ones as TIMEOUT
@@ -1666,6 +1885,56 @@ pub fn extract_js_iframe_srcs(html: &str) -> Vec<String> {
     srcs
 }
 
+/// Extract JS file references from inline script bodies (for worker URLs, etc.).
+/// Finds quoted strings ending in .js that exist on disk relative to the HTML file.
+pub fn extract_worker_js_refs(html: &str, html_path: &Path) -> Vec<String> {
+    let mut refs = Vec::new();
+    let lower = html.to_ascii_lowercase();
+    let mut pos = 0;
+    while let Some(start) = lower[pos..].find("<script") {
+        let abs_start = pos + start;
+        let open_end = match lower[abs_start..].find('>') {
+            Some(e) => abs_start + e + 1,
+            None => break,
+        };
+        let close = match lower[open_end..].find("</script") {
+            Some(e) => open_end + e,
+            None => break,
+        };
+        let body = &html[open_end..close];
+        // Find quoted strings ending in .js
+        for quote in ['"', '\''] {
+            let mut spos = 0;
+            while spos < body.len() {
+                if let Some(q_start) = body[spos..].find(quote) {
+                    let abs_q = spos + q_start + 1;
+                    if let Some(q_end) = body[abs_q..].find(quote) {
+                        let val = &body[abs_q..abs_q + q_end];
+                        if val.ends_with(".js") && !val.contains("testharness") && !val.contains("testharnessreport") && !val.contains(' ') {
+                            // Check if file exists on disk
+                            let resolved = if val.starts_with('/') {
+                                wpt_root().join(val.trim_start_matches('/'))
+                            } else {
+                                html_path.parent().unwrap().join(val)
+                            };
+                            if resolved.exists() && !refs.contains(&val.to_string()) {
+                                refs.push(val.to_string());
+                            }
+                        }
+                        spos = abs_q + q_end + 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        pos = close;
+    }
+    refs
+}
+
 pub fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<String> {
     // Strip fragment and query params before resolving filesystem path
     let src_no_fragment = src.split('#').next().unwrap_or(src);
@@ -1863,7 +2132,7 @@ struct WptSubResult {
 }
 
 /// Tests that need incremental (interleaved) HTML parsing.
-const INCREMENTAL_TESTS: &[&str] = &["MutationObserver-document"];
+const INCREMENTAL_TESTS: &[&str] = &["MutationObserver-document", "log-insertion"];
 
 // ---------------------------------------------------------------------------
 // Run a single WPT test
@@ -2089,6 +2358,15 @@ fn run_wpt_test_with_search(
         }
     }
 
+    // Extract worker JS references (e.g. "setup-function-worker.js" from inline scripts)
+    for worker_ref in extract_worker_js_refs(html, html_path) {
+        if let std::collections::hash_map::Entry::Vacant(e) = fetched_scripts.entry(worker_ref) {
+            if let Some(content) = resolve_script_src(html_path, e.key(), &variant_preamble, report_shim) {
+                e.insert(content);
+            }
+        }
+    }
+
     let mut link_hrefs = extract_link_hrefs(html);
     // Also extract CSS refs from inline scripts (dynamically created <link> elements)
     for css_ref in extract_css_refs_from_scripts(html) {
@@ -2109,6 +2387,28 @@ fn run_wpt_test_with_search(
     for src in &iframe_srcs {
         let src_no_fragment = src.split('#').next().unwrap_or(src);
         if let Some(content) = resolve_iframe_src(html_path, src) {
+            // Also extract and resolve scripts referenced by the iframe's HTML.
+            // Child iframes need their own <script src="..."> resolved too (e.g. testharness.js).
+            let iframe_dir = html_path.parent().unwrap().join(src.split('?').next().unwrap_or(src));
+            let iframe_html_path = if iframe_dir.exists() {
+                iframe_dir.clone()
+            } else {
+                // Resolve relative to WPT root for absolute paths
+                let clean = src.split('#').next().unwrap_or(src).split('?').next().unwrap_or(src);
+                if clean.starts_with('/') {
+                    wpt_root().join(clean.trim_start_matches('/'))
+                } else {
+                    html_path.parent().unwrap().join(clean)
+                }
+            };
+            let child_srcs = extract_script_srcs(&content);
+            for child_src in &child_srcs {
+                if !fetched_scripts.contains_key(child_src) {
+                    if let Some(child_content) = resolve_script_src(&iframe_html_path, child_src, &variant_preamble, report_shim) {
+                        fetched_scripts.insert(child_src.clone(), child_content);
+                    }
+                }
+            }
             fetched_iframes.insert(src_no_fragment.to_string(), content);
         }
     }
@@ -2174,6 +2474,52 @@ fn run_wpt_test_with_search(
     };
 
     if results_json == "undefined" || results_json == "null" || results_json == "[]" {
+        // For single_test mode, check if there's an uncaught error in the console buffer
+        // (e.g., assert_true(false) throws during onload, caught by eval_or_log)
+        let console_errors: Vec<String> = engine.drain_console()
+            .into_iter()
+            .filter(|l| l.starts_with("[error]"))
+            .collect();
+        if !console_errors.is_empty() {
+            // Extract the error message (strip [error] prefix), inject as a failed single test
+            let err_msg = console_errors[0].strip_prefix("[error] ").unwrap_or(&console_errors[0]);
+            let title = engine.eval_js("document.title || '(single test)'").unwrap_or_default();
+            let escaped_name = serde_json::to_string(&title).unwrap_or_default();
+            let escaped_msg = serde_json::to_string(&format!("uncaught exception: Error: {err_msg}")).unwrap_or_default();
+            let inject = format!(
+                "__wpt_get_results = function() {{ return [{{name:{escaped_name},status:1,message:{escaped_msg}}}]; }}"
+            );
+            engine.eval_js(&inject).ok();
+            // Re-read results and fall through to normal processing
+            let rj = engine.eval_js("JSON.stringify(__wpt_get_results())").unwrap_or_default();
+            if rj != "[]" && rj != "undefined" && rj != "null" {
+                // Replace results_json and fall through
+                let results_json = sanitize_json_surrogates(&rj);
+                if let Ok(results) = serde_json::from_str::<Vec<WptSubResult>>(&results_json) {
+                    // Inline the result comparison logic
+                    let mut failures = Vec::new();
+                    if let Some(ref exp) = expected {
+                        let mut actual_by_name: HashMap<&str, &WptSubResult> = HashMap::new();
+                        for r in &results { actual_by_name.insert(&r.name, r); }
+                        for (exp_name, exp_status) in &exp.subtests {
+                            match actual_by_name.get(exp_name.as_str()) {
+                                Some(actual) => {
+                                    let actual_status = status_to_string(actual.status);
+                                    if actual_status != exp_status {
+                                        failures.push(format!("  [MISMATCH] {}: expected {} but got {}{}", exp_name, exp_status, actual_status,
+                                            if actual.message.is_empty() { String::new() } else { format!(": {}", actual.message) }));
+                                    }
+                                }
+                                None => { if exp_status != "NOTRUN" { failures.push(format!("  [MISSING] {}: expected {} but test did not run", exp_name, exp_status)); } }
+                            }
+                        }
+                    }
+                    let pass_count = results.len().saturating_sub(failures.len());
+                    return WptTestResult { passed: pass_count, failed: failures.len(), details: failures, is_crash_test: false };
+                }
+            }
+        }
+
         let errs: Vec<String> = js_errors
             .iter()
             .map(|e| e.chars().take(200).collect::<String>())

@@ -347,7 +347,119 @@ const WEB_APIS_JS: &str = r#"
                 getDisplayMedia: function() { return Promise.reject(new DOMException('Not allowed', 'NotAllowedError')); },
             },
             serviceWorker: {
-                register: function(url) { return Promise.resolve({ installing: null, waiting: null, active: null, scope: '/', unregister: function() { return Promise.resolve(true); } }); },
+                register: function(url, opts) {
+                    var scope = (opts && opts.scope) || '/';
+                    // Build a Worker-like object that the registration exposes
+                    var workerObj = null;
+                    var scripts = globalThis.__braille_worker_scripts;
+                    if (scripts) {
+                        var resolvedUrl = url;
+                        if (url.charAt(0) === '/' && typeof location !== 'undefined') {
+                            resolvedUrl = location.origin + url;
+                        }
+                        var code = scripts[resolvedUrl] || scripts[url];
+                        if (!code) { try { code = scripts[new URL(resolvedUrl).pathname]; } catch(e) {} }
+                        if (code) {
+                            // Create a minimal ServiceWorker-like object
+                            workerObj = {
+                                state: 'installing',
+                                scriptURL: url,
+                                _listeners: {},
+                                addEventListener: function(t, cb) {
+                                    if (!this._listeners[t]) this._listeners[t] = [];
+                                    this._listeners[t].push(cb);
+                                },
+                                removeEventListener: function(t, cb) {
+                                    if (this._listeners[t]) this._listeners[t] = this._listeners[t].filter(function(f){return f!==cb;});
+                                },
+                                postMessage: function(data) {
+                                    // Deliver to worker scope
+                                    if (workerObj._scope) {
+                                        var ev = {type:'message', data:data, origin:'', ports:[]};
+                                        setTimeout(function(){ workerObj._scope._dispatch('message', ev); }, 0);
+                                    }
+                                },
+                                _scope: null
+                            };
+                            // Build worker scope and execute script
+                            var ws = {
+                                postMessage: function(data) {
+                                    setTimeout(function() {
+                                        var ev = {type:'message', data:data, origin:'', ports:[]};
+                                        if (workerObj.onmessage) workerObj.onmessage(ev);
+                                        var ls = workerObj._listeners['message'];
+                                        if (ls) { var s = ls.slice(); for (var i=0;i<s.length;i++) s[i](ev); }
+                                    }, 0);
+                                },
+                                self: null,
+                                onmessage: null,
+                                _listeners: {},
+                                addEventListener: function(t, cb) {
+                                    if (!ws._listeners[t]) ws._listeners[t] = [];
+                                    ws._listeners[t].push(cb);
+                                },
+                                removeEventListener: function() {},
+                                _dispatch: function(t, ev) {
+                                    if (ws['on'+t]) ws['on'+t](ev);
+                                    var ls = ws._listeners[t]; if(ls){var s=ls.slice();for(var i=0;i<s.length;i++)s[i](ev);}
+                                },
+                                document: undefined,
+                                window: undefined,
+                                registration: null,
+                                clients: { matchAll: function(){return Promise.resolve([]);}, claim: function(){return Promise.resolve();} },
+                                skipWaiting: function(){return Promise.resolve();}
+                            };
+                            ws.self = ws;
+                            workerObj._scope = ws;
+                            setTimeout(function() {
+                                // Execute code in the worker scope context.
+                                // Uses with(self) so importScripts-loaded globals are visible.
+                                function execInWorker(c) {
+                                    var fn = new Function('postMessage','self','addEventListener','removeEventListener','clients','skipWaiting','registration','importScripts',
+                                        'with(self){\n' + c + '\n}');
+                                    fn(ws.postMessage, ws, ws.addEventListener, ws.removeEventListener, ws.clients, ws.skipWaiting, ws.registration, importScriptsFn);
+                                }
+                                var importScriptsFn = function() {
+                                    var scripts = globalThis.__braille_worker_scripts;
+                                    if (!scripts) return;
+                                    for (var ai = 0; ai < arguments.length; ai++) {
+                                        var surl = arguments[ai];
+                                        var scode = scripts[surl] || scripts[surl.replace(/^.*:\/\/[^\/]+/, '')];
+                                        if (scode) execInWorker(scode);
+                                    }
+                                };
+                                execInWorker(code);
+                            }, 0);
+                        }
+                    }
+                    // Build registration object with event support
+                    var reg = {
+                        installing: workerObj,
+                        waiting: null,
+                        active: workerObj,
+                        scope: scope,
+                        _listeners: {},
+                        addEventListener: function(t, cb) {
+                            if (!reg._listeners[t]) reg._listeners[t] = [];
+                            reg._listeners[t].push(cb);
+                        },
+                        removeEventListener: function(t, cb) {
+                            if (reg._listeners[t]) reg._listeners[t] = reg._listeners[t].filter(function(f){return f!==cb;});
+                        },
+                        unregister: function() { return Promise.resolve(true); },
+                        update: function() { return Promise.resolve(reg); }
+                    };
+                    if (workerObj) {
+                        workerObj.registration = reg;
+                        if (workerObj._scope) workerObj._scope.registration = reg;
+                    }
+                    // Fire updatefound asynchronously
+                    setTimeout(function() {
+                        var ls = reg._listeners['updatefound'];
+                        if (ls) { var s = ls.slice(); for (var i=0;i<s.length;i++) s[i](); }
+                    }, 0);
+                    return Promise.resolve(reg);
+                },
                 ready: Promise.resolve({ active: null }),
                 controller: null,
                 addEventListener: function() {},

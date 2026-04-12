@@ -505,6 +505,11 @@ impl Engine {
 
         // 7. Post-processing
         Self::fire_link_stylesheet_loads(&mut runtime);
+
+        // Fire DOMContentLoaded (incremental mode skipped it during parsing)
+        runtime.eval_or_log("document.dispatchEvent(new Event('DOMContentLoaded', {bubbles: true}));");
+        runtime.run_jobs();
+
         Self::process_iframe_loads(&mut runtime, &tree);
         Self::fire_window_load(&mut runtime);
 

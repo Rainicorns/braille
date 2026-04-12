@@ -448,7 +448,9 @@ impl JsRuntime {
             window.onload = new Function('event', _bodyOnload);
         }
     }
-    window.dispatchEvent(new Event('load'));
+    try { window.dispatchEvent(new Event('load')); } catch(_loadErr) {
+        try { window.dispatchEvent(new ErrorEvent('error', {message: _loadErr.message || String(_loadErr), error: _loadErr})); } catch(_e2) {}
+    }
 }"#,
             );
         });
