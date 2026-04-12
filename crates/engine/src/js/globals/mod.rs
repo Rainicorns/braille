@@ -12,6 +12,7 @@ mod native_hooks;
 mod shadowrealm;
 mod timers;
 mod tree_traversal;
+mod wasm_api;
 mod web_apis;
 mod xpath;
 mod websocket;
@@ -88,6 +89,8 @@ pub fn register_all(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell
     fetch::register_fetch(ctx);
     super::crypto::register(ctx);
     crypto_subtle::register_crypto(ctx);
+    super::wasm::register(ctx);
+    wasm_api::register_wasm(ctx);
 
     // 9. DOM bridge (IIFE with class hierarchy + all bridge modules)
     super::dom_bridge::install(ctx, Rc::clone(&tree), Rc::clone(&state));

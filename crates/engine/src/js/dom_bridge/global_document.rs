@@ -14,6 +14,38 @@ pub(super) fn global_document_js() -> &'static str {
             return false;
         }
 
+        // GlobalEventHandlers list (spec: Document and Window implement this mixin).
+        // Defined here so both __makeDocumentLike and the main document setup can use it.
+        var _globalEventHandlers = ['onclick', 'ondblclick', 'onmousedown', 'onmouseup',
+            'onmouseover', 'onmouseout', 'onmousemove', 'onkeydown', 'onkeyup', 'onkeypress',
+            'onchange', 'oninput', 'onbeforeinput', 'onsubmit', 'onreset', 'onselect',
+            'onselectstart', 'onselectionchange',
+            'onfocus', 'onblur', 'onfocusin', 'onfocusout',
+            'onload', 'onerror', 'onabort', 'onresize',
+            'oncopy', 'oncut', 'onpaste',
+            'ondrag', 'ondragstart', 'ondragend', 'ondragover', 'ondragenter', 'ondragleave', 'ondrop',
+            'onscroll', 'onscrollend',
+            'ontouchstart', 'ontouchmove', 'ontouchend', 'ontouchcancel',
+            'onpointerdown', 'onpointerup', 'onpointermove', 'onpointerover', 'onpointerout',
+            'onpointerenter', 'onpointerleave', 'onpointercancel', 'ongotpointercapture', 'onlostpointercapture',
+            'oncontextmenu', 'onwheel', 'onanimationstart', 'onanimationend', 'onanimationiteration',
+            'ontransitionend', 'ontransitionrun', 'ontransitionstart', 'ontransitioncancel',
+            'onwebkitanimationstart', 'onwebkitanimationend', 'onwebkitanimationiteration',
+            'onwebkittransitionend'];
+
+        function __installGlobalEventHandlers(obj) {
+            _globalEventHandlers.forEach(function(attr) {
+                if (!(attr in obj)) {
+                    Object.defineProperty(obj, attr, {
+                        get: function() { return this['_eh_' + attr] || null; },
+                        set: function(v) { this['_eh_' + attr] = typeof v === 'function' ? v : null; },
+                        enumerable: true,
+                        configurable: true
+                    });
+                }
+            });
+        }
+
         function __makeDocumentLike(rootEl) {
             // Create a Rust-backed Document node so all EP methods (appendChild, insertBefore, etc.) work
             var docNid = __n_createDocumentNode();
@@ -28,7 +60,6 @@ pub(super) fn global_document_js() -> &'static str {
                 ownerDocument: null,
                 isConnected: true,
                 location: null,
-                title: '',
                 contentType: 'application/xml',
                 URL: 'about:blank',
                 documentURI: 'about:blank',
@@ -40,6 +71,26 @@ pub(super) fn global_document_js() -> &'static str {
             for (var k in ownProps) Object.defineProperty(newDoc, k, { value: ownProps[k], writable: true, enumerable: true, configurable: true });
             newDoc.__listeners = {};
             newDoc.__captureListeners = {};
+            __installGlobalEventHandlers(newDoc);
+            Object.defineProperty(newDoc, 'title', {
+                get: function() {
+                    var t = newDoc.querySelector ? newDoc.querySelector('title') : null;
+                    return t ? t.textContent : '';
+                },
+                set: function(v) {
+                    var t = newDoc.querySelector ? newDoc.querySelector('title') : null;
+                    if (!t) {
+                        var head = newDoc.head;
+                        if (head) {
+                            var titleNid = __n_createElement('title');
+                            __n_appendChild(head.__nid, titleNid);
+                            t = __w(titleNid);
+                        }
+                    }
+                    if (t) t.textContent = String(v);
+                },
+                configurable: true
+            });
             Object.defineProperty(newDoc, 'documentElement', { get: function() {
                 var kids = __n_getAllChildIds(docNid);
                 for (var i = 0; i < kids.length; i++) {
@@ -208,6 +259,12 @@ pub(super) fn global_document_js() -> &'static str {
         doc.charset = 'UTF-8';
         doc.inputEncoding = 'UTF-8';
         doc.contentType = 'text/html';
+
+        // Install GlobalEventHandlers on document (spec: Document implements GlobalEventHandlers).
+        // Without this, feature detection like `"oninput" in document` returns false,
+        // causing frameworks (React 18) to take IE fallback paths (attachEvent).
+        __installGlobalEventHandlers(doc);
+
         Object.defineProperty(doc, 'ownerDocument', { value: null, writable: true, configurable: true });
         Object.defineProperty(doc, 'location', {
             get: function() { return (typeof window !== 'undefined') ? window.location : undefined; },

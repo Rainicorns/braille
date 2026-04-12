@@ -257,10 +257,13 @@ const CLASS_HIERARCHY_JS: &str = r#"
             });
         });
 
-        // Standard event handler properties on HTMLElement.prototype
+        // Standard event handler properties on HTMLElement.prototype (GlobalEventHandlers mixin)
         var _elementEventHandlers = ['onclick', 'ondblclick', 'onmousedown', 'onmouseup',
             'onmouseover', 'onmouseout', 'onmousemove', 'onkeydown', 'onkeyup', 'onkeypress',
-            'onchange', 'oninput', 'onsubmit', 'onreset', 'onselect',
+            'onchange', 'oninput', 'onbeforeinput', 'onsubmit', 'onreset', 'onselect', 'onselectstart',
+            'onfocus', 'onblur', 'onfocusin', 'onfocusout',
+            'onload', 'onerror', 'onabort', 'onresize',
+            'oncopy', 'oncut', 'onpaste',
             'ondrag', 'ondragstart', 'ondragend', 'ondragover', 'ondragenter', 'ondragleave', 'ondrop',
             'onscroll', 'onscrollend',
             'ontouchstart', 'ontouchmove', 'ontouchend', 'ontouchcancel',

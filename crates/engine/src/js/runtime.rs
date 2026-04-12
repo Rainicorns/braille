@@ -51,7 +51,7 @@ impl JsRuntime {
     pub fn new(tree: Rc<RefCell<DomTree>>) -> Self {
         let runtime = Runtime::new().expect("failed to create QuickJS runtime");
         runtime.set_memory_limit(256 * 1024 * 1024);
-        runtime.set_max_stack_size(64 * 1024 * 1024);
+        runtime.set_max_stack_size(2 * 1024 * 1024);
 
         // Track unhandled promise rejections
         runtime.set_host_promise_rejection_tracker(Some(Box::new(
@@ -109,6 +109,9 @@ impl JsRuntime {
 
         // Clear module registry
         module_loader::clear_registry(&self.module_registry);
+
+        // Reset WebAssembly state (instances, memories, etc. — engine & module cache persist)
+        super::wasm::reset();
 
         // Clear JS-side wrapper cache + DOM state
         self.eval_or_log(r#"

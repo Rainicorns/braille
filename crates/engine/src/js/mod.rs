@@ -5,5 +5,6 @@ pub(crate) mod intl;
 pub(crate) mod module_loader;
 pub mod runtime;
 pub mod state;
+pub mod wasm;
 
 pub use runtime::JsRuntime;

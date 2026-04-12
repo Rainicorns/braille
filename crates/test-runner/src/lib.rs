@@ -48,6 +48,13 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     var _pending_async = [];
     var _harnessError = null;
 
+    // Capture the current window reference at preamble init time.
+    // When running inside execScriptInIframe's with(window) scope, this captures
+    // the iframe's window. setTimeout callbacks escape the with() scope, so bare
+    // `window` would resolve to the global (parent) window. _selfWindow preserves
+    // the correct reference across async boundaries.
+    var _selfWindow = (typeof window !== 'undefined') ? window : self;
+
     function _progress(status) {
         if (typeof __braille_test_progress === 'function') {
             __braille_test_progress(status === 0 || status === 3);
@@ -98,11 +105,36 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         return body;
     }
 
+    // Replace unpaired surrogates with U+XXXX notation (per WPT spec)
+    function _sanitizeSurrogates(str) {
+        if (typeof str !== 'string') return str;
+        var result = '';
+        for (var i = 0; i < str.length; i++) {
+            var code = str.charCodeAt(i);
+            if (code >= 0xD800 && code <= 0xDBFF) {
+                if (i + 1 < str.length) {
+                    var next = str.charCodeAt(i + 1);
+                    if (next >= 0xDC00 && next <= 0xDFFF) {
+                        result += str.charAt(i) + str.charAt(i + 1);
+                        i++;
+                        continue;
+                    }
+                }
+                result += 'U+' + code.toString(16);
+            } else if (code >= 0xDC00 && code <= 0xDFFF) {
+                result += 'U+' + code.toString(16);
+            } else {
+                result += str.charAt(i);
+            }
+        }
+        return result;
+    }
+
     function _resolveName(fn, name) {
-        if (name) return _dedupName(name);
+        if (name) return _dedupName(_sanitizeSurrogates(name));
         // Try auto-naming from function source
         var auto = _autoName(fn);
-        if (auto) return _dedupName(auto);
+        if (auto) return _dedupName(_sanitizeSurrogates(auto));
         // Fall back to page title
         var title = (typeof document !== 'undefined' && document.title) ? document.title : "(unnamed)";
         return _dedupName(title);
@@ -123,6 +155,10 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
 
     self.test = function(fn, name) {
         if (_stopped || _promise_setup_failed) return;
+        if (single_test_mode) {
+            if (!_uncaughtError) _uncaughtError = 'Cannot define subtests in single_test mode';
+            return;
+        }
         if (_promise_setup_called) {
             if (!_harnessError) _harnessError = 'test() is not allowed after promise_setup';
             return;
@@ -182,6 +218,10 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
 
     self.async_test = function(fn, name) {
         if (_stopped || _promise_setup_failed) return;
+        if (single_test_mode) {
+            if (!_uncaughtError) _uncaughtError = 'Cannot define subtests in single_test mode';
+            return;
+        }
         if (_promise_setup_called) {
             if (!_harnessError) _harnessError = 'async_test() is not allowed after promise_setup';
             return;
@@ -359,6 +399,11 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     };
 
     self.promise_test = function(fn, name) {
+        if (single_test_mode) {
+            if (!_uncaughtError) _uncaughtError = 'Cannot define subtests in single_test mode';
+            return;
+        }
+        if (_promise_setup_invalid) return;
         var resolvedName = _resolveName(fn, name);
         var result = { name: resolvedName, status: 3, message: "", _started: false };
         results.push(result);
@@ -501,54 +546,55 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     var _harnessTimeout = false;
     var _promise_setup_failed = false;
     var _promise_setup_called = false;
+    // _promise_setup_invalid: set when promise_setup gets a non-function arg.
+    // Subsequent promise_tests are completely skipped (no result registered).
+    var _promise_setup_invalid = false;
 
     self.promise_setup = function(fn, properties) {
         _promise_setup_called = true;
-        // promise_setup must be called before any tests
-        if (results.length > 0) {
-            if (!_harnessError) _harnessError = 'promise_setup must be the first thing in the file';
-            return;
-        }
-        if (properties && typeof properties === 'object') {
-            if (properties.single_test) single_test_mode = true;
-            if (properties.explicit_done) _explicit_done = true;
-            if (properties.allow_uncaught_exception) globalThis._allow_uncaught_exception = true;
-        }
+        // Track whether tests ran before promise_setup — if so, ignore properties
+        var _hadTestsBefore = results.length > 0;
         if (typeof fn !== 'function') {
             if (!_harnessError) _harnessError = 'promise_setup: argument is not a function';
             _promise_setup_failed = true;
-            // Block the chain permanently so subsequent tests stay NOTRUN
+            _promise_setup_invalid = true;
             promise_chain = new Promise(function() {});
             return;
         }
-        var result;
-        try {
-            result = fn();
-        } catch(e) {
-            if (!_harnessError) _harnessError = 'promise_setup: ' + (e.message || String(e));
-            _promise_setup_failed = true;
-            promise_chain = new Promise(function() {});
-            return;
-        }
-        var isThennable = false;
-        try { isThennable = result && typeof result.then === 'function'; } catch(e) {
-            if (!_harnessError) _harnessError = 'promise_setup: ' + (e.message || String(e));
-            _promise_setup_failed = true;
-            promise_chain = new Promise(function() {});
-            return;
-        }
-        if (!isThennable) {
-            if (!_harnessError) _harnessError = 'promise_setup: function did not return a thenable value';
-            _promise_setup_failed = true;
-            promise_chain = new Promise(function() {});
-            return;
-        }
+        // Chain the setup function onto promise_chain so it runs AFTER any
+        // already-chained promise_tests (the spec requires ordering).
         promise_chain = promise_chain.then(function() {
+            var result;
+            try {
+                result = fn();
+            } catch(e) {
+                if (!_harnessError) _harnessError = 'promise_setup: ' + (e.message || String(e));
+                _promise_setup_failed = true;
+                return new Promise(function() {});
+            }
+            var isThennable = false;
+            try { isThennable = result && typeof result.then === 'function'; } catch(e) {
+                if (!_harnessError) _harnessError = 'promise_setup: ' + (e.message || String(e));
+                _promise_setup_failed = true;
+                return new Promise(function() {});
+            }
+            if (!isThennable) {
+                if (!_harnessError) _harnessError = 'promise_setup: function did not return a thenable value';
+                _promise_setup_failed = true;
+                return new Promise(function() {});
+            }
             return result;
-        }).then(null, function(e) {
+        }).then(function() {
+            // Apply properties only after setup promise resolves, and only if
+            // no tests ran before promise_setup was called
+            if (!_hadTestsBefore && properties && typeof properties === 'object') {
+                if (properties.single_test) single_test_mode = true;
+                if (properties.explicit_done) _explicit_done = true;
+                if (properties.allow_uncaught_exception) globalThis._allow_uncaught_exception = true;
+            }
+        }, function(e) {
             if (!_harnessError) _harnessError = 'promise_setup: ' + (e && e.message ? e.message : String(e));
             _promise_setup_failed = true;
-            // Return a never-resolving promise to block remaining tests
             return new Promise(function() {});
         });
     };
@@ -584,7 +630,7 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
             if (r._started === false && r.status !== 1) r.status = 3;
             return {name: r.name, status: r.status, message: r.message || '', PASS: 0, FAIL: 1, TIMEOUT: 2, NOTRUN: 3};
         });
-        var statusObj = {status: _harnessTimeout ? 2 : (_harnessError ? 1 : 0), message: _harnessError || null, OK: 0, ERROR: 1, TIMEOUT: 2};
+        var statusObj = {status: _harnessError ? 1 : (_harnessTimeout ? 2 : 0), message: _harnessError || null, OK: 0, ERROR: 1, TIMEOUT: 2};
 
         // Fire internal completion callbacks
         for (var ci = 0; ci < _completion_callbacks.length; ci++) {
@@ -593,25 +639,25 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
 
         // Cross-frame dispatch: if running in a child frame, notify parent
         var isChild = false;
-        try { isChild = typeof window !== 'undefined' && window.parent && window.parent !== window; } catch(e) {}
+        try { isChild = _selfWindow.parent && _selfWindow.parent !== _selfWindow; } catch(e) {}
         if (isChild) {
             // Direct callback invocations on parent window
-            try { if (typeof window.parent.start_callback === 'function') window.parent.start_callback({}); } catch(e) {}
+            try { if (typeof _selfWindow.parent.start_callback === 'function') _selfWindow.parent.start_callback({}); } catch(e) {}
             for (var ti = 0; ti < tests.length; ti++) {
                 var notrunCopy = {name: tests[ti].name, status: 3, message: '', PASS: 0, FAIL: 1, TIMEOUT: 2, NOTRUN: 3};
-                try { if (typeof window.parent.test_state_callback === 'function') window.parent.test_state_callback(notrunCopy); } catch(e) {}
-                try { if (typeof window.parent.result_callback === 'function') window.parent.result_callback(tests[ti]); } catch(e) {}
+                try { if (typeof _selfWindow.parent.test_state_callback === 'function') _selfWindow.parent.test_state_callback(notrunCopy); } catch(e) {}
+                try { if (typeof _selfWindow.parent.result_callback === 'function') _selfWindow.parent.result_callback(tests[ti]); } catch(e) {}
             }
-            try { if (typeof window.parent.completion_callback === 'function') window.parent.completion_callback(tests, statusObj); } catch(e) {}
+            try { if (typeof _selfWindow.parent.completion_callback === 'function') _selfWindow.parent.completion_callback(tests, statusObj); } catch(e) {}
 
             // postMessage protocol (for iframe-msg style tests)
-            try { window.parent.postMessage({type: 'start', properties: {}}, '*'); } catch(e) {}
+            try { _selfWindow.parent.postMessage({type: 'start', properties: {}}, '*'); } catch(e) {}
             for (var mi = 0; mi < tests.length; mi++) {
                 var nmCopy = {name: tests[mi].name, status: 3, message: '', PASS: 0, FAIL: 1, TIMEOUT: 2, NOTRUN: 3};
-                try { window.parent.postMessage({type: 'test_state', test: nmCopy}, '*'); } catch(e) {}
-                try { window.parent.postMessage({type: 'result', test: tests[mi]}, '*'); } catch(e) {}
+                try { _selfWindow.parent.postMessage({type: 'test_state', test: nmCopy}, '*'); } catch(e) {}
+                try { _selfWindow.parent.postMessage({type: 'result', test: tests[mi]}, '*'); } catch(e) {}
             }
-            try { window.parent.postMessage({type: 'complete', tests: tests, status: statusObj}, '*'); } catch(e) {}
+            try { _selfWindow.parent.postMessage({type: 'complete', tests: tests, status: statusObj}, '*'); } catch(e) {}
         }
 
         // Worker dispatch: if running in a worker (no document), postMessage results back
@@ -850,7 +896,8 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         var threw = false;
         try { fn(); } catch(e) {
             threw = true;
-            if (!(e instanceof ctor)) {
+            // Strict constructor match — TypeError thrown for Error ctor should FAIL
+            if (!e || e.constructor !== ctor) {
                 throw new AssertionError(msg || 'assert_throws_js: function "' + fn + '" threw object "' + e + '" (' + (e && typeof e === 'object' ? '"' + e.constructor.name + '"' : typeof e) + ') expected instance of function "' + ctor + '" ("' + ctor.name + '")');
             }
         }
@@ -864,7 +911,12 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         InvalidAccessError: 15, TypeMismatchError: 17, SecurityError: 18,
         NetworkError: 19, AbortError: 20, URLMismatchError: 21,
         QuotaExceededError: 22, TimeoutError: 23, InvalidNodeTypeError: 24,
-        DataCloneError: 25
+        DataCloneError: 25,
+        // Code-less DOMException types (code 0 per spec)
+        EncodingError: 0, NotReadableError: 0, UnknownError: 0,
+        ConstraintError: 0, DataError: 0, TransactionInactiveError: 0,
+        ReadOnlyError: 0, VersionError: 0, OperationError: 0,
+        NotAllowedError: 0
     };
     var __legacyCodeNames = {
         INDEX_SIZE_ERR: "IndexSizeError", HIERARCHY_REQUEST_ERR: "HierarchyRequestError",
@@ -1120,7 +1172,8 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
             if (globalThis._allow_uncaught_exception) return;
             var msg = (ev && ev.error) ? String(ev.error) : (ev && ev.message) ? ev.message : String(ev);
             if (!_uncaughtError) _uncaughtError = msg;
-            if (!_harnessError) _harnessError = msg;
+            // In single_test mode, errors fail the test, not the harness
+            if (!single_test_mode && !_harnessError) _harnessError = msg;
         });
     }
     // Also hook into the unhandled rejection tracker
@@ -1128,7 +1181,7 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
         if (globalThis._allow_uncaught_exception) return;
         var msg = ev && ev.reason ? String(ev.reason) : 'unhandled rejection';
         if (!_uncaughtError) _uncaughtError = msg;
-        if (!_harnessError) _harnessError = msg;
+        if (!single_test_mode && !_harnessError) _harnessError = msg;
     };
     if (typeof addEventListener === 'function') {
         addEventListener('unhandledrejection', _rejectionHandler);
@@ -1136,9 +1189,9 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     // In iframe contexts, Promise rejections dispatch on the parent window.
     // Also listen there so we catch them.
     try {
-        if (typeof window !== 'undefined' && window.parent && window.parent !== window &&
-            typeof window.parent.addEventListener === 'function') {
-            window.parent.addEventListener('unhandledrejection', _rejectionHandler);
+        if (_selfWindow.parent && _selfWindow.parent !== _selfWindow &&
+            typeof _selfWindow.parent.addEventListener === 'function') {
+            _selfWindow.parent.addEventListener('unhandledrejection', _rejectionHandler);
         }
     } catch(e) {}
 
@@ -1149,19 +1202,17 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
     setTimeout(function() {
         if (_explicit_done || _completionFired) return;
 
-        // Watchdog: if promise_chain doesn't resolve, force timeout after a delay.
-        // This handles promise_setup returning a never-resolving promise.
+        // Watchdog: polls for permanently-blocked promise chains (e.g. promise_setup
+        // failures). Only fires when an explicit failure is detected — does NOT impose
+        // a hard timeout (the outer Rust runner handles that).
         var _promiseResolved = false;
         var isChildOrWorker2 = false;
-        try { isChildOrWorker2 = (typeof window !== 'undefined' && window.parent && window.parent !== window); } catch(e) {}
+        try { isChildOrWorker2 = (_selfWindow.parent && _selfWindow.parent !== _selfWindow); } catch(e) {}
         try { if (typeof document === 'undefined' && typeof postMessage === 'function') isChildOrWorker2 = true; } catch(e) {}
         if (isChildOrWorker2) {
-            // Watchdog for permanently-blocked promise chains (e.g. promise_setup failures).
-            // Only fires when promise_setup has explicitly failed; normal tests get processed
-            // by the promise_chain.then() path below.
             var _watchdogCheck = function() {
                 if (_completionFired) return;
-                if (_promise_setup_failed || _harnessTimeout) {
+                if (_promise_setup_failed || _harnessError) {
                     for (var ai3 = 0; ai3 < _pending_async.length; ai3++) {
                         if (!_pending_async[ai3].test._done) {
                             _pending_async[ai3].result.status = 2;
@@ -1169,17 +1220,11 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
                             _pending_async[ai3].test.done();
                         }
                     }
-                    if (!_harnessTimeout && !_harnessError) _harnessTimeout = true;
                     _fireCompletion();
                     return;
                 }
-                // Re-check after a delay for cases where promise blocks without explicit failure
-                setTimeout(function() {
-                    if (!_promiseResolved && !_completionFired) {
-                        _harnessTimeout = true;
-                        _watchdogCheck();
-                    }
-                }, 200);
+                // Keep polling for late failures (e.g. rejected promise_setup)
+                setTimeout(_watchdogCheck, 50);
             };
             setTimeout(_watchdogCheck, 0);
         }
@@ -1190,7 +1235,7 @@ if (globalThis.__braille_stop_on_fail === undefined) globalThis.__braille_stop_o
 
             // Check if we're in a child frame or worker
             var isChildOrWorker = false;
-            try { isChildOrWorker = (typeof window !== 'undefined' && window.parent && window.parent !== window); } catch(e) {}
+            try { isChildOrWorker = (_selfWindow.parent && _selfWindow.parent !== _selfWindow); } catch(e) {}
             try { if (typeof document === 'undefined' && typeof postMessage === 'function') isChildOrWorker = true; } catch(e) {}
 
             if (isChildOrWorker) {

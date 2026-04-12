@@ -41,6 +41,7 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 ml-dsa = "0.1.0-rc.8"
 aes-kw = "0.3.0-rc.2"
 taffy = "0.7"
+wasmtime = { version = "43", default-features = false, features = ["runtime", "cranelift", "std"] }
 
 [features]
 real-sites = []
@@ -59,6 +60,7 @@ path = "src/bin/braille_worker.rs"
 [dev-dependencies]
 libtest-mimic = "0.8"
 criterion = "0.5"
+reqwest = { version = "0.12", features = ["blocking"] }
 
 [[bench]]
 name = "engine_bench"

@@ -1,13 +1,19 @@
 //! Replay tests for Proton Mail signup page.
-//! Recorded from live sessions with --record.
+//! Recorded from live session with --record on 2026-04-13.
+//! Full interaction: load → click Free (prices load) → click Free (select) → type username → type password → submit.
 
 use braille_engine::transcript::ReplayFetcher;
 use braille_engine::Engine;
 use braille_wire::SnapMode;
 
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/proton_signup_full_2026_04_13.json"
+);
+
 #[test]
 fn proton_signup_page_loads() {
-    let mut fetcher = ReplayFetcher::load("tests/fixtures/proton_signup.json").unwrap();
+    let mut fetcher = ReplayFetcher::load(FIXTURE).unwrap();
     let mut engine = Engine::new();
     let snapshot = engine
         .navigate("https://account.proton.me/signup", &mut fetcher, SnapMode::Compact)
@@ -21,7 +27,7 @@ fn proton_signup_page_loads() {
 
 #[test]
 fn proton_signup_select_free_plan() {
-    let mut fetcher = ReplayFetcher::load("tests/fixtures/proton_signup.json").unwrap();
+    let mut fetcher = ReplayFetcher::load(FIXTURE).unwrap();
     let mut engine = Engine::new();
     let snapshot = engine
         .navigate("https://account.proton.me/signup", &mut fetcher, SnapMode::Accessibility)
@@ -29,9 +35,18 @@ fn proton_signup_select_free_plan() {
 
     assert!(snapshot.contains("Free"), "no Free plan option");
 
+    // First click reveals prices (triggers API fetches)
     engine.handle_click("@e6");
     engine.settle();
+    engine.settle_with_fetches(&mut fetcher);
+
+    // Second click selects the Free plan (should hide checkout)
+    engine.handle_click("@e6");
+    engine.settle();
+    engine.settle_with_fetches(&mut fetcher);
+
     let snap2 = engine.snapshot(SnapMode::Accessibility);
+    eprintln!("[proton] after selecting Free plan:\n{snap2}");
 
     assert!(
         !snap2.contains("Credit/debit card"),
@@ -43,14 +58,19 @@ fn proton_signup_select_free_plan() {
 /// doesn't re-render (no API responses to trigger state updates).
 #[test]
 fn proton_signup_type_username() {
-    let mut fetcher = ReplayFetcher::load("tests/fixtures/proton_signup.json").unwrap();
+    let mut fetcher = ReplayFetcher::load(FIXTURE).unwrap();
     let mut engine = Engine::new();
     let _snapshot = engine
         .navigate("https://account.proton.me/signup", &mut fetcher, SnapMode::Accessibility)
         .unwrap();
 
+    // Select free plan first (two clicks with fetch resolution)
     engine.handle_click("@e6");
     engine.settle();
+    engine.settle_with_fetches(&mut fetcher);
+    engine.handle_click("@e6");
+    engine.settle();
+    engine.settle_with_fetches(&mut fetcher);
 
     let result = engine.handle_type("@e11", "braille-test-bot");
     assert!(result.is_ok(), "type failed: {:?}", result);
@@ -67,12 +87,10 @@ fn proton_signup_type_username() {
 
 /// Full daemon flow: navigate, click free plan with fetch resolution, then type.
 /// This reproduces the live daemon behavior where React re-renders between interactions
-/// due to API responses. React 18's event delegation rejects our dispatched events
-/// (likely due to internal fiber mounting checks), so fire_input_events directly
-/// invokes the React onChange handler from __reactProps$ as a fallback.
+/// due to API responses.
 #[test]
 fn proton_signup_type_with_full_fetch_resolution() {
-    let mut fetcher = ReplayFetcher::load("tests/fixtures/proton_signup_full.json").unwrap();
+    let mut fetcher = ReplayFetcher::load(FIXTURE).unwrap();
     let mut engine = Engine::new();
     let _snapshot = engine
         .navigate("https://account.proton.me/signup", &mut fetcher, SnapMode::Compact)
@@ -90,6 +108,7 @@ fn proton_signup_type_with_full_fetch_resolution() {
     let result = engine.handle_type("@e11", "braille-test-bot");
     assert!(result.is_ok(), "type failed: {:?}", result);
     engine.settle();
+    engine.settle_with_fetches(&mut fetcher);
 
     let forms = engine.snapshot(SnapMode::Forms);
     eprintln!("[proton] forms after type+settle: {forms}");

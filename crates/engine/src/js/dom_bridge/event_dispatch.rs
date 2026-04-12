@@ -443,7 +443,7 @@ pub(super) fn event_dispatch_js() -> &'static str {
             commonInit.buttons = 0;
             el.dispatchEvent(new PointerEvent('pointerup', Object.assign({pointerId:1, pointerType:'mouse'}, commonInit)));
             el.dispatchEvent(new MouseEvent('mouseup', commonInit));
-            el.click();
+            el.dispatchEvent(new MouseEvent('click', commonInit));
         };
 
         // Unified link load event firing.  dispatchEvent already invokes on<type>
