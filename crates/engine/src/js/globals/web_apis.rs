@@ -682,14 +682,20 @@ const WEB_APIS_JS: &str = r#"
         globalThis.cancelIdleCallback = function(id) { clearTimeout(id); };
         // getSelection is installed by dom_bridge/selection.rs (needs Range/BrailleRange)
 
-        // MessageChannel — React 18 scheduler uses this for async rendering
+        // MessageChannel — React 18 scheduler uses this for async rendering.
+        // We dispatch via Promise.resolve().then() (microtask) instead of setTimeout
+        // (macrotask through Rust timer system). This keeps execution in JS without
+        // N round-trips through Rust's timer infrastructure, while avoiding the
+        // stack overflow that synchronous dispatch causes (React's scheduler calls
+        // postMessage inside onmessage, creating recursion).
         globalThis.MessageChannel = class MessageChannel {
             constructor() {
                 var self = this;
                 this.port1 = {
                     onmessage: null,
                     postMessage: function(msg) {
-                        if (self.port2.onmessage) setTimeout(function() { self.port2.onmessage({data: msg}); }, 0);
+                        var handler = self.port2.onmessage;
+                        if (handler) Promise.resolve({data: msg}).then(handler);
                     },
                     close: function() {},
                     addEventListener: function() {},
@@ -698,7 +704,8 @@ const WEB_APIS_JS: &str = r#"
                 this.port2 = {
                     onmessage: null,
                     postMessage: function(msg) {
-                        if (self.port1.onmessage) setTimeout(function() { self.port1.onmessage({data: msg}); }, 0);
+                        var handler = self.port1.onmessage;
+                        if (handler) Promise.resolve({data: msg}).then(handler);
                     },
                     close: function() {},
                     addEventListener: function() {},

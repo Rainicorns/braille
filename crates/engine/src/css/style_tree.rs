@@ -488,6 +488,11 @@ fn cascade_to_computed_entries(cascaded: &CascadedValues) -> HashMap<String, cra
 /// The walk is DFS (parent before child) so that inheritance works correctly:
 /// a child can look up its parent's already-computed style.
 pub fn compute_all_styles(tree: &mut DomTree) {
+    // Skip if no DOM mutations have occurred since last style computation
+    if !tree.styles_dirty {
+        return;
+    }
+
     // 1. Build UA rules (parsed through the real cssparser path)
     let ua_rules = build_ua_rules();
 
