@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use braille_engine::{Engine, FetchedResources};
+use braille_engine::{Engine, FetchedResources, IframeResource};
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -2212,7 +2212,50 @@ pub fn extract_worker_js_refs(html: &str, html_path: &Path) -> Vec<String> {
     refs
 }
 
-pub fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<String> {
+fn mime_from_extension(ext: &str) -> &'static str {
+    match ext {
+        "html" | "htm" => "text/html",
+        "xhtml" => "application/xhtml+xml",
+        "xml" => "application/xml",
+        "svg" => "image/svg+xml",
+        "css" => "text/css",
+        "js" | "mjs" => "text/javascript",
+        "json" => "application/json",
+        "txt" => "text/plain",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "pdf" => "application/pdf",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        _ => "text/html",
+    }
+}
+
+/// Parse WPT .py script query params to determine Content-Type.
+/// Supports `?type=X&subtype=Y` pattern used by contenttype_setter.py.
+fn content_type_from_py_query(src: &str) -> String {
+    let query = match src.split('?').nth(1) {
+        Some(q) => q,
+        None => return "text/html".to_string(),
+    };
+    let mut type_val = None;
+    let mut subtype_val = None;
+    for param in query.split('&') {
+        if let Some(v) = param.strip_prefix("type=") {
+            type_val = Some(v);
+        } else if let Some(v) = param.strip_prefix("subtype=") {
+            subtype_val = Some(v);
+        }
+    }
+    match (type_val, subtype_val) {
+        (Some(t), Some(s)) => format!("{}/{}", t, s),
+        _ => "text/html".to_string(),
+    }
+}
+
+pub fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<IframeResource> {
     // Strip fragment and query params before resolving filesystem path
     let src_no_fragment = src.split('#').next().unwrap_or(src);
     let clean_src = src_no_fragment.split('?').next().unwrap_or(src_no_fragment);
@@ -2221,7 +2264,104 @@ pub fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<String> {
     } else {
         html_path.parent().unwrap().join(clean_src)
     };
-    std::fs::read_to_string(&resolved_path).ok()
+
+    let ext = resolved_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // For .py WPT server scripts, parse query params for content type
+    let content_type = if ext == "py" {
+        content_type_from_py_query(src_no_fragment)
+    } else {
+        mime_from_extension(&ext).to_string()
+    };
+
+    match ext.as_str() {
+        "html" | "htm" | "xhtml" | "" => {
+            let content = std::fs::read_to_string(&resolved_path).ok()?;
+            Some(IframeResource { content, content_type })
+        }
+        "py" => {
+            // WPT .py scripts — simulate by reading content from pipe= or returning shell
+            if resolved_path.exists() {
+                Some(IframeResource {
+                    content: "<html><head></head><body></body></html>".to_string(),
+                    content_type,
+                })
+            } else {
+                None
+            }
+        }
+        _ => {
+            if resolved_path.exists() {
+                Some(IframeResource {
+                    content: "<html><head></head><body></body></html>".to_string(),
+                    content_type,
+                })
+            } else {
+                None
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WPT template substitution for .sub. tests
+// ---------------------------------------------------------------------------
+
+/// Perform WPT-style template substitution on HTML content.
+/// Replaces `{{variable}}` patterns used in `.sub.html` / `.sub.window.js` tests.
+/// See https://web-platform-tests.org/writing-tests/server-pipes.html#sub
+pub fn wpt_substitute(html: &str, test_path: &Path) -> String {
+    if !html.contains("{{") {
+        return html.to_string();
+    }
+
+    let path_str = test_path
+        .to_str()
+        .unwrap_or("/test.html");
+
+    // Build the path relative to the WPT root
+    let rel_path = if let Some(idx) = path_str.find("tests/wpt/") {
+        &path_str[idx + "tests/wpt".len()..]
+    } else {
+        path_str
+    };
+
+    let mut result = html.to_string();
+
+    // Location substitutions
+    result = result.replace("{{location[scheme]}}", "http");
+    result = result.replace("{{location[server]}}", "web-platform.test:8080");
+    // {{location[path]}} should be the test's own path
+    result = result.replace("{{location[path]}}", rel_path);
+    result = result.replace("{{location[host]}}", "web-platform.test:8080");
+    result = result.replace("{{location[hostname]}}", "web-platform.test");
+    result = result.replace("{{location[port]}}", "8080");
+    result = result.replace("{{location[origin]}}", "http://web-platform.test:8080");
+
+    // Domain substitutions
+    result = result.replace("{{domains[]}}", "web-platform.test");
+    result = result.replace("{{domains[www]}}", "www.web-platform.test");
+    result = result.replace("{{domains[www1]}}", "www1.web-platform.test");
+    result = result.replace("{{domains[www2]}}", "www2.web-platform.test");
+
+    // Host substitutions (includes port)
+    result = result.replace("{{hosts[][]}}", "web-platform.test");
+    result = result.replace("{{hosts[alt][]}}", "alt.web-platform.test");
+    result = result.replace("{{host}}", "web-platform.test");
+
+    // Port substitutions
+    result = result.replace("{{ports[http][0]}}", "8080");
+    result = result.replace("{{ports[http][1]}}", "8081");
+    result = result.replace("{{ports[https][0]}}", "8443");
+    result = result.replace("{{ports[https][1]}}", "8444");
+    result = result.replace("{{ports[ws][0]}}", "9001");
+    result = result.replace("{{ports[wss][0]}}", "9444");
+
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -2229,7 +2369,9 @@ pub fn resolve_iframe_src(html_path: &Path, src: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 pub fn wrap_js_in_html(js_path: &Path) -> String {
-    let js_content = std::fs::read_to_string(js_path).unwrap();
+    let raw_js = std::fs::read_to_string(js_path).unwrap();
+    // Apply WPT template substitution for .sub. JS tests
+    let js_content = wpt_substitute(&raw_js, js_path);
     let title = js_path.file_stem().unwrap().to_str().unwrap();
 
     // Detect META: global=shadowrealm (only if window is NOT listed — prefer window mode)
@@ -2416,7 +2558,7 @@ const INCREMENTAL_TESTS: &[&str] = &["MutationObserver-document", "log-insertion
 // ---------------------------------------------------------------------------
 
 pub fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> WptTestResult {
-    let html = match std::fs::read_to_string(html_path) {
+    let raw_html = match std::fs::read_to_string(html_path) {
         Ok(h) => h,
         Err(e) => {
             return WptTestResult {
@@ -2427,6 +2569,9 @@ pub fn run_wpt_test(html_path: &Path, preamble: &str, report_shim: &str) -> WptT
             };
         }
     };
+
+    // Apply WPT template substitution for .sub. tests
+    let html = wpt_substitute(&raw_html, html_path);
 
     // Extract variant meta tags: <meta name="variant" content="?include=foo"/>
     let variants = extract_variants(&html);
@@ -2663,7 +2808,7 @@ fn run_wpt_test_with_search(
     let mut fetched_iframes = HashMap::new();
     for src in &iframe_srcs {
         let src_no_fragment = src.split('#').next().unwrap_or(src);
-        if let Some(content) = resolve_iframe_src(html_path, src) {
+        if let Some(resource) = resolve_iframe_src(html_path, src) {
             // Also extract and resolve scripts referenced by the iframe's HTML.
             // Child iframes need their own <script src="..."> resolved too (e.g. testharness.js).
             let iframe_dir = html_path.parent().unwrap().join(src.split('?').next().unwrap_or(src));
@@ -2678,7 +2823,7 @@ fn run_wpt_test_with_search(
                     html_path.parent().unwrap().join(clean)
                 }
             };
-            let child_srcs = extract_script_srcs(&content);
+            let child_srcs = extract_script_srcs(&resource.content);
             for child_src in &child_srcs {
                 if !fetched_scripts.contains_key(child_src) {
                     if let Some(child_content) = resolve_script_src(&iframe_html_path, child_src, &variant_preamble, report_shim) {
@@ -2686,7 +2831,7 @@ fn run_wpt_test_with_search(
                     }
                 }
             }
-            fetched_iframes.insert(src_no_fragment.to_string(), content);
+            fetched_iframes.insert(src_no_fragment.to_string(), resource);
         }
     }
 

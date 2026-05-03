@@ -89,7 +89,7 @@ pub struct EngineState {
     pub next_timer_id: u32,
     pub timer_current_time_ms: u64,
     pub location_url: String,
-    pub iframe_src_content: HashMap<String, String>,
+    pub iframe_src_content: HashMap<String, (String, String)>,
     pub pending_navigation: Option<String>,
     pub pending_worker_spawns: Vec<PendingWorkerSpawn>,
     pub pending_worker_messages: Vec<PendingWorkerMessage>,

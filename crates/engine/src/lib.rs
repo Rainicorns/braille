@@ -33,18 +33,110 @@ pub use crate::meta_refresh::{check_refresh_header, MetaRefresh};
 pub use crate::navigation::{FetchProvider, MockFetcher};
 pub use crate::scripts::ScriptDescriptor;
 
+/// Snapshot of an element's transition/animation state before style recomputation.
+struct TransitionSnapshot {
+    transition_property: String,
+    transition_duration: String,
+    property_values: HashMap<String, String>,
+    animation_name: String,
+    #[allow(dead_code)]
+    animation_duration: String,
+}
+
+/// Parse a CSS duration list like "0.3s, 200ms" into seconds.
+fn parse_duration_list(s: &str) -> Vec<f64> {
+    s.split(',')
+        .map(|part| {
+            let part = part.trim();
+            if let Some(ms) = part.strip_suffix("ms") {
+                ms.trim().parse::<f64>().unwrap_or(0.0) / 1000.0
+            } else if let Some(secs) = part.strip_suffix('s') {
+                secs.trim().parse::<f64>().unwrap_or(0.0)
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+/// Parse CSS `transition` shorthand like "opacity 0.3s ease, transform 0.5s"
+/// into (property_names, durations).
+fn parse_transition_shorthand(s: &str) -> (Vec<String>, Vec<String>) {
+    let mut props = Vec::new();
+    let mut durations = Vec::new();
+
+    for part in s.split(',') {
+        let tokens: Vec<&str> = part.split_whitespace().collect();
+        let mut prop = "all".to_string();
+        let mut dur = "0s".to_string();
+
+        for token in &tokens {
+            if token.ends_with('s') || token.ends_with("ms") {
+                // First time-like token is duration
+                if dur == "0s" {
+                    dur = token.to_string();
+                }
+            } else if !token.contains('(') && *token != "ease" && *token != "ease-in"
+                && *token != "ease-out" && *token != "ease-in-out" && *token != "linear"
+                && *token != "step-start" && *token != "step-end"
+            {
+                // It's a property name
+                prop = token.to_string();
+            }
+        }
+
+        props.push(prop);
+        durations.push(dur);
+    }
+
+    (props, durations)
+}
+
+/// Parse CSS `animation` shorthand like "fadeout 0.5s forwards"
+/// into (animation_name, animation_duration).
+fn parse_animation_shorthand(s: &str) -> (String, String) {
+    let tokens: Vec<&str> = s.split_whitespace().collect();
+    let mut name = "none".to_string();
+    let mut dur = "0s".to_string();
+
+    // Known CSS keywords that are NOT animation names
+    let keywords = [
+        "none", "normal", "reverse", "alternate", "alternate-reverse",
+        "running", "paused", "forwards", "backwards", "both",
+        "infinite", "ease", "ease-in", "ease-out", "ease-in-out", "linear",
+        "step-start", "step-end",
+    ];
+
+    for token in &tokens {
+        if token.ends_with('s') || token.ends_with("ms") {
+            if dur == "0s" {
+                dur = token.to_string();
+            }
+        } else if token.parse::<f64>().is_err() && !keywords.contains(token) {
+            name = token.to_string();
+        }
+    }
+
+    (name, dur)
+}
+
+/// A pre-fetched iframe resource with content and MIME type.
+#[derive(Clone, Debug)]
+pub struct IframeResource {
+    pub content: String,
+    pub content_type: String,
+}
+
 /// Pre-fetched resources for external scripts, iframe content, and stylesheets.
 #[derive(Default)]
 pub struct FetchedResources {
     /// Maps script src URL -> fetched JavaScript content.
     pub scripts: HashMap<String, String>,
-    /// Maps iframe src URL -> fetched HTML content.
-    pub iframes: HashMap<String, String>,
+    /// Maps iframe src URL -> fetched iframe resource (content + content_type).
+    pub iframes: HashMap<String, IframeResource>,
     /// Maps link href URL -> fetched CSS content.
     pub css: HashMap<String, String>,
 }
-
-// Note: derive(Default) used instead of manual impl
 
 impl FetchedResources {
     /// Create a FetchedResources with only scripts (no iframes).
@@ -188,6 +280,8 @@ impl Engine {
         }
 
         let starting_time = self.runtime.as_mut().unwrap().current_time_ms();
+        // Track which elements have already had animationend fired in this settle
+        let mut fired_animations: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
         let wall_start = std::time::Instant::now();
 
         // Outer loop: drain JS → render pass → repeat if render caused new JS work
@@ -230,9 +324,18 @@ impl Engine {
             // Phase 3: Render pass — CSS, observers, focus (once per settle cycle)
             // Focus/hover state is already pushed to tree by JS via __n_setFocusedNode
             // and __n_setHoveredNode — no eval polling needed.
+
+            // Snapshot transition/animation state before style recomputation
+            let transition_snapshot = self.snapshot_transition_state();
+
             crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
 
             let mut needs_relayout = self.validate_focus_after_styles();
+
+            // Fire transitionend/animationend events for changed properties
+            if self.fire_transition_events(&transition_snapshot, &mut fired_animations) {
+                needs_relayout = true;
+            }
 
             // ResizeObserver — direct function call, no eval
             if self.runtime.as_mut().unwrap().call_global_fn_bool("__ro_check") {
@@ -303,6 +406,269 @@ impl Engine {
         true
     }
 
+    /// Snapshot computed style values for elements that have CSS transitions
+    /// or animations defined. Called before `compute_all_styles` so we can
+    /// detect property changes afterward.
+    fn snapshot_transition_state(
+        &self,
+    ) -> HashMap<NodeId, TransitionSnapshot> {
+        let tree = self.tree.borrow();
+        let mut snapshots = HashMap::new();
+
+        for nid in 0..tree.node_count() {
+            let node = tree.get_node(nid);
+            let cs = match &node.computed_style {
+                Some(cs) => cs,
+                None => continue,
+            };
+
+            // Try longhand properties first, then parse shorthand
+            let mut transition_property = cs
+                .get("transition-property")
+                .cloned()
+                .unwrap_or_default();
+            let mut transition_duration = cs
+                .get("transition-duration")
+                .cloned()
+                .unwrap_or_else(|| "0s".to_string());
+
+            // Parse the `transition` shorthand if longhands are empty/default
+            let transition_shorthand = cs.get("transition").map(|s| s.as_str()).unwrap_or("");
+            if !transition_shorthand.is_empty() && transition_shorthand != "none" {
+                let (parsed_props, parsed_durs) = parse_transition_shorthand(transition_shorthand);
+                if (transition_property.is_empty() || transition_property == "all") && !parsed_props.is_empty() {
+                    transition_property = parsed_props.join(", ");
+                }
+                if (transition_duration == "0s" || transition_duration == "0ms" || transition_duration.is_empty()) && !parsed_durs.is_empty() {
+                    transition_duration = parsed_durs.join(", ");
+                }
+            }
+
+            let animation_name = cs
+                .get("animation-name")
+                .map(|s| s.as_str())
+                .unwrap_or("none");
+            let animation_duration = cs
+                .get("animation-duration")
+                .map(|s| s.as_str())
+                .unwrap_or("0s");
+
+            // Also parse animation shorthand
+            let animation_shorthand = cs.get("animation").map(|s| s.as_str()).unwrap_or("");
+            let (parsed_anim_name, parsed_anim_dur) = if !animation_shorthand.is_empty() && animation_shorthand != "none" {
+                parse_animation_shorthand(animation_shorthand)
+            } else {
+                (animation_name.to_string(), animation_duration.to_string())
+            };
+
+            let has_transition = transition_duration != "0s" && transition_duration != "0ms" && !transition_duration.is_empty();
+            let has_animation = parsed_anim_name != "none"
+                && !parsed_anim_name.is_empty()
+                && parsed_anim_dur != "0s"
+                && parsed_anim_dur != "0ms";
+
+            if !has_transition && !has_animation {
+                continue;
+            }
+
+            if transition_property.is_empty() {
+                transition_property = "all".to_string();
+            }
+
+            // Collect current values of transitioning properties
+            let mut property_values = HashMap::new();
+            if has_transition {
+                if transition_property == "all" {
+                    for (k, v) in cs.iter() {
+                        property_values.insert(k.clone(), v.clone());
+                    }
+                } else {
+                    for prop in transition_property.split(',') {
+                        let prop = prop.trim();
+                        if let Some(val) = cs.get(prop) {
+                            property_values.insert(prop.to_string(), val.clone());
+                        }
+                    }
+                }
+            }
+
+            snapshots.insert(
+                nid,
+                TransitionSnapshot {
+                    transition_property,
+                    transition_duration: transition_duration.clone(),
+                    property_values,
+                    animation_name: parsed_anim_name,
+                    animation_duration: parsed_anim_dur,
+                },
+            );
+        }
+
+        snapshots
+    }
+
+    /// After style recomputation, compare old vs new computed styles for elements
+    /// with CSS transitions and fire `transitionend` events for changed properties.
+    /// Also fire `animationend` for elements with newly-applied animations.
+    fn fire_transition_events(
+        &mut self,
+        snapshots: &HashMap<NodeId, TransitionSnapshot>,
+        fired_animations: &mut std::collections::HashSet<NodeId>,
+    ) -> bool {
+        let tree = self.tree.borrow();
+        let mut events_to_fire: Vec<(NodeId, String, f64)> = Vec::new();
+        let mut animation_events: Vec<(NodeId, String, f64)> = Vec::new();
+
+        // 1. Check snapshotted elements for transition property changes
+        for (&nid, snapshot) in snapshots {
+            let node = tree.get_node(nid);
+            let cs = match &node.computed_style {
+                Some(cs) => cs,
+                None => continue,
+            };
+
+            let transition_duration = &snapshot.transition_duration;
+            if transition_duration != "0s" && transition_duration != "0ms" {
+                let durations: Vec<f64> = parse_duration_list(transition_duration);
+                let props: Vec<&str> = snapshot.transition_property.split(',')
+                    .map(|s| s.trim())
+                    .collect();
+
+                if snapshot.transition_property == "all" {
+                    let duration = durations.first().copied().unwrap_or(0.0);
+                    for (prop, old_val) in &snapshot.property_values {
+                        let new_val = cs.get(prop).map(|s| s.as_str()).unwrap_or("");
+                        if new_val != old_val {
+                            events_to_fire.push((nid, prop.clone(), duration));
+                        }
+                    }
+                } else {
+                    for (i, prop) in props.iter().enumerate() {
+                        let duration = durations.get(i).or(durations.last()).copied().unwrap_or(0.0);
+                        if let Some(old_val) = snapshot.property_values.get(*prop) {
+                            let new_val = cs.get(*prop).map(|s| s.as_str()).unwrap_or("");
+                            if new_val != old_val {
+                                events_to_fire.push((nid, prop.to_string(), duration));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Scan ALL elements for newly-applied animations (not just snapshotted ones)
+        for nid in 0..tree.node_count() {
+            let node = tree.get_node(nid);
+            let cs = match &node.computed_style {
+                Some(cs) => cs,
+                None => continue,
+            };
+
+            // Get the raw animation-name (which stores the shorthand value)
+            let anim_raw = cs.get("animation-name").map(|s| s.as_str()).unwrap_or("none");
+            if anim_raw == "none" || anim_raw.is_empty() {
+                continue;
+            }
+
+            // Skip if we already fired animationend for this element in this settle
+            if fired_animations.contains(&nid) {
+                continue;
+            }
+
+            // Check if this animation was already present in the snapshot
+            if let Some(snapshot) = snapshots.get(&nid) {
+                // Parse both old and new to compare actual animation names
+                let old_name = if snapshot.animation_name != "none" && !snapshot.animation_name.is_empty() {
+                    snapshot.animation_name.clone()
+                } else {
+                    "none".to_string()
+                };
+                let (new_name, new_dur) = parse_animation_shorthand(anim_raw);
+                if old_name != "none" && old_name == new_name {
+                    // Animation was already running, don't re-fire
+                    continue;
+                }
+                if new_name != "none" && !new_name.is_empty() && new_dur != "0s" && new_dur != "0ms" {
+                    let duration = parse_duration_list(&new_dur).first().copied().unwrap_or(0.0);
+                    animation_events.push((nid, new_name, duration));
+                    fired_animations.insert(nid);
+                }
+            } else {
+                // No snapshot — this is a new animation
+                let (name, dur) = parse_animation_shorthand(anim_raw);
+                if name != "none" && !name.is_empty() && dur != "0s" && dur != "0ms" {
+                    let duration = parse_duration_list(&dur).first().copied().unwrap_or(0.0);
+                    animation_events.push((nid, name, duration));
+                    fired_animations.insert(nid);
+                }
+            }
+        }
+        drop(tree);
+
+        if events_to_fire.is_empty() && animation_events.is_empty() {
+            return false;
+        }
+
+        let runtime = self.runtime.as_mut().unwrap();
+
+        // Fire transitionend events (with webkit prefix fallback)
+        for (nid, prop_name, elapsed) in &events_to_fire {
+            let js = format!(
+                r#"(function(){{
+                    var el = __braille_get_element_wrapper({nid});
+                    if (!el) return;
+                    var opts = {{
+                        propertyName: '{prop}', elapsedTime: {elapsed},
+                        pseudoElement: '', bubbles: true, cancelable: false
+                    }};
+                    el.dispatchEvent(new TransitionEvent('transitionend', opts));
+                    if (!__hasEventListeners(el, 'transitionend')) {{
+                        el.dispatchEvent(new TransitionEvent('webkitTransitionEnd', opts));
+                    }}
+                }})()"#,
+                nid = nid,
+                prop = prop_name,
+                elapsed = elapsed,
+            );
+            let _ = runtime.eval(&js);
+            runtime.run_jobs();
+        }
+
+        // Fire animation lifecycle events: animationstart then animationend.
+        // Webkit-prefixed aliases only fire if no unprefixed listener exists (per spec).
+        for (nid, anim_name, elapsed) in &animation_events {
+            let js = format!(
+                r#"(function(){{
+                    var el = __braille_get_element_wrapper({nid});
+                    if (!el) return;
+                    var startOpts = {{
+                        animationName: '{name}', elapsedTime: 0,
+                        pseudoElement: '', bubbles: true, cancelable: false
+                    }};
+                    el.dispatchEvent(new AnimationEvent('animationstart', startOpts));
+                    if (!__hasEventListeners(el, 'animationstart')) {{
+                        el.dispatchEvent(new AnimationEvent('webkitAnimationStart', startOpts));
+                    }}
+                    var endOpts = {{
+                        animationName: '{name}', elapsedTime: {elapsed},
+                        pseudoElement: '', bubbles: true, cancelable: false
+                    }};
+                    el.dispatchEvent(new AnimationEvent('animationend', endOpts));
+                    if (!__hasEventListeners(el, 'animationend')) {{
+                        el.dispatchEvent(new AnimationEvent('webkitAnimationEnd', endOpts));
+                    }}
+                }})()"#,
+                nid = nid,
+                name = anim_name,
+                elapsed = elapsed,
+            );
+            let _ = runtime.eval(&js);
+            runtime.run_jobs();
+        }
+
+        true
+    }
+
     /// Check for mandatory scroll-snap containers that are newly visible and
     /// fire `scrollend` on them. Returns true if any events were fired.
     fn fire_scroll_snap_events(&mut self) -> bool {
@@ -338,13 +704,21 @@ impl Engine {
                         if (!el) return '';
                         var snapped = __computeSnapOffset(el, el.scrollLeft, el.scrollTop);
                         var needsSnap = (snapped.x !== el.scrollLeft || snapped.y !== el.scrollTop);
+                        // Skip re-snap if we already settled to this exact position
+                        // (JS event handlers may have caused layout shift without calling scrollTo)
+                        if (needsSnap && el.__snap_settled &&
+                            el.__snap_settled.x === el.scrollLeft && el.__snap_settled.y === el.scrollTop) {{
+                            needsSnap = false;
+                        }}
                         var firstInit = !el.__snap_initialized;
                         if (needsSnap) {{
                             el.__snap_initialized = true;
                             el.scrollTo({{ left: snapped.x, top: snapped.y }});
+                            el.__snap_settled = {{ x: snapped.x, y: snapped.y }};
                             return '1';
                         }} else if (firstInit) {{
                             el.__snap_initialized = true;
+                            el.__snap_settled = {{ x: el.scrollLeft, y: el.scrollTop }};
                             el.dispatchEvent(new Event('scrollend', {{bubbles: false}}));
                             return '1';
                         }}

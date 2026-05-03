@@ -8,12 +8,24 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
     let lookup_fn =
         Function::new(ctx.clone(), move |url: String| -> String {
             with_state(|st| {
-                st.iframe_src_content.get(&url).cloned().unwrap_or_default()
+                st.iframe_src_content.get(&url).map(|(c, _)| c.clone()).unwrap_or_default()
             })
         })
         .unwrap();
     ctx.globals()
         .set("__braille_iframe_lookup_content", lookup_fn)
+        .unwrap();
+
+    // Native function: look up pre-fetched iframe content_type by URL
+    let lookup_ct_fn =
+        Function::new(ctx.clone(), move |url: String| -> String {
+            with_state(|st| {
+                st.iframe_src_content.get(&url).map(|(_, ct)| ct.clone()).unwrap_or_default()
+            })
+        })
+        .unwrap();
+    ctx.globals()
+        .set("__braille_iframe_lookup_content_type", lookup_ct_fn)
         .unwrap();
 
     // Native function: get iframe src attribute from the DomTree
@@ -329,6 +341,7 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     'Headers', 'Request', 'Response', 'FormData', 'ReadableStream',
                     'PerformanceObserver', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver',
                     'EventSource', 'Worker', 'SharedWorker',
+                    'Function',
                     'Proxy', 'Reflect', 'WeakMap', 'WeakSet', 'WeakRef',
                     'Float32Array', 'Float64Array', 'Int8Array', 'Int16Array', 'Int32Array',
                     'Uint16Array', 'Uint32Array', 'Uint8ClampedArray',
@@ -366,6 +379,23 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     if (!(gname in iframeWindow) && typeof globalThis[gname] !== 'undefined') {
                         iframeWindow[gname] = globalThis[gname];
                     }
+                }
+
+                // Create isolated AbortSignal/AbortController for this iframe
+                // (can't set _DOMEx on the shared reference — it would mutate the parent's)
+                if (iframeWindow.AbortSignal && iframeWindow.DOMException) {
+                    var parentAS = iframeWindow.AbortSignal;
+                    var iframeDOMEx = iframeWindow.DOMException;
+                    var iframeAS = Object.create(parentAS);
+                    iframeAS._DOMEx = iframeDOMEx;
+                    iframeAS.prototype = parentAS.prototype;
+                    iframeWindow.AbortSignal = iframeAS;
+                    iframeWindow.AbortController = (function(AS, DOMEx) {
+                        return class AbortController {
+                            constructor() { this.signal = AS._makeSignal(); }
+                            abort(reason) { AS._signalAbort(this.signal, reason !== undefined ? reason : new DOMEx('The operation was aborted.', 'AbortError')); }
+                        };
+                    })(iframeAS, iframeDOMEx);
                 }
 
                 return { window: iframeWindow, parentProxy: parentProxy };
@@ -569,7 +599,10 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                 } else {
                     iframeDoc = buildRealDomDocument(iframeNodeId);
                 }
-                iframeDoc.contentType = 'text/html';
+                // Derive contentType from pre-fetched metadata or default to text/html
+                var iframeSrc = (iframeEl && iframeEl.getAttribute) ? (iframeEl.getAttribute('src') || '') : '';
+                var ct = iframeSrc ? __braille_iframe_lookup_content_type(iframeSrc) : '';
+                iframeDoc.contentType = ct || 'text/html';
 
                 var built = buildIframeWindow(iframeEl, iframeDoc);
 
@@ -701,6 +734,12 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     var fragment = null;
                     if (__isAboutBlankSrc(src)) {
                         content = '<html><head></head><body></body></html>';
+                    } else if (src.substring(0, 5) === 'data:') {
+                        var commaIdx = src.indexOf(',');
+                        if (commaIdx < 0) continue;
+                        var meta = src.substring(5, commaIdx).toLowerCase();
+                        var raw = src.substring(commaIdx + 1);
+                        content = meta.indexOf('base64') >= 0 ? atob(raw) : decodeURIComponent(raw);
                     } else {
                         // Strip URL fragment before content lookup
                         var srcNoFrag = src;
@@ -793,6 +832,41 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                         __initSingleIframe(this);
                         return;
                     }
+                    // Handle data: URIs — content is inline
+                    if (val.substring(0, 5) === 'data:') {
+                        var commaIdx = val.indexOf(',');
+                        if (commaIdx >= 0) {
+                            var meta = val.substring(5, commaIdx).toLowerCase();
+                            var raw = val.substring(commaIdx + 1);
+                            var content = meta.indexOf('base64') >= 0 ? atob(raw) : decodeURIComponent(raw);
+                            var realm = __braille_create_iframe_realm(this.__nid, content);
+                            if (realm && realm.document) {
+                                var ct = 'text/html';
+                                var semi = meta.indexOf(';');
+                                if (semi > 0) ct = meta.substring(0, semi);
+                                else if (meta.length > 0 && meta.indexOf('base64') < 0) ct = meta;
+                                realm.document.contentType = ct || 'text/html';
+                            }
+                            if (this.dispatchEvent) this.dispatchEvent(new Event('load'));
+                            return;
+                        }
+                    }
+                    // Handle javascript: URIs — create about:blank realm, eval, use string result
+                    if (val.substring(0, 11) === 'javascript:') {
+                        var realm = __braille_create_iframe_realm(this.__nid, '<html><head></head><body></body></html>');
+                        if (realm) {
+                            var code = decodeURIComponent(val.substring(11));
+                            var result = execScriptInIframe(realm, code);
+                            if (typeof result === 'string') {
+                                // Replace document body with the result string
+                                if (realm.document.body) {
+                                    realm.document.body.textContent = result;
+                                }
+                            }
+                        }
+                        if (this.dispatchEvent) this.dispatchEvent(new Event('load'));
+                        return;
+                    }
                     // Strip fragment for content lookup
                     var srcNoFrag = val;
                     var fragment = null;
@@ -808,6 +882,11 @@ pub(super) fn register_iframe(ctx: &Ctx<'_>) {
                     // Set URL fragment for :target
                     if (fragment && realm && realm.document && realm.document.__nid !== undefined) {
                         __n_setUrlFragment(realm.document.__nid, fragment);
+                    }
+                    // Register window[name] for named access (HTML spec §7.3.3)
+                    var iframeName = this.getAttribute('name');
+                    if (iframeName && realm && realm.window && !(iframeName in globalThis)) {
+                        globalThis[iframeName] = realm.window;
                     }
                     // Fire load on iframe's window (for window.onload handlers)
                     if (realm && realm.window && typeof realm.window.onload === 'function') {

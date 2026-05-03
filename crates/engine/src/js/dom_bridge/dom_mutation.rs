@@ -153,10 +153,13 @@ pub(super) fn dom_mutation_js() -> &'static str {
             return child;
         };
         EP.replaceChild = function(newChild, oldChild) {
-            if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined)) {
+            if (newChild === null || newChild === undefined || (typeof newChild === 'object' && newChild.__nid === undefined && newChild.nodeType === undefined)) {
                 throw new TypeError("Failed to execute 'replaceChild' on 'Node': parameter 1 is not of type 'Node'.");
             }
-            if (oldChild === null || oldChild === undefined || (typeof oldChild === 'object' && oldChild.__nid === undefined)) {
+            if (newChild && newChild.nodeType === 2) {
+                throw new DOMException("Cannot insert an Attr node", "HierarchyRequestError");
+            }
+            if (oldChild === null || oldChild === undefined || (typeof oldChild === 'object' && oldChild.__nid === undefined && oldChild.nodeType === undefined)) {
                 throw new TypeError("Failed to execute 'replaceChild' on 'Node': parameter 2 is not of type 'Node'.");
             }
             if (this.__nid === undefined) return oldChild;

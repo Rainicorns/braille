@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use braille_engine::{Engine, FetchedResources};
+use braille_engine::{Engine, FetchedResources, IframeResource};
 
 #[test]
 fn iframe_loads_external_script_from_fetched_resources() {
@@ -35,7 +35,7 @@ fn iframe_loads_external_script_from_fetched_resources() {
     scripts.insert("/lib.js".to_string(), lib_js.to_string());
 
     let mut iframes = HashMap::new();
-    iframes.insert("child.html".to_string(), child_html.to_string());
+    iframes.insert("child.html".to_string(), IframeResource { content: child_html.to_string(), content_type: "text/html".into() });
 
     let resources = FetchedResources {
         scripts,
@@ -76,7 +76,7 @@ fn iframe_external_and_inline_scripts_execute_in_order() {
     scripts.insert("/second.js".to_string(), "window.order.push('ext2');".to_string());
 
     let mut iframes = HashMap::new();
-    iframes.insert("child.html".to_string(), child_html.to_string());
+    iframes.insert("child.html".to_string(), IframeResource { content: child_html.to_string(), content_type: "text/html".into() });
 
     let resources = FetchedResources {
         scripts,

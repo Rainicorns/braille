@@ -317,7 +317,7 @@ fn getelementsbytagname_mixed_namespaces() {
 fn getelementsbytagname_wpt_change_document_htmlness_flow() {
     // Simulates the full WPT Element-getElementsByTagName-change-document-HTMLNess test flow
     use std::collections::HashMap;
-    use braille_engine::FetchedResources;
+    use braille_engine::{FetchedResources, IframeResource};
 
     let html = r#"<!doctype html>
 <iframe src="test.xml"></iframe>
@@ -375,12 +375,13 @@ fn getelementsbytagname_wpt_change_document_htmlness_flow() {
 </script>"#;
 
     let mut iframes = HashMap::new();
-    iframes.insert("test.xml".to_string(), "<root/>".to_string());
+    iframes.insert("test.xml".to_string(), IframeResource { content: "<root/>".to_string(), content_type: "application/xml".into() });
 
     let mut engine = Engine::new();
     let fetched = FetchedResources {
         scripts: HashMap::new(),
         iframes,
+        css: HashMap::new(),
     };
     engine.load_html_with_resources(html, &fetched);
     engine.settle();

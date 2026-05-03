@@ -459,13 +459,13 @@ impl JsRuntime {
         });
     }
 
-    /// Store pre-fetched iframe HTML content.
-    pub fn populate_iframe_content(&self, iframes: &HashMap<String, String>) {
+    /// Store pre-fetched iframe content with MIME types.
+    pub fn populate_iframe_content(&self, iframes: &HashMap<String, crate::IframeResource>) {
         let mut state = self.state.borrow_mut();
-        for (url, content) in iframes {
+        for (url, resource) in iframes {
             state
                 .iframe_src_content
-                .insert(url.clone(), content.clone());
+                .insert(url.clone(), (resource.content.clone(), resource.content_type.clone()));
         }
     }
 
@@ -496,6 +496,8 @@ impl JsRuntime {
     /// create JS realms for them, execute their scripts, and fire onload.
     pub fn process_iframe_loads(&mut self, _tree: &Rc<RefCell<DomTree>>) {
         self.eval_or_log("if (typeof __braille_process_iframes === 'function') __braille_process_iframes();");
+        // Register window[name] for iframes with name attributes (HTML spec §7.3.3)
+        self.eval_or_log("if (typeof __registerIframeNamedAccess === 'function') __registerIframeNamedAccess();");
         // Drain any timers that iframe scripts may have scheduled at delay 0
         self.flush_jobs();
     }

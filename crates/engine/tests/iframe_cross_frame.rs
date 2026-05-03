@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use braille_engine::{Engine, FetchedResources};
+use braille_engine::{Engine, FetchedResources, IframeResource};
 
 /// Minimal preamble snippet that provides setup/done/assert_true for child iframes.
 /// This is a simplified version of the test runner's preamble.
@@ -93,7 +93,7 @@ done();
     scripts.insert("/preamble.js".to_string(), preamble);
 
     let mut iframes = HashMap::new();
-    iframes.insert("child.html".to_string(), child_html.to_string());
+    iframes.insert("child.html".to_string(), IframeResource { content: child_html.to_string(), content_type: "text/html".into() });
 
     let resources = FetchedResources {
         scripts,
@@ -151,7 +151,7 @@ done();
     scripts.insert("/preamble.js".to_string(), preamble);
 
     let mut iframes = HashMap::new();
-    iframes.insert("child.html".to_string(), child_html.to_string());
+    iframes.insert("child.html".to_string(), IframeResource { content: child_html.to_string(), content_type: "text/html".into() });
 
     let resources = FetchedResources {
         scripts,

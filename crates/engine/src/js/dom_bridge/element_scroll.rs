@@ -95,6 +95,8 @@ pub(super) fn element_scroll_js() -> &'static str {
                 ny = Number(y) || 0;
                 behavior = 'auto';
             }
+            // Clear snap-settled guard so user-initiated scrolls re-snap properly
+            delete this.__snap_settled;
             var snapped = __computeSnapOffset(this, nx, ny);
             nx = snapped.x;
             ny = snapped.y;

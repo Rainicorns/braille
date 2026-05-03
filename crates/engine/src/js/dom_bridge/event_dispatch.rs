@@ -300,6 +300,15 @@ pub(super) fn event_dispatch_js() -> &'static str {
                 event._path = [];
             }
 
+            // Per spec: clear dispatch flag before activation behavior runs,
+            // so the event can be redispatched during post-click handling (e.g., in onchange).
+            event._dispatching = false;
+            event._stopPropagation = false;
+            event._stopImmediate = false;
+            event.currentTarget = null;
+            event.eventPhase = 0;
+            __currentEvent = __prevEvent;
+
             // Activation behavior post-step: revert if event was canceled, else fire input/change
             if (_activationRevert && event.defaultPrevented) {
                 _activationRevert();
@@ -360,6 +369,8 @@ pub(super) fn event_dispatch_js() -> &'static str {
                         var btype = (ael.getAttribute('type') || '').toLowerCase();
                         if ((atag === 'BUTTON' && (btype === 'submit' || btype === '')) ||
                             (atag === 'INPUT' && (btype === 'submit' || btype === 'image'))) {
+                            // Disabled submit buttons must not activate (spec: activation behavior check)
+                            if (ael.disabled) break;
                             var form = ael.form;
                             if (form && form.__nid !== undefined) {
                                 var formConnected = false;
@@ -419,14 +430,7 @@ pub(super) fn event_dispatch_js() -> &'static str {
                 }
             }
 
-            // Per spec step 14: unset dispatching, stop propagation, and stop immediate flags
-            event._dispatching = false;
-            event._stopPropagation = false;
-            event._stopImmediate = false;
-            event.currentTarget = null;
-            event.eventPhase = 0;
-            // Restore previous window.event
-            __currentEvent = __prevEvent;
+            // Note: dispatch flags already cleared before activation behavior above
         }
 
         // __braille_click(nodeId) — called from Rust with full pointer/mouse event sequence

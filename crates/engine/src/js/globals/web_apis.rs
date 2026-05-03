@@ -33,7 +33,7 @@ const WEB_APIS_JS: &str = r#"
                 this.eventPhase = 0;
                 this._isTrusted = false;
                 Object.defineProperty(this, 'isTrusted', {get: __isTrustedGetter, configurable: false});
-                this.timeStamp = performance.now();
+                this._timeStamp = performance.now();
                 this._stopPropagation = false;
                 this._stopImmediate = false;
                 this._dispatching = false;
@@ -77,10 +77,15 @@ const WEB_APIS_JS: &str = r#"
         Event.prototype.CAPTURING_PHASE = 1;
         Event.prototype.AT_TARGET = 2;
         Event.prototype.BUBBLING_PHASE = 3;
+        Object.defineProperty(Event.prototype, 'timeStamp', {
+            get: function() { return this._timeStamp; },
+            configurable: true, enumerable: true
+        });
         globalThis.CustomEvent = class CustomEvent extends Event {
             constructor(type, opts) { super(type, opts); this.detail = (opts && opts.detail !== undefined ? opts.detail : null); }
             initCustomEvent(type) {
                 if (arguments.length < 1) throw new TypeError("Failed to execute 'initCustomEvent' on 'CustomEvent': 1 argument required, but only 0 present.");
+                if (this._dispatching) return;
                 this.initEvent(type, arguments[1], arguments[2]);
                 this.detail = arguments.length > 3 ? arguments[3] : null;
             }
@@ -94,6 +99,12 @@ const WEB_APIS_JS: &str = r#"
                 }
                 this.view = v;
                 this.detail = (opts && opts.detail) || 0;
+            }
+            initUIEvent(type, bubbles, cancelable, view, detail) {
+                if (this._dispatching) return;
+                this.initEvent(type, bubbles, cancelable);
+                this.view = view || null;
+                this.detail = detail || 0;
             }
         };
         globalThis.FocusEvent = class FocusEvent extends UIEvent {
@@ -116,6 +127,32 @@ const WEB_APIS_JS: &str = r#"
                 this.shiftKey = !!(opts && opts.shiftKey);
                 this.altKey = !!(opts && opts.altKey);
                 this.metaKey = !!(opts && opts.metaKey);
+                this.pageX = this.clientX + (typeof scrollX !== 'undefined' ? scrollX : 0);
+                this.pageY = this.clientY + (typeof scrollY !== 'undefined' ? scrollY : 0);
+            }
+            get offsetX() {
+                var t = this.target;
+                if (t && t.getBoundingClientRect) {
+                    return this.clientX - t.getBoundingClientRect().left;
+                }
+                return this.clientX;
+            }
+            get offsetY() {
+                var t = this.target;
+                if (t && t.getBoundingClientRect) {
+                    return this.clientY - t.getBoundingClientRect().top;
+                }
+                return this.clientY;
+            }
+            initMouseEvent(type, bubbles, cancelable, view, detail, screenX, screenY, clientX, clientY, ctrlKey, altKey, shiftKey, metaKey, button, relatedTarget) {
+                if (this._dispatching) return;
+                this.initUIEvent(type, bubbles, cancelable, view, detail);
+                this.screenX = screenX || 0; this.screenY = screenY || 0;
+                this.clientX = clientX || 0; this.clientY = clientY || 0;
+                this.ctrlKey = !!ctrlKey; this.altKey = !!altKey;
+                this.shiftKey = !!shiftKey; this.metaKey = !!metaKey;
+                this.button = button || 0;
+                this.relatedTarget = relatedTarget || null;
             }
         };
         globalThis.KeyboardEvent = class KeyboardEvent extends UIEvent {
@@ -134,12 +171,33 @@ const WEB_APIS_JS: &str = r#"
                 this.altKey = !!(opts && opts.altKey);
                 this.metaKey = !!(opts && opts.metaKey);
             }
+            initKeyboardEvent(type, bubbles, cancelable, view, key, location, ctrlKey, altKey, shiftKey, metaKey) {
+                if (this._dispatching) return;
+                this.initUIEvent(type, bubbles, cancelable, view, 0);
+                this.key = key || ''; this.location = location || 0;
+                this.ctrlKey = !!ctrlKey; this.altKey = !!altKey;
+                this.shiftKey = !!shiftKey; this.metaKey = !!metaKey;
+            }
         };
         globalThis.InputEvent = class InputEvent extends UIEvent {
             constructor(type, opts) { super(type, opts); this.data = (opts && opts.data) || null; this.inputType = (opts && opts.inputType) || ''; }
         };
-        globalThis.AnimationEvent = class AnimationEvent extends Event { constructor(t,o){super(t,o);} };
-        globalThis.TransitionEvent = class TransitionEvent extends Event { constructor(t,o){super(t,o);} };
+        globalThis.AnimationEvent = class AnimationEvent extends Event {
+            constructor(t,o){
+                super(t,o);
+                this.animationName = (o && o.animationName) || '';
+                this.elapsedTime = (o && o.elapsedTime) || 0;
+                this.pseudoElement = (o && o.pseudoElement) || '';
+            }
+        };
+        globalThis.TransitionEvent = class TransitionEvent extends Event {
+            constructor(t,o){
+                super(t,o);
+                this.propertyName = (o && o.propertyName) || '';
+                this.elapsedTime = (o && o.elapsedTime) || 0;
+                this.pseudoElement = (o && o.pseudoElement) || '';
+            }
+        };
         globalThis.WheelEvent = class WheelEvent extends MouseEvent {
             constructor(type, opts) {
                 super(type, opts);
@@ -1222,7 +1280,7 @@ const WEB_APIS_JS: &str = r#"
                 // Phase 2: fire events in creation/registration order
                 for (var i = 0; i < allSignals.length; i++) allSignals[i]._fire();
             }
-            AbortSignal.abort = function(reason) { var s = makeSignal(); s.aborted = true; s.reason = reason !== undefined ? reason : new DOMException('The operation was aborted.', 'AbortError'); return s; };
+            AbortSignal.abort = function(reason) { var s = makeSignal(); s.aborted = true; var DOMEx = (this && this._DOMEx) || DOMException; s.reason = reason !== undefined ? reason : new DOMEx('The operation was aborted.', 'AbortError'); return s; };
             AbortSignal.timeout = function(ms) { var s = makeSignal(); setTimeout(function() { signalAbort(s, new DOMException('The operation timed out.', 'TimeoutError')); }, ms); return s; };
             AbortSignal.any = function(signals) {
                 var s = makeSignal();
@@ -1234,6 +1292,7 @@ const WEB_APIS_JS: &str = r#"
             };
             AbortSignal._makeSignal = makeSignal;
             AbortSignal._signalAbort = signalAbort;
+            AbortSignal._DOMEx = DOMException;
             return AbortSignal;
         })();
         globalThis.AbortController = class AbortController {

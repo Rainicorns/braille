@@ -533,7 +533,7 @@ impl Engine {
     }
 
     /// Store pre-fetched iframe HTML content in the realm state.
-    pub(crate) fn populate_iframe_src_content(iframes: &HashMap<String, String>, runtime: &JsRuntime) {
+    pub(crate) fn populate_iframe_src_content(iframes: &HashMap<String, crate::IframeResource>, runtime: &JsRuntime) {
         runtime.populate_iframe_content(iframes);
     }
 

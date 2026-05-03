@@ -384,7 +384,9 @@ fn dynamic_script_error_fires_onerror() {
 
 #[test]
 fn message_channel_settles() {
-    // React's scheduler uses MessageChannel → setTimeout(0) → callback
+    // MessageChannel dispatches via Promise.resolve().then() (microtask),
+    // so the callback fires during eval_js's flush_jobs() — no settle needed.
+    // This matches React 18's scheduler which relies on fast MessageChannel delivery.
     let mut e = engine_with_html("<html><body></body></html>");
     e.eval_js(r#"
         window.__mc_result = 'not fired';
@@ -395,11 +397,7 @@ fn message_channel_settles() {
         ch.port2.postMessage('hello');
     "#).unwrap();
 
-    // Before settle: the setTimeout(0) hasn't fired
-    assert_eq!(e.eval_js("window.__mc_result").unwrap(), "not fired");
-
-    // After settle: the timer fires, MessageChannel callback runs
-    e.settle();
+    // Microtask delivery: message is already delivered after eval_js flush_jobs
     assert_eq!(e.eval_js("window.__mc_result").unwrap(), "fired: hello");
 }
 

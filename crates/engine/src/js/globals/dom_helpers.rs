@@ -476,6 +476,32 @@ const DOM_HELPERS_JS: &str = r#"
             var kids = __n_getAllChildIds(root.__nid);
             for (var i = 0; i < kids.length; i++) walk(kids[i]);
         }
+
+        // Per HTML spec §7.3.3: <iframe name="foo"> creates window.foo -> contentWindow.
+        // Called after iframe realms are created so contentWindow is available.
+        function __registerIframeNamedAccess() {
+            var iframeIds = __braille_find_iframes();
+            for (var i = 0; i < iframeIds.length; i++) {
+                var nid = iframeIds[i];
+                var name = __n_getAttribute(nid, 'name');
+                if (name && !(name in globalThis)) {
+                    var el = __w(nid);
+                    if (el && el.contentWindow) {
+                        globalThis[name] = el.contentWindow;
+                    }
+                }
+            }
+        }
+
+        // Check if an element has any event listeners for a given type.
+        // Checks on-handler properties AND addEventListener registrations.
+        globalThis.__hasEventListeners = function(el, type) {
+            if (typeof el['on' + type] === 'function') return true;
+            var ls = el.__et_listeners;
+            if (ls && ls[type + '_b'] && ls[type + '_b'].length > 0) return true;
+            if (ls && ls[type + '_c'] && ls[type + '_c'].length > 0) return true;
+            return false;
+        };
 "#;
 
 const FINALIZE_JS: &str = r#"

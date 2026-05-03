@@ -998,10 +998,25 @@ pub(super) fn global_document_js() -> &'static str {
             event.target = document;
             event.srcElement = document;
             event._path = [document, window];
+            // Fire capture listeners first (phase 1)
+            event.eventPhase = 1;
+            event.currentTarget = document;
+            var capCbs = _docCapture[event.type];
+            if (capCbs) {
+                var capSnap = capCbs.slice();
+                for (var ci = 0; ci < capSnap.length; ci++) {
+                    var wasPassive = event._inPassiveListener;
+                    if (capSnap[ci]._passive) event._inPassiveListener = true;
+                    capSnap[ci].call(document, event);
+                    event._inPassiveListener = wasPassive;
+                    if (event._stopImmediate) break;
+                }
+            }
+            // Then bubble listeners (phase 2)
             event.eventPhase = 2;
             event.currentTarget = document;
             var cbs = doc.__listeners[event.type];
-            if (cbs) {
+            if (cbs && !event._stopImmediate) {
                 var snapshot = cbs.slice();
                 for (var i = 0; i < snapshot.length; i++) {
                     var wasPassive = event._inPassiveListener;

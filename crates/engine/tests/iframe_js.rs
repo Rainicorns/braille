@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
-use braille_engine::{Engine, FetchedResources};
+use braille_engine::{Engine, FetchedResources, IframeResource};
 
 /// Helper: load HTML with pre-fetched iframe content, settle, then eval JS.
-fn engine_with_iframes(html: &str, iframes: HashMap<String, String>) -> Engine {
+fn engine_with_iframes(html: &str, iframes: HashMap<String, IframeResource>) -> Engine {
     let mut engine = Engine::new();
     let fetched = FetchedResources {
         scripts: HashMap::new(),
         iframes,
+        css: HashMap::new(),
     };
     engine.load_html_with_resources(html, &fetched);
     engine.settle();
@@ -33,8 +34,7 @@ fn iframe_src_content_loads() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://challenge.example.com/frame.html".to_string(),
-        r#"<html><body><script>parent.postMessage('iframe-loaded', '*');</script></body></html>"#
-            .to_string(),
+        IframeResource { content: r#"<html><body><script>parent.postMessage('iframe-loaded', '*');</script></body></html>"#.to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -57,7 +57,7 @@ fn iframe_contentwindow_exists() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/frame.html".to_string(),
-        "<html><body></body></html>".to_string(),
+        IframeResource { content: "<html><body></body></html>".to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -82,7 +82,7 @@ fn iframe_contentdocument_exists() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/frame.html".to_string(),
-        "<html><body></body></html>".to_string(),
+        IframeResource { content: "<html><body></body></html>".to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -112,7 +112,7 @@ fn iframe_document_creates_elements() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/frame.html".to_string(),
-        "<html><body></body></html>".to_string(),
+        IframeResource { content: "<html><body></body></html>".to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -140,8 +140,7 @@ fn iframe_scripts_run_in_isolation() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/frame.html".to_string(),
-        r#"<html><body><script>var iframeSecret = 'set-by-iframe';</script></body></html>"#
-            .to_string(),
+        IframeResource { content: r#"<html><body><script>var iframeSecret = 'set-by-iframe';</script></body></html>"#.to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -170,13 +169,12 @@ fn iframe_postmessage_parent_to_child() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/frame.html".to_string(),
-        r#"<html><body><script>
+        IframeResource { content: r#"<html><body><script>
             window.addEventListener('message', function(e) {
                 // Echo back what we received
                 parent.postMessage('got:' + e.data, '*');
             });
-        </script></body></html>"#
-            .to_string(),
+        </script></body></html>"#.to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -223,7 +221,7 @@ fn iframe_postmessage_bidirectional() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/frame.html".to_string(),
-        r#"<html><body><script>
+        IframeResource { content: r#"<html><body><script>
             var gotResponse = false;
             window.addEventListener('message', function(e) {
                 if (e.data === 'response') {
@@ -232,8 +230,7 @@ fn iframe_postmessage_bidirectional() {
                 }
             });
             parent.postMessage('request', '*');
-        </script></body></html>"#
-            .to_string(),
+        </script></body></html>"#.to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -262,7 +259,7 @@ fn iframe_onload_fires() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/frame.html".to_string(),
-        "<html><body></body></html>".to_string(),
+        IframeResource { content: "<html><body></body></html>".to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -293,8 +290,7 @@ fn iframe_messageevent_has_source() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/frame.html".to_string(),
-        r#"<html><body><script>parent.postMessage('hello', '*');</script></body></html>"#
-            .to_string(),
+        IframeResource { content: r#"<html><body><script>parent.postMessage('hello', '*');</script></body></html>"#.to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -361,7 +357,7 @@ fn proton_challenge_iframe_flow() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://account-api.proton.me/challenge/v4/html".to_string(),
-        r#"<html><body><script>
+        IframeResource { content: r#"<html><body><script>
             // Phase 1: iframe announces itself
             parent.postMessage({type: 'init'}, '*');
 
@@ -373,8 +369,7 @@ fn proton_challenge_iframe_flow() {
                     parent.postMessage({type: 'child.message.data', data: {fingerprint: 'test-fp-123'}}, '*');
                 }
             });
-        </script></body></html>"#
-            .to_string(),
+        </script></body></html>"#.to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -542,11 +537,11 @@ fn window_frames_returns_iframe_contentwindows() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/a.html".to_string(),
-        "<html><body><p>A</p></body></html>".to_string(),
+        IframeResource { content: "<html><body><p>A</p></body></html>".to_string(), content_type: "text/html".into() },
     );
     iframes.insert(
         "https://example.com/b.html".to_string(),
-        "<html><body><p>B</p></body></html>".to_string(),
+        IframeResource { content: "<html><body><p>B</p></body></html>".to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -580,7 +575,7 @@ fn window_length_counts_iframes() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/a.html".to_string(),
-        "<html><body></body></html>".to_string(),
+        IframeResource { content: "<html><body></body></html>".to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = engine_with_iframes(html, iframes);
@@ -608,13 +603,14 @@ fn window_frames_accessible_in_onload() {
     let mut iframes = HashMap::new();
     iframes.insert(
         "https://example.com/frame.html".to_string(),
-        "<html><body><p>hello</p></body></html>".to_string(),
+        IframeResource { content: "<html><body><p>hello</p></body></html>".to_string(), content_type: "text/html".into() },
     );
 
     let mut engine = Engine::new();
     let fetched = FetchedResources {
         scripts: HashMap::new(),
         iframes,
+        css: HashMap::new(),
     };
     engine.load_html_with_resources(html, &fetched);
     engine.settle();
@@ -640,12 +636,13 @@ fn window_frames_xml_iframe_document_access() {
 </script>"#;
 
     let mut iframes = HashMap::new();
-    iframes.insert("test.xml".to_string(), "<root/>".to_string());
+    iframes.insert("test.xml".to_string(), IframeResource { content: "<root/>".to_string(), content_type: "application/xml".into() });
 
     let mut engine = Engine::new();
     let fetched = FetchedResources {
         scripts: HashMap::new(),
         iframes,
+        css: HashMap::new(),
     };
     engine.load_html_with_resources(html, &fetched);
     engine.settle();
