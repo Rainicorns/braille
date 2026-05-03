@@ -321,14 +321,14 @@ const WEB_APIS_JS: &str = r#"
 
         // Navigator
         globalThis.navigator = {
-            userAgent: 'Mozilla/5.0 (compatible; Braille/0.1)',
+            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             language: 'en-US',
             languages: ['en-US'],
-            platform: 'Linux',
+            platform: 'MacIntel',
             onLine: true,
             cookieEnabled: true,
             maxTouchPoints: 0,
-            hardwareConcurrency: 1,
+            hardwareConcurrency: 8,
             vendor: 'Google Inc.',
             clipboard: {
                 writeText: function(text) {
