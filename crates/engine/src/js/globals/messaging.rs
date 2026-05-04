@@ -1,7 +1,7 @@
 use rquickjs::Ctx;
 
 /// Register `window.postMessage()` and `MessageEvent` constructor.
-pub(super) fn register_messaging(ctx: &Ctx<'_>) {
+pub(crate) fn register_messaging(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(
         r#"
         (function() {

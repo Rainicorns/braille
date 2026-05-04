@@ -2,7 +2,7 @@ use rquickjs::{Ctx, Function};
 
 use crate::js::dom_bridge::with_state_mut;
 
-pub(super) fn register_fetch(ctx: &Ctx<'_>) {
+pub(crate) fn register_fetch(ctx: &Ctx<'_>) {
     // fetch() queues a PendingFetch and returns a Promise
     let fetch_setup = Function::new(ctx.clone(), move |url: String, method: String, headers_json: String, body: rquickjs::Value<'_>| -> u64 {
         let headers: Vec<(String, String)> = serde_json::from_str(&headers_json).unwrap_or_default();

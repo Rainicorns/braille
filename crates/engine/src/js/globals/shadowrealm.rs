@@ -1,6 +1,6 @@
 use rquickjs::Ctx;
 
-pub(super) fn register_shadowrealm(ctx: &Ctx<'_>) {
+pub(crate) fn register_shadowrealm(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(
         r#"
 (function() {

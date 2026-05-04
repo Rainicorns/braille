@@ -1,6 +1,6 @@
 use rquickjs::Ctx;
 
-pub(super) fn register_wasm(ctx: &Ctx<'_>) {
+pub(crate) fn register_wasm(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(wasm_js()).unwrap();
 }
 

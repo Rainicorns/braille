@@ -1,6 +1,6 @@
 use rquickjs::Ctx;
 
-pub(super) fn register_crypto(ctx: &Ctx<'_>) {
+pub(crate) fn register_crypto(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(crypto_js()).unwrap();
 }
 

@@ -46,9 +46,6 @@ wasmtime = { version = "43", default-features = false, features = ["runtime", "c
 [features]
 real-sites = []
 
-[features]
-real-sites = []
-
 [lints]
 workspace = true
 

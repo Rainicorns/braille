@@ -3,7 +3,7 @@ use rquickjs::{Ctx, Function};
 use crate::js::dom_bridge::{with_state, with_tree};
 
 /// Register iframe realm creation and contentWindow/contentDocument support.
-pub(super) fn register_iframe(ctx: &Ctx<'_>) {
+pub(crate) fn register_iframe(ctx: &Ctx<'_>) {
     // Native function: look up pre-fetched iframe content by URL
     let lookup_fn =
         Function::new(ctx.clone(), move |url: String| -> String {

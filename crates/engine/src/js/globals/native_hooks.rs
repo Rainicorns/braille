@@ -7,7 +7,7 @@ use rquickjs::{Ctx, Function};
 
 use crate::js::dom_bridge::with_state_mut;
 
-pub(super) fn register(ctx: &Ctx<'_>) {
+pub(crate) fn register(ctx: &Ctx<'_>) {
     // Register __braille_navigate — called by location.href setter to signal pending navigation
     let navigate_fn = Function::new(ctx.clone(), move |url: String| {
         with_state_mut(|s| s.pending_navigation = Some(url));

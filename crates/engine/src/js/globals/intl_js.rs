@@ -1,6 +1,6 @@
 use rquickjs::Ctx;
 
-pub(super) fn register_intl_js(ctx: &Ctx<'_>) {
+pub(crate) fn register_intl_js(ctx: &Ctx<'_>) {
     // Intl object with constructors backed by native __n_intlFormatDate/__n_intlFormatNumber
     ctx.eval::<(), _>(r#"
         globalThis.Intl = {

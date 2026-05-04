@@ -3,7 +3,7 @@
 
 use rquickjs::Ctx;
 
-pub(super) fn register(ctx: &Ctx<'_>) {
+pub(crate) fn register(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(COLLECTIONS_JS).unwrap();
 }
 

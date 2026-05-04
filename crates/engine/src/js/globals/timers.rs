@@ -2,7 +2,7 @@ use rquickjs::{Ctx, Function};
 
 use crate::js::dom_bridge::with_state_mut;
 
-pub(super) fn register_timers(ctx: &Ctx<'_>) {
+pub(crate) fn register_timers(ctx: &Ctx<'_>) {
     // setTimeout/setInterval: JS wrapper stores callback functions, Rust tracks timing
     {
         let register_timer = Function::new(ctx.clone(), move |delay: rquickjs::Value<'_>, is_interval: bool| -> u32 {

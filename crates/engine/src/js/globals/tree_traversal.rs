@@ -2,7 +2,7 @@
 
 use rquickjs::Ctx;
 
-pub(super) fn register(ctx: &Ctx<'_>) {
+pub(crate) fn register(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(TREE_TRAVERSAL_JS).unwrap();
 }
 

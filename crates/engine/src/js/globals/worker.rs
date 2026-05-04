@@ -3,7 +3,7 @@ use rquickjs::{Ctx, Function};
 use crate::js::dom_bridge::with_state_mut;
 use crate::js::state::{PendingWorkerMessage, PendingWorkerSpawn, PendingWorkerTerminate};
 
-pub(super) fn register_worker(ctx: &Ctx<'_>) {
+pub(crate) fn register_worker(ctx: &Ctx<'_>) {
     // Native: push a worker spawn request, return a temporary JS-side worker index
     let spawn_fn = Function::new(ctx.clone(), move |url: String| -> u32 {
         with_state_mut(|st| {

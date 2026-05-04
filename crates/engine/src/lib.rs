@@ -1,4 +1,5 @@
 pub mod a11y;
+pub mod async_ops;
 pub mod browser_events;
 pub mod commands;
 pub mod cookies;
@@ -13,6 +14,7 @@ mod meta_refresh;
 pub mod navigation;
 pub mod permissions;
 mod scripts;
+pub mod style_computer;
 pub mod transcript;
 
 use std::cell::RefCell;
@@ -32,6 +34,8 @@ use braille_wire::{BrowserEvent, SnapMode};
 pub use crate::meta_refresh::{check_refresh_header, MetaRefresh};
 pub use crate::navigation::{FetchProvider, MockFetcher};
 pub use crate::scripts::ScriptDescriptor;
+pub use crate::async_ops::AsyncOperations;
+pub use crate::style_computer::{StyleComputer, BrailleStyleComputer};
 
 /// Snapshot of an element's transition/animation state before style recomputation.
 struct TransitionSnapshot {
@@ -204,6 +208,8 @@ pub struct Engine {
     /// Reset when an element goes back to display:none so it fires again on re-show.
     /// Permission states (persists across page loads within session).
     pub permissions: Permissions,
+    /// Pluggable style computation backend. Default: BrailleStyleComputer.
+    pub style_computer: Box<dyn StyleComputer>,
 }
 
 impl Default for Engine {
@@ -225,6 +231,24 @@ impl Engine {
             runtime_mode: RuntimeMode::default(),
             include_hidden_content: false,
             permissions: Permissions::default(),
+            style_computer: Box::new(BrailleStyleComputer),
+        }
+    }
+
+    /// Create an engine with a custom style computer backend.
+    pub fn with_style_computer(style_computer: Box<dyn StyleComputer>) -> Self {
+        Engine {
+            tree: Rc::new(RefCell::new(DomTree::new())),
+            runtime: None,
+            ref_map: HashMap::new(),
+            focused_element: None,
+            pending_url: None,
+            http_cookie_jar: Vec::new(),
+            cookies_pending_js_sync: false,
+            runtime_mode: RuntimeMode::default(),
+            include_hidden_content: false,
+            permissions: Permissions::default(),
+            style_computer,
         }
     }
 
@@ -275,7 +299,7 @@ impl Engine {
 
     fn settle_inner(&mut self, time_budget_ms: u64) {
         if self.runtime.is_none() {
-            crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+            self.style_computer.compute_all_styles(&mut self.tree.borrow_mut());
             return;
         }
 
@@ -328,7 +352,7 @@ impl Engine {
             // Snapshot transition/animation state before style recomputation
             let transition_snapshot = self.snapshot_transition_state();
 
-            crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+            self.style_computer.compute_all_styles(&mut self.tree.borrow_mut());
 
             let mut needs_relayout = self.validate_focus_after_styles();
 

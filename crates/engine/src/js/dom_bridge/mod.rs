@@ -118,6 +118,28 @@ pub(crate) fn set_state(state: Rc<RefCell<EngineState>>) {
     });
 }
 
+/// Swap the tree thread-local, returning the previous value.
+/// Used by BrailleContext for push/pop semantics.
+pub(crate) fn swap_tree(new: Option<Rc<RefCell<DomTree>>>) -> Option<Rc<RefCell<DomTree>>> {
+    TREE.with(|t| {
+        let mut borrow = t.borrow_mut();
+        let prev = borrow.take();
+        *borrow = new;
+        prev
+    })
+}
+
+/// Swap the state thread-local, returning the previous value.
+/// Used by BrailleContext for push/pop semantics.
+pub(crate) fn swap_state(new: Option<Rc<RefCell<EngineState>>>) -> Option<Rc<RefCell<EngineState>>> {
+    STATE.with(|s| {
+        let mut borrow = s.borrow_mut();
+        let prev = borrow.take();
+        *borrow = new;
+        prev
+    })
+}
+
 /// Install the DOM bridge. Must be called once during runtime initialization.
 pub fn install(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell<EngineState>>) {
     set_tree(tree);
@@ -127,35 +149,72 @@ pub fn install(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell<Engi
     register_js_wrappers(ctx);
 }
 
+/// The ordered list of JS modules that make up the DOM bridge.
+/// Each module contributes JS code that runs in a shared scope with access to
+/// `_cache`, `_listeners`, `EP`, etc.
+///
+/// Plugins can customize this by calling `default_bridge_modules()`, removing/replacing
+/// entries, or inserting new ones, then passing the result to `install_with_modules`.
+#[allow(dead_code)]
+pub struct BridgeModule {
+    pub name: &'static str,
+    pub js: fn() -> &'static str,
+}
+
+/// Returns the default set of bridge modules in load order.
+pub fn default_bridge_modules() -> Vec<BridgeModule> {
+    vec![
+        BridgeModule { name: "element_prototype", js: element_prototype::element_prototype_js },
+        BridgeModule { name: "element_events", js: element_events::element_events_js },
+        BridgeModule { name: "element_scroll", js: element_scroll::element_scroll_js },
+        BridgeModule { name: "element_properties", js: element_properties::element_properties_js },
+        BridgeModule { name: "form_bindings", js: form_bindings::form_bindings_js },
+        BridgeModule { name: "label_bindings", js: label_bindings::label_bindings_js },
+        BridgeModule { name: "wrapper_factory", js: wrapper_and_dispatch::wrapper_factory_js },
+        BridgeModule { name: "event_dispatch", js: event_dispatch::event_dispatch_js },
+        BridgeModule { name: "dom_mutation", js: dom_mutation::dom_mutation_js },
+        BridgeModule { name: "global_document", js: global_document::global_document_js },
+        BridgeModule { name: "selection", js: selection::selection_js },
+        BridgeModule { name: "slot_assignment", js: slot_assignment::slot_assignment_js },
+        BridgeModule { name: "constructors_and_wiring", js: wrapper_and_dispatch::constructors_and_wiring_js },
+    ]
+}
+
+/// Install the DOM bridge with a custom set of modules.
+/// Allows plugins to replace or extend individual bridge modules.
+#[allow(dead_code)]
+pub fn install_with_modules(ctx: &Ctx<'_>, tree: Rc<RefCell<DomTree>>, state: Rc<RefCell<EngineState>>, modules: &[BridgeModule]) {
+    set_tree(tree);
+    set_state(state);
+    native_functions::register_native_functions(ctx);
+    register_js_wrappers_from_modules(ctx, modules);
+}
+
 fn register_js_wrappers(ctx: &Ctx<'_>) {
-    // Build the JS initialization as a single IIFE from separate chunks.
-    // Each chunk is returned by a dedicated function for maintainability.
-    let js = [
-        "(function() {\n",
-        "var _cache = {};\n",
-        "var _listeners = {};\n",
-        "var _captureKeys = {};\n",
-        "var _bubbleKeys = {};\n",
-        "var _winListeners = {};\n",
-        "var _winCapture = {};\n",
-        "var _docCapture = {};\n",
-        "var EP = {};\n",
-        element_prototype::element_prototype_js(),
-        element_events::element_events_js(),
-        element_scroll::element_scroll_js(),
-        element_properties::element_properties_js(),
-        form_bindings::form_bindings_js(),
-        label_bindings::label_bindings_js(),
-        wrapper_and_dispatch::wrapper_factory_js(),
-        event_dispatch::event_dispatch_js(),
-        dom_mutation::dom_mutation_js(),
-        global_document::global_document_js(),
-        selection::selection_js(),
-        slot_assignment::slot_assignment_js(),
-        wrapper_and_dispatch::constructors_and_wiring_js(),
-        "\n})();\n",
-    ].concat();
-    // Debug: dump JS around line 2002
+    let modules = default_bridge_modules();
+    register_js_wrappers_from_modules(ctx, &modules);
+}
+
+fn register_js_wrappers_from_modules(ctx: &Ctx<'_>, modules: &[BridgeModule]) {
+    let mut parts: Vec<&str> = Vec::with_capacity(modules.len() + 10);
+    parts.push("(function() {\n");
+    parts.push("var _cache = {};\n");
+    parts.push("var _listeners = {};\n");
+    parts.push("var _captureKeys = {};\n");
+    parts.push("var _bubbleKeys = {};\n");
+    parts.push("var _winListeners = {};\n");
+    parts.push("var _winCapture = {};\n");
+    parts.push("var _docCapture = {};\n");
+    parts.push("var EP = {};\n");
+
+    let module_sources: Vec<&str> = modules.iter().map(|m| (m.js)()).collect();
+    for src in &module_sources {
+        parts.push(src);
+    }
+
+    parts.push("\n})();\n");
+
+    let js = parts.concat();
     ctx.eval::<(), _>(&*js).unwrap_or_else(|e| {
         let msg = match e {
             rquickjs::Error::Exception => {

@@ -82,7 +82,7 @@ impl Engine {
         self.focused_element = None;
 
         // 7. Compute CSS styles after script execution
-        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+        self.style_computer.compute_all_styles(&mut self.tree.borrow_mut());
     }
 
     /// Parse HTML and identify all scripts (inline and external) in document order.
@@ -174,7 +174,7 @@ impl Engine {
         self.focused_element = None;
 
         // Compute CSS styles after script execution
-        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+        self.style_computer.compute_all_styles(&mut self.tree.borrow_mut());
     }
 
     fn execute_one_descriptor_lossy(
@@ -389,7 +389,7 @@ impl Engine {
         self.runtime = Some(runtime);
         if self.cookies_pending_js_sync { self.sync_cookies_to_js(); }
         self.focused_element = None;
-        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+        self.style_computer.compute_all_styles(&mut self.tree.borrow_mut());
         errors
     }
 
@@ -523,7 +523,7 @@ impl Engine {
         self.runtime = Some(runtime);
         if self.cookies_pending_js_sync { self.sync_cookies_to_js(); }
         self.focused_element = None;
-        crate::css::style_tree::compute_all_styles(&mut self.tree.borrow_mut());
+        self.style_computer.compute_all_styles(&mut self.tree.borrow_mut());
         errors
     }
 

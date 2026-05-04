@@ -6,13 +6,13 @@
 
 use rquickjs::Ctx;
 
-pub(super) fn register(ctx: &Ctx<'_>) {
+pub(crate) fn register(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(DOM_HELPERS_JS).unwrap();
 }
 
 /// Run after dom_bridge to make all interface objects non-enumerable (per spec).
 /// Must run late because dom_bridge defines Document, Text, Comment, etc.
-pub(super) fn finalize(ctx: &Ctx<'_>) {
+pub(crate) fn finalize(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(FINALIZE_JS).unwrap();
 }
 

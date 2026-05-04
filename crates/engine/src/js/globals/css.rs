@@ -1,6 +1,6 @@
 use rquickjs::Ctx;
 
-pub(super) fn register_css_object(ctx: &Ctx<'_>) {
+pub(crate) fn register_css_object(ctx: &Ctx<'_>) {
     // CSS global with supports() backed by native __n_cssSupports, plus CSS.escape()
     ctx.eval::<(), _>(r#"
         globalThis.CSS = {

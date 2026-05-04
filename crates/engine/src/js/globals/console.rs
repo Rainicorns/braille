@@ -3,7 +3,7 @@ use rquickjs::{Ctx, Function, Object};
 
 use crate::js::dom_bridge::with_state_mut;
 
-pub(super) fn register_console(ctx: &Ctx<'_>) {
+pub(crate) fn register_console(ctx: &Ctx<'_>) {
     let console = Object::new(ctx.clone()).unwrap();
 
     let mk = |prefix: &'static str| {

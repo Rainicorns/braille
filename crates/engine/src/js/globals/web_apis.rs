@@ -5,7 +5,7 @@
 
 use rquickjs::Ctx;
 
-pub(super) fn register(ctx: &Ctx<'_>) {
+pub(crate) fn register(ctx: &Ctx<'_>) {
     ctx.eval::<(), _>(WEB_APIS_JS).unwrap();
 }
 
